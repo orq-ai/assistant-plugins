@@ -268,18 +268,4 @@ NOW PROCESS THE ACTUAL INPUT
 
 ---
 
-## Template Usage Notes
-
-1. **PROMPT_TYPE**: Set to `"agent"` for agent/deployment prompts, `"evaluator"` for evaluator prompts.
-
-2. **FAILURE_EXAMPLES**: Sample f=10 failures (research-validated default). Include representative failures, not exhaustive lists. Ensure at least 2 examples per pattern you want to address.
-
-3. **POSITIVE_EXAMPLES**: Always include p=3 positive traces as regression anchors. These prevent over-correction by ensuring rules don't break existing good behavior.
-
-4. **FEEDBACK_SOURCE**: Set to `"human"` for user feedback (thumbs up/down, corrections, free-text) or `"ai_eval"` for evaluator scores. The same meta-prompt processes both — only the preprocessing (normalization) differs.
-
-5. **Iteration count**: Default to 2 iterations for most models (GPT, Claude). Use up to 5 for Gemini models. Stop early if ITERATION_GUIDANCE recommends `"stop"`.
-
-6. **Rule cap**: Maximum 10 total rules across all iterations. If approaching the cap, prioritize highest frequency × severity rules.
-
-7. **Variables**: Fill in `CURRENT_PROMPT` with the full prompt text, `FAILURE_EXAMPLES` and `POSITIVE_EXAMPLES` with sampled traces from the target deployment.
+> **Usage:** This file contains the raw prompt template between the ``` fences. Everything outside the fences is for the agent operator, not the LLM. See SKILL.md Phase 3 for how to fill in the variables.

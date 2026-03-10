@@ -237,12 +237,71 @@ def test_meta_prompt_reference() -> list[str]:
     return errors
 
 
+def test_cross_file_consistency() -> list[str]:
+    """Check 5: Parameters and taxonomy are consistent between SKILL.md and meta-prompt.md."""
+    errors = []
+
+    if not SKILL_MD.exists() or not META_PROMPT.exists():
+        return ["Cannot check consistency — files missing"]
+
+    skill_text = SKILL_MD.read_text(encoding="utf-8")
+    meta_text = META_PROMPT.read_text(encoding="utf-8")
+
+    # Check that all taxonomy tags mentioned in meta-prompt are referenced in SKILL.md
+    # Only match tags in the ISSUE TAXONOMY section (between "ISSUE TAXONOMY:" and next empty line)
+    taxonomy_match = re.search(
+        r"ISSUE TAXONOMY:\n((?:- \w+:.*\n)+)", meta_text
+    )
+    taxonomy_tags = (
+        re.findall(r"^- (\w+):", taxonomy_match.group(1), re.MULTILINE)
+        if taxonomy_match
+        else []
+    )
+    for tag in taxonomy_tags:
+        if tag not in skill_text:
+            errors.append(
+                f"Taxonomy tag '{tag}' in meta-prompt.md not referenced in SKILL.md"
+            )
+
+    # Check that SKILL.md taxonomy references match meta-prompt taxonomy
+    skill_tags = re.findall(r"`(\w+)`", skill_text.split("Issue Taxonomy")[1].split("##")[0]) if "Issue Taxonomy" in skill_text else []
+    meta_tags = set(taxonomy_tags)
+    for tag in skill_tags:
+        if tag in (
+            "accuracy", "missing_requirement", "policy", "safety",
+            "formatting", "verbosity", "tone", "tool_use", "reasoning",
+            "hallucination",
+        ) and tag not in meta_tags:
+            errors.append(
+                f"Taxonomy tag '{tag}' in SKILL.md not found in meta-prompt.md"
+            )
+
+    # Check that key structural elements referenced in SKILL.md steps exist in meta-prompt
+    # (e.g., output sections A-F)
+    for section_label in ("PATTERN_ANALYSIS", "ANCHOR_CHECK", "RULES_TO_APPEND", "REGRESSION_TESTS", "ITERATION_GUIDANCE"):
+        if section_label in skill_text and section_label not in meta_text:
+            errors.append(
+                f"SKILL.md references output section '{section_label}' not found in meta-prompt.md"
+            )
+
+    # Check that the LEARNED_RULES format is consistent
+    skill_has_learned_rules = "### LEARNED_RULES" in skill_text
+    meta_has_learned_rules = "LEARNED_RULES" in meta_text
+    if skill_has_learned_rules and not meta_has_learned_rules:
+        errors.append("SKILL.md references LEARNED_RULES but meta-prompt.md does not")
+    if meta_has_learned_rules and not skill_has_learned_rules:
+        errors.append("meta-prompt.md references LEARNED_RULES but SKILL.md does not")
+
+    return errors
+
+
 def main() -> None:
     checks = [
         ("Frontmatter matches existing skill patterns", test_frontmatter),
         ("Companion skill references are valid", test_companion_skills),
         ("AGENTS.md includes prompt-learning correctly", test_agents_md),
         ("Meta-prompt is referenced and well-structured", test_meta_prompt_reference),
+        ("Cross-file consistency (SKILL.md ↔ meta-prompt.md)", test_cross_file_consistency),
     ]
 
     total_errors = 0

@@ -31,6 +31,7 @@ This skill is **automated and feedback-driven**, distinct from `optimize-prompt`
 Consult these docs when working with the orq.ai platform:
 - **Prompts overview:** https://docs.orq.ai/docs/prompts/overview
 - **Prompt management:** https://docs.orq.ai/docs/prompts/management
+- **Prompt versioning:** https://docs.orq.ai/docs/prompts/versioning
 - **Deployments overview:** https://docs.orq.ai/docs/deployments/overview
 - **Experiments:** https://docs.orq.ai/docs/experiments/creating
 - **Traces:** https://docs.orq.ai/docs/observability/traces
@@ -99,20 +100,7 @@ Never deploy rules without running an A/B experiment. The validation experiment 
 
 ## Issue Taxonomy
 
-The meta-prompt classifies failures into these types:
-
-| Issue Type | Description |
-|------------|-------------|
-| `accuracy` | Factually incorrect or imprecise outputs |
-| `missing_requirement` | Fails to address part of the user's request |
-| `policy` | Violates organizational policies or guidelines |
-| `safety` | Produces harmful, biased, or inappropriate content |
-| `formatting` | Wrong output structure, missing fields, schema violations |
-| `verbosity` | Too long or too short for the context |
-| `tone` | Inappropriate register, persona drift |
-| `tool_use` | Wrong tool selected, incorrect arguments, misinterpreted results |
-| `reasoning` | Flawed logic, incorrect deductions |
-| `hallucination` | Fabricated facts, citations, or capabilities |
+The meta-prompt classifies failures into 10 types: `accuracy`, `missing_requirement`, `policy`, `safety`, `formatting`, `verbosity`, `tone`, `tool_use`, `reasoning`, and `hallucination`. See the full taxonomy with descriptions in `resources/meta-prompt.md` (ISSUE TAXONOMY section).
 
 ## Destructive Actions
 
@@ -121,15 +109,15 @@ The following actions require explicit user confirmation via `AskUserQuestion` b
 - Promoting a rule-enhanced prompt version to a production deployment
 - Removing or modifying existing learned rules
 
-## Research-Validated Defaults
+## Defaults
 
-These defaults come from systematic experiments (RES-205):
+> **Note:** These defaults are preliminary. RES-205 experiments are still running — values will be updated once results are final.
 
 | Parameter | Default | Range | Notes |
 |-----------|---------|-------|-------|
-| Failures per batch (f) | 10 | 5-15 | f=10 outperforms f=5 (+0.27) and f=20 (+1.23) |
-| Positives per batch (p) | 3 | 2-5 | p=0 over-corrects (8 rules); p=3 focuses (2 rules) |
-| Iterations | 2 | 1-5 | 2 for GPT/Claude; up to 5 for Gemini |
+| Failures per batch (f) | 10 | 5-15 | Representative sample, not exhaustive |
+| Positives per batch (p) | 3 | 2-5 | Regression anchors to prevent over-correction |
+| Iterations | 2 | 1-5 | 2 for GPT/Claude; up to 5 for Gemini (pending validation) |
 | Occurrence threshold | 2+ | — | One-offs are skipped |
 | Rules per iteration | 1-5 | — | Prioritized by frequency × severity |
 | Total rule cap | 10 | — | Across all iterations |
