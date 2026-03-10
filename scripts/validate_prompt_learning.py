@@ -9,7 +9,7 @@ Checks:
 1. Frontmatter matches existing skill patterns
 2. All companion skill references point to existing skills
 3. AGENTS.md includes the new skill entry
-4. resources/meta-prompt.md is properly referenced in SKILL.md steps
+4. Meta-prompt template is inline in SKILL.md with required structural elements
 """
 
 from __future__ import annotations
@@ -18,10 +18,10 @@ import re
 import sys
 from pathlib import Path
 
+
 ROOT = Path(__file__).resolve().parent.parent
 SKILL_DIR = ROOT / "skills" / "prompt-learning"
 SKILL_MD = SKILL_DIR / "SKILL.md"
-META_PROMPT = SKILL_DIR / "resources" / "meta-prompt.md"
 AGENTS_MD = ROOT / "agents" / "AGENTS.md"
 
 PASS = "\033[32m✓\033[0m"
@@ -185,112 +185,65 @@ def test_agents_md() -> list[str]:
     return errors
 
 
-def test_meta_prompt_reference() -> list[str]:
-    """Check 4: resources/meta-prompt.md exists and is referenced in SKILL.md."""
+def test_inline_meta_prompt() -> list[str]:
+    """Check 4: Meta-prompt template is inline in SKILL.md with required elements."""
     errors = []
-
-    if not META_PROMPT.exists():
-        errors.append(f"Meta-prompt not found at {META_PROMPT}")
-        return errors
 
     if not SKILL_MD.exists():
-        errors.append(f"SKILL.md not found at {SKILL_MD}")
-        return errors
+        return [f"SKILL.md not found at {SKILL_MD}"]
 
-    skill_text = SKILL_MD.read_text(encoding="utf-8")
+    text = SKILL_MD.read_text(encoding="utf-8")
 
-    # Check that SKILL.md references the meta-prompt file
-    if "resources/meta-prompt.md" not in skill_text:
+    # The meta-prompt should be inline in Phase 3 (not in a separate file)
+    resources_dir = SKILL_DIR / "resources"
+    if resources_dir.exists() and (resources_dir / "meta-prompt.md").exists():
         errors.append(
-            "SKILL.md does not reference 'resources/meta-prompt.md'"
+            "Meta-prompt exists as separate file resources/meta-prompt.md — "
+            "should be inlined in SKILL.md Phase 3"
         )
 
-    # Check that meta-prompt contains key structural elements
-    meta_text = META_PROMPT.read_text(encoding="utf-8")
+    # Check that Phase 3 contains the meta-prompt template
+    if "Execute the following meta-prompt" not in text:
+        errors.append("SKILL.md Phase 3 missing inline meta-prompt instruction")
 
-    required_sections = [
-        "GOAL",
-        "INPUTS",
-        "PROCESS",
-        "OUTPUT FORMAT",
-        "EXAMPLE",
-        "ISSUE TAXONOMY",
-        "FAILURE_EXAMPLES",
-        "POSITIVE_EXAMPLES",
-        "RULES_TO_APPEND",
-        "ITERATION_GUIDANCE",
+    # Check required structural elements are present in the inline template
+    required_elements = [
+        ("GOAL", "meta-prompt GOAL section"),
+        ("FAILURE_EXAMPLES", "failure examples input"),
+        ("POSITIVE_EXAMPLES", "positive examples input"),
+        ("FEEDBACK SHAPES", "feedback shape reference"),
+        ("STEP 1", "failure pattern analysis step"),
+        ("STEP 2", "anchor check step"),
+        ("STEP 3", "rule generation step"),
+        ("RULES_TO_APPEND", "rules output format"),
+        ("REGRESSION_TESTS", "regression test generation"),
+        ("ITERATION_GUIDANCE", "iteration guidance output"),
+        ("If [TRIGGER]", "rule format specification"),
+        ("LEARNED_RULES", "learned rules section reference"),
     ]
-    for section in required_sections:
-        if section not in meta_text:
-            errors.append(f"Meta-prompt missing required section: {section}")
+    for element, description in required_elements:
+        if element not in text:
+            errors.append(f"SKILL.md missing meta-prompt element: {description} ({element})")
 
-    # Check that the meta-prompt has the "If [TRIGGER] then [ACTION]" rule format
-    if "If [TRIGGER]" not in meta_text:
-        errors.append(
-            "Meta-prompt missing rule format: 'If [TRIGGER], then [ACTION]'"
-        )
+    # Check that the issue taxonomy tags in the inline template match the
+    # Issue Taxonomy section
+    taxonomy_section = text.split("Issue Taxonomy")[1].split("##")[0] if "Issue Taxonomy" in text else ""
+    taxonomy_tags = re.findall(r"`(\w+)`", taxonomy_section)
+    expected_tags = {
+        "accuracy", "missing_requirement", "policy", "safety",
+        "formatting", "verbosity", "tone", "tool_use", "reasoning",
+        "hallucination",
+    }
+    # Only check tags that look like taxonomy entries
+    found_tags = {t for t in taxonomy_tags if t in expected_tags}
+    missing_tags = expected_tags - found_tags
+    if missing_tags:
+        errors.append(f"Issue Taxonomy section missing tags: {missing_tags}")
 
-    # Check that LEARNED_RULES section is referenced
-    if "LEARNED_RULES" not in meta_text:
-        errors.append("Meta-prompt missing LEARNED_RULES reference")
-
-    return errors
-
-
-def test_cross_file_consistency() -> list[str]:
-    """Check 5: Parameters and taxonomy are consistent between SKILL.md and meta-prompt.md."""
-    errors = []
-
-    if not SKILL_MD.exists() or not META_PROMPT.exists():
-        return ["Cannot check consistency — files missing"]
-
-    skill_text = SKILL_MD.read_text(encoding="utf-8")
-    meta_text = META_PROMPT.read_text(encoding="utf-8")
-
-    # Check that all taxonomy tags mentioned in meta-prompt are referenced in SKILL.md
-    # Only match tags in the ISSUE TAXONOMY section (between "ISSUE TAXONOMY:" and next empty line)
-    taxonomy_match = re.search(
-        r"ISSUE TAXONOMY:\n((?:- \w+:.*\n)+)", meta_text
-    )
-    taxonomy_tags = (
-        re.findall(r"^- (\w+):", taxonomy_match.group(1), re.MULTILINE)
-        if taxonomy_match
-        else []
-    )
-    for tag in taxonomy_tags:
-        if tag not in skill_text:
-            errors.append(
-                f"Taxonomy tag '{tag}' in meta-prompt.md not referenced in SKILL.md"
-            )
-
-    # Check that SKILL.md taxonomy references match meta-prompt taxonomy
-    skill_tags = re.findall(r"`(\w+)`", skill_text.split("Issue Taxonomy")[1].split("##")[0]) if "Issue Taxonomy" in skill_text else []
-    meta_tags = set(taxonomy_tags)
-    for tag in skill_tags:
-        if tag in (
-            "accuracy", "missing_requirement", "policy", "safety",
-            "formatting", "verbosity", "tone", "tool_use", "reasoning",
-            "hallucination",
-        ) and tag not in meta_tags:
-            errors.append(
-                f"Taxonomy tag '{tag}' in SKILL.md not found in meta-prompt.md"
-            )
-
-    # Check that key structural elements referenced in SKILL.md steps exist in meta-prompt
-    # (e.g., output sections A-F)
-    for section_label in ("PATTERN_ANALYSIS", "ANCHOR_CHECK", "RULES_TO_APPEND", "REGRESSION_TESTS", "ITERATION_GUIDANCE"):
-        if section_label in skill_text and section_label not in meta_text:
-            errors.append(
-                f"SKILL.md references output section '{section_label}' not found in meta-prompt.md"
-            )
-
-    # Check that the LEARNED_RULES format is consistent
-    skill_has_learned_rules = "### LEARNED_RULES" in skill_text
-    meta_has_learned_rules = "LEARNED_RULES" in meta_text
-    if skill_has_learned_rules and not meta_has_learned_rules:
-        errors.append("SKILL.md references LEARNED_RULES but meta-prompt.md does not")
-    if meta_has_learned_rules and not skill_has_learned_rules:
-        errors.append("meta-prompt.md references LEARNED_RULES but SKILL.md does not")
+    # Check that the inline meta-prompt also lists the taxonomy tags
+    # (look for the compact taxonomy list in the template)
+    if "accuracy" not in text or "hallucination" not in text:
+        errors.append("Inline meta-prompt missing taxonomy tag references")
 
     return errors
 
@@ -300,8 +253,7 @@ def main() -> None:
         ("Frontmatter matches existing skill patterns", test_frontmatter),
         ("Companion skill references are valid", test_companion_skills),
         ("AGENTS.md includes prompt-learning correctly", test_agents_md),
-        ("Meta-prompt is referenced and well-structured", test_meta_prompt_reference),
-        ("Cross-file consistency (SKILL.md ↔ meta-prompt.md)", test_cross_file_consistency),
+        ("Meta-prompt is inline and well-structured", test_inline_meta_prompt),
     ]
 
     total_errors = 0

@@ -100,7 +100,20 @@ Never deploy rules without running an A/B experiment. The validation experiment 
 
 ## Issue Taxonomy
 
-The meta-prompt classifies failures into 10 types: `accuracy`, `missing_requirement`, `policy`, `safety`, `formatting`, `verbosity`, `tone`, `tool_use`, `reasoning`, and `hallucination`. See the full taxonomy with descriptions in `resources/meta-prompt.md` (ISSUE TAXONOMY section).
+The meta-prompt classifies failures into these types:
+
+| Issue Type | Description |
+|------------|-------------|
+| `accuracy` | Factually incorrect or imprecise outputs |
+| `missing_requirement` | Fails to address part of the user's request |
+| `policy` | Violates organizational policies or guidelines |
+| `safety` | Produces harmful, biased, or inappropriate content |
+| `formatting` | Wrong output structure, missing fields, schema violations |
+| `verbosity` | Too long or too short for the context |
+| `tone` | Inappropriate register, persona drift |
+| `tool_use` | Wrong tool selected, incorrect arguments, misinterpreted results |
+| `reasoning` | Flawed logic, incorrect deductions |
+| `hallucination` | Fabricated facts, citations, or capabilities |
 
 ## Destructive Actions
 
@@ -176,9 +189,7 @@ Follow these steps **in order**. Do NOT skip steps.
 
 ### Phase 3: Generate Rules (Meta-Prompt)
 
-6. **Load the meta-prompt template** from `resources/meta-prompt.md`.
-
-7. **Fill in the meta-prompt variables:**
+6. **Build the meta-prompt** by filling in the template below with collected data:
    - `PROMPT_TYPE`: "agent" or "evaluator" based on target
    - `CURRENT_PROMPT`: full text of the current prompt version
    - `ITERATION`: current iteration number (starts at 1)
@@ -186,13 +197,71 @@ Follow these steps **in order**. Do NOT skip steps.
    - `FAILURE_EXAMPLES`: the f=10 sampled failures with normalized feedback
    - `POSITIVE_EXAMPLES`: the p=3 sampled positive traces
 
-8. **Execute the meta-prompt** and collect the structured output:
-   - A) PATTERN_ANALYSIS — recurring patterns and one-off issues
-   - B) ANCHOR_CHECK — conflicts with positive anchors
-   - C) RULES — numbered "If [TRIGGER] then [ACTION]" rules
-   - D) RULES_TO_APPEND — formatted text block for the prompt
-   - E) REGRESSION_TESTS — test cases for validation
-   - F) ITERATION_GUIDANCE — continue or stop recommendation
+7. **Execute the following meta-prompt** (send it to the LLM with the variables filled in):
+
+   ~~~
+   You are a prompt engineer improving a prompt based on feedback from multiple examples.
+
+   GOAL: Analyze a batch of feedback (failures + positive anchors) and produce minimal, high-impact rules that:
+   1. Fix recurring failure patterns
+   2. Don't break existing good behavior (regression anchors)
+
+   INPUTS:
+   1) PROMPT_TYPE: "agent" | "evaluator"
+   2) CURRENT_PROMPT: The prompt to improve
+   3) ITERATION: Current iteration number
+   4) FEEDBACK_SOURCE: "human" | "ai_eval"
+   5) FAILURE_EXAMPLES (5-15 samples with negative feedback):
+      [{"user_input": "...", "model_output": "...", "reference": "..." (optional), "feedback": <see shapes below>}, ...]
+   6) POSITIVE_EXAMPLES (2-5 regression anchors):
+      [{"user_input": "...", "model_output": "...", "feedback": "pass" | {"value": true, ...}}, ...]
+
+   FEEDBACK SHAPES:
+   - Human categorical: "fail" | "pass" | "borderline"
+   - Human numerical: 3 (just the number)
+   - Human free text: "The response was too vague..."
+   - AI eval boolean: {"value": true|false, "explanation": "..."}
+   - AI eval categorical: {"value": "A"|"B"|"C", "explanation": "..."}
+   - AI eval numerical: {"value": 6, "scale": "1-10", "explanation": "..."}
+   - Enriched normalized: {"verdict": "fail", "severity": 4, "issue_tags": ["missing_requirement"], "explanation": "..."}
+
+   PROCESS:
+
+   STEP 1 — ANALYZE FAILURE PATTERNS:
+   Group failures by issue type. Identify recurring patterns (2+ occurrences).
+   Issue taxonomy: accuracy, missing_requirement, policy, safety, formatting, verbosity, tone, tool_use, reasoning, hallucination.
+   Output: {"patterns": [{"issue_tag": "...", "count": N, "severity": 1-5, "examples": [indices], "root_cause": "..."}], "one_off_issues": [...]}
+
+   STEP 2 — CHECK AGAINST POSITIVE ANCHORS:
+   For each pattern, verify the fix won't break positive examples.
+   Output: {"anchor_conflicts": [{"pattern": "...", "conflicting_anchor": index, "conflict_reason": "..."}]}
+
+   STEP 3 — GENERATE RULES (only for recurring patterns without conflicts):
+   Create 1-5 rules. Format: "If [TRIGGER], then [ACTION]."
+   Prioritize by: frequency × severity.
+   Skip: one-offs, anchor conflicts, patterns too vague to test.
+
+   STEP 4 — FORMAT RULES_TO_APPEND:
+   Text block for ### LEARNED_RULES section.
+
+   STEP 5 — GENERATE REGRESSION TESTS:
+   Create 5-10 test cases: 3-5 "should_now_pass" + 2-5 "should_still_pass".
+
+   STEP 6 — ITERATION GUIDANCE:
+   Recommend "continue" (significant patterns remain) or "stop" (diminishing returns).
+
+   OUTPUT FORMAT:
+   A) PATTERN_ANALYSIS — JSON with patterns and one_off_issues
+   B) ANCHOR_CHECK — JSON with anchor_conflicts and safe_to_patch list
+   C) RULES — numbered list
+   D) RULES_TO_APPEND — text block for the prompt
+   E) REGRESSION_TESTS — JSON array of test cases
+   F) ITERATION_GUIDANCE — {"recommendation": "continue"|"stop", "reason": "...", "remaining_issues": N, "expected_next_iteration_gain": "high"|"medium"|"low"}
+
+   NOW PROCESS THE ACTUAL INPUT.
+   ~~~
+
+8. **Collect the structured output** (sections A through F).
 
 9. **Review the output** with the user:
    - Show the identified patterns and their frequency/severity
