@@ -12,6 +12,7 @@ Systematically improve prompt deployments through trace-driven failure analysis,
 - `trace-analysis` — identify failure patterns that inform prompt edits
 - `run-experiment` — run A/B experiments comparing prompt versions
 - `build-evaluator` — create evaluators to measure prompt improvements
+- `prompt-learning` — automated feedback-driven rule generation (complementary approach)
 
 ## When to use
 

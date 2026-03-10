@@ -8,7 +8,9 @@ allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, mcp__
 
 End-to-end workflow for evaluating LLM pipelines using the orq.ai platform, grounded in evaluation best practices.
 
-**Companion skill:** `build-evaluator` — use that skill for detailed judge prompt design. This skill orchestrates the broader workflow that wraps around it.
+**Companion skills:**
+- `build-evaluator` — use that skill for detailed judge prompt design. This skill orchestrates the broader workflow that wraps around it.
+- `prompt-learning` — automated feedback-driven rule generation validated via experiments
 
 ## When to use
 

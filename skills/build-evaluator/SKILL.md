@@ -8,6 +8,10 @@ allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuest
 
 Design and create production-grade LLM evaluators on the orq.ai platform, grounded in evaluation best practices.
 
+**Companion skills:**
+- `prompt-learning` — uses evaluator scores as AI feedback to generate prompt rules
+- `run-experiment` — run experiments using evaluators built with this skill
+
 ## When to use
 
 - User asks to create an LLM-as-a-Judge evaluator

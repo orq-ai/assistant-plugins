@@ -20,6 +20,7 @@ These skills are:
  - manage-memory -> "skills/manage-memory/SKILL.md"
  - monitor-production -> "skills/monitor-production/SKILL.md"
  - optimize-prompt -> "skills/optimize-prompt/SKILL.md"
+ - prompt-learning -> "skills/prompt-learning/SKILL.md"
  - regression-test -> "skills/regression-test/SKILL.md"
  - run-experiment -> "skills/run-experiment/SKILL.md"
  - scaffold-integration -> "skills/scaffold-integration/SKILL.md"
@@ -47,6 +48,7 @@ manage-deployment: `Configure, version, and manage orq.ai deployments — model 
 manage-memory: `Create and configure orq.ai Memory Stores for persistent context in conversational agents`
 monitor-production: `Analyze production trace data for anomalies, cost trends, latency regressions, and emerging failure modes`
 optimize-prompt: `Systematically iterate on a prompt deployment using trace data, A/B testing, and structured refinement techniques`
+prompt-learning: `Automatically improve prompts by collecting feedback, generating "If [TRIGGER] then [ACTION]" rules via a meta-prompt, and validating with A/B experiments`
 regression-test: `Run a quick regression check against a golden dataset to verify recent changes haven't degraded quality`
 run-experiment: `End-to-end LLM evaluation workflow — error analysis, dataset creation, experiment execution, result analysis, and ticket filing`
 scaffold-integration: `Generate SDK integration code (Python or Node) for orq.ai agents, deployments, and knowledge bases in the user's codebase`

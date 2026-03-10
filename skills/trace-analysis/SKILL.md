@@ -11,6 +11,7 @@ Systematic methodology for reading LLM traces, identifying failure modes, and bu
 **Companion skills:**
 - `build-evaluator` — build automated evaluators for persistent failure modes
 - `action-plan` — turn findings into prioritized improvement plans
+- `prompt-learning` — automatically turn trace-identified patterns into prompt rules
 
 ## When to use
 

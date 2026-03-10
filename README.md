@@ -235,6 +235,7 @@ The `action-plan` skill can file tickets directly to Linear. See [Linear MCP set
 | **manage-memory** | Create and configure orq.ai Memory Stores for persistent context in conversational agents | [SKILL.md](skills/manage-memory/SKILL.md) |
 | **monitor-production** | Analyze production trace data for anomalies, cost trends, latency regressions, and emerging failure modes | [SKILL.md](skills/monitor-production/SKILL.md) |
 | **optimize-prompt** | Systematically iterate on a prompt deployment using trace data, A/B testing, and structured refinement techniques | [SKILL.md](skills/optimize-prompt/SKILL.md) |
+| **prompt-learning** | Automatically improve prompts by collecting feedback, generating "If [TRIGGER] then [ACTION]" rules via a meta-prompt, and validating with A/B experiments | [SKILL.md](skills/prompt-learning/SKILL.md) |
 | **regression-test** | Run a quick regression check against a golden dataset to verify recent changes haven't degraded quality | [SKILL.md](skills/regression-test/SKILL.md) |
 | **run-experiment** | End-to-end LLM evaluation workflow — error analysis, dataset creation, experiment execution, result analysis, and ticket filing | [SKILL.md](skills/run-experiment/SKILL.md) |
 | **scaffold-integration** | Generate SDK integration code (Python or Node) for orq.ai agents, deployments, and knowledge bases in the user's codebase | [SKILL.md](skills/scaffold-integration/SKILL.md) |

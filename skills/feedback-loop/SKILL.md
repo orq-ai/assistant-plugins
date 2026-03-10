@@ -11,6 +11,7 @@ Set up user feedback collection and analyze feedback patterns to drive data-info
 **Companion skills:**
 - `trace-analysis` — deep-dive into traces flagged by negative feedback
 - `action-plan` — prioritize improvements based on feedback patterns
+- `prompt-learning` — automatically turn feedback patterns into prompt rules
 - `scaffold-integration` — generate SDK code for feedback collection
 
 ## When to use
