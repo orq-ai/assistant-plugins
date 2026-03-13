@@ -228,8 +228,7 @@ The `action-plan` skill can file tickets directly to Linear. See [Linear MCP set
 | **evaluate-conversation** | Evaluate multi-turn conversation quality with session-level, turn-level, and memory/coherence checks | [SKILL.md](skills/evaluate-conversation/SKILL.md) |
 | **evaluate-rag** | Evaluate RAG pipelines by separately measuring retrieval quality and generation faithfulness | [SKILL.md](skills/evaluate-rag/SKILL.md) |
 | **feedback-loop** | Set up and analyze user feedback collection to drive data-informed improvement cycles | [SKILL.md](skills/feedback-loop/SKILL.md) |
-| **generate-synthetic-dataset** | Generate structured, diverse evaluation datasets using the dimensions-tuples-natural language method | [SKILL.md](skills/generate-synthetic-dataset/SKILL.md) |
-| **generate-synthetic-dataset-v2** | Deployment-based synthetic data generation — create datasets from descriptions or expand existing datasets with few-shot examples | [SKILL.md](skills/generate-synthetic-dataset-v2/SKILL.md) |
+| **generate-synthetic-dataset** | Generate structured, diverse evaluation datasets — from scratch using dimensions-tuples methodology, from a description, or by expanding existing datasets | [SKILL.md](skills/generate-synthetic-dataset/SKILL.md) |
 | **knowledge-base** | Manage orq.ai Knowledge Bases — create, configure, upload files, chunk content, search, and maintain RAG data sources via API | [SKILL.md](skills/knowledge-base/SKILL.md) |
 | **list-models** | List available models and systematically compare them on cost, latency, and quality to find the optimal choice for your use case | [SKILL.md](skills/list-models/SKILL.md) |
 | **manage-deployment** | Configure, version, and manage orq.ai deployments — model selection, prompt linking, fallbacks, caching, and guardrails | [SKILL.md](skills/manage-deployment/SKILL.md) |
@@ -240,7 +239,7 @@ The `action-plan` skill can file tickets directly to Linear. See [Linear MCP set
 | **run-experiment** | End-to-end LLM evaluation workflow — error analysis, dataset creation, experiment execution, result analysis, and ticket filing | [SKILL.md](skills/run-experiment/SKILL.md) |
 | **scaffold-integration** | Generate SDK integration code (Python or Node) for orq.ai agents, deployments, and knowledge bases in the user's codebase | [SKILL.md](skills/scaffold-integration/SKILL.md) |
 | **setup-ci-eval** | Set up continuous evaluation in CI/CD pipelines that runs regression tests on every prompt or agent change | [SKILL.md](skills/setup-ci-eval/SKILL.md) |
-| **system-prompt-optimizer** | Automated prompt optimization using orq.ai's PO1 analyzer and PO2 rewriter deployments | [SKILL.md](skills/system-prompt-optimizer/SKILL.md) |
+| **prompt-optimizer** | Analyze and optimize system prompts — AI-powered analysis and rewriting using structured prompting guidelines | [SKILL.md](skills/prompt-optimizer/SKILL.md) |
 | **trace-analysis** | Systematic trace reading and failure taxonomy building using open coding and axial coding | [SKILL.md](skills/trace-analysis/SKILL.md) |
 <!-- END_SKILLS_TABLE -->
 

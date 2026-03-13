@@ -9,6 +9,7 @@ allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuest
 Systematically improve prompt deployments through trace-driven failure analysis, structured refinement techniques, and A/B experimentation on the orq.ai platform.
 
 **Companion skills:**
+- `prompt-optimizer` — quick automated prompt improvement without trace data (use when you just want to improve a prompt's structure and clarity)
 - `trace-analysis` — identify failure patterns that inform prompt edits
 - `run-experiment` — run A/B experiments comparing prompt versions
 - `build-evaluator` — create evaluators to measure prompt improvements
