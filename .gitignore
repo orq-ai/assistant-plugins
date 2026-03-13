@@ -21,7 +21,3 @@
 # OS
 Thumbs.db
 desktop.ini
-
-# CLI build artifacts
-cli/node_modules/
-cli/dist/
