@@ -25,6 +25,7 @@ These skills are:
  - run-experiment -> "skills/run-experiment/SKILL.md"
  - scaffold-integration -> "skills/scaffold-integration/SKILL.md"
  - setup-ci-eval -> "skills/setup-ci-eval/SKILL.md"
+ - prompt-optimizer -> "skills/prompt-optimizer/SKILL.md"
  - trace-analysis -> "skills/trace-analysis/SKILL.md"
 
 IMPORTANT: You MUST read the SKILL.md file whenever the description of the skills matches the user intent, or may help accomplish their task.
@@ -41,7 +42,7 @@ evaluate-agent: `Evaluate agentic and tool-calling LLM pipelines with stage-spec
 evaluate-conversation: `Evaluate multi-turn conversation quality with session-level, turn-level, and memory/coherence checks`
 evaluate-rag: `Evaluate RAG pipelines by separately measuring retrieval quality and generation faithfulness`
 feedback-loop: `Set up and analyze user feedback collection to drive data-informed improvement cycles`
-generate-synthetic-dataset: `Generate structured, diverse evaluation datasets using the dimensions-tuples-natural language method`
+generate-synthetic-dataset: `Generate structured, diverse evaluation datasets — from scratch using dimensions-tuples methodology, from a description, or by expanding existing datasets`
 knowledge-base: `Manage orq.ai Knowledge Bases — create, configure, upload files, chunk content, search, and maintain RAG data sources via API`
 list-models: `List available models and systematically compare them on cost, latency, and quality to find the optimal choice for your use case`
 manage-deployment: `Configure, version, and manage orq.ai deployments — model selection, prompt linking, fallbacks, caching, and guardrails`
@@ -53,6 +54,7 @@ regression-test: `Run a quick regression check against a golden dataset to verif
 run-experiment: `End-to-end LLM evaluation workflow — error analysis, dataset creation, experiment execution, result analysis, and ticket filing`
 scaffold-integration: `Generate SDK integration code (Python or Node) for orq.ai agents, deployments, and knowledge bases in the user's codebase`
 setup-ci-eval: `Set up continuous evaluation in CI/CD pipelines that runs regression tests on every prompt or agent change`
+prompt-optimizer: `Analyze and optimize system prompts — get AI-powered analysis and rewriting using structured prompting guidelines`
 trace-analysis: `Systematic trace reading and failure taxonomy building using open coding and axial coding`
 </available_skills>
 
