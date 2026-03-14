@@ -4,7 +4,7 @@ argument-hint: [section]
 allowed-tools: Bash, AskUserQuestion, orq*
 ---
 
-# Status
+# Workspace
 
 Show a quick overview of the user's orq.ai workspace. Optionally filter to a specific section.
 

@@ -36,10 +36,13 @@ Paths referenced within SKILL folders are relative to that SKILL. For example th
 
 You have slash commands available in the `commands/` directory:
 
+ - quickstart -> "commands/quickstart.md" — Interactive onboarding guide for new users
  - invoke -> "commands/invoke.md" — Invoke an orq.ai agent or deployment and display the response
- - status -> "commands/status.md" — Show workspace overview (agents, deployments, prompts, datasets, experiments)
+ - workspace -> "commands/workspace.md" — Show workspace overview (agents, deployments, prompts, datasets, experiments)
  - traces -> "commands/traces.md" — Query and summarize traces with filters (debugging entry point)
+ - analytics -> "commands/analytics.md" — Performance metrics (latency, cost, tokens, error rates)
+ - models -> "commands/models.md" — List available AI models and capabilities
 
-Commands are quick-action tools. Skills are multi-step workflows. Use `/orq:invoke`, `/orq:status`, or `/orq:traces` for fast operations. Use skills when the user needs guided, multi-step work.
+Commands are quick-action tools. Skills are multi-step workflows. Use `/orq:quickstart` for onboarding, `/orq:invoke`, `/orq:workspace`, `/orq:traces`, `/orq:analytics`, or `/orq:models` for fast operations. Use skills when the user needs guided, multi-step work.
 
 </commands>

@@ -1,8 +1,46 @@
-# orq.ai Agent Skills
+# Orq.ai Agent Skills
 
 Agent Skills for building, evaluating, and improving LLM pipelines on the [orq.ai](https://orq.ai) platform.
 
-These 6 skills encode best practices into repeatable workflows covering the full Build → Evaluate lifecycle — from creating agents and prompts, through trace analysis and experimentation, to prompt optimization.
+Each skill encodes best practices from prompt engineering, agent design, evaluation methodology, and experimentation into repeatable workflows. Together they cover the full **Build → Evaluate → Optimize** lifecycle — from creating agents and writing prompts, through trace analysis and dataset generation, to running validated experiments and iterating on results.
+
+Built on the [Agent Skills](https://agentskills.io/home#adoption) standard format — works with any compatible agent (Claude Code, Cursor, Gemini CLI, and others).
+
+## Installation
+
+Using npx skills (Cursor, Claude Code, Gemini CLI, etc.)
+```bash
+npx skills add orq-ai/orq-skills
+```
+
+Using Claude Code Plugin Manager
+```bash
+/plugin install orq-ai@orq-skills
+```
+
+Manual: clone and point your agent to the directory
+```bash
+git clone https://github.com/orq-ai/orq-skills.git
+cd orq-skills
+claude --plugin-dir .
+```
+
+## Quickstart
+
+New to orq.ai? Run the interactive onboarding to set up your credentials, connect the MCP server, and get a guided tour of all available commands and skills:
+
+```
+/orq:quickstart
+```
+
+## Requirements
+
+- An [orq.ai](https://orq.ai) account with an API key (`ORQ_API_KEY` environment variable)
+- The orq.ai MCP server connected to Claude Code:
+  ```bash
+  claude mcp add --transport http orq https://my.orq.ai/v2/mcp \
+    --header "Authorization: Bearer $ORQ_API_KEY"
+  ```
 
 ## Commands
 
@@ -10,9 +48,12 @@ Quick-action slash commands for common operations. Commands are thin orchestrato
 
 | Command | What It Does | Usage |
 |---------|-------------|-------|
+| **quickstart** | Interactive onboarding — credentials, MCP setup, tour | `/orq:quickstart` |
 | **invoke** | Test an agent or deployment and display the response | `/orq:invoke <name> "message"` |
-| **status** | Show workspace overview — agents, deployments, prompts, datasets, experiments | `/orq:status [section]` |
+| **workspace** | Show workspace overview — agents, deployments, prompts, datasets, experiments | `/orq:workspace [section]` |
 | **traces** | Query and summarize traces with filters — debugging entry point | `/orq:traces [--deployment <name>] [--status <status>] [--last <duration>]` |
+| **analytics** | Performance metrics — latency, cost, token usage, error rates | `/orq:analytics [--deployment <name>] [--last <duration>]` |
+| **models** | List available AI models and capabilities | `/orq:models [search-term]` |
 
 **Commands vs skills:** Commands are for quick, focused actions (invoke, list, query). Skills are for multi-step workflows that require reasoning and decision-making (build, evaluate, optimize).
 
@@ -29,143 +70,62 @@ Quick-action slash commands for common operations. Commands are thin orchestrato
 | **optimize-prompt** | Analyze and optimize system prompts using a structured prompting guidelines framework | [SKILL.md](skills/optimize-prompt/SKILL.md) |
 <!-- END_SKILLS_TABLE -->
 
-## The Lifecycle
+## Usage
+
+### Commands
+
+Commands are invoked with `/orq:<command>` in Claude Code.
 
 ```
-BUILD                 ANALYZE → MEASURE → IMPROVE
-─────                 ─────────────────────────────
-build-agent -------> analyze-trace-failures --> run-experiment
-build-evaluator           "what's failing?"      "measure & decide"
-                               |                      |
-                               |             generate-synthetic-dataset
-                               |                (data for evals)
-                               |                      |
-                               |                optimize-prompt
-                               |                 (improve prompts)
-                               |                      |
-                               <──────────────────────┘
-                                (continuous improvement loop)
+/orq:quickstart
 ```
-
-**Primary flow:** build-agent → build-evaluator → analyze-trace-failures → run-experiment → optimize-prompt → run-experiment (iterate)
-
-## How Skills Connect
-
-Skills hand off to each other automatically — each SKILL.md lists its companion skills.
-
-**The eval cycle:** **analyze-trace-failures** → **build-evaluator** → **run-experiment** → **optimize-prompt** → repeat
-
-**Build flow:** **build-agent** (includes KB + memory setup) → **run-experiment**
-
-**Data quality:** **generate-synthetic-dataset** (includes dataset curation) → **run-experiment**
-
-## Quick Start Examples
-
-### 1. Test an agent quickly
+Interactive onboarding — set up credentials, connect to orq.ai, and tour all commands and skills.
 
 ```
 /orq:invoke support-bot "What's your return policy?"
-→ Invokes the agent and displays the response
 ```
-
-### 2. Check your workspace
+Test an agent or deployment and display the response.
 
 ```
-/orq:status
-→ Shows counts and recent items across agents, deployments, prompts, datasets, experiments
+/orq:workspace
 ```
-
-### 3. Debug production issues
+Show workspace overview — agents, deployments, prompts, datasets, experiments.
 
 ```
 /orq:traces --status error --last 24h
-→ Shows recent errors, then hand off to analyze-trace-failures for deep analysis
 ```
-
-### 4. Evaluate an existing agent
+Query and summarize traces. Useful as a debugging entry point before deeper analysis.
 
 ```
-You: "My support agent is giving bad answers, help me figure out why"
-→ Skills used: analyze-trace-failures → build-evaluator → run-experiment
+/orq:analytics --last 7d
 ```
-
-### 5. Build an eval dataset from scratch
+View performance metrics — latency, cost, token usage, error rates.
 
 ```
-You: "I need to create test cases for my product recommendation agent"
-→ Skills used: generate-synthetic-dataset
+/orq:models gpt
 ```
+List available AI models, optionally filtered by search term.
 
-### 6. Build a new agent
+### Skills
 
-```
-You: "I need a customer support agent with access to our order database"
-→ Skills used: build-agent
-```
-
-### 7. Improve a prompt
+Skills are triggered by describing what you need in natural language. Claude picks the right skill automatically.
 
 ```
-You: "My prompt keeps breaking character, help me fix it"
-→ Skills used: optimize-prompt
+"I need a customer support agent with access to our order database"
+→ build-agent
 ```
 
-## Key Best Practices Encoded
-
-These skills enforce evaluation best practices throughout the workflow:
-
-- **Binary Pass/Fail** over Likert scales — less noise, more actionable
-- **One evaluator per failure mode** — never bundle criteria
-- **Trace analysis before automation** — read 50-100 traces before building evaluators
-- **Fix prompts before switching models** — most failures are specification issues
-- **Validate evaluators with TPR/TNR** — unvalidated evaluators are unreliable
-- **Structured synthetic data** — dimensions → tuples → natural language for 5-10x diversity
-- **Separate retrieval from generation** in RAG evals — know what to fix
-- **Grade outcomes, not paths** in agent evals — agents find valid alternative approaches
-- **Session-level before turn-level** in conversation evals — don't over-invest in per-turn analysis
-- **Always A/B test prompt changes** — never "vibes check", always experiment
-- **Version everything** — prompts, deployments, baselines, never modify in-place
-
-## orq.ai Platform Integration
-
-All skills integrate with the orq.ai platform through:
-
-| Interface | Best For | When to Use |
-|-----------|----------|-------------|
-| **orq MCP tools** | Integrated workflows within your coding agent (datasets, experiments, evaluators, traces, agents, models) | Primary interface — use for all supported operations |
-| **HTTP API** | Operations not yet available via MCP (agent invoke, evaluator invoke, knowledge, memory, tools) | Fallback — use `curl` with `Authorization: Bearer $ORQ_API_KEY` |
-
-## File Structure
-
 ```
-.claude-plugin/
-└── plugin.json              # Plugin manifest
-commands/
-├── invoke.md                # /orq:invoke — test agents and deployments
-├── status.md                # /orq:status — workspace overview
-└── traces.md                # /orq:traces — query and summarize traces
-skills/
-├── analyze-trace-failures/
-│   └── SKILL.md
-├── build-agent/
-│   ├── SKILL.md
-│   └── resources/
-│       ├── tool-description-guide.md
-│       └── system-instruction-template.md
-├── build-evaluator/
-│   ├── SKILL.md
-│   └── resources/
-│       ├── judge-prompt-template.md
-│       ├── validation-checklist.md
-│       └── data-split-guide.md
-├── generate-synthetic-dataset/
-│   └── SKILL.md
-├── optimize-prompt/
-│   └── SKILL.md
-└── run-experiment/
-    └── SKILL.md
+"My support agent is giving bad answers, help me figure out why"
+→ analyze-trace-failures → build-evaluator → run-experiment
 ```
 
-## License
+```
+"I need to create test cases for my product recommendation agent"
+→ generate-synthetic-dataset
+```
 
-MIT
+```
+"My prompt keeps breaking character, help me fix it"
+→ optimize-prompt
+```
