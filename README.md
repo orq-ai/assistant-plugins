@@ -68,6 +68,7 @@ Quick-action slash commands for common operations. Commands are thin orchestrato
 | **run-experiment** | Create and run orq.ai experiments — compare configurations with specialized agent, conversation, and RAG evaluation | [SKILL.md](skills/run-experiment/SKILL.md) |
 | **generate-synthetic-dataset** | Generate and curate evaluation datasets — structured generation, quick from description, expansion, and dataset maintenance | [SKILL.md](skills/generate-synthetic-dataset/SKILL.md) |
 | **optimize-prompt** | Analyze and optimize system prompts using a structured prompting guidelines framework | [SKILL.md](skills/optimize-prompt/SKILL.md) |
+| **prompt-learning** | Automatically improve prompts by collecting feedback, generating rules via a meta-prompt, and validating with multi-judge experiments | [SKILL.md](skills/prompt-learning/SKILL.md) |
 <!-- END_SKILLS_TABLE -->
 
 ## Usage

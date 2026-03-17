@@ -1,7 +1,7 @@
 ---
 name: analyze-trace-failures
 description: Read production traces, identify what's failing, build failure taxonomies, and categorize issues using open coding and axial coding methodology
-allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, mcp__linear-server__*, orq*
+allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, orq*
 ---
 
 # Analyze Trace Failures

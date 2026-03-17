@@ -111,7 +111,8 @@ Follow these steps **in order**. Do NOT skip steps.
 ### Phase 1: Fetch the Current Prompt
 
 1. **Find and retrieve the target prompt:**
-   - Use `search_entities` with `type: "prompts"` to find the target prompt
+   - If the user provided prompt text inline (not referencing an orq.ai prompt by name), skip the search and proceed directly to Phase 2 using the provided text. Skip Phase 4 (Apply) unless the user explicitly asks to save it to orq.ai.
+   - Otherwise, use `search_entities` with `type: "prompts"` to find the target prompt
    - Use HTTP API to get full prompt details including current version text
    - Document: prompt name, current version, system message content, model, parameters
 

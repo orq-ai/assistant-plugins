@@ -1,7 +1,7 @@
 ---
 name: prompt-learning
 description: Automatically improve prompts by collecting feedback, generating "If [TRIGGER] then [ACTION]" rules via a meta-prompt, and validating with multi-judge experiments
-allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__linear-server__*, orq*
+allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, orq*
 ---
 
 # Prompt Learning
@@ -11,11 +11,10 @@ Automatically improve prompts through feedback-driven rule generation. Collects 
 This skill is **automated and feedback-driven**, distinct from `optimize-prompt` (which is manual/trace-driven). The pipeline is: Collect → Normalize → Meta-Prompt → Aggregate → Apply → Validate.
 
 **Companion skills:**
-- `feedback-loop` — set up feedback collection and analyze feedback patterns
 - `optimize-prompt` — manual trace-driven prompt refinement (complementary approach)
 - `run-experiment` — run A/B experiments comparing prompt versions
 - `build-evaluator` — create evaluators to measure prompt improvements
-- `trace-analysis` — deep-dive into traces to understand failure modes
+- `analyze-trace-failures` — deep-dive into traces to understand failure modes
 
 ## When to use
 
@@ -192,7 +191,7 @@ Follow these steps **in order**. Do NOT skip steps.
 
 4. **Verify sufficient data:**
    - Need at least f=10 failure traces to proceed
-   - If insufficient, inform user and suggest using `feedback-loop` to set up collection first
+   - If insufficient, inform user and suggest collecting more feedback before proceeding
 
 ### Phase 2: Normalize Feedback (Normalize)
 

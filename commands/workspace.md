@@ -33,7 +33,7 @@ Use the `search_entities` MCP tool to fetch each section. Run all applicable cal
 
 Fetch only the sections needed based on arguments.
 
-### 4. Display the overview
+### 3. Display the overview
 
 Present a clean summary, not raw JSON. Format as a workspace dashboard:
 

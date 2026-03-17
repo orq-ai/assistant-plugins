@@ -8,7 +8,8 @@ These skills are:
  - build-evaluator -> "skills/build-evaluator/SKILL.md"
  - generate-synthetic-dataset -> "skills/generate-synthetic-dataset/SKILL.md"
  - optimize-prompt -> "skills/optimize-prompt/SKILL.md"
-- run-experiment -> "skills/run-experiment/SKILL.md"
+ - prompt-learning -> "skills/prompt-learning/SKILL.md"
+ - run-experiment -> "skills/run-experiment/SKILL.md"
 
 IMPORTANT: You MUST read the SKILL.md file whenever the description of the skills matches the user intent, or may help accomplish their task.
 
@@ -25,6 +26,8 @@ run-experiment: `Create and run orq.ai experiments — compare configurations ag
 generate-synthetic-dataset: `Generate and curate evaluation datasets — structured generation, quick from description, expansion from existing data, plus dataset maintenance and quality improvement`
 
 optimize-prompt: `Analyze and optimize system prompts using a structured prompting guidelines framework — AI-powered analysis and rewriting`
+
+prompt-learning: `Automatically improve prompts by collecting feedback, generating "If [TRIGGER] then [ACTION]" rules via a meta-prompt, and validating with multi-judge experiments`
 
 </available_skills>
 

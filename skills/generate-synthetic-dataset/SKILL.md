@@ -257,7 +257,7 @@ This method produces 5-10x more diverse data than naive generation by separating
 9. **Create the dataset** using orq MCP tools:
    - Use `create_dataset` with a descriptive name
    - Use `create_datapoints` to add each test case (use HTTP API for >50 datapoints)
-   - Structure: `input` (user message), `reference` (expected behavior)
+   - Structure: `messages` array with `{role: "user", content: "..."}` for the user input and `{role: "assistant", content: "..."}` for the expected output, plus optionally `inputs` for prompt variables and `expected_output` for evaluator references
    - Optionally add metadata tags for slice analysis
 
 10. **Verify the dataset:**
@@ -296,7 +296,7 @@ Best for rapid first-pass datasets when the user describes what they need.
 #### Phase 3: Generate and Review
 
 3. **Generate datapoints** in batches of 10-20:
-   - Each datapoint should have: `inputs` (with a `category` field describing the scenario + named variables) and optionally `expected_output`
+   - Each datapoint should have: `messages` array with `{role: "user", content: "..."}` for the input and optionally `{role: "assistant", content: "..."}` for expected output, plus `inputs` (with a `category` field describing the scenario + named variables) and optionally `expected_output`
    - Vary input lengths — include both short and long, challenging inputs
    - Ensure diverse categories and edge cases
 

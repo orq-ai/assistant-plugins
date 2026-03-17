@@ -32,7 +32,7 @@ Keep the number of non-deletable test resources to a minimum. Reuse agents and e
 2. Call `search_entities(type=agent)` to verify MCP connectivity
 3. Discover available projects via `search_entities(type=project)` — pick the first one and use `{project_name}/orq-skills-tests` as the test path
 4. Seed test data (all under the discovered test path):
-   - `create_agent` → key: `orq-skills-test-echo`, model: `openai/gpt-5-mini`, instructions: "Echo back the user's message verbatim" *(manual cleanup required)*
+   - `create_agent` → key: `orq-skills-test-echo`, model: `openai/gpt-4.1-mini`, instructions: "Echo back the user's message verbatim" *(manual cleanup required)*
    - `create_dataset` → `orq-skills-test-dataset` + `create_datapoints` (5 rows with inputs + expected_output) *(auto-deletable)*
    - `create_python_eval` → key: `orq-skills-test-eval-length`, code: checks `len(log['output']) > 0` *(manual cleanup required)*
 

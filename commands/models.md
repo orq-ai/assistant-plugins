@@ -25,7 +25,7 @@ Use the `list_models` MCP tool to retrieve available models.
 - If a model type was identified from the search term, pass it as `modelType`.
 - Otherwise, fetch all relevant types by calling `list_models` in parallel for: `chat`, `embedding`, and any other types of interest.
 
-### 4. Display models
+### 3. Display models
 
 Present models grouped by provider, formatted cleanly — not raw JSON:
 
