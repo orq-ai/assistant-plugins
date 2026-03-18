@@ -13,7 +13,7 @@ End-to-end workflow for evaluating LLM pipelines using the orq.ai platform. Cove
 - `build-evaluator` — design judge prompts for subjective criteria
 - `analyze-trace-failures` — build failure taxonomies from production traces
 - `generate-synthetic-dataset` — generate diverse test scenarios
-- `optimize-prompt` — systematic prompt iteration based on eval results
+- `optimize-prompt` — analyze and rewrite prompts using a structured guidelines framework
 
 ## When to use
 
