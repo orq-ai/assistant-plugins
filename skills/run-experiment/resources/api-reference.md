@@ -2,6 +2,8 @@
 
 MCP tools and HTTP API endpoints used by the run-experiment skill.
 
+> **Official documentation:** [Run Experiments via the API](https://docs.orq.ai/docs/experiments/api#run-experiments-via-the-api)
+
 ## Contents
 - MCP tools
 - HTTP API fallback (experiments, evaluators, agents, tools, memory, knowledge)

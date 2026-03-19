@@ -2,6 +2,8 @@
 
 MCP tools and HTTP API endpoints used by the build-agent skill.
 
+> **Official documentation:** [Agents Framework and API Guide](https://docs.orq.ai/docs/common-architecture/agents-framework-guide#agents-framework-and-api-guide)
+
 ## Contents
 - MCP tools
 - HTTP API: agents, tools, knowledge bases, memory stores, files, evaluators

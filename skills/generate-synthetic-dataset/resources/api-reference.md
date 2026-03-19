@@ -2,6 +2,8 @@
 
 MCP tools and HTTP API endpoints used by the generate-synthetic-dataset skill.
 
+> **Official documentation:** [Datasets via the API — Programmatic Data Management](https://docs.orq.ai/docs/datasets/api-usage#datasets-via-the-api-programmatic-data-management)
+
 ## Contents
 - MCP tools
 - HTTP API: datasets, datapoints, evaluators
