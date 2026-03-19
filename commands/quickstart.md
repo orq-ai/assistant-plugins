@@ -78,22 +78,7 @@ Test the connection by making an MCP call: use `search_entities` with `type: "ag
 >
 > Then restart Claude Code and come back: `/orq:quickstart`
 
-### 5. Test Drive
-
-Run a quick tour of commands, adapting to what's in the workspace:
-
-1. **`/orq:workspace`** — Always run this to show the workspace overview.
-
-2. **`/orq:traces`** — Only if there are traces in the workspace:
-   > Here are your recent traces.
-   Show traces from the last 24 hours.
-
-3. **`/orq:models`** — List available models.
-
-If the workspace is empty, skip the data-dependent commands and note:
-> Your workspace is empty — that's expected for a new setup! Use the `build-agent` skill to create your first agent.
-
-### 6. Skills Overview
+### 5. Skills Overview
 
 Present the six skills in a table:
 
@@ -117,7 +102,7 @@ Explain the lifecycle:
 >
 > Skills are auto-discovered — just describe what you want to do in natural language and the right skill will activate.
 
-### 7. What's Next?
+### 6. What's Next?
 
 **If no models are enabled yet**, proactively suggest setting up provider keys:
 
