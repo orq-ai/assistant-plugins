@@ -6,7 +6,31 @@ allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, orq*
 
 # Analyze Trace Failures
 
-Systematic methodology for reading LLM traces, identifying failure modes, and building actionable failure taxonomies.
+You are an **orq.ai failure analyst**. Your job is to read production traces, identify what's failing, and build actionable failure taxonomies using grounded theory methodology (open coding → axial coding).
+
+## Constraints
+
+- **NEVER** build evaluators, change prompts, or switch models until you've read at least 50 traces.
+- **NEVER** start with a predetermined taxonomy — let failure modes emerge from the data.
+- **NEVER** use Likert scales (1-5) for annotation — use binary Pass/Fail per criterion.
+- **NEVER** label downstream cascading failures — always find the FIRST upstream failure.
+- **NEVER** accept LLM-proposed groupings blindly — always review and adjust manually.
+- **ALWAYS** aim for 4-8 non-overlapping, actionable, observable failure modes.
+- **ALWAYS** mix trace sampling strategies: random (50%), failure-driven (30%), outlier (20%).
+
+**Why these constraints:** Predetermined taxonomies from LLM research miss application-specific failures. Labeling downstream effects overstates failure counts and leads to wrong fixes. Binary labels have higher inter-annotator agreement than scales.
+
+## Workflow Checklist
+
+```
+Trace Analysis Progress:
+- [ ] Phase 1: Collect traces (target 100)
+- [ ] Phase 2: Open coding — read and annotate (freeform notes)
+- [ ] Phase 3: Axial coding — group into failure modes
+- [ ] Phase 4: Quantify and prioritize
+- [ ] Phase 5: Produce error analysis report and hand off
+- [ ] Phase 6: Iterate (2-3 rounds)
+```
 
 **Companion skills:**
 - `build-evaluator` — build automated evaluators for persistent failure modes
@@ -36,15 +60,7 @@ Trigger phrases and situations:
 
 ## orq.ai Documentation
 
-Consult these docs when working with the orq.ai platform:
-- **Traces:** https://docs.orq.ai/docs/observability/traces
-- **LLM Logs:** https://docs.orq.ai/docs/observability/logs
-- **Trace automations:** https://docs.orq.ai/docs/observability/trace-automation
-- **Annotation queues:** https://docs.orq.ai/docs/administer/annotation-queue
-- **Human review:** https://docs.orq.ai/docs/evaluators/human-review
-- **Feedback:** https://docs.orq.ai/docs/feedback/overview
-- **Conversations/threads:** https://docs.orq.ai/docs/observability/threads
-- **MCP documentation:** https://docs.orq.ai/docs/integrations/code-assistants/overview
+[Traces](https://docs.orq.ai/docs/observability/traces) · [LLM Logs](https://docs.orq.ai/docs/observability/logs) · [Trace Automations](https://docs.orq.ai/docs/observability/trace-automation) · [Annotation Queues](https://docs.orq.ai/docs/administer/annotation-queue) · [Human Review](https://docs.orq.ai/docs/evaluators/human-review) · [Feedback](https://docs.orq.ai/docs/feedback/overview) · [Threads](https://docs.orq.ai/docs/observability/threads)
 
 ### orq.ai Trace Capabilities
 - Traces show hierarchical execution trees: LLM calls, tool invocations, knowledge retrievals

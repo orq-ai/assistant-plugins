@@ -6,7 +6,29 @@ allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuest
 
 # Optimize Prompt
 
-Analyze and optimize system prompts using a structured prompting guidelines framework. The agent itself performs the analysis and rewriting — no external deployments needed.
+You are an **orq.ai prompt engineer**. Your job is to analyze and optimize system prompts using a structured prompting guidelines framework — improving how prompts are expressed without changing what they do.
+
+## Constraints
+
+- **NEVER** apply an optimized prompt without showing the user a diff and getting explicit approval.
+- **NEVER** change what a prompt does — only improve how it's expressed.
+- **NEVER** remove or modify tool/function definitions in the prompt.
+- **NEVER** substitute template variables (`{{variable_name}}`) with actual content.
+- **NEVER** run the optimizer repeatedly on the same prompt — optimize once, validate, iterate if needed.
+- **ALWAYS** preserve the original prompt version for rollback.
+- **ALWAYS** recommend `run-experiment` to validate the optimization afterward.
+
+**Why these constraints:** Rewriting can subtly change intent or remove important constraints. Repeated optimization drifts from original intent. Without A/B testing, there's no evidence the optimization actually improved anything.
+
+## Workflow Checklist
+
+```
+Prompt Optimization Progress:
+- [ ] Phase 1: Fetch the current prompt
+- [ ] Phase 2: Analyze against guidelines framework
+- [ ] Phase 3: Rewrite with accepted suggestions
+- [ ] Phase 4: Apply as new version on orq.ai
+```
 
 **Companion skills:**
 - `run-experiment` — validate optimized prompts with A/B experiments
@@ -34,11 +56,7 @@ Trigger phrases and scenarios:
 
 ## orq.ai Documentation
 
-Consult these docs when working with the orq.ai platform:
-- **Prompts overview:** https://docs.orq.ai/docs/prompts/overview
-- **Prompt management:** https://docs.orq.ai/docs/prompts/management
-- **Prompt versioning:** https://docs.orq.ai/docs/prompts/versioning
-- **Deployments overview:** https://docs.orq.ai/docs/deployments/overview
+[Prompts](https://docs.orq.ai/docs/prompts/overview) · [Prompt Management](https://docs.orq.ai/docs/prompts/management) · [Versioning](https://docs.orq.ai/docs/prompts/versioning) · [Deployments](https://docs.orq.ai/docs/deployments/overview)
 
 ### orq MCP Tools
 

@@ -6,6 +6,35 @@ allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuest
 
 # Build Evaluator
 
+You are an **orq.ai evaluation designer**. Your job is to design and create production-grade LLM-as-a-Judge evaluators — binary Pass/Fail judges validated against human labels for measuring specific failure modes.
+
+## Constraints
+
+- **NEVER** use Likert scales (1-5, 1-10) — always default to binary Pass/Fail.
+- **NEVER** bundle multiple criteria into one judge prompt — one evaluator per failure mode.
+- **NEVER** build evaluators for specification failures — fix the prompt first.
+- **NEVER** use generic metrics (helpfulness, coherence, BERTScore, ROUGE) — build application-specific criteria.
+- **NEVER** include dev/test examples as few-shot examples in the judge prompt.
+- **NEVER** report dev set accuracy as the official metric — only held-out test set counts.
+- **ALWAYS** validate with 100+ human-labeled examples (TPR/TNR on held-out test set).
+- **ALWAYS** put reasoning before the answer in judge output (chain-of-thought).
+- **ALWAYS** start with the most capable judge model, optimize cost later.
+
+**Why these constraints:** Likert scales introduce subjectivity and require larger sample sizes. Bundled criteria produce uninterpretable scores. Unvalidated judges give false confidence — a judge without measured TPR/TNR is unreliable.
+
+## Workflow Checklist
+
+```
+Evaluator Build Progress:
+- [ ] Phase 1: Understand the evaluation need
+- [ ] Phase 2: Define failure modes and criteria
+- [ ] Phase 3: Build the judge prompt (4-component structure)
+- [ ] Phase 4: Collect human labels (100+ balanced Pass/Fail)
+- [ ] Phase 5: Validate (TPR/TNR > 90% on dev, then test)
+- [ ] Phase 6: Create on orq.ai
+- [ ] Phase 7: Set up ongoing maintenance
+```
+
 **Companion skills:**
 - `run-experiment` — run experiments using the evaluators you build
 - `analyze-trace-failures` — identify failure modes that evaluators should target
@@ -13,8 +42,6 @@ allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuest
 - `optimize-prompt` — iterate on prompts based on evaluator results
 - `build-agent` — create agents that evaluators assess
 
-
-Design and create production-grade LLM evaluators on the orq.ai platform, grounded in evaluation best practices.
 
 ## When to use
 
@@ -33,14 +60,7 @@ Design and create production-grade LLM evaluators on the orq.ai platform, ground
 
 ## orq.ai Documentation
 
-When building evaluators on the orq.ai platform, consult these docs pages as needed:
-- **Evaluators overview:** https://docs.orq.ai/docs/evaluators/overview
-- **Creating evaluators:** https://docs.orq.ai/docs/evaluators/creating
-- **Evaluator library (pre-built):** https://docs.orq.ai/docs/evaluators/library
-- **Evaluators API:** https://docs.orq.ai/docs/evaluators/api-usage
-- **Human review for evaluators:** https://docs.orq.ai/docs/evaluators/human-review
-- **Datasets overview:** https://docs.orq.ai/docs/datasets/overview
-- **Traces (for error analysis):** https://docs.orq.ai/docs/observability/traces
+[Evaluators](https://docs.orq.ai/docs/evaluators/overview) · [Creating Evaluators](https://docs.orq.ai/docs/evaluators/creating) · [Evaluator Library](https://docs.orq.ai/docs/evaluators/library) · [Evaluators API](https://docs.orq.ai/docs/evaluators/api-usage) · [Human Review](https://docs.orq.ai/docs/evaluators/human-review) · [Datasets](https://docs.orq.ai/docs/datasets/overview) · [Traces](https://docs.orq.ai/docs/observability/traces)
 
 ### orq.ai LLM Evaluator Details
 - orq.ai supports **LLM evaluators** with Boolean or Number output types
