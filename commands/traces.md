@@ -45,26 +45,44 @@ Use the `list_traces` MCP tool with the constructed filter, limit, and sort para
 
 Present traces in a scannable format, not raw JSON.
 
-**Overview line:**
+**Header, overview line, and workspace link:**
+
 ```
+# Orq.ai Traces — Recent Activity
+
 Traces (last 24h): 47 total — 41 success, 4 error, 2 timeout
 ```
 
-**Then list traces, grouped by status (errors first):**
+Then add: `View and filter traces at **[Traces → my.orq.ai](https://my.orq.ai/)**.`
+
+**Then list traces grouped by status (errors first) using ASCII table format with full trace IDs:**
 ```
 Errors (4)
-  1. 2026-03-13 14:22  deployer/summarizer  "Input too long"      trace_abc123
-  2. 2026-03-13 13:01  agent/support-bot    "Tool call failed"    trace_def456
-  ...
+
+  ┌───┬──────────────────┬──────────┬──────────────────────────────────┐
+  │ # │    Time (UTC)    │ Duration │            Trace ID              │
+  ├───┼──────────────────┼──────────┼──────────────────────────────────┤
+  │ 1 │ Mar 13, 14:22:07 │ 209ms    │ b422a93c8b34ddfa70eaf5c7e3705c19 │
+  │ 2 │ Mar 13, 13:01:06 │ 192ms    │ 4f1957728f7b0a6ba6b3ce0fd1679c4a │
+  │ 3 │ Mar 13, 12:55:04 │ 228ms    │ 89d0a987ff11b23aca1f5b2e4d8efac2 │
+  │ 4 │ Mar 13, 12:54:04 │ 297ms    │ c20e270e79257144f93b5beedcc6c62f │
+  └───┴──────────────────┴──────────┴──────────────────────────────────┘
 
 Success (showing 10 of 41)
-  1. 2026-03-13 15:30  agent/support-bot    1.2s  230 tokens       trace_ghi789
-  2. 2026-03-13 15:28  deployer/classifier  0.8s  150 tokens       trace_jkl012
-  ...
+
+  ┌───┬──────────────────┬──────────┬──────────────────────────────────┐
+  │ # │    Time (UTC)    │ Duration │            Trace ID              │
+  ├───┼──────────────────┼──────────┼──────────────────────────────────┤
+  │ 1 │ Mar 13, 15:30:58 │ 493ms    │ 2d8781e8d628b89e9bde9fcdf7f80827 │
+  │ 2 │ Mar 13, 15:28:57 │ 629ms    │ 201ee2b617ce05622bc8e1888703a0bd │
+  └───┴──────────────────┴──────────┴──────────────────────────────────┘
 ```
 
-Adapt fields based on what the API returns. Prioritize: timestamp, entity, error message or latency/tokens, trace ID.
+#### Formatting rules
 
+- Use ASCII box-drawing characters (`┌ ─ ┬ ┐ │ ├ ┤ └ ┴ ┘`) for the table borders.
+- Show the **full trace ID** (all 32 hex characters) — never truncate it.
+- Adapt fields based on what the API returns. Prioritize: timestamp, entity, error message or latency/tokens, trace ID.
 - Show errors and failures first — they're why the user is here.
 - Cap each group at 10 items. If there are more, show the count.
 - Include the trace ID so the user can reference it in follow-up.
