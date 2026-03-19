@@ -40,7 +40,8 @@ You have slash commands available in the `commands/` directory:
  - workspace -> "commands/workspace.md" — Show workspace overview (agents, deployments, prompts, datasets, experiments)
  - traces -> "commands/traces.md" — Query and summarize traces with filters (debugging entry point)
  - models -> "commands/models.md" — List available AI models and capabilities
+ - analytics -> "commands/analytics.md" — Show workspace analytics (requests, cost, tokens, errors, trends)
 
-Commands are quick-action tools. Skills are multi-step workflows. Use `/orq:quickstart` for onboarding, `/orq:workspace`, `/orq:traces`, or `/orq:models` for fast operations. Use skills when the user needs guided, multi-step work.
+Commands are quick-action tools. Skills are multi-step workflows. Use `/orq:quickstart` for onboarding, `/orq:workspace`, `/orq:traces`, `/orq:models`, or `/orq:analytics` for fast operations. Use skills when the user needs guided, multi-step work.
 
 </commands>

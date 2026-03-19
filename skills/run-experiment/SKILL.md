@@ -142,14 +142,14 @@ Consult these docs as needed:
 
 ### Phase 3: Measure — Run the Experiment
 
-8. **Create and run the experiment** on orq.ai:
+8. **Create and run the experiment** on orq.ai using `create_experiment` MCP tool:
    - Link the dataset and evaluator(s)
    - Select the target model/deployment
    - Configure system prompt (if testing prompt variations)
    - Run and wait for completion
 
-9. **Collect results:**
-   - Retrieve experiment run results via orq MCP tools
+9. **Collect results** using `get_experiment_run` and `list_experiment_runs` MCP tools:
+   - Retrieve experiment run results — use `list_experiment_runs` to find the latest run, then `get_experiment_run` for detailed per-datapoint scores
    - Extract per-datapoint scores and overall metrics
    - Note the run cost for budget tracking
 

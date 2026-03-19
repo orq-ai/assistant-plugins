@@ -42,8 +42,8 @@ Agent Build Progress:
 - [ ] Phase 4: Configure tools
 - [ ] Phase 5A: Set up Knowledge Base (if needed)
 - [ ] Phase 5B: Set up Memory Store (if needed)
-- [ ] Phase 6: Create the agent
-- [ ] Phase 7: Test edge cases
+- [ ] Phase 6: Create and verify the agent
+- [ ] Phase 7: Test edge cases and iterate
 ```
 
 ## Resources
@@ -175,13 +175,14 @@ If the agent needs reference data (docs, FAQs, policies), set up a Knowledge Bas
 See [resources/knowledge-base-management.md](resources/knowledge-base-management.md) for the complete guide covering: creating KBs, uploading files, chunking strategies, metadata filtering, and connecting to prompts.
 
 **Quick steps:**
-1. Check existing KBs with `search_entities` — reuse if possible
-2. Create a KB with embedding model, key, and path
-3. Upload files and create datasources
-4. Configure chunking strategy (sentence for prose, recursive for structured docs)
-5. Add chunks with metadata for filtering
-6. Search to verify retrieval quality
-7. Connect KB to the agent's prompt
+1. **Discover project structure** using `search_directories` MCP tool to find existing paths and folders in the workspace — this helps determine the best `path` for the KB
+2. Check existing KBs with `search_entities` — reuse if possible
+3. Create a KB with embedding model, key, and path
+4. Upload files and create datasources
+5. Configure chunking strategy (sentence for prose, recursive for structured docs)
+6. Add chunks with metadata for filtering
+7. Search to verify retrieval quality
+8. Connect KB to the agent's prompt
 
 ### Phase 5B: Memory Store Configuration
 
@@ -204,11 +205,15 @@ See [resources/memory-store-management.md](resources/memory-store-management.md)
     - Set all configurations: instructions, model, tools, KB, memory
     - Verify the configuration is complete before creating
 
-15. **Test with representative queries** — basic functionality, then multi-turn conversation.
+15. **Verify the agent** using `get_agent` MCP tool:
+    - Confirm all settings were applied correctly (instructions, model, tools, KB, memory)
+    - Check that tools are attached and KB/memory references are valid
+
+16. **Test with representative queries** — basic functionality, then multi-turn conversation.
 
 ### Phase 7: Test Edge Cases
 
-16. **Test systematically:**
+17. **Test systematically:**
 
     | Test Category | What to Test |
     |--------------|-------------|
@@ -221,9 +226,14 @@ See [resources/memory-store-management.md](resources/memory-store-management.md)
     | **KB retrieval** | Does it find the right chunks? |
     | **Memory** | Does it correctly store and recall facts? |
 
-17. **Document findings** and iterate on instructions/tools as needed.
+18. **Iterate on configuration** using `update_agent` MCP tool:
+    - Fix issues found during testing without recreating the agent
+    - Update instructions, tools, or model as needed
+    - Re-verify with `get_agent` after each update
 
-18. **Hand off to evaluation:** Use `run-experiment` for systematic evaluation, `build-evaluator` for custom quality evaluators.
+19. **Document findings** and finalize the agent configuration.
+
+20. **Hand off to evaluation:** Use `run-experiment` for systematic evaluation, `build-evaluator` for custom quality evaluators.
 
 ---
 

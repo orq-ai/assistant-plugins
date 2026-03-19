@@ -25,8 +25,9 @@ If empty, show all sections.
 
 ### 2. Fetch data
 
-Use the `search_entities` MCP tool to fetch each section. Run all applicable calls in parallel.
+Use the `search_entities` MCP tool and `get_analytics_overview` MCP tool to fetch data. Run all applicable calls in parallel.
 
+- **Analytics overview:** `get_analytics_overview` — fetches request volume, cost, error rate for the summary line
 - **Agents:** `search_entities` with `type: "agent"`
 - **Deployments:** `search_entities` with `type: "deployment"`
 - **Prompts:** `search_entities` with `type: "prompt"`
@@ -35,7 +36,7 @@ Use the `search_entities` MCP tool to fetch each section. Run all applicable cal
 - **Projects:** `search_entities` with `type: "project"`
 - **Knowledge:** `search_entities` with `type: "knowledge"`
 
-Fetch only the sections needed based on arguments.
+Fetch only the sections needed based on arguments. Always fetch analytics overview regardless of section filter.
 
 ### 3. Display the overview
 
@@ -47,6 +48,8 @@ Output the overview in this format:
 # Orq.ai Workspace — Overview
 
 **3** agents · **5** deployments · **8** prompts · **2** datasets · **1** experiment · **2** projects · **2** knowledge bases
+
+**Last 24h:** 12,450 requests · $8.42 cost · 0.03% error rate
 
 Manage your workspace at **[Workspace → my.orq.ai](https://my.orq.ai/)**.
 

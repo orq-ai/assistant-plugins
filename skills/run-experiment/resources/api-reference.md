@@ -24,6 +24,8 @@ Use the orq MCP server (`https://my.orq.ai/v2/mcp`) as the primary interface. Fo
 | `list_experiment_runs` | List experiment runs |
 | `get_experiment_run` | Get experiment run details |
 | `list_models` | List available models (including embedding models) |
+| `get_analytics_overview` | Quick health check — error rate, request volume before experiments |
+| `query_analytics` | Drill-down analytics — correlate experiment results with production metrics |
 
 ## HTTP API Fallback
 

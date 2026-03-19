@@ -76,6 +76,7 @@ Use the orq MCP server (`https://my.orq.ai/v2/mcp`) as the primary interface. Al
 
 | Tool | Purpose |
 |------|---------|
+| `get_analytics_overview` | Quick health check — error rate, request volume, top models |
 | `list_traces` | List and filter recent traces |
 | `list_spans` | List spans within a trace |
 | `get_span` | Get detailed span information |
@@ -98,7 +99,12 @@ When annotating traces, use Pass/Fail per specific criterion. Likert scales (1-5
 
 ### Phase 1: Collect Traces
 
-1. **Gather traces for analysis.** Target: **100 traces** for theoretical saturation.
+1. **Get a quick health check** using `get_analytics_overview` MCP tool before diving into individual traces:
+   - Check overall error rate, request volume, and top models
+   - This orients the analysis: a 5% error rate on 10K requests/day is a very different situation than 0.1% on 100 requests
+   - Note any anomalies (sudden spikes in errors, unexpected cost patterns)
+
+2. **Gather traces for analysis.** Target: **100 traces** for theoretical saturation.
 
    **From production (if available):**
    - Use `list_traces` from orq MCP to sample recent traces
@@ -120,7 +126,7 @@ When annotating traces, use Pass/Fail per specific criterion. Likert scales (1-5
 
    **Mix strategies:** Start with random (50%), then add failure-driven (30%) and outlier (20%) traces for a balanced sample that includes both typical and problematic cases.
 
-2. **Ensure trace completeness.** For each trace, you need:
+3. **Ensure trace completeness.** For each trace, you need:
    - The original user input
    - The final system output
    - All intermediate steps (for agents/pipelines): LLM calls, tool calls with args and responses, retrieved documents, reasoning steps
@@ -128,7 +134,7 @@ When annotating traces, use Pass/Fail per specific criterion. Likert scales (1-5
 
 ### Phase 2: Open Coding — Read and Annotate
 
-3. **Read each trace and write freeform notes.** For each trace:
+4. **Read each trace and write freeform notes.** For each trace:
    - Read the full trace end-to-end
    - Ask: "Is this output good or bad?" (binary judgment)
    - If bad: "What specifically went wrong?"
@@ -144,7 +150,7 @@ When annotating traces, use Pass/Fail per specific criterion. Likert scales (1-5
    | ghi789   | Fail      | "Called wrong tool, used search instead of calculator" |
    ```
 
-4. **When stuck articulating what's wrong**, use these lenses as prompts (not forced categories):
+5. **When stuck articulating what's wrong**, use these lenses as prompts (not forced categories):
    - Hallucination (fabricated facts)
    - Instruction non-compliance (ignored explicit rules)
    - Persona/tone drift (broke character)
@@ -154,25 +160,25 @@ When annotating traces, use Pass/Fail per specific criterion. Likert scales (1-5
    - Safety/guardrail bypass (responded to disallowed content)
    - Structural errors (wrong format, missing fields)
 
-5. **Stop when you reach saturation.** Continue until:
+6. **Stop when you reach saturation.** Continue until:
    - At least **20 bad traces** are annotated
    - New traces stop revealing fundamentally new failure types
    - Typically 50-100 traces, depending on pipeline complexity
 
 ### Phase 3: Axial Coding — Structure the Taxonomy
 
-6. **Group freeform annotations into failure modes.** Read through all your notes and cluster similar failures:
+7. **Group freeform annotations into failure modes.** Read through all your notes and cluster similar failures:
    - Some clusters are obvious: "wrong tool" + "hallucinated tool" = **Tool Selection Errors**
    - Some require splitting: "hallucinated facts" vs "hallucinated user intent" are meaningfully different
    - Some require merging: "too casual for luxury client" + "used jargon with beginner" = **Persona-Audience Mismatch**
 
-7. **Use LLM assistance (carefully).** After coding 30-50 traces:
+8. **Use LLM assistance (carefully).** After coding 30-50 traces:
    - Paste your freeform annotations into an LLM
    - Ask it to propose groupings
    - **NEVER accept LLM groupings blindly** — always review and adjust manually
    - The LLM helps spot patterns you missed; you make the final taxonomy decisions
 
-8. **Define each failure mode precisely:**
+9. **Define each failure mode precisely:**
    ```
    Failure Mode: [Name]
    Description: [1-2 sentence definition]
@@ -181,7 +187,7 @@ When annotating traces, use Pass/Fail per specific criterion. Likert scales (1-5
    Example: [A concrete trace excerpt]
    ```
 
-9. **Ensure failure modes are:**
+10. **Ensure failure modes are:**
    - **Non-overlapping** — each trace should clearly belong to 0 or 1 failure mode
    - **Actionable** — knowing this failure exists tells you what to fix
    - **Observable** — two people would agree on whether it applies to a given trace
@@ -189,7 +195,7 @@ When annotating traces, use Pass/Fail per specific criterion. Likert scales (1-5
 
 ### Phase 4: Quantify and Prioritize
 
-10. **Label all traces against the structured taxonomy.**
+11. **Label all traces against the structured taxonomy.**
     - Add columns: one per failure mode (binary: 0 or 1)
     - For each trace, mark which failure mode(s) apply
     - Compute **error rates** per failure mode: count / total traces
@@ -203,7 +209,7 @@ When annotating traces, use Pass/Fail per specific criterion. Likert scales (1-5
     | Context loss after 3+ turns | 3 | 6% | Medium |
     ```
 
-11. **For multi-step pipelines, build a Transition Failure Matrix:**
+12. **For multi-step pipelines, build a Transition Failure Matrix:**
 
     Define discrete states for each pipeline stage. For each failed trace, identify the first state where something went wrong.
 
@@ -218,7 +224,7 @@ When annotating traces, use Pass/Fail per specific criterion. Likert scales (1-5
 
     Sum columns to find the most error-prone stages. Focus debugging on the hottest cells.
 
-12. **Classify each failure mode for action:**
+13. **Classify each failure mode for action:**
 
     | Failure Mode | Classification | Next Step |
     |-------------|---------------|-----------|
@@ -229,7 +235,7 @@ When annotating traces, use Pass/Fail per specific criterion. Likert scales (1-5
 
 ### Phase 5: Output and Handoff
 
-13. **Produce the error analysis report:**
+14. **Produce the error analysis report:**
 
     ```markdown
     # Error Analysis Report
@@ -258,7 +264,7 @@ When annotating traces, use Pass/Fail per specific criterion. Likert scales (1-5
     3. [Third priority]
     ```
 
-14. **Hand off to companion skills:**
+15. **Hand off to companion skills:**
     - Specification failures → fix prompts directly
     - Need test data → `generate-synthetic-dataset`
     - Need evaluators → `build-evaluator`
@@ -266,7 +272,7 @@ When annotating traces, use Pass/Fail per specific criterion. Likert scales (1-5
 
 ### Phase 6: Iterate
 
-15. **Expect 2-3 rounds of refinement:**
+16. **Expect 2-3 rounds of refinement:**
     - Round 1: Initial open/axial coding — rough taxonomy
     - Round 2: Refined definitions, edge cases clarified
     - Round 3: Final taxonomy — stable, non-overlapping, actionable

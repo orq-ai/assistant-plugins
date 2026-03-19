@@ -273,22 +273,51 @@ Your JSON Evaluation:
 
 ### Phase 6: Create the Evaluator on orq.ai
 
-13. **Create the evaluator** using the orq MCP tools:
-    - Use `create_llm_eval` with the refined judge prompt
+13. **Choose the evaluator type** based on the criterion:
+
+    | Check Type | When to Use | MCP Tool |
+    |------------|-------------|----------|
+    | **Code-based** (regex, assertions, schema) | Deterministic checks: format validation, length limits, required fields, exact matches | `create_python_eval` |
+    | **LLM-as-Judge** | Subjective/nuanced criteria that code can't capture: tone, faithfulness, persona consistency | `create_llm_eval` |
+
+    **If code-based (`create_python_eval`):**
+    - Write a Python 3.12 function: `def evaluate(log) -> bool` (or `-> float` for numeric scores)
+    - The `log` dict has keys: `output`, `input`, `reference`
+    - Available imports: `numpy`, `nltk`, `re`, `json`
+    - Example:
+      ```python
+      import re, json
+
+      def evaluate(log):
+          output = log["output"]
+          # Check that output is valid JSON with required fields
+          try:
+              parsed = json.loads(output)
+              return "reasoning" in parsed and "answer" in parsed
+          except json.JSONDecodeError:
+              return False
+      ```
+    - Create using `create_python_eval` MCP tool with the Python code
+
+    **If LLM-as-Judge (`create_llm_eval`):**
+    - Use `create_llm_eval` with the refined judge prompt from Phase 3-5
     - Set appropriate model (start capable, optimize later)
     - Map variables: `{{log.input}}`, `{{log.output}}`, `{{log.reference}}` as needed
+
+14. **Create the evaluator** on orq.ai:
     - Link to relevant dataset and experiment
 
-14. **Document the evaluator**:
+15. **Document the evaluator**:
     - Criterion name and description
+    - Evaluator type (Python or LLM)
     - Pass/Fail definitions
-    - Judge model used
-    - TPR and TNR on test set (with number of examples)
+    - Judge model used (if LLM)
+    - TPR and TNR on test set (with number of examples, if LLM)
     - Known limitations or edge cases
 
 ### Phase 7: Ongoing Maintenance
 
-15. **Set up maintenance cadence**:
+16. **Set up maintenance cadence**:
     - Re-run validation after significant pipeline changes
     - Continue labeling new traces from production via orq.ai Annotation Queues
     - Recompute TPR/TNR regularly; check whether confidence intervals remain tight

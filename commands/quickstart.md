@@ -17,7 +17,7 @@ Greet the user and give a brief overview:
 
 > **Welcome to the orq.ai plugin for Claude Code!**
 >
-> This plugin gives you **6 commands** (quick actions) and **6 skills** (multi-step workflows) for building, evaluating, and improving LLM pipelines on the orq.ai platform.
+> This plugin gives you **5 commands** (quick actions) and **6 skills** (multi-step workflows) for building, evaluating, and improving LLM pipelines on the orq.ai platform.
 >
 > **The lifecycle:** Build → Deploy → Monitor → Evaluate → Optimize
 
@@ -119,6 +119,7 @@ Then use `AskUserQuestion` to route the user to their next task:
 - **"Debug production traces"** → Suggest `/orq:traces` then `analyze-trace-failures`
 - **"Optimize a prompt"** → Suggest the `optimize-prompt` skill
 - **"Generate test data"** → Suggest the `generate-synthetic-dataset` skill
+- **"Check analytics"** → Suggest `/orq:analytics` for usage stats and cost tracking
 - **"Just explore"** → Suggest starting with `/orq:workspace` and trying commands
 - **"Visit [https://docs.orq.ai](https://docs.orq.ai)"** → Visit Orq.ai documentation.
 
