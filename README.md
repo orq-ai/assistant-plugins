@@ -15,9 +15,10 @@ Using npx skills (Cursor, Claude Code, Gemini CLI, etc.)
 npx skills add orq-ai/orq-skills
 ```
 
-Using Claude Code Plugin Manager
+Using Claude Code Plugin Marketplace
 ```bash
-/plugin install orq-ai@orq-skills
+/plugin marketplace add orq-ai/orq-skills
+/plugin install orq@orq-skills
 ```
 
 Manual: clone and point your agent to the directory

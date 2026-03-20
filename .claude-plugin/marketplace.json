@@ -1,0 +1,26 @@
+{
+  "name": "orq-skills",
+  "owner": {
+    "name": "orq.ai",
+    "email": "support@orq.ai"
+  },
+  "metadata": {
+    "description": "Agent skills for building, evaluating, and optimizing LLM pipelines on the orq.ai platform.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "orq",
+      "source": ".",
+      "description": "Build, evaluate, and optimize LLM pipelines on orq.ai — agents, prompts, traces, experiments, and datasets.",
+      "version": "0.1.0",
+      "author": {
+        "name": "orq.ai"
+      },
+      "homepage": "https://orq.ai",
+      "repository": "https://github.com/orq-ai/orq-skills",
+      "license": "MIT",
+      "keywords": ["orq", "llm", "agents", "prompts", "evaluation", "monitoring", "rag", "experiments", "traces"]
+    }
+  ]
+}
