@@ -1,71 +1,94 @@
 # Orq.ai Agent Skills
 
-Agent Skills for building, evaluating, and improving LLM pipelines on the [orq.ai](https://orq.ai) platform.
+Agent Skills for the full **Build → Evaluate → Optimize** lifecycle of LLM pipelines on [orq.ai](https://orq.ai). 
 
-Each skill encodes best practices from prompt engineering, agent design, evaluation methodology, and experimentation into repeatable workflows. 
+**Skills** are multi-step workflows that require reasoning (e.g. build an agent, run an experiment); 
 
-Together they cover the full **Build → Evaluate → Optimize** lifecycle — from creating agents and writing prompts, through trace analysis and dataset generation, to running validated experiments and iterating on results.
+**Commands** are quick actions for immediate results (list traces, show analytics). 
 
-Built on the [Agent Skills](https://agentskills.io/home#adoption) standard format — works with any compatible agent (Claude Code, Cursor, Gemini CLI, and others).
+Each skill encodes best practices from prompt engineering, agent design, evaluation methodology, and experimentation into repeatable workflows. From creating agents and writing prompts, through trace analysis and dataset generation, to running validated experiments and iterating on results. 
 
-## Installation
+Built on the [Agent Skills](https://agentskills.io/home#adoption) standard format, so it works with any compatible agent (Claude Code, Cursor, Gemini CLI, and others).
 
-To install these skills on any compatible coding agent, use `npx skills` (such as Cursor, Claude Code, Gemini CLI, etc.).
+## Setup
+
+### Prerequisites
+
+- An [orq.ai](https://orq.ai) account
+- An API key from [Settings → API Keys](https://my.orq.ai)
+
+
+### Connect the MCP Server
+
+Make sure you have Orq.ai MCP configured. The MCP server gives skills and commands access to your Orq.ai workspace.
+
 ```bash
-npx skills add orq-ai/orq-skills
+# Set your API key
+export ORQ_API_KEY=your-key-here  # add to ~/.zshrc or ~/.bashrc
+
+# Connect the MCP server (run once)
+claude mcp add --transport http orq-workspace https://my.orq.ai/v2/mcp \
+  --header "Authorization: Bearer ${ORQ_API_KEY}"
 ```
 
-### Claude Code
+### Install orq-skills
 
-Using the plugin marketplace:
+Pick one method:
+
 ```bash
+# Option 1: npx skills CLI (works with Cursor, Gemini CLI, etc.)
+npx skills add orq-ai/orq-skills
+
+# Option 2: Claude Code plugin marketplace
 /plugin marketplace add orq-ai/orq-skills
 /plugin install orq@orq-skills
-```
 
-Or install directly from GitHub:
-```bash
+# Option 3: Direct from GitHub
 /plugin install github:orq-ai/orq-skills
-```
 
-Manual: clone and point your agent to the directory:
-```bash
+# Option 4: Manual clone
 git clone https://github.com/orq-ai/orq-skills.git
 cd orq-skills
 claude --plugin-dir .
 ```
 
-## Quickstart
 
-New to orq.ai? Run the interactive onboarding to set up your credentials, connect the MCP server, and get a guided tour of all available commands and skills:
+### Verify
+
+Run the interactive onboarding to confirm everything works:
 
 ```
 /orq:quickstart
 ```
 
-## Requirements
-
-- An [orq.ai](https://orq.ai) account with an API key (`ORQ_API_KEY` environment variable)
-- The orq.ai MCP server connected to Claude Code:
-  ```bash
-  claude mcp add --transport http orq https://my.orq.ai/v2/mcp \
-    --header "Authorization: Bearer $ORQ_API_KEY"
-  ```
+---
 
 ## Commands
 
-Quick-action slash commands for common operations. Commands are thin orchestrators — they parse arguments, call the API, and display results.
+Quick-action slash commands. Use `/orq:<command>` in Claude Code.
 
 | Command | What It Does | Usage |
 |---------|-------------|-------|
-| **quickstart** | Interactive onboarding — credentials, MCP setup, tour | `/orq:quickstart` |
-| **workspace** | Show workspace overview — agents, deployments, prompts, datasets, experiments | `/orq:workspace [section]` |
-| **traces** | Query and summarize traces with filters — debugging entry point | `/orq:traces [--deployment <name>] [--status <status>] [--last <duration>]` |
-| **models** | List available AI models and capabilities | `/orq:models [search-term]` |
+| **quickstart** | Interactive onboarding — credentials, MCP setup, skills tour | `/orq:quickstart` |
+| **workspace** | Workspace overview — agents, deployments, prompts, datasets, experiments | `/orq:workspace [section]` |
+| **traces** | Query and summarize traces with filters | `/orq:traces [--deployment name] [--status error] [--last 24h]` |
+| **models** | List available AI models by provider | `/orq:models [search-term]` |
+| **analytics** | Usage analytics — requests, cost, tokens, errors | `/orq:analytics [--last 24h] [--group-by model]` |
 
-**Commands vs skills:** Commands are for quick, focused actions (list, query, inspect). Skills are for multi-step workflows that require reasoning and decision-making (build, evaluate, optimize).
+### Examples
 
-## Available Skills
+```
+/orq:workspace agents          # Show only agents
+/orq:traces --status error --last 1h   # Recent errors
+/orq:models gpt-4              # Search for GPT-4 variants
+/orq:analytics --group-by deployment    # Cost per deployment
+```
+
+---
+
+## Skills
+
+Skills are triggered by describing what you need. Claude picks the right skill automatically.
 
 <!-- BEGIN_SKILLS_TABLE -->
 | Skill | What It Does | Documentation |
@@ -78,52 +101,54 @@ Quick-action slash commands for common operations. Commands are thin orchestrato
 | **optimize-prompt** | Analyze and optimize system prompts using a structured prompting guidelines framework | [SKILL.md](skills/optimize-prompt/SKILL.md) |
 <!-- END_SKILLS_TABLE -->
 
-## Usage
+---
 
-### Commands
+## Workflows
 
-Commands are invoked with `/orq:<command>` in Claude Code.
-
-```
-/orq:quickstart
-```
-Interactive onboarding — set up credentials, connect to orq.ai, and tour all commands and skills.
+### 1. Build a New Agent
 
 ```
-/orq:workspace
-```
-Show workspace overview — agents, deployments, prompts, datasets, experiments.
-
-```
-/orq:traces --status error --last 24h
-```
-Query and summarize traces. Useful as a debugging entry point before deeper analysis.
-
-```
-/orq:models gpt
-```
-List available AI models, optionally filtered by search term.
-
-### Skills
-
-Skills are triggered by describing what you need in natural language. Claude picks the right skill automatically.
-
-```
-"I need a customer support agent with access to our order database"
-→ build-agent
+"I need a customer support agent"             → build-agent
+"Create test cases for it"                     → generate-synthetic-dataset
+"Build an evaluator for response accuracy"     → build-evaluator
+"Run an experiment to get a baseline"          → run-experiment
 ```
 
-```
-"My support agent is giving bad answers, help me figure out why"
-→ analyze-trace-failures → build-evaluator → run-experiment
-```
+### 2. Debug Production Issues
 
 ```
-"I need to create test cases for my product recommendation agent"
-→ generate-synthetic-dataset
+/orq:traces --status error --last 24h          # Find errors
+"Analyze these failures"                       → analyze-trace-failures
+"Fix the prompt based on the failure analysis" → optimize-prompt
+"Re-run the experiment to verify the fix"      → run-experiment
 ```
 
+### 3. Improve an Existing Agent
+
 ```
-"My prompt keeps breaking character, help me fix it"
-→ optimize-prompt
+/orq:analytics --group-by deployment           # Spot high error rates
+"Analyze traces for the checkout agent"        → analyze-trace-failures
+"Build evaluators for the failure modes"       → build-evaluator
+"Generate a dataset covering edge cases"       → generate-synthetic-dataset
+"Run an experiment and compare"                → run-experiment
+"Optimize the prompt based on results"         → optimize-prompt
 ```
+
+### 4. Improve an existing Prompt
+
+```
+"My prompt isn't performing well, help me improve it" → optimize-prompt
+"Create test cases to compare before and after"       → generate-synthetic-dataset
+"Build an evaluator for [specific dimension]"         → build-evaluator
+"Run an experiment: current vs optimized prompt"     → run-experiment
+"Refine the prompt based on failure cases"            → optimize-prompt
+```
+
+---
+
+## Links
+
+- [orq.ai Dashboard](https://my.orq.ai)
+- [Documentation](https://docs.orq.ai)
+- [GitHub Repository](https://github.com/orq-ai/orq-skills)
+- [Agent Skills Standard](https://agentskills.io)
