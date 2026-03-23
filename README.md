@@ -35,11 +35,6 @@ claude mcp add --transport http orq-workspace https://my.orq.ai/v2/mcp \
 
 **Option 1: Claude Code plugin (recommended)** — installs skills, commands, and agents:
 ```bash
-# Via marketplace
-/plugin marketplace add orq-ai/orq-skills
-/plugin install orq@orq-skills
-
-# Or directly from GitHub
 /plugin install github:orq-ai/orq-skills
 ```
 
