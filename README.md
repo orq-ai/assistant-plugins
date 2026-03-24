@@ -93,7 +93,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 <!-- BEGIN_SKILLS_TABLE -->
 | Skill | What It Does | Documentation |
 |-------|-------------|---------------|
-| **instrument-app** | Instrument LLM applications with orq.ai observability — AI Router proxy, OpenTelemetry, `@traced` decorator, and trace enrichment | [SKILL.md](skills/instrument-app/SKILL.md) |
+| **setup-observability** | Set up orq.ai observability for existing LLM applications — AI Router proxy, OpenTelemetry, `@traced` decorator, and trace enrichment | [SKILL.md](skills/setup-observability/SKILL.md) |
 | **build-agent** | Design, create, and configure an orq.ai Agent with tools, instructions, knowledge bases, and memory | [SKILL.md](skills/build-agent/SKILL.md) |
 | **build-evaluator** | Create validated LLM-as-a-Judge evaluators following evaluation best practices | [SKILL.md](skills/build-evaluator/SKILL.md) |
 | **analyze-trace-failures** | Read production traces, identify what's failing, build failure taxonomies, and categorize issues | [SKILL.md](skills/analyze-trace-failures/SKILL.md) |
@@ -106,7 +106,15 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 
 ## Workflows
 
-### 1. Build a New Agent
+### 1. Instrument an Existing App
+
+```
+"Add orq.ai tracing to my app"               → setup-observability
+/orq:traces --last 1h                          # Verify traces are flowing
+"Analyze these traces for failures"            → analyze-trace-failures
+```
+
+### 2. Build a New Agent
 
 ```
 "I need a customer support agent"             → build-agent
@@ -115,7 +123,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 "Run an experiment to get a baseline"          → run-experiment
 ```
 
-### 2. Debug Production Issues
+### 3. Debug Production Issues
 
 ```
 /orq:traces --status error --last 24h          # Find errors
@@ -124,7 +132,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 "Re-run the experiment to verify the fix"      → run-experiment
 ```
 
-### 3. Improve an Existing Agent
+### 4. Improve an Existing Agent
 
 ```
 /orq:analytics --group-by deployment           # Spot high error rates
@@ -135,7 +143,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 "Optimize the prompt based on results"         → optimize-prompt
 ```
 
-### 4. Improve an existing Prompt
+### 5. Improve an Existing Prompt
 
 ```
 "My prompt isn't performing well, help me improve it" → optimize-prompt
