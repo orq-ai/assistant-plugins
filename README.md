@@ -10,7 +10,6 @@ Each skill encodes best practices from prompt engineering, agent design, evaluat
 
 Built on the [Agent Skills](https://agentskills.io/home#adoption) standard format, so it works with any compatible agent (Claude Code, Cursor, Gemini CLI, and others).
 
-**Using Claude Code?** Check out [orq-ai/claude-plugins](https://github.com/orq-ai/claude-plugins) — it bundles orq-skills with **orq-trace** (automatic session tracing) and **orq-mcp** (workspace MCP server) in a single install.
 
 ## Setup
 
