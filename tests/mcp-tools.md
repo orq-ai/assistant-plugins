@@ -8,7 +8,7 @@ Tests the orq.ai MCP server tools directly. Requires `setup.md` to have run firs
 
 ## Read-only tools (safe, no cleanup needed)
 
-1. `search_entities` — all 8 types (agent, dataset, prompt, experiment, knowledge, memory_store, deployment, project)
+1. `search_entities` — all 9 types (agent, dataset, prompt, experiment, knowledge, memory_store, deployment, project, evaluator)
 2. `search_directories` — list project dirs
 3. `list_models(modelType=chat)` → verify non-empty
 4. `list_registry_keys` → verify returns array
@@ -27,21 +27,23 @@ Tests the orq.ai MCP server tools directly. Requires `setup.md` to have run firs
 14. `delete_datapoints` → delete 1, verify 2 remain
 15. `delete_dataset` → delete `orq-skills-test-crud-dataset` (only this test resource)
 
-## Evaluator creation *(manual cleanup required — no MCP delete tool)*
+## Evaluator tools *(manual cleanup required — no MCP delete tool)*
 
 16. `create_llm_eval` → key: `orq-skills-test-llm-eval`, with simple judge prompt
 17. `create_python_eval` → key: `orq-skills-test-py-eval`
+18. `get_evaluator_llm(key=orq-skills-test-llm-eval)` → verify returns prompt and model
+19. `get_evaluator_python(key=orq-skills-test-py-eval)` → verify returns code
 
 ## Agent tools
 
-18. `get_agent(key=orq-skills-test-echo)` → verify config matches what we created
-19. `create_agent` → key: `orq-skills-test-crud-agent` *(manual cleanup required — no MCP delete tool)*
-20. `update_agent(key=orq-skills-test-crud-agent)` → update instructions (only our test agent)
+20. `get_agent(key=orq-skills-test-echo)` → verify config matches what we created
+21. `create_agent` → key: `orq-skills-test-crud-agent` *(manual cleanup required — no MCP delete tool)*
+22. `update_agent(key=orq-skills-test-crud-agent)` → update instructions (only our test agent)
 
 ## Experiment tools
 
-21. `create_experiment` → key: `orq-skills-test-experiment` with seeded dataset + evaluator *(manual cleanup required — no MCP delete tool)*
-22. `list_experiment_runs`
+23. `create_experiment` → key: `orq-skills-test-experiment` with seeded dataset + evaluator *(manual cleanup required — no MCP delete tool)*
+24. `list_experiment_runs`
 
 ---
 

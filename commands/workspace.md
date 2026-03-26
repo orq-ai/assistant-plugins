@@ -20,6 +20,7 @@ Show a quick overview of the user's orq.ai workspace — agents, deployments, pr
 - `experiments` — show only experiments
 - `projects` — show only projects
 - `knowledge` — show only knowledge bases
+- `evaluator` — show only evaluators
 
 If empty, show all sections.
 
@@ -35,6 +36,7 @@ Use the `search_entities` MCP tool and `get_analytics_overview` MCP tool to fetc
 - **Experiments:** `search_entities` with `type: "experiment"`
 - **Projects:** `search_entities` with `type: "project"`
 - **Knowledge:** `search_entities` with `type: "knowledge"`
+- **Evaluator:** `search_entities` with `type: "evaluator"`
 
 Fetch only the sections needed based on arguments. Always fetch analytics overview regardless of section filter.
 
@@ -91,6 +93,12 @@ Manage your workspace at **[Workspace → my.orq.ai](https://my.orq.ai/)**.
 
 - **product-docs** — 120 documents
 - **faq-database** — 45 documents
+
+
+### Evaluators (2)
+
+- **coherence** — active
+- **toxicity** — active
 ```
 
 #### Formatting rules

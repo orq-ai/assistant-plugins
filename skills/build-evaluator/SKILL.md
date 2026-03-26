@@ -81,6 +81,8 @@ Use the orq MCP server (`https://my.orq.ai/v2/mcp`) as the primary interface. Fo
 |------|---------|
 | `create_llm_eval` | Create an LLM evaluator with your judge prompt |
 | `create_python_eval` | Create a Python evaluator for code-based checks |
+| `get_evaluator_llm` | Retrieve an LLM evaluator by key or ID (not supported for jury-mode evaluators) |
+| `get_evaluator_python` | Retrieve a Python evaluator by key or ID |
 | `list_models` | List available judge models |
 
 **HTTP API fallback** (for operations not yet in MCP):
@@ -89,11 +91,6 @@ Use the orq MCP server (`https://my.orq.ai/v2/mcp`) as the primary interface. Fo
 # List existing evaluators (paginated: returns {data: [...], has_more: bool})
 # Use ?limit=N to control page size. If has_more is true, fetch the next page with ?after=<last_id>
 curl -s https://my.orq.ai/v2/evaluators \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" | jq
-
-# Get evaluator details
-curl -s https://my.orq.ai/v2/evaluators/<ID> \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" | jq
 

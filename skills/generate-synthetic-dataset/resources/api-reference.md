@@ -21,6 +21,8 @@ Use the orq MCP server (`https://my.orq.ai/v2/mcp`) as the primary interface. Fo
 | `search_entities` | Find existing datasets (`type: "dataset"`) |
 | `update_datapoint` | Modify existing datapoints (curation) |
 | `delete_datapoints` | Remove datapoints from a dataset (curation) |
+| `get_evaluator_llm` | Retrieve an LLM evaluator to understand dataset requirements |
+| `get_evaluator_python` | Retrieve a Python evaluator to understand dataset requirements |
 
 ## HTTP API
 

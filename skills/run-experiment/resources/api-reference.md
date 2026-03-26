@@ -15,6 +15,9 @@ Use the orq MCP server (`https://my.orq.ai/v2/mcp`) as the primary interface. Fo
 | Tool | Purpose |
 |------|---------|
 | `create_llm_eval` | Create an LLM evaluator |
+| `create_python_eval` | Create a Python evaluator for code-based checks |
+| `get_evaluator_llm` | Retrieve an LLM evaluator by key or ID |
+| `get_evaluator_python` | Retrieve a Python evaluator by key or ID |
 | `list_traces` | List and filter traces for error analysis |
 | `list_spans` | List spans within a trace |
 | `get_span` | Get detailed span information |
@@ -36,11 +39,6 @@ For operations not yet in MCP.
 ```bash
 # List evaluators
 curl -s https://my.orq.ai/v2/evaluators \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" | jq
-
-# Get evaluator details
-curl -s https://my.orq.ai/v2/evaluators/<ID> \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" | jq
 
