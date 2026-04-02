@@ -39,29 +39,63 @@ Before creating a new store:
 
 ## Create and Configure
 
-1. **Create the memory store** with a descriptive key (e.g., `user-preferences`, `conversation-context`). Set appropriate description and configure scope (per-user, per-session, global).
+1. **Create the memory store** with all required parameters:
 
-2. **Set up initial memory structure.** Define what fields/documents the memory store will contain. Create template documents if needed:
+   | Parameter | Required | Description | Example |
+   |-----------|----------|-------------|---------|
+   | `key` | Yes | Unique identifier | `user-preferences` |
+   | `description` | Yes | Purpose of the store | `Stores user preferences across sessions` |
+   | `path` | Yes | Project path | `Default/agents` |
+   | `embedding_config` | Yes | Embedding model config | `{"model": "openai/text-embedding-3-small"}` |
 
-```json
-{
-  "key": "user_profile",
-  "content": {
-    "name": null,
-    "preferences": {
-      "language": "en",
-      "tone": "neutral",
-      "verbosity": "medium"
-    },
-    "facts": [],
-    "last_interaction": null
-  }
-}
-```
+2. **Understand the sub-resource structure:**
+   - A **memory store** contains **memories** (identified by `entity_id` — typically a user ID)
+   - A **memory** contains **documents** (individual pieces of remembered information)
+   - Endpoint pattern: `/v2/memory-stores/{key}/memories/{memory_id}/documents`
+
+3. **Set up initial memories** if needed. Memories are typically created automatically when the agent writes to the store, but you can pre-populate:
+
+   ```json
+   // POST /v2/memory-stores/{key}/memories
+   {
+     "entity_id": "user_12345",
+     "metadata": {
+       "type": "customer",
+       "segment": "premium"
+     }
+   }
+   ```
 
 ## Integrate with Agent
 
-Update agent configuration to include the memory store. Add memory-related instructions to the agent's system prompt:
+To attach a memory store to an agent, you need three things:
+
+1. **Add the store to the agent's `memory_stores` array:**
+   ```json
+   "memory_stores": ["user-preferences"]
+   ```
+
+2. **Add the built-in memory tools to `settings.tools`:**
+   ```json
+   "settings": {
+     "tools": [
+       {"type": "retrieve_memory_stores"},
+       {"type": "query_memory_store"},
+       {"type": "write_memory_store"},
+       {"type": "delete_memory_document"}
+     ]
+   }
+   ```
+
+3. **Include `memory.entity_id` when invoking the agent** to identify whose memory to access:
+   ```json
+   {
+     "message": {"role": "user", "parts": [{"kind": "text", "text": "..."}]},
+     "memory": {"entity_id": "user_12345"}
+   }
+   ```
+
+Add memory-related instructions to the agent's system prompt:
 
 ```
 You have access to a memory store with user preferences and facts.

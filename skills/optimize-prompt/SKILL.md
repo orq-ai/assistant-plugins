@@ -68,18 +68,18 @@ Use the orq MCP server (`https://my.orq.ai/v2/mcp`) as the primary interface. Fo
 
 | Tool | Purpose |
 |------|---------|
-| `search_entities` | Find prompts (`type: "prompts"`) and deployments |
+| `search_entities` | Find prompts (`type: "prompt"`) and deployments |
 
 **HTTP API fallback** (for operations not yet in MCP):
 
 ```bash
 # Get prompt details with versions
-curl -s https://my.orq.ai/v2/prompts/<ID> \
+curl -s https://api.orq.ai/v2/prompts/<ID> \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" | jq
 
 # Create a new prompt version
-curl -s -X POST https://my.orq.ai/v2/prompts/<ID>/versions \
+curl -s -X POST https://api.orq.ai/v2/prompts/<ID>/versions \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"messages": [...], "model": "...", "parameters": {...}}' | jq
@@ -132,7 +132,7 @@ Follow these steps **in order**. Do NOT skip steps.
 
 1. **Find and retrieve the target prompt:**
    - If the user provided prompt text inline (not referencing an orq.ai prompt by name), skip the search and proceed directly to Phase 2 using the provided text. Skip Phase 4 (Apply) unless the user explicitly asks to save it to orq.ai.
-   - Otherwise, use `search_entities` with `type: "prompts"` to find the target prompt
+   - Otherwise, use `search_entities` with `type: "prompt"` to find the target prompt
    - Use HTTP API to get full prompt details including current version text
    - Document: prompt name, current version, system message content, model, parameters
 

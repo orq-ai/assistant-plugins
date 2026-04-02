@@ -88,17 +88,17 @@ Use the orq MCP server (`https://my.orq.ai/v2/mcp`) as the primary interface. Fo
 ```bash
 # List existing evaluators (paginated: returns {data: [...], has_more: bool})
 # Use ?limit=N to control page size. If has_more is true, fetch the next page with ?after=<last_id>
-curl -s https://my.orq.ai/v2/evaluators \
+curl -s https://api.orq.ai/v2/evaluators \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" | jq
 
 # Get evaluator details
-curl -s https://my.orq.ai/v2/evaluators/<ID> \
+curl -s https://api.orq.ai/v2/evaluators/<ID> \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" | jq
 
 # Test-invoke an evaluator against a sample output
-curl -s https://my.orq.ai/v2/evaluators/<ID>/invoke \
+curl -s https://api.orq.ai/v2/evaluators/<ID>/invoke \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"output": "The LLM output to evaluate", "query": "The original input", "reference": "Expected answer"}' | jq
