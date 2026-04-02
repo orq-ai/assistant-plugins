@@ -1,6 +1,10 @@
 ---
 name: build-evaluator
-description: Create validated LLM-as-a-Judge evaluators following best practices — binary Pass/Fail judges with TPR/TNR validation for measuring specific failure modes
+description: >
+  Create validated LLM-as-a-Judge evaluators following best practices — binary
+  Pass/Fail judges with TPR/TNR validation for measuring specific failure modes.
+  Use when you need to automate quality checks, build guardrails, or measure
+  a specific failure mode identified during trace analysis.
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, orq*
 ---
 
@@ -379,4 +383,12 @@ When the user lacks real traces for error analysis:
 4. **Human review** at each stage
 
 This two-step process produces more diverse data than asking an LLM to "generate test cases" directly.
+
+## Upstream Sources
+
+When this skill's content conflicts with observed behavior, resolve in this order:
+
+1. **orq MCP tools** — live API responses are always authoritative (`create_llm_eval`, `create_python_eval`)
+2. **[orq.ai documentation](https://docs.orq.ai)** — official docs for evaluator types, judge prompts, and validation
+3. **This skill file** — may lag behind API or docs changes
 

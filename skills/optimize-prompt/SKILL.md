@@ -1,6 +1,10 @@
 ---
 name: optimize-prompt
-description: Analyze and optimize system prompts using a structured prompting guidelines framework — AI-powered analysis and rewriting
+description: >
+  Analyze and optimize system prompts using a structured prompting guidelines
+  framework — AI-powered analysis and rewriting. Use when a prompt needs
+  improvement, experiment results show quality gaps, or you want a structured
+  review of an existing system prompt.
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, orq*
 ---
 
@@ -208,3 +212,11 @@ After completing this skill, direct the user to the relevant platform page:
 
 - **View/edit the prompt:** `https://my.orq.ai/prompts` — review original and optimized versions
 - **View deployments:** `https://my.orq.ai/deployments` — update deployment to use the optimized prompt
+
+## Upstream Sources
+
+When this skill's content conflicts with observed behavior, resolve in this order:
+
+1. **orq MCP tools** — live API responses are always authoritative (`search_entities`, `get_agent`)
+2. **[orq.ai documentation](https://docs.orq.ai)** — official docs for prompts, deployments, and agents
+3. **This skill file** — may lag behind API or docs changes

@@ -1,6 +1,10 @@
 ---
 name: build-agent
-description: Designs, creates, and configures orq.ai Agents with tools, instructions, knowledge bases, and memory stores. Use when building new agents, attaching KBs or memory, writing system instructions, selecting models, or setting up RAG pipelines.
+description: >
+  Design, create, and configure orq.ai Agents with tools, instructions,
+  knowledge bases, and memory stores. Use when building new agents, attaching
+  KBs or memory, writing system instructions, selecting models, or setting up
+  RAG pipelines.
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, orq*
 ---
 
@@ -262,3 +266,11 @@ After completing this skill, direct the user to:
 - **Tools:** [my.orq.ai](https://my.orq.ai/) — view and edit tool definitions
 - **AI Router:** [my.orq.ai](https://my.orq.ai/) — browse available models
 - **Traces:** [my.orq.ai](https://my.orq.ai/) — inspect agent execution traces
+
+## Upstream Sources
+
+When this skill's content conflicts with observed behavior, resolve in this order:
+
+1. **orq MCP tools** — live API responses are always authoritative (`create_agent`, `get_agent`, `list_models`)
+2. **[orq.ai documentation](https://docs.orq.ai)** — official docs for agent configuration, tools, and model support
+3. **This skill file** — may lag behind API or docs changes

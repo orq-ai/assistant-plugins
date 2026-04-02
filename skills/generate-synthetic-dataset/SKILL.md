@@ -1,6 +1,10 @@
 ---
 name: generate-synthetic-dataset
-description: Generates and curates evaluation datasets — structured generation via dimensions-tuples-NL, quick from description, expansion from existing data, plus dataset maintenance through deduplication, rebalancing, and gap-filling. Use when creating eval data, expanding test coverage, or cleaning datasets.
+description: >
+  Generate and curate evaluation datasets — structured generation via
+  dimensions-tuples-NL, quick from description, expansion from existing data,
+  plus dataset maintenance through deduplication, rebalancing, and gap-filling.
+  Use when creating eval data, expanding test coverage, or cleaning datasets.
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, orq*
 ---
 
@@ -294,3 +298,11 @@ Aim for **at least 3 adversarial test cases per attack vector** relevant to your
 
 - **View datasets:** [my.orq.ai](https://my.orq.ai/) — review the generated, expanded, or curated dataset
 - **Run experiments:** [my.orq.ai](https://my.orq.ai/) — test your pipeline against the new dataset
+
+## Upstream Sources
+
+When this skill's content conflicts with observed behavior, resolve in this order:
+
+1. **orq MCP tools** — live API responses are always authoritative (`create_dataset`, `create_datapoints`)
+2. **[orq.ai documentation](https://docs.orq.ai)** — official docs for dataset formats and management
+3. **This skill file** — may lag behind API or docs changes

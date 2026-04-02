@@ -1,7 +1,11 @@
 ---
 name: run-experiment
-description: Creates and runs orq.ai experiments — compares configurations against datasets using evaluators, analyzes results, and generates prioritized action plans. Use when evaluating LLM agents, deployments, conversations, or RAG pipelines end-to-end.
-allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, mcp__linear-server__*, orq*
+description: >
+  Create and run orq.ai experiments — compare configurations against datasets
+  using evaluators, analyze results, and generate prioritized action plans.
+  Use when evaluating LLM agents, deployments, conversations, or RAG pipelines
+  end-to-end.
+allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, orq*
 ---
 
 # Run Experiment
@@ -82,7 +86,6 @@ Consult these docs as needed:
 ## Prerequisites
 
 - **orq.ai MCP server** connected
-- **Linear MCP server** connected (for filing improvement tickets)
 - A target LLM deployment/agent on orq.ai to evaluate
 
 ---
@@ -244,7 +247,7 @@ Consult these docs as needed:
     - [ ] Evaluator updated (if applicable)
     ```
 
-17. **File tickets.** Detect available PM tools (Linear, Jira, GitHub) via MCP, or ask the user. Options: connected PM tool, markdown file, or skip.
+17. **File tickets.** Ask the user where to track improvements. Options: markdown file, GitHub issues, or skip.
 
     **Ticket structure:**
     ```
@@ -346,3 +349,11 @@ Is the average score above your threshold?
 **Results:** Look at lowest scores first. Slice by category/dimension. Track cost per run. For agents: analyze transition failure matrix. For conversations: check position-dependent degradation. For RAG: check retrieval metrics before generation.
 
 **Tickets:** One ticket per improvement. Block re-run ticket on all improvements. Include evidence and success criteria. Score on impact vs effort.
+
+## Upstream Sources
+
+When this skill's content conflicts with observed behavior, resolve in this order:
+
+1. **orq MCP tools** — live API responses are always authoritative (`create_experiment`, `get_experiment_run`, `list_experiment_runs`)
+2. **[orq.ai documentation](https://docs.orq.ai)** — official docs for experiments, evaluators, and datasets
+3. **This skill file** — may lag behind API or docs changes

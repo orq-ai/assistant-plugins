@@ -1,6 +1,10 @@
 ---
 name: analyze-trace-failures
-description: Read production traces, identify what's failing, build failure taxonomies, and categorize issues using open coding and axial coding methodology
+description: >
+  Read production traces, identify what's failing, and build failure taxonomies
+  using open coding and axial coding methodology. Use when debugging agent or
+  pipeline quality, investigating "why are my outputs bad?", or before building
+  any evaluator — error analysis must come first.
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, orq*
 ---
 
@@ -299,3 +303,11 @@ When analyzing agent traces specifically:
 | Labeling downstream cascading failures | Overstates failure count, leads to wrong fixes | Always find and label the FIRST upstream failure |
 | Building evaluators for every failure mode | Not every failure needs automation | Only automate for persistent generalization failures |
 | Not tracking the transition failure matrix | Multi-step pipeline debugging is guesswork | Map failures to specific state transitions for targeted fixes |
+
+## Upstream Sources
+
+When this skill's content conflicts with observed behavior, resolve in this order:
+
+1. **orq MCP tools** — live API responses are always authoritative (`list_traces`, `get_span`, `get_analytics_overview`)
+2. **[orq.ai documentation](https://docs.orq.ai)** — official docs for traces, evaluators, and platform features
+3. **This skill file** — may lag behind API or docs changes

@@ -1,6 +1,10 @@
 ---
 name: compare-agents
-description: Run cross-framework agent comparisons using evaluatorq from orqkit. Compares any combination of agents (orq.ai, LangGraph, CrewAI, OpenAI Agents SDK, Vercel AI SDK) head-to-head on the same dataset with LLM-as-a-judge scoring. Use when user says "compare agents", "benchmark", "test agents", or wants side-by-side evaluation.
+description: >
+  Run cross-framework agent comparisons using evaluatorq from orqkit — compares
+  any combination of agents (orq.ai, LangGraph, CrewAI, OpenAI Agents SDK,
+  Vercel AI SDK) head-to-head on the same dataset with LLM-as-a-judge scoring.
+  Use when comparing agents, benchmarking, or wanting side-by-side evaluation.
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, orq*
 ---
 
@@ -195,3 +199,12 @@ After running the comparison:
 - **Experiment results:** orq.ai Studio → Your Project → Experiments
 - **Agent details:** orq.ai Studio → Agents
 - **Traces:** orq.ai Studio → Observability → Traces
+
+## Upstream Sources
+
+When this skill's content conflicts with observed behavior, resolve in this order:
+
+1. **[evaluatorq package source](https://github.com/orq-ai/orqkit)** — installed package is authoritative for API, imports, and patterns
+2. **orq MCP tools** — live API responses for agent and dataset operations
+3. **[orq.ai documentation](https://docs.orq.ai)** — official docs for agents and experiments
+4. **This skill file** — may lag behind package or API changes
