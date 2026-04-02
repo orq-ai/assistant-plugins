@@ -16,7 +16,7 @@ Supported comparison modes:
 
 ## Constraints
 
-- **NEVER** create datasets inline in the comparison script — delegate to `generate-synthetic-dataset` skill or use `{ datasetId: "..." }` to load from the platform.
+- **NEVER** create datasets inline in the comparison script — delegate to `generate-synthetic-dataset` skill or use `{ dataset_id: "..." }` (Python) / `{ datasetId: "..." }` (TypeScript) to load from the platform.
 - **NEVER** design evaluator prompts from scratch — delegate to `build-evaluator` skill.
 - **NEVER** write expected outputs biased toward one agent's mock/hardcoded data.
 - **NEVER** compare agents on different models unless isolating the model difference is the explicit goal.

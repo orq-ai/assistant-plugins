@@ -40,6 +40,46 @@ When creating custom code tools for orq agents, the parameter schema **must** in
 
 ---
 
+## orq.ai SDK — Evaluator Invocation
+
+### `orq.evaluators.invoke()` does not exist
+
+The SDK client has no `evaluators` namespace. To invoke an evaluator programmatically, use `orq.evals.invoke()`:
+
+```python
+# Wrong — AttributeError: 'Evaluators' object has no attribute 'invoke'
+result = orq.evaluators.invoke(key="my-eval", inputs={...})
+
+# Correct — use evals.invoke() with the evaluator ID
+result = orq.evals.invoke(
+    id="<EVALUATOR_ID>",
+    query="input text",
+    output="output text",
+    reference="reference text",
+)
+```
+
+Note: `evals.invoke()` takes the evaluator **ID** (not key), and uses `query`/`output`/`reference` as top-level parameters (not an `inputs` dict).
+
+### Response structure is nested
+
+The response from `evals.invoke()` wraps the evaluation result inside `result.value`:
+
+```python
+result = orq.evals.invoke(id="...", query="...", output="...", reference="...")
+
+# Wrong — AttributeError: 'InvokeEvalResponseBodyLLM' has no attribute 'explanation'
+result.explanation
+
+# Correct — value and explanation are nested under result.value
+result.value.value        # bool or number (the evaluator score)
+result.value.explanation  # str (the evaluator reasoning)
+```
+
+The Python SDK import is `from orq_ai_sdk import Orq` (package: `pip install orq-ai-sdk`).
+
+---
+
 ## Evaluator Design
 
 ### Wording bias in evaluator prompts

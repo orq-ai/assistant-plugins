@@ -69,6 +69,61 @@ const myScorer = async ({ data, output }) => ({
 });
 ```
 
+### Invoking an orq.ai Evaluator from a Scorer
+
+To use an orq.ai LLM-as-a-judge evaluator inside a scorer, call `orq.evals.invoke()` with the evaluator's **ID** (not key).
+
+> **Important:** The SDK method is `orq.evals.invoke()`, NOT `orq.evaluators.invoke()`. The `evaluators` namespace does not exist on the SDK client.
+
+**Python:**
+```python
+from orq_ai_sdk import Orq
+from evaluatorq import EvaluationResult
+
+EVALUATOR_ID = "<EVALUATOR_ID>"
+
+async def orq_eval_scorer(params):
+    data: DataPoint = params["data"]
+    output = params["output"]
+
+    orq = Orq(api_key=ORQ_API_KEY, server_url=ORQ_BASE_URL)
+    result = orq.evals.invoke(
+        id=EVALUATOR_ID,
+        query=data.inputs["query"],
+        output=output["response"],
+        reference=data.expected_output or "",
+    )
+
+    return EvaluationResult(
+        value=1.0 if result.value.value else 0.0,
+        explanation=result.value.explanation or "",
+    )
+```
+
+**TypeScript:**
+```typescript
+import { Orq } from "@orq-ai/node";
+
+const EVALUATOR_ID = "<EVALUATOR_ID>";
+
+const orqEvalScorer = async ({ data, output }) => {
+  const orq = new Orq({ apiKey: process.env.ORQ_API_KEY! });
+  const result = await orq.evals.invoke({
+    id: EVALUATOR_ID,
+    requestBody: {
+      query: data.inputs.query,
+      output: output.response,
+      reference: data.expected_output ?? "",
+    },
+  });
+
+  return {
+    value: result.value.value ? 1.0 : 0.0,
+    explanation: result.value.explanation ?? "",
+  };
+};
+```
+
 ### Running evaluatorq
 
 **Python:**
@@ -122,6 +177,8 @@ async def evaluatorq(
     description: str | None = None,
 ) -> EvaluatorqResult
 ```
+
+> **Python supports `{"dataset_id": "..."}`** (snake_case) to fetch data from the orq.ai platform. Note: use `dataset_id`, NOT `datasetId`.
 
 ### TypeScript
 
