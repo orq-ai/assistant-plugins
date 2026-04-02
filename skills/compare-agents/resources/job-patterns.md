@@ -37,6 +37,8 @@ async def orq_agent_job(data: DataPoint, row: int):
     }
 ```
 
+> **Import:** Use `from orq_ai_sdk import Orq` (package: `pip install orq-ai-sdk`). The module name is `orq_ai_sdk`, NOT `orq`.
+
 ### TypeScript
 
 ```typescript
