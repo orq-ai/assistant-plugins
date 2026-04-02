@@ -4,7 +4,9 @@ description: >
   Create validated LLM-as-a-Judge evaluators following best practices — binary
   Pass/Fail judges with TPR/TNR validation for measuring specific failure modes.
   Use when you need to automate quality checks, build guardrails, or measure
-  a specific failure mode identified during trace analysis.
+  a specific failure mode identified during trace analysis. Do NOT use when
+  failures are fixable with prompt changes (use optimize-prompt) or when failure
+  modes are unknown (use analyze-trace-failures first).
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, orq*
 ---
 
@@ -38,6 +40,13 @@ Evaluator Build Progress:
 - [ ] Phase 6: Create on orq.ai
 - [ ] Phase 7: Set up ongoing maintenance
 ```
+
+## Done When
+
+- Judge prompt passes all items in the Judge Prompt Quality Checklist (Phase 6 reference)
+- TPR > 90% AND TNR > 90% on held-out test set (100+ labeled examples)
+- Evaluator created on orq.ai via `create_llm_eval` or `create_python_eval`
+- Evaluator documented: criterion, type, pass/fail definitions, TPR/TNR, known limitations
 
 **Companion skills:**
 - `run-experiment` — run experiments using the evaluators you build
@@ -331,16 +340,16 @@ Your JSON Evaluation:
 
 When building evaluators, STOP the user if they attempt any of these:
 
-| Anti-Pattern | Why It's Wrong | What to Do Instead |
-|---|---|---|
-| Using 1-10 or 1-5 scales | Introduces subjectivity, requires more data, hides uncertainty | Use binary Pass/Fail per criterion |
-| Bundling multiple criteria in one judge | Ambiguous, hard to debug, low agreement | One evaluator per failure mode |
-| Using generic metrics (helpfulness, coherence, BERTScore, ROUGE) | "Creates an illusion of confidence that is unjustified" | Build application-specific criteria from error analysis |
-| Skipping judge validation | Judge may not reflect actual quality criteria | Measure TPR/TNR on held-out labeled test set |
-| Using off-the-shelf eval tools uncritically | "All you get is you don't know what they actually do" | Build custom evaluators from observed failure modes |
-| Building evaluators before fixing prompts | Many failures are specification failures, not generalization | Fix obvious prompt gaps first |
-| Using dev set accuracy as official metric | Overfitting during iterative refinement | Report accuracy ONLY from held-out test set |
-| Having judge see its own few-shot examples in eval | Data contamination inflates metrics | Strict train/dev/test separation |
+| Anti-Pattern | What to Do Instead |
+|---|---|
+| Using 1-10 or 1-5 scales | Binary Pass/Fail per criterion — scales introduce subjectivity and require more data |
+| Bundling multiple criteria in one judge | One evaluator per failure mode — bundled judges are ambiguous and hard to debug |
+| Using generic metrics (helpfulness, coherence, BERTScore, ROUGE) | Build application-specific criteria from error analysis |
+| Skipping judge validation | Measure TPR/TNR on held-out labeled test set (100+ examples) |
+| Using off-the-shelf eval tools uncritically | Build custom evaluators from observed failure modes |
+| Building evaluators before fixing prompts | Fix obvious prompt gaps first — many failures are specification failures |
+| Using dev set accuracy as official metric | Report accuracy ONLY from held-out test set |
+| Having judge see its own few-shot examples in eval | Strict train/dev/test separation — contamination inflates metrics |
 
 ## Reference: Judge Prompt Quality Checklist
 
@@ -384,11 +393,14 @@ When the user lacks real traces for error analysis:
 
 This two-step process produces more diverse data than asking an LLM to "generate test cases" directly.
 
-## Upstream Sources
+## Documentation & Resolution
 
-When this skill's content conflicts with observed behavior, resolve in this order:
+When you need to look up orq.ai platform details, check in this order:
 
-1. **orq MCP tools** — live API responses are always authoritative (`create_llm_eval`, `create_python_eval`)
-2. **[orq.ai documentation](https://docs.orq.ai)** — official docs for evaluator types, judge prompts, and validation
-3. **This skill file** — may lag behind API or docs changes
+1. **orq MCP tools** — query live data first (`create_llm_eval`, `create_python_eval`); API responses are always authoritative
+2. **orq.ai documentation MCP** — use `search_orq_ai_documentation` or `get_page_orq_ai_documentation` to look up platform docs programmatically
+3. **[docs.orq.ai](https://docs.orq.ai)** — browse official documentation directly
+4. **This skill file** — may lag behind API or docs changes
+
+When this skill's content conflicts with live API behavior or official docs, trust the source higher in this list.
 

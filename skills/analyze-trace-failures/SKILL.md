@@ -4,7 +4,9 @@ description: >
   Read production traces, identify what's failing, and build failure taxonomies
   using open coding and axial coding methodology. Use when debugging agent or
   pipeline quality, investigating "why are my outputs bad?", or before building
-  any evaluator — error analysis must come first.
+  any evaluator — error analysis must come first. Do NOT use when you already
+  have identified failure modes and need evaluators (use build-evaluator) or
+  datasets (use generate-synthetic-dataset).
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, orq*
 ---
 
@@ -35,6 +37,14 @@ Trace Analysis Progress:
 - [ ] Phase 5: Produce error analysis report and hand off
 - [ ] Phase 6: Iterate (2-3 rounds)
 ```
+
+## Done When
+
+- 50+ traces read with freeform annotations
+- 20+ bad traces annotated with specific failure descriptions
+- 4-8 non-overlapping, actionable failure modes defined with Pass/Fail criteria
+- Taxonomy stable across 2+ coding rounds (no new categories emerging)
+- Error analysis report produced with failure rates, classifications, and recommended next steps
 
 **Companion skills:**
 - `build-evaluator` — build automated evaluators for persistent failure modes
@@ -293,21 +303,24 @@ When analyzing agent traces specifically:
 
 ## Common Pitfalls
 
-| Pitfall | Why It's Wrong | What to Do Instead |
-|---------|---------------|-------------------|
-| Skipping open coding | Jumping to generic categories from LLM research misses application-specific failures | Read traces, write freeform notes, let patterns emerge |
-| Using Likert scales for annotation | Introduces noise, slower, lower inter-annotator agreement | Binary pass/fail per specific failure mode |
-| Freezing the taxonomy too early | New traces reveal edge cases needing definition refinement | Keep iterating for 2-3 rounds |
-| Excluding domain experts | Non-experts produce superficial/incorrect labels | The person who knows "good output" best should do the analysis |
-| Unrepresentative trace sample | Only looking at recent/easy/familiar traces misses real diversity | Sample across time, features, user types, difficulty levels |
-| Labeling downstream cascading failures | Overstates failure count, leads to wrong fixes | Always find and label the FIRST upstream failure |
-| Building evaluators for every failure mode | Not every failure needs automation | Only automate for persistent generalization failures |
-| Not tracking the transition failure matrix | Multi-step pipeline debugging is guesswork | Map failures to specific state transitions for targeted fixes |
+| Pitfall | What to Do Instead |
+|---------|-------------------|
+| Skipping open coding — jumping to generic categories | Read traces, write freeform notes, let patterns emerge from data |
+| Using Likert scales for annotation | Binary pass/fail per specific failure mode |
+| Freezing the taxonomy too early | Keep iterating for 2-3 rounds — new traces reveal edge cases |
+| Excluding domain experts from analysis | The person who knows "good output" best should do the analysis |
+| Unrepresentative trace sample | Sample across time, features, user types, difficulty levels |
+| Labeling downstream cascading failures | Always find and label the FIRST upstream failure |
+| Building evaluators for every failure mode | Only automate for persistent generalization failures |
+| Not tracking the transition failure matrix | Map failures to specific state transitions for targeted fixes |
 
-## Upstream Sources
+## Documentation & Resolution
 
-When this skill's content conflicts with observed behavior, resolve in this order:
+When you need to look up orq.ai platform details, check in this order:
 
-1. **orq MCP tools** — live API responses are always authoritative (`list_traces`, `get_span`, `get_analytics_overview`)
-2. **[orq.ai documentation](https://docs.orq.ai)** — official docs for traces, evaluators, and platform features
-3. **This skill file** — may lag behind API or docs changes
+1. **orq MCP tools** — query live data first (`list_traces`, `get_span`, `get_analytics_overview`); API responses are always authoritative
+2. **orq.ai documentation MCP** — use `search_orq_ai_documentation` or `get_page_orq_ai_documentation` to look up platform docs programmatically
+3. **[docs.orq.ai](https://docs.orq.ai)** — browse official documentation directly
+4. **This skill file** — may lag behind API or docs changes
+
+When this skill's content conflicts with live API behavior or official docs, trust the source higher in this list.

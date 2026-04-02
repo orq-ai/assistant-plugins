@@ -4,7 +4,9 @@ description: >
   Analyze and optimize system prompts using a structured prompting guidelines
   framework — AI-powered analysis and rewriting. Use when a prompt needs
   improvement, experiment results show quality gaps, or you want a structured
-  review of an existing system prompt.
+  review of an existing system prompt. Do NOT use when production traces show
+  failures (use analyze-trace-failures first to identify patterns). Do NOT use
+  to build evaluators (use build-evaluator).
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, orq*
 ---
 
@@ -33,6 +35,12 @@ Prompt Optimization Progress:
 - [ ] Phase 3: Rewrite with accepted suggestions
 - [ ] Phase 4: Apply as new version on orq.ai
 ```
+
+## Done When
+
+- User has reviewed and approved the diff between original and optimized prompt
+- New prompt version created on orq.ai (original preserved for rollback)
+- `run-experiment` recommended to validate the optimization with A/B testing
 
 **Companion skills:**
 - `run-experiment` — validate optimized prompts with A/B experiments
@@ -197,14 +205,14 @@ Follow these steps **in order**. Do NOT skip steps.
 
 ## Anti-Patterns
 
-| Anti-Pattern | Why It's Wrong | What to Do Instead |
-|---|---|---|
-| Applying optimized prompt without review | Rewriting can change intent or remove important constraints | Always show a diff and get user approval |
-| Rewriting without understanding the issues | Blind rewriting can make prompts worse | Run analysis first (unless user has specific instructions) |
-| Running the optimizer repeatedly on the same prompt | Each pass can drift further from the original intent | Optimize once, validate, then iterate if needed |
-| Not preserving the original version | No rollback path if the optimization regresses | Always create a new version, keep the original intact |
-| Changing what the prompt does instead of how it's expressed | Optimization should improve clarity, not change behavior | Preserve intent — improve expression only |
-| Skipping validation after optimization | No way to know if the optimization actually improved things | Use `run-experiment` to compare original vs optimized |
+| Anti-Pattern | What to Do Instead |
+|---|---|
+| Applying optimized prompt without review | Always show a diff and get user approval — rewriting can change intent |
+| Rewriting without understanding the issues | Run analysis first (unless user has specific instructions) |
+| Running the optimizer repeatedly on the same prompt | Optimize once, validate, then iterate — each pass drifts from original intent |
+| Not preserving the original version | Always create a new version, keep the original intact for rollback |
+| Changing what the prompt does instead of how it's expressed | Preserve intent — improve expression only, not behavior |
+| Skipping validation after optimization | Use `run-experiment` to compare original vs optimized |
 
 ## Open in orq.ai
 
@@ -213,10 +221,13 @@ After completing this skill, direct the user to the relevant platform page:
 - **View/edit the prompt:** `https://my.orq.ai/prompts` — review original and optimized versions
 - **View deployments:** `https://my.orq.ai/deployments` — update deployment to use the optimized prompt
 
-## Upstream Sources
+## Documentation & Resolution
 
-When this skill's content conflicts with observed behavior, resolve in this order:
+When you need to look up orq.ai platform details, check in this order:
 
-1. **orq MCP tools** — live API responses are always authoritative (`search_entities`, `get_agent`)
-2. **[orq.ai documentation](https://docs.orq.ai)** — official docs for prompts, deployments, and agents
-3. **This skill file** — may lag behind API or docs changes
+1. **orq MCP tools** — query live data first (`search_entities`, `get_agent`); API responses are always authoritative
+2. **orq.ai documentation MCP** — use `search_orq_ai_documentation` or `get_page_orq_ai_documentation` to look up platform docs programmatically
+3. **[docs.orq.ai](https://docs.orq.ai)** — browse official documentation directly
+4. **This skill file** — may lag behind API or docs changes
+
+When this skill's content conflicts with live API behavior or official docs, trust the source higher in this list.

@@ -5,6 +5,9 @@ description: >
   dimensions-tuples-NL, quick from description, expansion from existing data,
   plus dataset maintenance through deduplication, rebalancing, and gap-filling.
   Use when creating eval data, expanding test coverage, or cleaning datasets.
+  Do NOT use when sufficient real production data exists (use
+  analyze-trace-failures instead). Do NOT use for evaluator creation (use
+  build-evaluator).
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, orq*
 ---
 
@@ -33,6 +36,22 @@ You are an **orq.ai dataset engineer**. Your job is to generate high-quality, di
 - `analyze-trace-failures` — identify failure modes that inform dataset design
 - `optimize-prompt` — iterate on prompts based on experiment results
 
+## When to use
+
+- "generate test data", "create a dataset", "I need eval data"
+- User needs to create an evaluation dataset from scratch
+- User wants to expand an existing dataset with more diversity
+- User wants to clean, deduplicate, or rebalance a dataset
+- User needs adversarial test cases for an agent or pipeline
+- Before running experiments when no production data exists
+
+## When NOT to use
+
+- **Have real production traces?** → Use `analyze-trace-failures` to work with real data first
+- **Need to build an evaluator?** → Use `build-evaluator`
+- **Want to run an experiment?** → Use `run-experiment` (but create the dataset first)
+- **Need to optimize a prompt?** → Use `optimize-prompt`
+
 ## Workflow Checklist
 
 Choose the appropriate mode, then copy and track:
@@ -46,6 +65,14 @@ Dataset Generation Progress:
 - [ ] Create / update on orq.ai
 - [ ] Verify coverage and balance
 ```
+
+## Done When
+
+- Every dimension value appears in 2+ datapoints, no value dominates >30%
+- 15-20% of datapoints are adversarial test cases
+- All datapoints reviewed by user (no unreviewed generated data)
+- Dataset created on orq.ai with correct structure (messages, inputs, expected_output)
+- Coverage and balance verified — ready for `run-experiment`
 
 ## Resources
 
@@ -299,10 +326,13 @@ Aim for **at least 3 adversarial test cases per attack vector** relevant to your
 - **View datasets:** [my.orq.ai](https://my.orq.ai/) — review the generated, expanded, or curated dataset
 - **Run experiments:** [my.orq.ai](https://my.orq.ai/) — test your pipeline against the new dataset
 
-## Upstream Sources
+## Documentation & Resolution
 
-When this skill's content conflicts with observed behavior, resolve in this order:
+When you need to look up orq.ai platform details, check in this order:
 
-1. **orq MCP tools** — live API responses are always authoritative (`create_dataset`, `create_datapoints`)
-2. **[orq.ai documentation](https://docs.orq.ai)** — official docs for dataset formats and management
-3. **This skill file** — may lag behind API or docs changes
+1. **orq MCP tools** — query live data first (`create_dataset`, `create_datapoints`); API responses are always authoritative
+2. **orq.ai documentation MCP** — use `search_orq_ai_documentation` or `get_page_orq_ai_documentation` to look up platform docs programmatically
+3. **[docs.orq.ai](https://docs.orq.ai)** — browse official documentation directly
+4. **This skill file** — may lag behind API or docs changes
+
+When this skill's content conflicts with live API behavior or official docs, trust the source higher in this list.

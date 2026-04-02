@@ -4,7 +4,9 @@ description: >
   Design, create, and configure orq.ai Agents with tools, instructions,
   knowledge bases, and memory stores. Use when building new agents, attaching
   KBs or memory, writing system instructions, selecting models, or setting up
-  RAG pipelines.
+  RAG pipelines. Do NOT use for debugging existing agents (use
+  analyze-trace-failures) or comparing agents across frameworks (use
+  compare-agents).
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, orq*
 ---
 
@@ -34,6 +36,21 @@ You are an **orq.ai agent architect**. Your job is to design, create, and config
 - `generate-synthetic-dataset` — create test datasets for agent evaluation
 - `optimize-prompt` — improve agent system instructions and prompt quality
 
+## When to use
+
+- "build an agent", "create a new agent", "set up an agent"
+- User needs to configure tools, instructions, KB, or memory for an agent
+- User wants to select a model for a new agent
+- User wants to wire a Knowledge Base or Memory Store into an agent
+- User is building a RAG pipeline with agent orchestration
+
+## When NOT to use
+
+- **Agent failing in production?** → Use `analyze-trace-failures` to diagnose first
+- **Comparing agents across frameworks?** → Use `compare-agents`
+- **Running evaluations on an existing agent?** → Use `run-experiment`
+- **Need to improve an agent's prompt?** → Use `optimize-prompt`
+
 ## Workflow Checklist
 
 Copy this to track progress:
@@ -49,6 +66,15 @@ Agent Build Progress:
 - [ ] Phase 6: Create and verify the agent
 - [ ] Phase 7: Test edge cases and iterate
 ```
+
+## Done When
+
+- Agent created and verified via `get_agent` MCP tool — all fields match intent
+- System instructions follow the template structure (role, task, constraints, output format)
+- All tools have precise descriptions with when-to-use AND when-NOT-to-use
+- KB retrieval tested (if applicable) — relevant chunks returned for sample queries
+- Memory store configured and tested (if applicable)
+- Agent passes basic test scenarios: tool selection, ambiguous input, error recovery, boundary enforcement
 
 ## Resources
 
@@ -267,10 +293,13 @@ After completing this skill, direct the user to:
 - **AI Router:** [my.orq.ai](https://my.orq.ai/) — browse available models
 - **Traces:** [my.orq.ai](https://my.orq.ai/) — inspect agent execution traces
 
-## Upstream Sources
+## Documentation & Resolution
 
-When this skill's content conflicts with observed behavior, resolve in this order:
+When you need to look up orq.ai platform details, check in this order:
 
-1. **orq MCP tools** — live API responses are always authoritative (`create_agent`, `get_agent`, `list_models`)
-2. **[orq.ai documentation](https://docs.orq.ai)** — official docs for agent configuration, tools, and model support
-3. **This skill file** — may lag behind API or docs changes
+1. **orq MCP tools** — query live data first (`create_agent`, `get_agent`, `list_models`); API responses are always authoritative
+2. **orq.ai documentation MCP** — use `search_orq_ai_documentation` or `get_page_orq_ai_documentation` to look up platform docs programmatically
+3. **[docs.orq.ai](https://docs.orq.ai)** — browse official documentation directly
+4. **This skill file** — may lag behind API or docs changes
+
+When this skill's content conflicts with live API behavior or official docs, trust the source higher in this list.

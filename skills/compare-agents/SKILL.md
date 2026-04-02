@@ -5,6 +5,8 @@ description: >
   any combination of agents (orq.ai, LangGraph, CrewAI, OpenAI Agents SDK,
   Vercel AI SDK) head-to-head on the same dataset with LLM-as-a-judge scoring.
   Use when comparing agents, benchmarking, or wanting side-by-side evaluation.
+  Do NOT use when comparing only orq.ai configurations with no external agents
+  (use run-experiment instead).
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, orq*
 ---
 
@@ -50,6 +52,13 @@ Agent Comparison Progress:
 - [ ] Phase 4: Generate comparison script
 - [ ] Phase 5: Run and view results in orq.ai
 ```
+
+## Done When
+
+- All agents independently invocable and verified before the full experiment
+- Experiment completed and results visible in the orq.ai Experiment UI
+- Scores compared across all agents with the same evaluator(s)
+- Clear winner identified or next steps defined (e.g., deeper investigation with `analyze-trace-failures`)
 
 ## When to use
 
@@ -200,11 +209,14 @@ After running the comparison:
 - **Agent details:** orq.ai Studio → Agents
 - **Traces:** orq.ai Studio → Observability → Traces
 
-## Upstream Sources
+## Documentation & Resolution
 
-When this skill's content conflicts with observed behavior, resolve in this order:
+When you need to look up orq.ai platform details, check in this order:
 
 1. **[evaluatorq package source](https://github.com/orq-ai/orqkit)** — installed package is authoritative for API, imports, and patterns
-2. **orq MCP tools** — live API responses for agent and dataset operations
-3. **[orq.ai documentation](https://docs.orq.ai)** — official docs for agents and experiments
-4. **This skill file** — may lag behind package or API changes
+2. **orq MCP tools** — query live data for agent and dataset operations; API responses are always authoritative
+3. **orq.ai documentation MCP** — use `search_orq_ai_documentation` or `get_page_orq_ai_documentation` to look up platform docs programmatically
+4. **[docs.orq.ai](https://docs.orq.ai)** — browse official documentation directly
+5. **This skill file** — may lag behind package, API, or docs changes
+
+When this skill's content conflicts with live API behavior or official docs, trust the source higher in this list.

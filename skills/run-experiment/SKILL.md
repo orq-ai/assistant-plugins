@@ -4,7 +4,8 @@ description: >
   Create and run orq.ai experiments — compare configurations against datasets
   using evaluators, analyze results, and generate prioritized action plans.
   Use when evaluating LLM agents, deployments, conversations, or RAG pipelines
-  end-to-end.
+  end-to-end. Do NOT use without a dataset and evaluators. Do NOT use for
+  cross-framework comparisons with external agents (use compare-agents).
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, orq*
 ---
 
@@ -33,6 +34,23 @@ You are an **orq.ai evaluation engineer**. Your job is to design, execute, and a
 - `generate-synthetic-dataset` — generate diverse test scenarios
 - `optimize-prompt` — analyze and rewrite prompts using a structured guidelines framework
 
+## When to use
+
+- "run an experiment", "evaluate my agent", "measure quality"
+- User has a dataset and evaluators ready to test
+- User wants to compare prompt variations or model configurations
+- User wants to A/B test an optimization
+- User needs to measure improvements after prompt or agent changes
+- User wants end-to-end evaluation of agents, deployments, conversations, or RAG pipelines
+
+## When NOT to use
+
+- **No dataset yet?** → Use `generate-synthetic-dataset` first
+- **No evaluators yet?** → Use `build-evaluator` first
+- **Don't know what's failing?** → Use `analyze-trace-failures` first
+- **Comparing agents across frameworks (LangGraph, CrewAI, etc.)?** → Use `compare-agents`
+- **Just need to optimize a prompt?** → Use `optimize-prompt`
+
 ## Workflow Checklist
 
 Copy this to track progress:
@@ -45,6 +63,14 @@ Experiment Progress:
 - [ ] Phase 4: Act — analyze results, classify failures, file tickets
 - [ ] Phase 5: Re-measure — re-run after improvements
 ```
+
+## Done When
+
+- Experiment completed with results visible in orq.ai Experiment UI
+- All P0 improvements from the action plan implemented and re-measured
+- No regressions from previous run (or regressions documented and accepted)
+- Action plan delivered with prioritized improvements (P0/P1/P2)
+- Tickets filed (if requested) with evidence and success criteria
 
 ## Specialized Methodology
 
@@ -350,10 +376,13 @@ Is the average score above your threshold?
 
 **Tickets:** One ticket per improvement. Block re-run ticket on all improvements. Include evidence and success criteria. Score on impact vs effort.
 
-## Upstream Sources
+## Documentation & Resolution
 
-When this skill's content conflicts with observed behavior, resolve in this order:
+When you need to look up orq.ai platform details, check in this order:
 
-1. **orq MCP tools** — live API responses are always authoritative (`create_experiment`, `get_experiment_run`, `list_experiment_runs`)
-2. **[orq.ai documentation](https://docs.orq.ai)** — official docs for experiments, evaluators, and datasets
-3. **This skill file** — may lag behind API or docs changes
+1. **orq MCP tools** — query live data first (`create_experiment`, `get_experiment_run`, `list_experiment_runs`); API responses are always authoritative
+2. **orq.ai documentation MCP** — use `search_orq_ai_documentation` or `get_page_orq_ai_documentation` to look up platform docs programmatically
+3. **[docs.orq.ai](https://docs.orq.ai)** — browse official documentation directly
+4. **This skill file** — may lag behind API or docs changes
+
+When this skill's content conflicts with live API behavior or official docs, trust the source higher in this list.
