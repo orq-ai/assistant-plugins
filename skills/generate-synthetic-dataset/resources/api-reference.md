@@ -10,7 +10,7 @@ MCP tools and HTTP API endpoints used by the generate-synthetic-dataset skill.
 
 ## MCP Tools
 
-Use the orq MCP server (`https://api.orq.ai/v2/mcp`) as the primary interface. For operations not yet available via MCP, use the HTTP API as fallback.
+Use the orq MCP server (`https://my.orq.ai/v2/mcp`) as the primary interface. For operations not yet available via MCP, use the HTTP API as fallback.
 
 | Tool | Purpose |
 |------|---------|

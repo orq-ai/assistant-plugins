@@ -38,7 +38,7 @@ Supported comparison modes:
 - `build-evaluator` — design the LLM-as-a-judge evaluator
 - `run-experiment` — run orq.ai-native experiments (when no external agents are involved)
 - `build-agent` — create orq.ai agents to include in comparisons
-- `setup-observability` — instrument agents for tracing
+- `analyze-trace-failures` — diagnose agent failures and instrument tracing
 
 ## Workflow Checklist
 

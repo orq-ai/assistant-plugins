@@ -69,7 +69,7 @@ curl -s -X PATCH https://api.orq.ai/v2/agents/<KEY> \
 curl -s -X PATCH https://api.orq.ai/v2/agents/<KEY> \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model": "openai/gpt-4.1"}' | jq
+  -d '{"model": {"id": "openai/gpt-4.1"}}' | jq
 ```
 
 ### Agent Responses
@@ -122,7 +122,7 @@ curl -s https://api.orq.ai/v2/tools \
   -X POST \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"key": "tool-key", "description": "Tool description", "type": "function", "function": {"name": "tool_name", "parameters": {"type": "object", "properties": {}}}}' | jq
+  -d '{"key": "tool-key", "description": "Tool description", "path": "Default/tools", "type": "function", "function": {"name": "tool_name", "parameters": {"type": "object", "properties": {}}}}' | jq
 ```
 
 ### Evaluators
@@ -170,13 +170,13 @@ curl -s -X DELETE https://api.orq.ai/v2/knowledge/<KNOWLEDGE_ID> \
   -H "Authorization: Bearer $ORQ_API_KEY"
 
 # Search a Knowledge Base
-curl -s https://api.orq.ai/v2/knowledge/<KNOWLEDGE_ID>/search \
+curl -s -X POST https://api.orq.ai/v2/knowledge/<KNOWLEDGE_ID>/search \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"query": "search query"}' | jq .
 
 # Search with metadata filters
-curl -s https://api.orq.ai/v2/knowledge/<KNOWLEDGE_ID>/search \
+curl -s -X POST https://api.orq.ai/v2/knowledge/<KNOWLEDGE_ID>/search \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -272,11 +272,7 @@ curl -s https://api.orq.ai/v2/memory-stores/<KEY>/memories \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-  "entity_id": "user_12345",
-  "metadata": {
-    "type": "customer",
-    "segment": "premium"
-  }
+  "entity_id": "user_12345"
 }' | jq
 
 # Create a memory document (sub-resource of memory)
@@ -284,7 +280,7 @@ curl -s https://api.orq.ai/v2/memory-stores/<KEY>/memories/<MEMORY_ID>/documents
   -X POST \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"content": "User prefers casual tone and English language"}' | jq
+  -d '{"text": "User prefers casual tone and English language"}' | jq
 
 # List memories in a store
 curl -s https://api.orq.ai/v2/memory-stores/<KEY>/memories \

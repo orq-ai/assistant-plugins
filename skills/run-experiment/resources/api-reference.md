@@ -10,7 +10,7 @@ MCP tools and HTTP API endpoints used by the run-experiment skill.
 
 ## MCP Tools
 
-Use the orq MCP server (`https://api.orq.ai/v2/mcp`) as the primary interface. For operations not yet available via MCP, use the HTTP API as fallback.
+Use the orq MCP server (`https://my.orq.ai/v2/mcp`) as the primary interface. For operations not yet available via MCP, use the HTTP API as fallback.
 
 | Tool | Purpose |
 |------|---------|
@@ -113,7 +113,7 @@ curl -s https://api.orq.ai/v2/memory-stores/<STORE_KEY>/memories \
   -X POST \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"entity_id": "user_123", "metadata": {"source": "session_1"}}' | jq
+  -d '{"entity_id": "user_123"}' | jq
 
 # List memories in a store
 curl -s https://api.orq.ai/v2/memory-stores/<STORE_KEY>/memories \
@@ -139,12 +139,12 @@ curl -s https://api.orq.ai/v2/knowledge \
   -X POST \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"key": "product-docs", "embedding_model": "openai/text-embedding-3-small", "top_k": 5, "threshold": 0.7}' | jq
+  -d '{"key": "product-docs", "type": "internal", "path": "Default/knowledge", "embedding_model": "openai/text-embedding-3-small"}' | jq
 
 # Search a knowledge base (retrieval-only evaluation)
 curl -s https://api.orq.ai/v2/knowledge/<ID>/search \
   -X POST \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"query": "How do I reset my password?", "limit": 10, "threshold": 0.8}' | jq
+  -d '{"query": "How do I reset my password?", "top_k": 10, "threshold": 0.8}' | jq
 ```

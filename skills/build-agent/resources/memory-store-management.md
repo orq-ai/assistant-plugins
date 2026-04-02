@@ -58,11 +58,7 @@ Before creating a new store:
    ```json
    // POST /v2/memory-stores/{key}/memories
    {
-     "entity_id": "user_12345",
-     "metadata": {
-       "type": "customer",
-       "segment": "premium"
-     }
+     "entity_id": "user_12345"
    }
    ```
 

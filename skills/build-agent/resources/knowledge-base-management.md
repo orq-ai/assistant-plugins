@@ -9,7 +9,8 @@ Complete guide for creating, populating, searching, and managing orq.ai Knowledg
 - Chunking strategies
 - Add chunks with metadata
 - Search with metadata filters
-- Connect KB to prompts
+- Connect KB to an Agent
+- Connect KB to Deployments/Prompts
 - Update and delete
 - Common pitfalls
 
@@ -98,7 +99,7 @@ Filter operators:
 
 ## Connect KB to an Agent
 
-To attach a Knowledge Base to an agent, you need two things:
+To attach a Knowledge Base to an agent:
 
 1. **Add the KB to the agent's `knowledge_bases` array:**
    ```json
