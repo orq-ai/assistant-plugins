@@ -57,7 +57,7 @@ Different wording is acceptable as long as the facts match."
 
 ### Same model for fair comparison
 
-When comparing frameworks, ensure all agents use the same underlying model (e.g., `openai/gpt-4o-mini`). Otherwise you're measuring model differences, not framework differences.
+When comparing frameworks, ensure all agents use the same underlying model (e.g., `openai/gpt-5-mini`). Otherwise you're measuring model differences, not framework differences.
 
 ---
 

@@ -42,9 +42,9 @@ Models enabled in your workspace. Add providers or enable more models at **[AI R
 
 ### OpenAI (6)
 
-- **gpt-4o** — chat · 128k context
-- **gpt-4o-mini** — chat · 128k context
-- **o1** — chat · 200k context
+- **gpt-5** — chat · 1M context
+- **gpt-5-mini** — chat · 1M context
+- **gpt-4.1** — chat · 1M context
 - **text-embedding-3-large** — embedding · 3072 dims
 - **text-embedding-3-small** — embedding · 1536 dims
 - ... and 1 more

@@ -41,7 +41,7 @@ curl -s -X POST https://api.orq.ai/v2/agents \
   "description": "A helpful assistant",
   "instructions": "Be helpful and concise",
   "path": "Default/agents",
-  "model": {"id": "openai/gpt-4o"},
+  "model": {"id": "openai/gpt-4.1"},
   "settings": {
     "max_iterations": 10,
     "max_execution_time": 300,
@@ -69,7 +69,7 @@ curl -s -X PATCH https://api.orq.ai/v2/agents/<KEY> \
 curl -s -X PATCH https://api.orq.ai/v2/agents/<KEY> \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model": "openai/gpt-4o"}' | jq
+  -d '{"model": "openai/gpt-4.1"}' | jq
 ```
 
 ### Agent Responses

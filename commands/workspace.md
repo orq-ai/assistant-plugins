@@ -61,9 +61,9 @@ Manage your workspace at **[Workspace → my.orq.ai](https://my.orq.ai/)**.
 
 ### Agents (3)
 
-- **customer-support-bot** — gpt-4o · 2 tools · 1 KB
+- **customer-support-bot** — gpt-5-mini · 2 tools · 1 KB
 - **onboarding-agent** — claude-sonnet · 3 tools
-- **internal-qa** — gpt-4o-mini
+- **internal-qa** — gpt-4.1-mini
 
 ### Deployments (5)
 
