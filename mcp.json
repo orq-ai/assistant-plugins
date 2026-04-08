@@ -1,1 +1,11 @@
-.mcp.json
+{
+  "mcpServers": {
+    "orq-workspace": {
+      "type": "http",
+      "url": "https://my.orq.ai/v2/mcp",
+      "headers": {
+        "Authorization": "Bearer ${ORQ_API_KEY}"
+      }
+    }
+  }
+}
