@@ -10,5 +10,6 @@
   "repository": "https://github.com/orq-ai/orq-skills",
   "license": "MIT",
   "keywords": ["orq", "llm", "agents", "prompts", "deployments", "evaluation", "monitoring", "rag", "experiments", "traces"],
-  "mcpServers": ".mcp.json"
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
 }
