@@ -30,15 +30,6 @@ Built on the [Agent Skills](https://agentskills.io/home#adoption) standard forma
 
 Installs skills, commands, agents, **and the MCP server** in one go.
 
-# Connect the MCP server (run once)
-claude mcp add --transport http orq-workspace https://my.orq.ai/v2/mcp \
-  --header "Authorization: Bearer ${ORQ_API_KEY}"
-# The .mcp.json at the repo root also configures MCP for Codex and Cursor plugins.
-```
-
-### Install orq-skills
-
-**Option 1: Claude Code plugin (recommended)** — installs skills, commands, and agents:
 ```bash
 # Add the marketplace
 claude plugin marketplace add orq-ai/claude-plugins
@@ -48,39 +39,67 @@ claude plugin install orq-mcp@orq-claude-plugin
 claude plugin install orq-skills@orq-claude-plugin
 ```
 
-**Option 2: Cursor plugin** — installs skills and MCP config:
+See the [claude-plugins repo](https://github.com/orq-ai/claude-plugins) for details on what each plugin ships.
+
+---
+
+#### Option B — Cursor plugin
+
+Installs skills and MCP config:
+
 ```bash
 # Symlink or copy to ~/.cursor/plugins/local/orq
 ln -s /path/to/orq-skills ~/.cursor/plugins/local/orq
 ```
+
 Cursor discovers components from default paths (`skills/`, `mcp.json`) in the plugin root.
 
-**Option 3: Codex plugin** — installs skills and MCP config:
+---
+
+#### Option C — Codex plugin
+
+Installs skills and MCP config:
+
 ```bash
 # This repository includes a ready marketplace entry at:
 # .agents/plugins/marketplace.json
 # (plugin source path: "./plugins/orq")
 ```
+
 See [Codex plugin docs](https://developers.openai.com/codex/plugins/build) for installation details.
 
-**Option 4: npx skills CLI** — installs skills only (works with Cursor, Gemini CLI, etc.):
+---
+
+#### Option D — Manual MCP installation + npx skills CLI
+
+For any other Agent Skills–compatible agent. Two steps:
+
+**1. Register the `orq-workspace` MCP server.**
+
+For Claude Code:
+
 ```bash
 claude mcp add --transport http orq-workspace https://my.orq.ai/v2/mcp \
   --header "Authorization: Bearer ${ORQ_API_KEY}"
 ```
 
-**Option 5: Manual clone** — with Claude Code:
+For Cursor, Gemini CLI, Codex, Cline, Copilot CLI, Windsurf, and others — see [MANUAL_INSTALL.md](MANUAL_INSTALL.md) for the per-tool MCP config.
+
+**2. Install the skills:**
+
 ```bash
 npx skills add orq-ai/orq-skills
 ```
 
-> **Note:** Commands (`/orq:quickstart`, `/orq:workspace`, …) and agents are only bundled with Path A. Path B gives you skills only.
+`npx skills add` auto-detects Claude Code, Cursor, Gemini CLI, Copilot, Cline, Codex, and Windsurf and installs skills into the right directory. If you'd rather copy the skill folders by hand, see [MANUAL_INSTALL.md](MANUAL_INSTALL.md).
+
+> **Note:** Commands (`/orq:quickstart`, `/orq:workspace`, …) and agents are only bundled with Option A. Other options give you skills only.
 
 ---
 
 ### Verify
 
-Run the interactive onboarding to confirm Claude setup:
+Run the interactive onboarding — it checks your `ORQ_API_KEY`, confirms the MCP server is reachable, and validates your credentials against a live API call:
 
 ```
 /orq:quickstart
