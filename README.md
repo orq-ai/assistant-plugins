@@ -17,15 +17,18 @@ Built on the [Agent Skills](https://agentskills.io/home#adoption) standard forma
 
 - An [orq.ai](https://orq.ai) account
 - An API key from [Settings → API Keys](https://my.orq.ai)
+- The `ORQ_API_KEY` environment variable set:
 
+  ```bash
+  echo 'export ORQ_API_KEY=your-key-here'
+  ```
 
-### Connect the MCP Server
+---
+### Install orq-skills
 
-Make sure you have Orq.ai MCP configured. The MCP server gives skills and commands access to your Orq.ai workspace.
+#### Option A — Claude Code plugin (recommended)
 
-```bash
-# Set your API key
-export ORQ_API_KEY=your-key-here  # add to ~/.zshrc or ~/.bashrc
+Installs skills, commands, agents, **and the MCP server** in one go.
 
 # Connect the MCP server (run once)
 claude mcp add --transport http orq-workspace https://my.orq.ai/v2/mcp \
@@ -40,6 +43,8 @@ claude mcp add --transport http orq-workspace https://my.orq.ai/v2/mcp \
 # Add the marketplace
 claude plugin marketplace add orq-ai/claude-plugins
 
+# Install the MCP server and the skills bundle
+claude plugin install orq-mcp@orq-claude-plugin
 claude plugin install orq-skills@orq-claude-plugin
 ```
 
@@ -60,17 +65,18 @@ See [Codex plugin docs](https://developers.openai.com/codex/plugins/build) for i
 
 **Option 4: npx skills CLI** — installs skills only (works with Cursor, Gemini CLI, etc.):
 ```bash
-npx skills add orq-ai/orq-skills
+claude mcp add --transport http orq-workspace https://my.orq.ai/v2/mcp \
+  --header "Authorization: Bearer ${ORQ_API_KEY}"
 ```
 
 **Option 5: Manual clone** — with Claude Code:
 ```bash
-git clone https://github.com/orq-ai/orq-skills.git
-cd orq-skills
-claude --plugin-dir .
+npx skills add orq-ai/orq-skills
 ```
 
-> **Note:** Commands (`/orq:quickstart`, `/orq:workspace`, etc.) and agents are only available when installed as a Claude Code plugin.
+> **Note:** Commands (`/orq:quickstart`, `/orq:workspace`, …) and agents are only bundled with Path A. Path B gives you skills only.
+
+---
 
 ### Verify
 
