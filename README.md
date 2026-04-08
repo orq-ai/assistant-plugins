@@ -47,19 +47,24 @@ See the [claude-plugins repo](https://github.com/orq-ai/claude-plugins) for deta
 
 For any other Agent Skills–compatible agent. Two steps:
 
-**1. Manually register the MCP server**:
+**1. Register the `orq-workspace` MCP server.**
 
-Example with Claude Code.
+For Claude Code:
+
 ```bash
 claude mcp add --transport http orq-workspace https://my.orq.ai/v2/mcp \
   --header "Authorization: Bearer ${ORQ_API_KEY}"
 ```
+
+For Cursor, Gemini CLI, Codex, Cline, Copilot CLI, Windsurf, and others — see [MANUAL_INSTALL.md](MANUAL_INSTALL.md) for the per-tool MCP config.
 
 **2. Install the skills:**
 
 ```bash
 npx skills add orq-ai/orq-skills
 ```
+
+`npx skills add` auto-detects Claude Code, Cursor, Gemini CLI, Copilot, Cline, Codex, and Windsurf and installs skills into the right directory. If you'd rather copy the skill folders by hand, see [MANUAL_INSTALL.md](MANUAL_INSTALL.md).
 
 > **Note:** Commands (`/orq:quickstart`, `/orq:workspace`, …) and agents are only bundled with Path A. Path B gives you skills only.
 
