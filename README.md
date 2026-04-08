@@ -17,54 +17,62 @@ Built on the [Agent Skills](https://agentskills.io/home#adoption) standard forma
 
 - An [orq.ai](https://orq.ai) account
 - An API key from [Settings → API Keys](https://my.orq.ai)
+- The `ORQ_API_KEY` environment variable set:
+  ```bash
+  echo 'export ORQ_API_KEY=your-key-here'
+  ```
 
-
-### Connect the MCP Server
-
-Make sure you have Orq.ai MCP configured. The MCP server gives skills and commands access to your Orq.ai workspace.
-
-```bash
-# Set your API key
-export ORQ_API_KEY=your-key-here  # add to ~/.zshrc or ~/.bashrc
-
-# Connect the MCP server (run once)
-claude mcp add --transport http orq-workspace https://my.orq.ai/v2/mcp \
-  --header "Authorization: Bearer ${ORQ_API_KEY}"
-```
-
+---
 ### Install orq-skills
 
-**Option 1: Claude Code plugin (recommended)** — installs skills, commands, and agents:
+#### Option A — Claude Code plugin (recommended)
+
+Installs skills, commands, agents, **and the MCP server** in one go.
+
 ```bash
 # Add the marketplace
 claude plugin marketplace add orq-ai/claude-plugins
 
+# Install the MCP server and the skills bundle
+claude plugin install orq-mcp@orq-claude-plugin
 claude plugin install orq-skills@orq-claude-plugin
 ```
 
-This also allows you to install the trace hooks and MCP server. See the [claude plugin](https://github.com/orq-ai/claude-plugins) for further details.
+See the [claude-plugins repo](https://github.com/orq-ai/claude-plugins) for details on what each plugin ships.
 
-**Option 2: npx skills CLI** — installs skills only (works with Cursor, Gemini CLI, etc.):
+---
+
+#### Option B — Manual MCP installation + npx skills CLI
+
+For any other Agent Skills–compatible agent. Two steps:
+
+**1. Manually register the MCP server**:
+
+Example with Claude Code.
+```bash
+claude mcp add --transport http orq-workspace https://my.orq.ai/v2/mcp \
+  --header "Authorization: Bearer ${ORQ_API_KEY}"
+```
+
+**2. Install the skills:**
+
 ```bash
 npx skills add orq-ai/orq-skills
 ```
 
-**Option 3: Manual clone** — with Claude Code:
-```bash
-git clone https://github.com/orq-ai/orq-skills.git
-cd orq-skills
-claude --plugin-dir .
-```
+> **Note:** Commands (`/orq:quickstart`, `/orq:workspace`, …) and agents are only bundled with Path A. Path B gives you skills only.
 
-> **Note:** Commands (`/orq:quickstart`, `/orq:workspace`, etc.) and agents are only available when installed as a Claude Code plugin.
+---
 
 ### Verify
 
-Run the interactive onboarding to confirm everything works:
+Run the interactive onboarding — it checks your `ORQ_API_KEY`, confirms the MCP server is reachable, and validates your credentials against a live API call:
 
 ```
 /orq:quickstart
 ```
+
+If anything's misconfigured (missing env var, wrong key, MCP not registered), quickstart will tell you exactly what to fix.
 
 ---
 

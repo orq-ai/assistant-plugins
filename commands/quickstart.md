@@ -17,7 +17,7 @@ Greet the user and give a brief overview:
 
 > **Welcome to the orq.ai plugin for Claude Code!**
 >
-> This plugin gives you **5 commands** (quick actions) and **6 skills** (multi-step workflows) for building, evaluating, and improving LLM pipelines on the orq.ai platform.
+> This plugin gives you a set of **commands** (quick actions) and **skills** (multi-step workflows) for building, evaluating, and improving LLM pipelines on the orq.ai platform.
 >
 > **The lifecycle:** Build → Deploy → Monitor → Evaluate → Optimize
 
@@ -80,23 +80,11 @@ Test the connection by making an MCP call: use `search_entities` with `type: "ag
 
 ### 5. Skills Overview
 
-Present the six skills in a table:
+Enumerate every skill currently registered under the `orq:` namespace in this session and present them as a markdown table with two columns: **Skill** (the short name, without the `orq:` prefix) and **When to Use** (taken from the skill's own `description` field).
 
-```
-Available Skills
-================
+Do **not** hardcode the list — read it from the skills actually available right now, so the output always reflects the installed plugin. Sort alphabetically unless a more meaningful ordering is obvious (e.g., lifecycle order).
 
-| Skill                      | When to Use                                                    |
-|----------------------------|----------------------------------------------------------------|
-| build-agent                | Create and configure a new orq.ai agent with tools and memory  |
-| build-evaluator            | Create LLM-as-a-Judge evaluators for measuring failure modes   |
-| analyze-trace-failures     | Read production traces and categorize what's failing           |
-| run-experiment             | Compare configurations against datasets using evaluators       |
-| generate-synthetic-dataset | Generate evaluation datasets for testing                       |
-| optimize-prompt            | Analyze and rewrite system prompts for better performance      |
-```
-
-Explain the lifecycle:
+Then explain the lifecycle:
 
 > **The eval cycle:** analyze-trace-failures → build-evaluator → run-experiment → optimize-prompt → repeat
 >
