@@ -20,7 +20,7 @@ Built on the [Agent Skills](https://agentskills.io/home#adoption) standard forma
 - The `ORQ_API_KEY` environment variable set:
 
   ```bash
-  echo 'export ORQ_API_KEY=your-key-here'
+  export ORQ_API_KEY=your-key-here
   ```
 
 ---
