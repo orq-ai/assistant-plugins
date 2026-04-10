@@ -23,13 +23,18 @@ Built on the [Agent Skills](https://agentskills.io/home#adoption) standard forma
 
 ### Connect the MCP Server
 
-Make sure you have Orq.ai MCP configured. The MCP server gives skills and commands access to your Orq.ai workspace.
+The MCP server gives skills and commands access to your orq.ai workspace.
 
 ```bash
-# Set your API key
-export ORQ_API_KEY=your-key-here  # add to ~/.zshrc or ~/.bashrc
+# Set your API key (add to ~/.zshrc or ~/.bashrc to persist)
+export ORQ_API_KEY=your-key-here
+```
 
-# Connect the MCP server (run once)
+> **Skip the rest of this section if you're using Option 1, 2, or 3 below** — those plugins register the `orq-workspace` MCP server automatically from the bundled manifest. You only need to register it manually for Options 4–5 or when connecting a tool that doesn't use the plugin format.
+
+For manual registration in Claude Code:
+
+```bash
 claude mcp add --transport http orq-workspace https://my.orq.ai/v2/mcp \
   --header "Authorization: Bearer ${ORQ_API_KEY}"
 ```
@@ -43,7 +48,7 @@ claude mcp add --transport http orq-workspace https://my.orq.ai/v2/mcp \
 
 **Option 2: Cursor plugin** — installs skills and MCP config.
 
-The repo root is a Cursor plugin (`.cursor-plugin/plugin.json` declares `./skills/` and `./mcp.json`). Cursor loads local plugins from `~/.cursor/plugins/local/<name>`:
+The repo root is a Cursor plugin (`.cursor-plugin/plugin.json` declares `./skills/` and `./.mcp.json`). Cursor loads local plugins from `~/.cursor/plugins/local/<name>`:
 
 ```bash
 # 1. Clone the repo
@@ -74,7 +79,7 @@ cd orq-skills
 export ORQ_API_KEY=your-key-here
 
 # Launch Codex from the repo root so it picks up .agents/plugins/marketplace.json
-codex .
+codex
 ```
 
 Restart Codex and verify the `orq` plugin appears in the plugin directory — the manifest registers the skills folder and the `orq-workspace` MCP server automatically.
@@ -86,15 +91,16 @@ Personal install — use the plugin outside this repo:
 mkdir -p ~/.codex/plugins
 cp -r plugins/orq ~/.codex/plugins/orq
 
-# Reference it in your personal marketplace
+# Reference it in your personal marketplace (use an absolute path —
+# tilde expansion is not guaranteed inside JSON string values)
 mkdir -p ~/.agents/plugins
-cat > ~/.agents/plugins/marketplace.json <<'JSON'
+cat > ~/.agents/plugins/marketplace.json <<JSON
 {
   "name": "personal",
   "plugins": [
     {
       "name": "orq",
-      "source": { "source": "local", "path": "~/.codex/plugins/orq" }
+      "source": { "source": "local", "path": "$HOME/.codex/plugins/orq" }
     }
   ]
 }
@@ -171,10 +177,12 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 <!-- BEGIN_SKILLS_TABLE -->
 | Skill | What It Does | Documentation |
 |-------|-------------|---------------|
+| **setup-observability** | Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment | [SKILL.md](skills/setup-observability/SKILL.md) |
 | **build-agent** | Design, create, and configure an orq.ai Agent with tools, instructions, knowledge bases, and memory | [SKILL.md](skills/build-agent/SKILL.md) |
 | **build-evaluator** | Create validated LLM-as-a-Judge evaluators following evaluation best practices | [SKILL.md](skills/build-evaluator/SKILL.md) |
 | **analyze-trace-failures** | Read production traces, identify what's failing, build failure taxonomies, and categorize issues | [SKILL.md](skills/analyze-trace-failures/SKILL.md) |
 | **run-experiment** | Create and run orq.ai experiments — compare configurations with specialized agent, conversation, and RAG evaluation | [SKILL.md](skills/run-experiment/SKILL.md) |
+| **compare-agents** | Run cross-framework agent comparisons using evaluatorq — compare orq.ai, LangGraph, CrewAI, OpenAI Agents SDK, and others | [SKILL.md](skills/compare-agents/SKILL.md) |
 | **generate-synthetic-dataset** | Generate and curate evaluation datasets — structured generation, quick from description, expansion, and dataset maintenance | [SKILL.md](skills/generate-synthetic-dataset/SKILL.md) |
 | **optimize-prompt** | Analyze and optimize system prompts using a structured prompting guidelines framework | [SKILL.md](skills/optimize-prompt/SKILL.md) |
 <!-- END_SKILLS_TABLE -->
