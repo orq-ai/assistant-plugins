@@ -10,75 +10,140 @@ Each skill encodes best practices from prompt engineering, agent design, evaluat
 
 Built on the [Agent Skills](https://agentskills.io/home#adoption) standard format, so it works with any compatible agent (Claude Code, Cursor, Gemini CLI, and others).
 
-
 ## Setup
 
 ### Prerequisites
 
 - An [orq.ai](https://orq.ai) account
 - An API key from [Settings → API Keys](https://my.orq.ai)
-- The `ORQ_API_KEY` environment variable set:
 
   ```bash
   export ORQ_API_KEY=your-key-here
   ```
 
----
-### Install orq-skills
+### Connect the MCP Server
 
-#### Option A — Claude Code plugin (recommended)
-
-Installs skills, commands, agents, **and the MCP server** in one go.
+The MCP server gives skills and commands access to your orq.ai workspace.
 
 ```bash
-# Add the marketplace
-claude plugin marketplace add orq-ai/claude-plugins
-
-# Install the MCP server and the skills bundle
-claude plugin install orq-mcp@orq-claude-plugin
-claude plugin install orq-skills@orq-claude-plugin
+# Set your API key (add to ~/.zshrc or ~/.bashrc to persist)
+export ORQ_API_KEY=your-key-here
 ```
 
-See the [claude-plugins repo](https://github.com/orq-ai/claude-plugins) for details on what each plugin ships.
+> **Skip the rest of this section if you're using Option 1, 2, or 3 below** — those plugins register the `orq-workspace` MCP server automatically from the bundled manifest. You only need to register it manually for Options 4–5 or when connecting a tool that doesn't use the plugin format.
 
----
-
-#### Option B — Manual MCP installation + npx skills CLI
-
-For any other Agent Skills–compatible agent. Two steps:
-
-**1. Register the `orq-workspace` MCP server.**
-
-For Claude Code:
+For manual registration in Claude Code:
 
 ```bash
 claude mcp add --transport http orq-workspace https://my.orq.ai/v2/mcp \
   --header "Authorization: Bearer ${ORQ_API_KEY}"
 ```
 
-For Cursor, Gemini CLI, Codex, Cline, Copilot CLI, Windsurf, and others — see [MANUAL_INSTALL.md](MANUAL_INSTALL.md) for the per-tool MCP config.
+### Install orq-skills
 
-**2. Install the skills:**
+**Option 1: Claude Code plugin (recommended)** — installs skills, commands, and agents:
+```bash
+/plugin install github:orq-ai/orq-skills
+```
 
+**Option 2: Cursor plugin** — installs skills and MCP config.
+
+The repo root is a Cursor plugin (`.cursor-plugin/plugin.json` declares `./skills/` and `./.mcp.json`). Cursor loads local plugins from `~/.cursor/plugins/local/<name>`:
+
+```bash
+# 1. Clone the repo
+git clone https://github.com/orq-ai/orq-skills.git
+cd orq-skills
+
+# 2. Symlink into Cursor's local plugins directory
+mkdir -p ~/.cursor/plugins/local
+ln -s "$(pwd)" ~/.cursor/plugins/local/orq
+
+# 3. Export your API key (the MCP config references ${ORQ_API_KEY})
+export ORQ_API_KEY=your-key-here
+```
+
+Restart Cursor (or run **Developer: Reload Window**). Verify: **Settings → Rules** should list the `orq` skills under *Agent Decides*, and **Settings → Features → Model Context Protocol** should let you enable `orq-workspace`. Then ask in chat: *"List my orq.ai agents."*
+
+*Testing as a Cursor marketplace:* to smoke-test the repo as if it were a Cursor team marketplace before submitting to [cursor.com/marketplace/publish](https://cursor.com/marketplace/publish), add a `.cursor-plugin/marketplace.json` at the repo root and import the repo via **Dashboard → Settings → Plugins → Team Marketplaces → Import** with your GitHub URL. Team marketplaces require a Teams or Enterprise plan.
+
+**Option 3: Codex plugin** — installs skills and MCP config.
+
+The repo ships a Codex plugin at [plugins/orq](plugins/orq) (`plugins/orq/.codex-plugin/plugin.json`) and a repo-level marketplace at [.agents/plugins/marketplace.json](.agents/plugins/marketplace.json). Codex reads marketplace manifests from two locations: `$REPO_ROOT/.agents/plugins/marketplace.json` (repo-level) and `~/.agents/plugins/marketplace.json` (personal).
+
+Repo install — test the bundled marketplace in place:
+
+```bash
+git clone https://github.com/orq-ai/orq-skills.git
+cd orq-skills
+export ORQ_API_KEY=your-key-here
+
+# Launch Codex from the repo root so it picks up .agents/plugins/marketplace.json
+codex
+```
+
+Restart Codex and verify the `orq` plugin appears in the plugin directory — the manifest registers the skills folder and the `orq-workspace` MCP server automatically.
+
+Personal install — use the plugin outside this repo:
+
+```bash
+# Copy the plugin bundle into Codex's personal plugins dir
+mkdir -p ~/.codex/plugins
+cp -r plugins/orq ~/.codex/plugins/orq
+
+# Reference it in your personal marketplace (use an absolute path —
+# tilde expansion is not guaranteed inside JSON string values)
+mkdir -p ~/.agents/plugins
+cat > ~/.agents/plugins/marketplace.json <<JSON
+{
+  "name": "personal",
+  "plugins": [
+    {
+      "name": "orq",
+      "source": { "source": "local", "path": "$HOME/.codex/plugins/orq" }
+    }
+  ]
+}
+JSON
+
+export ORQ_API_KEY=your-key-here
+```
+
+Restart Codex. See the [Codex plugin docs](https://developers.openai.com/codex/plugins/build) for the full plugin spec.
+
+**Option 4: npx skills CLI** — installs skills only (works with Cursor, Gemini CLI, Cline, Copilot CLI, Windsurf, etc.):
 ```bash
 npx skills add orq-ai/orq-skills
 ```
+Then register the `orq-workspace` MCP server in your tool using the HTTP config shown in "Connect the MCP Server" above — most tools accept a JSON block with `url` + `headers`. Check your tool's MCP docs for the exact config file path.
 
-`npx skills add` auto-detects Claude Code, Cursor, Gemini CLI, Copilot, Cline, Codex, and Windsurf and installs skills into the right directory. If you'd rather copy the skill folders by hand, see [MANUAL_INSTALL.md](MANUAL_INSTALL.md).
+**Option 5: Manual clone** — with Claude Code:
+```bash
+git clone https://github.com/orq-ai/orq-skills.git
+cd orq-skills
+claude --plugin-dir .
+```
 
-> **Note:** Commands (`/orq:quickstart`, `/orq:workspace`, …) and agents are only bundled with Path A. Path B gives you skills only.
+> **Note:** Commands (`/orq:quickstart`, `/orq:workspace`, etc.) and agents are only available when installed as a Claude Code plugin.
 
----
 
 ### Verify
 
-Run the interactive onboarding — it checks your `ORQ_API_KEY`, confirms the MCP server is reachable, and validates your credentials against a live API call:
+**Claude Code (Option 1 or 5):** run the interactive onboarding — it checks `ORQ_API_KEY`, confirms the MCP server is reachable, and validates your credentials with a live API call.
 
 ```
 /orq:quickstart
 ```
 
-If anything's misconfigured (missing env var, wrong key, MCP not registered), quickstart will tell you exactly what to fix.
+**Cursor (Option 2):** restart Cursor, confirm `orq` skills appear under *Settings → Rules*, enable `orq-workspace` under *Settings → Features → MCP*, and ask the chat *"List my orq.ai agents."*
+
+**Codex (Option 3):** restart Codex from the repo root, confirm the `orq` plugin appears in the plugin directory, and ask *"List my orq.ai agents."*
+
+**All options:** validate the plugin manifests with
+
+```bash
+tests/scripts/validate-plugin-manifests.sh
+```
 
 ---
 
@@ -112,11 +177,12 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 <!-- BEGIN_SKILLS_TABLE -->
 | Skill | What It Does | Documentation |
 |-------|-------------|---------------|
-| **setup-observability** | Set up orq.ai observability for existing LLM applications — AI Router proxy, OpenTelemetry, `@traced` decorator, and trace enrichment | [SKILL.md](skills/setup-observability/SKILL.md) |
+| **setup-observability** | Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment | [SKILL.md](skills/setup-observability/SKILL.md) |
 | **build-agent** | Design, create, and configure an orq.ai Agent with tools, instructions, knowledge bases, and memory | [SKILL.md](skills/build-agent/SKILL.md) |
 | **build-evaluator** | Create validated LLM-as-a-Judge evaluators following evaluation best practices | [SKILL.md](skills/build-evaluator/SKILL.md) |
 | **analyze-trace-failures** | Read production traces, identify what's failing, build failure taxonomies, and categorize issues | [SKILL.md](skills/analyze-trace-failures/SKILL.md) |
 | **run-experiment** | Create and run orq.ai experiments — compare configurations with specialized agent, conversation, and RAG evaluation | [SKILL.md](skills/run-experiment/SKILL.md) |
+| **compare-agents** | Run cross-framework agent comparisons using evaluatorq — compare orq.ai, LangGraph, CrewAI, OpenAI Agents SDK, and others | [SKILL.md](skills/compare-agents/SKILL.md) |
 | **generate-synthetic-dataset** | Generate and curate evaluation datasets — structured generation, quick from description, expansion, and dataset maintenance | [SKILL.md](skills/generate-synthetic-dataset/SKILL.md) |
 | **optimize-prompt** | Analyze and optimize system prompts using a structured prompting guidelines framework | [SKILL.md](skills/optimize-prompt/SKILL.md) |
 <!-- END_SKILLS_TABLE -->
@@ -125,15 +191,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 
 ## Workflows
 
-### 1. Instrument an Existing App
-
-```
-"Add orq.ai tracing to my app"               → setup-observability
-/orq:traces --last 1h                          # Verify traces are flowing
-"Analyze these traces for failures"            → analyze-trace-failures
-```
-
-### 2. Build a New Agent
+### 1. Build a New Agent
 
 ```
 "I need a customer support agent"             → build-agent
@@ -142,7 +200,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 "Run an experiment to get a baseline"          → run-experiment
 ```
 
-### 3. Debug Production Issues
+### 2. Debug Production Issues
 
 ```
 /orq:traces --status error --last 24h          # Find errors
@@ -151,7 +209,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 "Re-run the experiment to verify the fix"      → run-experiment
 ```
 
-### 4. Improve an Existing Agent
+### 3. Improve an Existing Agent
 
 ```
 /orq:analytics --group-by deployment           # Spot high error rates
@@ -162,7 +220,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 "Optimize the prompt based on results"         → optimize-prompt
 ```
 
-### 5. Improve an Existing Prompt
+### 4. Improve an existing Prompt
 
 ```
 "My prompt isn't performing well, help me improve it" → optimize-prompt

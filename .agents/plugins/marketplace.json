@@ -1,0 +1,20 @@
+{
+  "name": "orq-marketplace",
+  "interface": {
+    "displayName": "orq.ai Plugins"
+  },
+  "plugins": [
+    {
+      "name": "orq",
+      "source": {
+        "source": "local",
+        "path": "./plugins/orq"
+      },
+      "policy": {
+        "installation": "INSTALLED_BY_DEFAULT",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

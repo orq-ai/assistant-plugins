@@ -1,0 +1,28 @@
+{
+  "name": "orq",
+  "version": "0.1.0",
+  "description": "Agent skills for building, deploying, evaluating, and monitoring LLM pipelines on the orq.ai platform.",
+  "author": {
+    "name": "orq.ai",
+    "url": "https://orq.ai"
+  },
+  "homepage": "https://orq.ai",
+  "repository": "https://github.com/orq-ai/orq-skills",
+  "license": "MIT",
+  "keywords": ["orq", "llm", "agents", "prompts", "deployments", "evaluation", "monitoring", "rag", "experiments", "traces"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "orq.ai",
+    "shortDescription": "Build, evaluate, and monitor LLM pipelines on orq.ai",
+    "longDescription": "Agent skills for the full Build → Evaluate → Optimize lifecycle of LLM pipelines. Includes skills for building agents, running experiments, generating datasets, creating evaluators, analyzing traces, and optimizing prompts — plus the orq.ai MCP server for workspace access.",
+    "developerName": "orq.ai",
+    "category": "Coding",
+    "capabilities": ["Interactive", "Write"],
+    "brandColor": "#ff8f34",
+    "logo": "./assets/logo.png",
+    "websiteURL": "https://orq.ai",
+    "privacyPolicyURL": "https://orq.ai/privacy",
+    "termsOfServiceURL": "https://orq.ai/terms"
+  }
+}
