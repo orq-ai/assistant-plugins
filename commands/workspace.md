@@ -1,4 +1,5 @@
 ---
+name: workspace
 description: Show a workspace overview — agents, deployments, prompts, datasets, experiments, projects, and knowledge bases
 argument-hint: [section]
 allowed-tools: AskUserQuestion, orq*

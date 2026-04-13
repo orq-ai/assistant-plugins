@@ -1,4 +1,5 @@
 ---
+name: analytics
 description: Show workspace analytics — requests, cost, tokens, errors, top models, and drill-down trends
 argument-hint: [--last <duration>] [--group-by <dimension>]
 allowed-tools: AskUserQuestion, orq*

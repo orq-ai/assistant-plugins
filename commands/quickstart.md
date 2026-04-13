@@ -1,4 +1,5 @@
 ---
+name: quickstart
 description: Interactive onboarding guide — set up credentials, connect to orq.ai, and learn every command and skill
 argument-hint:
 allowed-tools: Bash, AskUserQuestion, orq*
