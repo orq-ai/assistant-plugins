@@ -1,4 +1,5 @@
 ---
+name: models
 description: List available AI models and their capabilities
 argument-hint: [search-term]
 allowed-tools: AskUserQuestion, orq*

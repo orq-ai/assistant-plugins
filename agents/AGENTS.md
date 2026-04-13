@@ -1,3 +1,8 @@
+---
+name: orq-assistant
+description: orq.ai workspace assistant — routes to skills and commands for building, evaluating, and monitoring LLM pipelines
+---
+
 <skills>
 
 You have additional SKILLs documented in directories containing a "SKILL.md" file.

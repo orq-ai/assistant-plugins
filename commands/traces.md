@@ -1,4 +1,5 @@
 ---
+name: traces
 description: Query and summarize traces with filters — debugging entry point before analyze-trace-failures
 argument-hint: [--deployment <name>] [--status <status>] [--last <duration>] [--limit <n>]
 allowed-tools: AskUserQuestion, orq*
