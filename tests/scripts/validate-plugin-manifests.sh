@@ -13,10 +13,12 @@ fi
 
 assert_jq() {
   local file="$1" expr="$2" msg="$3"
-  if ! jq -e "$expr" "$file" >/dev/null 2>&1; then
+  local jq_err
+  if ! jq_err=$(jq -e "$expr" "$file" 2>&1 >/dev/null); then
     echo "FAIL: $msg"
     echo "  file: $file"
     echo "  expression: $expr"
+    [[ -n "$jq_err" ]] && echo "  jq error: $jq_err"
     exit 1
   fi
 }
@@ -129,6 +131,10 @@ assert_path -d "plugins/orq/skills" \
   "plugins/orq/skills directory must exist (symlink to ../../skills)"
 assert_path -f "plugins/orq/skills/build-agent/SKILL.md" \
   "plugins/orq/skills/build-agent/SKILL.md must exist (verifies symlink resolves)"
+assert_path -f "plugins/orq/.mcp.json" \
+  "plugins/orq/.mcp.json must resolve to a readable file"
+assert_path -f "plugins/orq/mcp.json" \
+  "plugins/orq/mcp.json must resolve to a readable file"
 
 # --- Symlink integrity ---
 

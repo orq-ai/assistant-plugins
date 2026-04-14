@@ -51,7 +51,7 @@ import os
 
 client = OpenAI(
     base_url="https://api.orq.ai/v2/router",
-    api_key=os.getenv("ORQ_API_KEY"),
+    api_key=os.environ["ORQ_API_KEY"],
 )
 ```
 
@@ -72,7 +72,7 @@ import os
 
 llm = ChatOpenAI(
     model="openai/gpt-4o",
-    api_key=os.getenv("ORQ_API_KEY"),
+    api_key=os.environ["ORQ_API_KEY"],
     base_url="https://api.orq.ai/v2/router",
 )
 ```

@@ -186,7 +186,7 @@ Follow these steps **in order**. Do NOT skip steps.
 import os
 from orq_ai_sdk import Orq
 
-client = Orq(api_key=os.environ.get("ORQ_API_KEY"))
+client = Orq(api_key=os.environ["ORQ_API_KEY"])
 
 # Non-streaming
 response = client.deployments.invoke(
@@ -281,7 +281,7 @@ curl -s -X POST https://api.orq.ai/v2/deployments/invoke \
 import os
 from orq_ai_sdk import Orq
 
-client = Orq(api_key=os.environ.get("ORQ_API_KEY"))
+client = Orq(api_key=os.environ["ORQ_API_KEY"])
 
 # Single turn
 response = client.agents.responses.create(
@@ -421,8 +421,8 @@ import os
 from openai import OpenAI
 
 client = OpenAI(
-    api_key=os.environ.get("ORQ_API_KEY"),
-    base_url="https://api.orq.ai/v2",
+    api_key=os.environ["ORQ_API_KEY"],
+    base_url="https://api.orq.ai/v2/router",
 )
 
 # Non-streaming — basic call
@@ -507,7 +507,8 @@ curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
 | Anti-Pattern | What to Do Instead |
 |---|---|
 | Invoking a deployment without `inputs` when prompt has `{{variables}}` | Always find and pass every `{{variable}}` in the prompt — missing ones silently omit content |
-| Hardcoding `ORQ_API_KEY` in source code | Use `os.environ.get("ORQ_API_KEY")` / `process.env.ORQ_API_KEY` |
+| Hardcoding `ORQ_API_KEY` in source code | Use `os.environ["ORQ_API_KEY"]` / `process.env.ORQ_API_KEY` |
+| Using OpenAI message format for agents (`{"role": "user", "content": "..."}`) | Use A2A parts format: `{"role": "user", "parts": [{"kind": "text", "text": "..."}]}` |
 | Skipping `identity.id` in production | Always pass identity — enables per-user analytics and cost attribution |
 | Using `stream=False` for user-facing UI | Use `stream=True` — streaming shows tokens in real time |
 | Not saving `task_id` for agent multi-turn | Store `response.task_id` and pass it in subsequent turns |

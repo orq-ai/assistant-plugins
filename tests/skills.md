@@ -53,6 +53,57 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 
 ---
 
+## `invoke-deployment`
+
+### Scenario 1: Deployment invocation (happy path)
+
+- Ask: "Invoke my deployment `customer-support` with variable `customer_name` set to 'Jane'"
+- Verify Phase 1: calls `search_entities` with `type: "deployment"` to confirm key
+- Verify Phase 2: identifies `{{customer_name}}` as a required input, maps it
+- Verify Phase 3: generates Python SDK code using `client.deployments.invoke(key=..., inputs={...})`
+- Verify: code uses `os.environ["ORQ_API_KEY"]`, never hardcodes the key
+- Verify: code includes `identity={"id": ...}`
+
+### Scenario 2: Agent invocation with multi-turn
+
+- Ask: "Send a message to my agent and then follow up"
+- Verify: uses `client.agents.responses.create()`, NOT `client.agents.invoke()`
+- Verify: message format uses A2A parts structure (`parts: [{kind: "text", text: ...}]`), not OpenAI-style `content`
+- Verify: saves `task_id` from first response and passes it in the follow-up call
+
+### Scenario 3: Model (AI Router) invocation
+
+- Ask: "Call GPT-4.1 directly through the AI Router"
+- Verify: uses `provider/model` format (e.g., `openai/gpt-4.1`), not bare model name
+- Verify: points OpenAI client at `base_url="https://api.orq.ai/v2/router"`
+- Verify: does NOT use orq SDK for this path — uses `openai.OpenAI()`
+
+### Scenario 4: Streaming recommendation
+
+- Ask: "I need to call a deployment for a chatbot UI"
+- Verify: recommends `stream=True` for user-facing invocations
+
+---
+
+## `compare-agents`
+
+### Scenario 1: orq.ai vs orq.ai comparison
+
+- Ask: "Compare my two orq.ai agents `agent-gpt4o` and `agent-claude` head-to-head"
+- Verify Phase 1: identifies both agents, uses `search_entities` with `type: "agent"`
+- Verify Phase 4: generates evaluatorq script with two `@job` functions, each using `agents.responses.create()` (not `agents.invoke()`)
+- Verify: script uses `from orq_ai_sdk import Orq` (not `from orq import ...`)
+- Verify: both jobs use the same evaluator for fair comparison
+
+### Scenario 2: External vs orq.ai comparison
+
+- Ask: "Compare my LangGraph agent against my orq.ai agent"
+- Verify: generates one LangGraph job pattern and one orq.ai job pattern
+- Verify: delegates dataset creation to `generate-synthetic-dataset` (does not create inline)
+- Verify: delegates evaluator creation to `build-evaluator` (does not design from scratch)
+
+---
+
 ## `build-agent`
 
 - Ask: "Build a simple FAQ agent for a pizza restaurant"
@@ -97,6 +148,12 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 - `skills/setup-observability/resources/traced-decorator-guide.md`
 - `skills/setup-observability/resources/framework-integrations.md`
 - `skills/setup-observability/resources/baseline-checklist.md`
+- `skills/invoke-deployment/SKILL.md`
+- `skills/invoke-deployment/resources/api-reference.md`
+- `skills/compare-agents/SKILL.md`
+- `skills/compare-agents/resources/job-patterns.md`
+- `skills/compare-agents/resources/evaluatorq-api.md`
+- `skills/compare-agents/resources/gotchas.md`
 - `skills/build-agent/SKILL.md`
 - `skills/build-evaluator/SKILL.md`
 - `skills/generate-synthetic-dataset/SKILL.md`

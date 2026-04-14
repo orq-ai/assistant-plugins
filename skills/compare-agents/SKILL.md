@@ -38,7 +38,7 @@ Supported comparison modes:
 - `build-evaluator` — design the LLM-as-a-judge evaluator
 - `run-experiment` — run orq.ai-native experiments (when no external agents are involved)
 - `build-agent` — create orq.ai agents to include in comparisons
-- `analyze-trace-failures` — diagnose agent failures and instrument tracing
+- `analyze-trace-failures` — diagnose agent failures from trace data
 
 ## Workflow Checklist
 
@@ -185,7 +185,7 @@ Agent Comparison Progress:
     ```
 
 12. **View results** in orq.ai:
-    - Open the orq.ai Studio → navigate to your project → **Experiments**
+    - Open [my.orq.ai](https://my.orq.ai/) → navigate to your project → **Experiments**
     - Compare scores across all agents — response quality, latency, and cost
 
 13. **If issues arise**, check [resources/gotchas.md](resources/gotchas.md) for common pitfalls.
@@ -205,9 +205,9 @@ Agent Comparison Progress:
 ## Open in orq.ai
 
 After running the comparison:
-- **Experiment results:** orq.ai Studio → Your Project → Experiments
-- **Agent details:** orq.ai Studio → Agents
-- **Traces:** orq.ai Studio → Observability → Traces
+- **Experiment results:** [my.orq.ai](https://my.orq.ai/) → Experiments
+- **Agent details:** [my.orq.ai](https://my.orq.ai/) → Agents
+- **Traces:** [my.orq.ai](https://my.orq.ai/) → Traces
 
 ## Documentation & Resolution
 
