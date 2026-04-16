@@ -13,7 +13,7 @@ from orq_ai_sdk import Orq
 from orq_ai_sdk.traced import traced
 import os
 
-client = Orq(api_key=os.getenv("ORQ_API_KEY"))
+client = Orq(api_key=os.environ["ORQ_API_KEY"])
 
 @traced(name="my-operation", type="function")
 def my_function():

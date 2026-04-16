@@ -4,10 +4,8 @@ description: >
   Invoke orq.ai deployments, agents, and models via the Python SDK or HTTP API.
   Use when a user wants to call a deployment with prompt variables, invoke an
   agent in a conversation, or call a model directly through the AI Router.
-  Covers Python SDK templates inline; curl and advanced options in the API
-  reference resource. Do NOT use for creating or editing deployments/agents
-  (use optimize-prompt or build-agent). Do NOT use for running evaluations
-  (use run-experiment).
+  Do NOT use for creating or editing deployments/agents (use optimize-prompt
+  or build-agent). Do NOT use for running evaluations (use run-experiment).
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, orq*
 ---
 
@@ -181,7 +179,7 @@ Follow these steps **in order**. Do NOT skip steps.
 
 ## Code Templates
 
-One Python SDK example per invocation type. For curl examples, advanced options (documents, knowledge filters, fallbacks, retry, structured output), and full request/response field tables, see [resources/api-reference.md](resources/api-reference.md).
+One Python SDK example and one curl example per invocation type. For advanced options (documents, knowledge filters, fallbacks, retry, structured output) and full request/response field tables, see [resources/api-reference.md](resources/api-reference.md).
 
 ### Deployment — Python SDK
 
@@ -201,13 +199,28 @@ response = client.deployments.invoke(
 print(response.choices[0].message.content)
 
 # Streaming
-for chunk in client.deployments.invoke(
+response = client.deployments.invoke(
     key="<deployment-key>",
     inputs={"variable_name": "value"},
     identity={"id": "user_<unique_id>"},
     stream=True,
-):
+)
+for chunk in response:
     print(chunk, end="", flush=True)
+```
+
+### Deployment — curl
+
+```bash
+curl -s -X POST https://api.orq.ai/v2/deployments/invoke \
+  -H "Authorization: Bearer $ORQ_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key": "<deployment-key>",
+    "inputs": {"variable_name": "value"},
+    "identity": {"id": "user_<unique_id>", "display_name": "Jane Doe"},
+    "metadata": {"environment": "production"}
+  }' | jq
 ```
 
 ### Agent — Python SDK
@@ -236,6 +249,21 @@ follow_up = client.agents.responses.create(
 print(follow_up.output[0].parts[0].text)
 ```
 
+### Agent — curl
+
+```bash
+curl -s -X POST https://api.orq.ai/v2/agents/<agent-key>/responses \
+  -H "Authorization: Bearer $ORQ_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": {
+      "role": "user",
+      "parts": [{"kind": "text", "text": "Hello, can you help me?"}]
+    },
+    "identity": {"id": "user_<unique_id>", "display_name": "Jane Doe"}
+  }' | jq
+```
+
 ### Agent — Node.js SDK
 
 ```typescript
@@ -256,6 +284,7 @@ const followUp = await client.agents.responses.create({
   taskId: response.taskId,
   message: { role: "user", parts: [{ kind: "text", text: "Tell me more." }] },
 });
+console.log(followUp.output[0].parts[0].text);
 ```
 
 ### Model (AI Router) — Python SDK
@@ -279,6 +308,21 @@ response = client.chat.completions.create(
     ],
 )
 print(response.choices[0].message.content)
+```
+
+### Model (AI Router) — curl
+
+```bash
+curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
+  -H "Authorization: Bearer $ORQ_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "openai/gpt-4.1",
+    "messages": [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": "What is the capital of France?"}
+    ]
+  }' | jq
 ```
 
 ---
