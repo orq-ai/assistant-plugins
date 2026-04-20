@@ -1,0 +1,24 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "assistant-plugins",
+  "version": "0.1.0",
+  "description": "Orq plugins for Claude Code — tracing, MCP tools, and agent skills",
+  "owner": {
+    "name": "Orq AI",
+    "email": "support@orq.ai"
+  },
+  "plugins": [
+    {
+      "name": "orq-trace",
+      "description": "Automatically trace Claude Code sessions to Orq. Captures sessions, turns, tool calls, and LLM responses as hierarchical OTLP spans.",
+      "source": "./plugins/trace-hooks",
+      "category": "observability"
+    },
+    {
+      "name": "orq-skills",
+      "description": "Agent skills for building, evaluating, and optimizing LLM pipelines on orq.ai. Includes skills for experiment design, prompt optimization, trace analysis, dataset generation, and agent/evaluator creation.",
+      "source": "./",
+      "category": "development"
+    }
+  ]
+}
