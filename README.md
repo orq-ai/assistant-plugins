@@ -30,7 +30,7 @@ The MCP server gives skills and commands access to your orq.ai workspace.
 export ORQ_API_KEY=your-key-here
 ```
 
-> **Skip the rest of this section if you're using Option 1, 2, or 3 below** — those plugins register the `orq-workspace` MCP server automatically from the bundled manifest. You only need to register it manually for Options 4–5 or when connecting a tool that doesn't use the plugin format.
+> **Skip the rest of this section if you're installing the Claude Code plugin (Option 1, with `orq-mcp`) or a Cursor/Codex plugin** — those plugins register the MCP server automatically from the bundled manifest. Manual registration is only needed for the `npx skills` CLI or when connecting a tool that doesn't use the plugin format.
 
 For manual registration in Claude Code:
 
@@ -41,103 +41,44 @@ claude mcp add --transport http orq-workspace https://my.orq.ai/v2/mcp \
 
 ### Install orq-skills
 
-**Option 1: Claude Code plugin (recommended)** — installs skills, commands, and agents:
-```bash
-/plugin install github:orq-ai/orq-skills
-```
-
-**Option 2: Cursor plugin** — installs skills and MCP config.
-
-The repo root is a Cursor plugin (`.cursor-plugin/plugin.json` declares `./skills/` and `./.mcp.json`). Cursor loads local plugins from `~/.cursor/plugins/local/<name>`:
+**Option 1: Claude Code plugin (recommended)** — installs skills, commands, and agents via the [orq-ai/claude-plugins](https://github.com/orq-ai/claude-plugins) marketplace:
 
 ```bash
-# 1. Clone the repo
-git clone https://github.com/orq-ai/orq-skills.git
-cd orq-skills
-
-# 2. Symlink into Cursor's local plugins directory
-mkdir -p ~/.cursor/plugins/local
-ln -s "$(pwd)" ~/.cursor/plugins/local/orq
-
-# 3. Export your API key (the MCP config references ${ORQ_API_KEY})
-export ORQ_API_KEY=your-key-here
+# In Claude Code:
+/plugin marketplace add orq-ai/claude-plugins
+/plugin install orq-skills@orq-claude-plugin
 ```
 
-Restart Cursor (or run **Developer: Reload Window**). Verify: **Settings → Rules** should list the `orq` skills under *Agent Decides*, and **Settings → Features → Model Context Protocol** should let you enable `orq-workspace`. Then ask in chat: *"List my orq.ai agents."*
-
-*Testing as a Cursor marketplace:* to smoke-test the repo as if it were a Cursor team marketplace before submitting to [cursor.com/marketplace/publish](https://cursor.com/marketplace/publish), add a `.cursor-plugin/marketplace.json` at the repo root and import the repo via **Dashboard → Settings → Plugins → Team Marketplaces → Import** with your GitHub URL. Team marketplaces require a Teams or Enterprise plan.
-
-**Option 3: Codex plugin** — installs skills and MCP config.
-
-The repo ships a Codex plugin at [plugins/orq](plugins/orq) (`plugins/orq/.codex-plugin/plugin.json`) and a repo-level marketplace at [.agents/plugins/marketplace.json](.agents/plugins/marketplace.json). Codex reads marketplace manifests from two locations: `$REPO_ROOT/.agents/plugins/marketplace.json` (repo-level) and `~/.agents/plugins/marketplace.json` (personal).
-
-Repo install — test the bundled marketplace in place:
+The same marketplace also ships `orq-mcp` (MCP server plugin). Install it alongside to skip the manual MCP registration step:
 
 ```bash
-git clone https://github.com/orq-ai/orq-skills.git
-cd orq-skills
-export ORQ_API_KEY=your-key-here
-
-# Launch Codex from the repo root so it picks up .agents/plugins/marketplace.json
-codex
+/plugin install orq-mcp@orq-claude-plugin
 ```
 
-Restart Codex and verify the `orq` plugin appears in the plugin directory — the manifest registers the skills folder and the `orq-workspace` MCP server automatically.
+**Option 2: npx skills CLI** — universal skills installer (Claude Code, Cursor, Gemini CLI, Cline, Copilot CLI, Codex, Windsurf, and [many others](https://www.npmjs.com/package/skills)):
 
-Personal install — use the plugin outside this repo:
-
-```bash
-# Copy the plugin bundle into Codex's personal plugins dir
-mkdir -p ~/.codex/plugins
-cp -r plugins/orq ~/.codex/plugins/orq
-
-# Reference it in your personal marketplace (use an absolute path —
-# tilde expansion is not guaranteed inside JSON string values)
-mkdir -p ~/.agents/plugins
-cat > ~/.agents/plugins/marketplace.json <<JSON
-{
-  "name": "personal",
-  "plugins": [
-    {
-      "name": "orq",
-      "source": { "source": "local", "path": "$HOME/.codex/plugins/orq" }
-    }
-  ]
-}
-JSON
-
-export ORQ_API_KEY=your-key-here
-```
-
-Restart Codex. See the [Codex plugin docs](https://developers.openai.com/codex/plugins/build) for the full plugin spec.
-
-**Option 4: npx skills CLI** — installs skills only (works with Cursor, Gemini CLI, Cline, Copilot CLI, Windsurf, etc.):
 ```bash
 npx skills add orq-ai/orq-skills
 ```
-Then register the `orq-workspace` MCP server in your tool using the HTTP config shown in "Connect the MCP Server" above — most tools accept a JSON block with `url` + `headers`. Check your tool's MCP docs for the exact config file path.
 
-**Option 5: Manual clone** — with Claude Code:
-```bash
-git clone https://github.com/orq-ai/orq-skills.git
-cd orq-skills
-claude --plugin-dir .
-```
+Auto-detects your agent and writes skills to the correct location (e.g. `.claude/skills/`, `.cursor/rules/`). Run inside your project directory. Then register the MCP server per "Connect the MCP Server" above.
 
-> **Note:** Commands (`/orq:quickstart`, `/orq:workspace`, etc.) and agents are only available when installed as a Claude Code plugin.
+### Other install methods
+
+- [Cursor plugin](docs/install-cursor.md)
+- [Codex plugin](docs/install-codex.md)
+- [Manual clone (Claude Code)](docs/install-manual.md)
 
 
 ### Verify
 
-**Claude Code (Option 1 or 5):** run the interactive onboarding — it checks `ORQ_API_KEY`, confirms the MCP server is reachable, and validates your credentials with a live API call.
+**Claude Code:** run the interactive onboarding — it checks `ORQ_API_KEY`, confirms the MCP server is reachable, and validates your credentials with a live API call.
 
 ```
 /orq:quickstart
 ```
 
-**Cursor (Option 2):** restart Cursor, confirm `orq` skills appear under *Settings → Rules*, enable `orq-workspace` under *Settings → Features → MCP*, and ask the chat *"List my orq.ai agents."*
-
-**Codex (Option 3):** restart Codex from the repo root, confirm the `orq` plugin appears in the plugin directory, and ask *"List my orq.ai agents."*
+**Cursor / Codex:** see verify steps in the relevant install doc under [docs/](docs/).
 
 **All options:** validate the plugin manifests with
 
