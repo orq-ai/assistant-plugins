@@ -89,7 +89,8 @@ Invoke Progress:
 - A **deployment** is a versioned LLM configuration: prompt + model + parameters. Invoke it with `inputs` to fill template `{{variables}}` and get a completion.
 - An **agent** is a deployment with tools, memory, and knowledge bases. Invoke it for multi-turn conversations and tool-calling workflows.
 - **Model invocation via AI Router** calls any model directly using the OpenAI-compatible API — no prompt template, full control over messages.
-- **`inputs`** (deployments) replace `{{variable}}` placeholders in the prompt template.
+- **`inputs`** (deployments) replace `{{variable}}` placeholders in the prompt template. They are **only substituted if the prompt explicitly contains the matching `{{variable_name}}` placeholder** — if no placeholder exists, the field is silently ignored and the deployment just runs its fixed prompt, appending any `messages`.
+- **`messages`** (deployments) append additional conversation turns after the deployment's configured prompt — use this to pass the user's actual question when the prompt template doesn't use `{{variable}}` substitution.
 - **`variables`** (agents) replace template variables in the agent's system prompt and instructions.
 - **`identity`** links requests to contacts in orq.ai — required `id`, optional `display_name`, `email`, `metadata`, `logo_url`, `tags`.
 - **`stream=True`** enables server-sent events for real-time token delivery.
@@ -117,13 +118,24 @@ Follow these steps **in order**. Do NOT skip steps.
 
    If the user already knows the key, skip directly to step 3.
 
-3. **For deployments:** inspect the prompt template and list every `{{variable}}` placeholder — these map to `inputs` keys. Missing inputs silently omit placeholder content.
+3. **For deployments:** inspect the prompt template and identify which invocation pattern applies:
+   - **Variable substitution** — the prompt contains `{{variable}}` placeholders → pass values via `inputs`
+   - **Message appending** — the prompt has no variables → pass the user's question via `messages: [{role: "user", content: "..."}]`
+   - **Mixed** — some variables in the template AND a dynamic user message → use both `inputs` and `messages`
+
+   `inputs` values are **only substituted if the matching `{{variable_name}}` exists in the prompt** — passing `inputs` to a deployment with no placeholders has no effect.
 
 ### Phase 2: Configure the Invocation
 
-4. **For deployments — map `inputs` to prompt variables.**
+4. **For deployments — determine the invocation pattern.**
 
-   For each `{{variable}}` found in the prompt, confirm the value:
+   | Pattern | When | What to pass |
+   |---|---|---|
+   | Variable substitution | Prompt has `{{variable}}` placeholders | `inputs: {variable_name: value}` |
+   | Message appending | Prompt has no variables | `messages: [{role: "user", content: "..."}]` |
+   | Mixed | Prompt has variables AND needs user input | Both `inputs` and `messages` |
+
+   For each `{{variable}}` in the prompt, confirm the value to pass:
 
    | Prompt variable | `inputs` key | Example |
    |---|---|---|
@@ -191,16 +203,39 @@ from orq_ai_sdk import Orq
 
 client = Orq(api_key=os.environ["ORQ_API_KEY"])
 
-# Non-streaming
+# Pattern 1: variable substitution
+# Use when the prompt template contains {{variable}} placeholders.
+# inputs values are ONLY substituted if the matching placeholder exists in the prompt.
 response = client.deployments.invoke(
     key="<deployment-key>",
-    inputs={"variable_name": "value"},
+    inputs={
+        "customer_name": "Jane Doe",
+        "issue": "Payment failed",
+    },
     identity={"id": "user_<unique_id>", "display_name": "Jane Doe"},
     metadata={"environment": "production"},
 )
 print(response.choices[0].message.content)
 
-# Streaming
+# Pattern 2: message appending
+# Use when the prompt has no {{variable}} placeholders — pass the user's question via messages.
+response = client.deployments.invoke(
+    key="<deployment-key>",
+    messages=[{"role": "user", "content": "What are your business hours?"}],
+    identity={"id": "user_<unique_id>"},
+)
+print(response.choices[0].message.content)
+
+# Pattern 3: mixed — variables + user message
+response = client.deployments.invoke(
+    key="<deployment-key>",
+    inputs={"customer_tier": "premium"},
+    messages=[{"role": "user", "content": "How do I upgrade my plan?"}],
+    identity={"id": "user_<unique_id>"},
+)
+print(response.choices[0].message.content)
+
+# Streaming (works with any pattern above)
 response = client.deployments.invoke(
     key="<deployment-key>",
     inputs={"variable_name": "value"},
@@ -214,14 +249,36 @@ for chunk in response:
 ### Deployment — curl
 
 ```bash
+# Pattern 1: variable substitution (prompt has {{variable}} placeholders)
 curl -s -X POST https://api.orq.ai/v2/deployments/invoke \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "key": "<deployment-key>",
-    "inputs": {"variable_name": "value"},
+    "inputs": {"customer_name": "Jane Doe", "issue": "Payment failed"},
     "identity": {"id": "user_<unique_id>", "display_name": "Jane Doe"},
     "metadata": {"environment": "production"}
+  }' | jq
+
+# Pattern 2: message appending (prompt has no {{variable}} placeholders)
+curl -s -X POST https://api.orq.ai/v2/deployments/invoke \
+  -H "Authorization: Bearer $ORQ_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key": "<deployment-key>",
+    "messages": [{"role": "user", "content": "What are your business hours?"}],
+    "identity": {"id": "user_<unique_id>"}
+  }' | jq
+
+# Pattern 3: mixed — variables + user message
+curl -s -X POST https://api.orq.ai/v2/deployments/invoke \
+  -H "Authorization: Bearer $ORQ_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key": "<deployment-key>",
+    "inputs": {"customer_tier": "premium"},
+    "messages": [{"role": "user", "content": "How do I upgrade my plan?"}],
+    "identity": {"id": "user_<unique_id>"}
   }' | jq
 ```
 
@@ -334,6 +391,7 @@ curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
 | Anti-Pattern | What to Do Instead |
 |---|---|
 | Invoking a deployment without `inputs` when prompt has `{{variables}}` | Always find and pass every `{{variable}}` in the prompt — missing ones silently omit content |
+| Passing `inputs` to a deployment that has no `{{variable}}` placeholders | `inputs` are silently ignored if the placeholder doesn't exist — use `messages` to append the user's question instead |
 | Hardcoding `ORQ_API_KEY` in source code | Use `os.environ["ORQ_API_KEY"]` / `process.env.ORQ_API_KEY` |
 | Using OpenAI message format for agents (`{"role": "user", "content": "..."}`) | Use A2A parts format: `{"role": "user", "parts": [{"kind": "text", "text": "..."}]}` |
 | Skipping `identity.id` in production | Always pass identity — enables per-user analytics and cost attribution |
