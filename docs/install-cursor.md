@@ -1,10 +1,15 @@
 # Cursor install
 
-Installs skills and MCP config. Repo root doubles as Cursor plugin (`.cursor-plugin/plugin.json` declares `./skills/` and `./.mcp.json`). Cursor loads local plugins from `~/.cursor/plugins/local/<name>`.
+Two paths:
 
-## Install
+- **Bundled plugin** — skills + MCP in one step (clone + symlink).
+- **Separate** — `npx skills` for skills, manual JSON for MCP.
 
 Make sure `ORQ_API_KEY` is exported (see [Prerequisites](../README.md#prerequisites)) — the MCP config references `${ORQ_API_KEY}`.
+
+## Option A: Bundled plugin (skills + MCP)
+
+Repo root doubles as Cursor plugin (`.cursor-plugin/plugin.json` declares `./skills/` and `./.mcp.json`). Cursor loads local plugins from `~/.cursor/plugins/local/<name>`.
 
 ```bash
 # 1. Clone the repo
@@ -17,6 +22,32 @@ ln -s "$(pwd)" ~/.cursor/plugins/local/orq
 ```
 
 Restart Cursor (or run **Developer: Reload Window**).
+
+## Option B: Skills only (npx)
+
+```bash
+npx skills add orq-ai/orq-skills
+```
+
+Writes skills to `.cursor/rules/`. Then add the MCP server separately (see below).
+
+## MCP server (standalone)
+
+Cursor reads MCP servers from `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` in your project. Add:
+
+```json
+{
+  "mcpServers": {
+    "orq-workspace": {
+      "type": "http",
+      "url": "https://my.orq.ai/v2/mcp",
+      "headers": { "Authorization": "Bearer ${ORQ_API_KEY}" }
+    }
+  }
+}
+```
+
+Restart Cursor, then enable `orq-workspace` under **Settings → Features → Model Context Protocol**.
 
 ## Verify
 
