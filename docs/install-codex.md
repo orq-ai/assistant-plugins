@@ -8,10 +8,11 @@ Codex reads marketplace manifests from two locations:
 
 ## Repo install — test the bundled marketplace in place
 
+Make sure `ORQ_API_KEY` is exported (see [Prerequisites](../README.md#prerequisites)).
+
 ```bash
 git clone https://github.com/orq-ai/orq-skills.git
 cd orq-skills
-export ORQ_API_KEY=your-key-here
 
 # Launch Codex from the repo root so it picks up .agents/plugins/marketplace.json
 codex
@@ -40,8 +41,6 @@ cat > ~/.agents/plugins/marketplace.json <<JSON
   ]
 }
 JSON
-
-export ORQ_API_KEY=your-key-here
 ```
 
 Restart Codex. See the [Codex plugin docs](https://developers.openai.com/codex/plugins/build) for the full plugin spec.

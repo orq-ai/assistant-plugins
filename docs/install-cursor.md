@@ -4,6 +4,8 @@ Installs skills and MCP config. Repo root doubles as Cursor plugin (`.cursor-plu
 
 ## Install
 
+Make sure `ORQ_API_KEY` is exported (see [Prerequisites](../README.md#prerequisites)) — the MCP config references `${ORQ_API_KEY}`.
+
 ```bash
 # 1. Clone the repo
 git clone https://github.com/orq-ai/orq-skills.git
@@ -12,9 +14,6 @@ cd orq-skills
 # 2. Symlink into Cursor's local plugins directory
 mkdir -p ~/.cursor/plugins/local
 ln -s "$(pwd)" ~/.cursor/plugins/local/orq
-
-# 3. Export your API key (the MCP config references ${ORQ_API_KEY})
-export ORQ_API_KEY=your-key-here
 ```
 
 Restart Cursor (or run **Developer: Reload Window**).
