@@ -115,57 +115,17 @@ Follow these steps **in order**. Do NOT skip steps.
    - Use `provider/model` format for model names (e.g., `openai/gpt-4o`, `anthropic/claude-sonnet-4-5-20250929`)
    - That's it — traces appear automatically
 
-   **Python (OpenAI SDK):**
-   ```python
-   from openai import OpenAI
-   import os
-
-   client = OpenAI(
-       base_url="https://api.orq.ai/v2/router",
-       api_key=os.environ["ORQ_API_KEY"],
-   )
-   ```
-
-   **Node.js (OpenAI SDK):**
-   ```typescript
-   import OpenAI from "openai";
-
-   const client = new OpenAI({
-       baseURL: "https://api.orq.ai/v2/router",
-       apiKey: process.env.ORQ_API_KEY,
-   });
-   ```
-
-   For framework-specific setup (LangChain, CrewAI, etc.), refer to the framework's docs page linked in [resources/framework-integrations.md](resources/framework-integrations.md).
+   For SDK code examples (Python, Node.js) and framework-specific setup (LangChain, CrewAI, etc.), see [resources/framework-integrations.md](resources/framework-integrations.md).
 
 6. **For Observability mode:**
    - Set OTEL environment variables. **Warning:** If the project already has OpenTelemetry configured (e.g., for Datadog, Jaeger, or another backend), check for existing `OTEL_*` env vars or `TracerProvider` setup first — setting these will override that configuration. Confirm with the user before overwriting.
-     ```bash
-     export OTEL_EXPORTER_OTLP_ENDPOINT="https://api.orq.ai/v2/otel"
-     export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer $ORQ_API_KEY"
-     export OTEL_RESOURCE_ATTRIBUTES="service.name=<your-app-name>,service.version=1.0.0"
-     export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="http/json"
-     ```
    - Install the framework's OpenInference instrumentor package
    - Initialize the instrumentor BEFORE creating SDK clients
    - Refer to the framework's docs page for the exact instrumentor and setup
 
-   **Python (OpenAI example):** *(Node.js uses `@opentelemetry/sdk-node` — see [Integration Overview](https://docs.orq.ai/docs/integrations/overview) for Node.js setup)*
-   ```python
-   from opentelemetry import trace
-   from opentelemetry.sdk.trace import TracerProvider
-   from opentelemetry.sdk.trace.export import BatchSpanProcessor
-   from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-   from openinference.instrumentation.openai import OpenAIInstrumentor
+   For OTEL env vars, Python/Node.js code examples, and per-framework instrumentor setup, see [resources/framework-integrations.md](resources/framework-integrations.md).
 
-   # Initialize BEFORE creating OpenAI client
-   tracer_provider = TracerProvider()
-   tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
-   trace.set_tracer_provider(tracer_provider)
-   OpenAIInstrumentor().instrument(tracer_provider=tracer_provider)
-   ```
-
-   > **Note:** The import order above is critical — instrumentors must be initialized before framework clients. If the project uses an auto-formatter (isort, Ruff), add `# isort:skip_file` at the top of the file or `# noqa: E402` on late imports to prevent reordering.
+   > **Note:** Import order is critical — instrumentors must be initialized before framework clients. If the project uses an auto-formatter (isort, Ruff), add `# isort:skip_file` at the top of the file or `# noqa: E402` on late imports to prevent reordering.
 
 7. **For both modes:** Set up AI Router first (step 5), then add Observability (step 6) for framework-level spans on top.
 
