@@ -11,6 +11,8 @@ Make sure `ORQ_API_KEY` is exported (see [Prerequisites](../README.md#prerequisi
 
 Repo root doubles as Cursor plugin (`.cursor-plugin/plugin.json` declares `./skills/` and `./.mcp.json`). Cursor loads local plugins from `~/.cursor/plugins/local/<name>`.
 
+> **Windows:** Git symlinks require `core.symlinks=true` and either Developer Mode or Admin privileges. Without this, symlinked files are checked out as plain text and plugin resolution silently breaks. Run `git config --global core.symlinks true` before cloning, and enable [Windows Developer Mode](https://learn.microsoft.com/en-us/windows/apps/get-started/enable-your-device-for-development).
+
 ```bash
 # 1. Clone the repo
 git clone https://github.com/orq-ai/orq-skills.git

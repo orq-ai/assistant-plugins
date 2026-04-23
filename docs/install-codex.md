@@ -17,6 +17,8 @@ Codex reads marketplace manifests from:
 
 ### Repo install — test the bundled marketplace in place
 
+> **Windows:** Git symlinks require `core.symlinks=true` and either Developer Mode or Admin privileges. Without this, symlinked files are checked out as plain text and plugin resolution silently breaks. Run `git config --global core.symlinks true` before cloning, and enable [Windows Developer Mode](https://learn.microsoft.com/en-us/windows/apps/get-started/enable-your-device-for-development).
+
 ```bash
 git clone https://github.com/orq-ai/orq-skills.git
 cd orq-skills
@@ -31,8 +33,9 @@ The manifest registers the skills folder and the `orq-workspace` MCP server auto
 
 ```bash
 # Copy the plugin bundle into Codex's personal plugins dir
+# -rL dereferences symlinks so the copied files resolve correctly
 mkdir -p ~/.codex/plugins
-cp -r plugins/orq ~/.codex/plugins/orq
+cp -rL plugins/orq ~/.codex/plugins/orq
 
 # Reference it in your personal marketplace (use an absolute path —
 # tilde expansion is not guaranteed inside JSON string values)
