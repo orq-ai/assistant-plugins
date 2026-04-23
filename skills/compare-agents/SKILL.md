@@ -194,14 +194,6 @@ Agent Comparison Progress:
 
 ---
 
-## Checklist
-
-- [ ] Agents identified: frameworks, invocation methods confirmed
-- [ ] Dataset created with unbiased, cross-agent datapoints
-- [ ] Evaluator created with factual-correctness language
-- [ ] Comparison script generated with correct IDs and import paths
-- [ ] Script runs successfully and results appear in the orq.ai Experiment UI
-
 ## Open in orq.ai
 
 After running the comparison:
@@ -209,14 +201,4 @@ After running the comparison:
 - **Agent details:** [my.orq.ai](https://my.orq.ai/) → Agents
 - **Traces:** [my.orq.ai](https://my.orq.ai/) → Traces
 
-## Documentation & Resolution
-
-When you need to look up orq.ai platform details, check in this order:
-
-1. **[evaluatorq package source](https://github.com/orq-ai/orqkit)** — installed package is authoritative for API, imports, and patterns
-2. **orq MCP tools** — query live data for agent and dataset operations; API responses are always authoritative
-3. **orq.ai documentation MCP** — use `search_orq_ai_documentation` or `get_page_orq_ai_documentation` to look up platform docs programmatically
-4. **[docs.orq.ai](https://docs.orq.ai)** — browse official documentation directly
-5. **This skill file** — may lag behind package, API, or docs changes
-
-When this skill's content conflicts with live API behavior or official docs, trust the source higher in this list.
+When this skill conflicts with live API responses or docs.orq.ai, trust the API.

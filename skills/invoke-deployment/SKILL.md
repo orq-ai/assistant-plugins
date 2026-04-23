@@ -422,13 +422,4 @@ After completing this skill, direct the user to:
 - **Traces:** [my.orq.ai](https://my.orq.ai/) → Traces — inspect invocations, token usage, latency
 - **Analytics:** [my.orq.ai](https://my.orq.ai/) → Analytics — per-deployment/agent cost and volume
 
-## Documentation & Resolution
-
-When you need to look up orq.ai platform details, check in this order:
-
-1. **orq MCP tools** — query live data first (`search_entities` with `type: "deployment"` or `"agent"`); API responses are always authoritative
-2. **orq.ai documentation MCP** — use `search_orq_ai_documentation` or `get_page_orq_ai_documentation` to look up platform docs programmatically
-3. **[docs.orq.ai](https://docs.orq.ai)** — browse official documentation directly
-4. **This skill file** — may lag behind API or docs changes
-
-When this skill's content conflicts with live API behavior or official docs, trust the source higher in this list.
+When this skill conflicts with live API responses or docs.orq.ai, trust the API.
