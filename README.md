@@ -21,6 +21,18 @@ Built on the [Agent Skills](https://agentskills.io/home#adoption) standard forma
   export ORQ_API_KEY=your-key-here
   ```
 
+### Quick reference
+
+| Tool | Recommended install |
+|------|---------------------|
+| Claude Code | [Claude Code plugin](#claude-code-plugin) |
+| Cursor | [Cursor install guide](docs/install-cursor.md) |
+| Codex | [Codex install guide](docs/install-codex.md) |
+| Gemini CLI, Cline, Copilot, Windsurf | [Skills-only install (npx)](#skills-only-install) |
+| Any MCP-capable client | [MCP-only install](#mcp-only-install) |
+
+---
+
 ### Claude Code plugin
 
 Use this if you want easy access to all components — skills, MCP tools, and trace hooks — in one install. Installed via the [orq-ai/claude-plugins](https://github.com/orq-ai/claude-plugins) marketplace.
