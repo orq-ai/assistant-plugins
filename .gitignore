@@ -18,6 +18,9 @@
 context
 tests/
 
+# Local skills install artifacts
+.agents/skills/
+
 # Environment
 .env
 .env.local
