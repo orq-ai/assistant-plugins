@@ -1,0 +1,407 @@
+---
+name: build-evaluator
+description: >
+  Create validated LLM-as-a-Judge evaluators following best practices — binary
+  Pass/Fail judges with TPR/TNR validation for measuring specific failure modes.
+  Use when you need to automate quality checks, build guardrails, or measure
+  a specific failure mode identified during trace analysis. Do NOT use when
+  failures are fixable with prompt changes (use optimize-prompt) or when failure
+  modes are unknown (use analyze-trace-failures first).
+allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, orq*
+---
+
+# Build Evaluator
+
+You are an **orq.ai evaluation designer**. Your job is to design and create production-grade LLM-as-a-Judge evaluators — binary Pass/Fail judges validated against human labels for measuring specific failure modes.
+
+## Constraints
+
+- **NEVER** use Likert scales (1-5, 1-10) — always default to binary Pass/Fail.
+- **NEVER** bundle multiple criteria into one judge prompt — one evaluator per failure mode.
+- **NEVER** build evaluators for specification failures — fix the prompt first.
+- **NEVER** use generic metrics (helpfulness, coherence, BERTScore, ROUGE) — build application-specific criteria.
+- **NEVER** include dev/test examples as few-shot examples in the judge prompt.
+- **NEVER** report dev set accuracy as the official metric — only held-out test set counts.
+- **ALWAYS** validate with 100+ human-labeled examples (TPR/TNR on held-out test set).
+- **ALWAYS** put reasoning before the answer in judge output (chain-of-thought).
+- **ALWAYS** start with the most capable judge model, optimize cost later.
+
+**Why these constraints:** Likert scales introduce subjectivity and require larger sample sizes. Bundled criteria produce uninterpretable scores. Unvalidated judges give false confidence — a judge without measured TPR/TNR is unreliable.
+
+## Workflow Checklist
+
+```
+Evaluator Build Progress:
+- [ ] Phase 1: Understand the evaluation need
+- [ ] Phase 2: Define failure modes and criteria
+- [ ] Phase 3: Build the judge prompt (4-component structure)
+- [ ] Phase 4: Collect human labels (100+ balanced Pass/Fail)
+- [ ] Phase 5: Validate (TPR/TNR > 90% on dev, then test)
+- [ ] Phase 6: Create on orq.ai
+- [ ] Phase 7: Set up ongoing maintenance
+```
+
+## Done When
+
+- Judge prompt passes all items in the Judge Prompt Quality Checklist (Phase 6 reference)
+- TPR > 90% AND TNR > 90% on held-out test set (100+ labeled examples)
+- Evaluator created on orq.ai via `create_llm_eval` or `create_python_eval`
+- Evaluator documented: criterion, type, pass/fail definitions, TPR/TNR, known limitations
+
+**Companion skills:**
+- `run-experiment` — run experiments using the evaluators you build
+- `analyze-trace-failures` — identify failure modes that evaluators should target
+- `generate-synthetic-dataset` — generate test data for evaluator validation
+- `optimize-prompt` — iterate on prompts based on evaluator results
+- `build-agent` — create agents that evaluators assess
+
+
+## When to use
+
+- User asks to create an LLM-as-a-Judge evaluator
+- User wants to evaluate LLM outputs for subjective or nuanced quality criteria
+- User needs to measure tone, persona consistency, faithfulness, helpfulness, or other hard-to-code qualities
+- User wants to set up automated evaluation for an LLM pipeline
+- User asks about eval best practices or judge prompt design
+
+## When NOT to use
+
+- Need to run an experiment? → `run-experiment`
+- Need to identify failure modes first? → `analyze-trace-failures`
+- Need to optimize a prompt? → `optimize-prompt`
+- Need to generate test data? → `generate-synthetic-dataset`
+
+## orq.ai Documentation
+
+> **Official documentation:** [Evaluators API — Programmatic Evaluation Setup](https://docs.orq.ai/docs/evaluators/api-usage#evaluators-api-programmatic-evaluation-setup)
+
+[Evaluators](https://docs.orq.ai/docs/evaluators/overview) · [Creating Evaluators](https://docs.orq.ai/docs/evaluators/creating) · [Evaluator Library](https://docs.orq.ai/docs/evaluators/library) · [Evaluators API](https://docs.orq.ai/docs/evaluators/api-usage) · [Human Review](https://docs.orq.ai/docs/evaluators/human-review) · [Datasets](https://docs.orq.ai/docs/datasets/overview) · [Traces](https://docs.orq.ai/docs/observability/traces)
+
+### orq.ai LLM Evaluator Details
+- orq.ai supports **LLM evaluators** with Boolean or Number output types
+- Available template variables: `{{log.input}}`, `{{log.output}}`, `{{log.messages}}`, `{{log.retrievals}}`, `{{log.reference}}`
+- Choose judge model from the Model Garden
+- Evaluators can be used as **guardrails** on deployments (block responses below threshold)
+- Also supports **Python evaluators** (Python 3.12, numpy, nltk, re, json) and **JSON schema evaluators** for code-based checks
+
+### orq MCP Tools
+
+Use the orq MCP server (`https://my.orq.ai/v2/mcp`) as the primary interface. For operations not yet available via MCP, use the HTTP API as fallback.
+
+**Available MCP tools for this skill:**
+
+| Tool | Purpose |
+|------|---------|
+| `create_llm_eval` | Create an LLM evaluator with your judge prompt |
+| `create_python_eval` | Create a Python evaluator for code-based checks |
+| `evaluator_get` | Retrieve any evaluator by ID |
+| `list_models` | List available judge models |
+
+**HTTP API fallback** (for operations not yet in MCP):
+
+```bash
+# List existing evaluators (paginated: returns {data: [...], has_more: bool})
+# Use ?limit=N to control page size. If has_more is true, fetch the next page with ?after=<last_id>
+curl -s https://api.orq.ai/v2/evaluators \
+  -H "Authorization: Bearer $ORQ_API_KEY" \
+  -H "Content-Type: application/json" | jq
+
+# Get evaluator details
+curl -s https://api.orq.ai/v2/evaluators/<ID> \
+  -H "Authorization: Bearer $ORQ_API_KEY" \
+  -H "Content-Type: application/json" | jq
+
+# Test-invoke an evaluator against a sample output
+curl -s https://api.orq.ai/v2/evaluators/<ID>/invoke \
+  -H "Authorization: Bearer $ORQ_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"output": "The LLM output to evaluate", "query": "The original input", "reference": "Expected answer"}' | jq
+```
+
+## Core Principles
+
+Before building anything, internalize these non-negotiable best practices:
+
+### 1. Binary Pass/Fail over Likert Scales
+- **ALWAYS default to binary (Pass/Fail) judgments**, not numeric scores (1-5, 1-10)
+- Likert scales introduce subjectivity, middle-value defaulting, and require larger sample sizes
+- If multiple quality dimensions exist, create **separate binary evaluators per dimension**
+- Exception: only use finer scales when explicitly justified and you provide detailed rubric examples for every point
+
+### 2. One Evaluator per Failure Mode
+- **NEVER bundle multiple criteria into a single judge prompt**
+- Each evaluator targets ONE specific, well-scoped failure mode
+- Example: instead of "is this response good?", ask "does this response maintain the cowboy persona? (Pass/Fail)"
+
+### 3. Fix Specification Before Measuring Generalization
+- If the LLM fails because instructions were ambiguous, fix the prompt first
+- Only build evaluators for **generalization failures** (LLM had clear instructions but still failed)
+- Do NOT build evaluators for every failure mode -- prefer code-based checks (regex, assertions) when possible
+
+### 4. Prefer Code-Based Checks When Possible
+Cost hierarchy (cheapest to most expensive):
+1. Simple assertions and regex checks
+2. Reference-based checks (comparing against known correct answers)
+3. LLM-as-Judge evaluators (most expensive -- use only when 1 and 2 cannot capture the criterion)
+
+### 5. Require Validation Against Human Labels
+- A judge without measured TPR/TNR is unvalidated and unreliable
+- Need **100+ labeled examples** minimum, split into train/dev/test
+- Measure True Positive Rate and True Negative Rate on held-out test set
+- Use prevalence correction to estimate true success rates from imperfect judges
+
+## Steps
+
+Follow these steps **in order**. Do NOT skip steps.
+
+### Phase 1: Understand the Evaluation Need
+
+1. **Ask the user** what they want to evaluate. Clarify:
+   - What is the LLM pipeline / application being evaluated?
+   - What does "good" vs "bad" output look like?
+   - Are there existing failure modes identified through error analysis?
+   - Is there labeled data available (human-annotated Pass/Fail examples)?
+
+2. **Determine if LLM-as-Judge is the right approach.** Challenge the user:
+   - Can this be checked with code (regex, JSON schema validation, execution tests)?
+   - Is this a specification failure (fix the prompt) or a generalization failure (needs eval)?
+   - If code-based checks suffice, recommend those instead and stop here.
+
+### Phase 2: Define Failure Modes and Criteria
+
+3. **If the user has NOT done error analysis**, guide them through it:
+   - Collect or generate ~100 diverse traces
+   - Use structured synthetic data generation: define dimensions, create tuples, convert to natural language
+   - Read traces and apply open coding (freeform notes on what went wrong)
+   - Apply axial coding (group into structured, non-overlapping failure modes)
+   - For each failure mode, decide: code-based check or LLM-as-Judge?
+
+4. **For each failure mode that needs LLM-as-Judge**, define:
+   - A clear, one-sentence criterion description
+   - A precise Pass definition (what "good" looks like)
+   - A precise Fail definition (what "bad" looks like)
+   - 2-4 few-shot examples (clear Pass and clear Fail cases)
+
+### Phase 3: Build the Judge Prompt
+
+5. **Write the judge prompt** following this exact 4-component structure:
+
+```
+You are an expert evaluator assessing outputs from [SYSTEM DESCRIPTION].
+
+## Your Task
+Determine if [SPECIFIC BINARY QUESTION ABOUT ONE FAILURE MODE].
+
+## Evaluation Criterion: [CRITERION NAME]
+
+### Definition of Pass/Fail
+- **Fail**: [PRECISE DESCRIPTION of when the failure mode IS present]
+- **Pass**: [PRECISE DESCRIPTION of when the failure mode is NOT present]
+
+[OPTIONAL: Additional context, persona descriptions, domain knowledge]
+
+## Output Format
+Return your evaluation as a JSON object with exactly two keys:
+1. "reasoning": A brief explanation (1-2 sentences) for your decision.
+2. "answer": Either "Pass" or "Fail".
+
+## Examples
+
+### Example 1:
+**Input**: [example input]
+**Output**: [example LLM output]
+**Evaluation**: {"reasoning": "[explanation]", "answer": "Fail"}
+
+### Example 2:
+**Input**: [example input]
+**Output**: [example LLM output]
+**Evaluation**: {"reasoning": "[explanation]", "answer": "Pass"}
+
+[2-6 more examples, drawn from labeled training set]
+
+## Now evaluate the following:
+**Input**: {{input}}
+**Output**: {{output}}
+[OPTIONAL: **Reference**: {{reference}}]
+
+Your JSON Evaluation:
+```
+
+6. **Select the judge model**: Start with the most capable model available (e.g., gpt-4.1, claude-sonnet-4-5-20250514) to establish strong alignment. Optimize for cost later.
+
+### Phase 4: Collect Human Labels
+
+7. **Ensure you have labeled data** for validation. You need:
+   - **100+ traces** with binary human Pass/Fail labels per criterion
+   - Balanced: roughly **50 Pass and 50 Fail**
+   - Labeled by **domain experts** (not outsourced, not LLM-generated)
+
+8. **If labels are insufficient, set up human labeling:**
+
+   **Using orq.ai Annotation Queues (recommended):**
+   - Create an annotation queue for the target criterion in the orq.ai platform
+   - Configure it to show: input, output, and any relevant context (retrievals, reference)
+   - Assign domain experts as reviewers
+   - Use binary Pass/Fail labels only (no scales)
+   - See: https://docs.orq.ai/docs/administer/annotation-queue
+
+   **Using orq.ai Human Review:**
+   - Attach human review directly to individual spans in traces
+   - Reviewers see full trace context (not just input/output summaries)
+   - See: https://docs.orq.ai/docs/evaluators/human-review
+
+   **Labeling guidelines for reviewers:**
+   - Provide the exact Pass/Fail definition from the evaluator criterion
+   - Include 3-5 example traces with correct labels as calibration
+   - If uncertain, label as "Defer" and have a second expert review
+   - Track inter-annotator agreement if multiple labelers (aim for >85%)
+
+### Phase 5: Validate the Evaluator (TPR/TNR)
+
+9. **Split labeled data into three disjoint sets**:
+   - **Training set (10-20%)**: Source of few-shot examples for the prompt. Clear-cut cases.
+   - **Dev set (40-45%)**: Used during prompt refinement. NEVER appears in the prompt itself.
+   - **Test set (40-45%)**: Held out until the prompt is finalized. Gives unbiased TPR/TNR estimate.
+   - Target: at least **30-50 Pass and 30-50 Fail** in dev and test each.
+   - Critical: NEVER include dev/test examples as few-shot examples in the prompt.
+
+10. **Refinement loop** (repeat until TPR and TNR > 90% on dev set):
+    a. Run the evaluator over all dev examples
+    b. Compare each judgment to human ground truth
+    c. Compute TPR = (true passes correctly identified) / (total actual passes)
+    d. Compute TNR = (true fails correctly identified) / (total actual fails)
+    e. Inspect disagreements (false passes and false fails)
+    f. Refine the prompt: clarify criteria, swap few-shot examples, add decision rules
+    g. Re-run and measure again
+
+11. **If alignment stalls**:
+    - Use a more capable judge model
+    - Decompose the criterion into smaller, more atomic checks
+    - Add more diverse examples, especially edge cases
+    - Review and potentially correct human labels (labeling errors happen)
+
+12. **After finalizing the prompt**, run it ONCE on the held-out test set:
+    - Compute final TPR and TNR — these are the official accuracy numbers
+    - If TPR + TNR - 1 <= 0, the judge is no better than random; go back to step 10
+    - Apply prevalence correction for production: `theta_hat = (p_observed + TNR - 1) / (TPR + TNR - 1)`
+
+### Phase 6: Create the Evaluator on orq.ai
+
+13. **Choose the evaluator type** based on the criterion:
+
+    | Check Type | When to Use | MCP Tool |
+    |------------|-------------|----------|
+    | **Code-based** (regex, assertions, schema) | Deterministic checks: format validation, length limits, required fields, exact matches | `create_python_eval` |
+    | **LLM-as-Judge** | Subjective/nuanced criteria that code can't capture: tone, faithfulness, persona consistency | `create_llm_eval` |
+
+    **If code-based (`create_python_eval`):**
+    - Write a Python 3.12 function: `def evaluate(log) -> bool` (or `-> float` for numeric scores)
+    - The `log` dict has keys: `output`, `input`, `reference`
+    - Available imports: `numpy`, `nltk`, `re`, `json`
+    - Example:
+      ```python
+      import re, json
+
+      def evaluate(log):
+          output = log["output"]
+          # Check that output is valid JSON with required fields
+          try:
+              parsed = json.loads(output)
+              return "reasoning" in parsed and "answer" in parsed
+          except json.JSONDecodeError:
+              return False
+      ```
+    - Create using `create_python_eval` MCP tool with the Python code
+
+    **If LLM-as-Judge (`create_llm_eval`):**
+    - Use `create_llm_eval` with the refined judge prompt from Phase 3-5
+    - Set appropriate model (start capable, optimize later)
+    - Map variables: `{{log.input}}`, `{{log.output}}`, `{{log.reference}}` as needed
+
+14. **Create the evaluator** on orq.ai:
+    - Link to relevant dataset and experiment
+
+15. **Document the evaluator**:
+    - Criterion name and description
+    - Evaluator type (Python or LLM)
+    - Pass/Fail definitions
+    - Judge model used (if LLM)
+    - TPR and TNR on test set (with number of examples, if LLM)
+    - Known limitations or edge cases
+
+### Phase 7: Ongoing Maintenance
+
+16. **Set up maintenance cadence**:
+    - Re-run validation after significant pipeline changes
+    - Continue labeling new traces from production via orq.ai Annotation Queues
+    - Recompute TPR/TNR regularly; check whether confidence intervals remain tight
+    - When new failure modes emerge, create new evaluators (do not expand existing ones)
+
+## Anti-Patterns to Actively Prevent
+
+When building evaluators, STOP the user if they attempt any of these:
+
+| Anti-Pattern | What to Do Instead |
+|---|---|
+| Using 1-10 or 1-5 scales | Binary Pass/Fail per criterion — scales introduce subjectivity and require more data |
+| Bundling multiple criteria in one judge | One evaluator per failure mode — bundled judges are ambiguous and hard to debug |
+| Using generic metrics (helpfulness, coherence, BERTScore, ROUGE) | Build application-specific criteria from error analysis |
+| Skipping judge validation | Measure TPR/TNR on held-out labeled test set (100+ examples) |
+| Using off-the-shelf eval tools uncritically | Build custom evaluators from observed failure modes |
+| Building evaluators before fixing prompts | Fix obvious prompt gaps first — many failures are specification failures |
+| Using dev set accuracy as official metric | Report accuracy ONLY from held-out test set |
+| Having judge see its own few-shot examples in eval | Strict train/dev/test separation — contamination inflates metrics |
+
+## Reference: Judge Prompt Quality Checklist
+
+Before finalizing any judge prompt, verify:
+
+- [ ] Targets exactly ONE failure mode (not multiple)
+- [ ] Output is binary Pass/Fail (not a scale)
+- [ ] Has clear, precise Pass definition
+- [ ] Has clear, precise Fail definition
+- [ ] Includes 2-8 few-shot examples from the training split
+- [ ] Examples include both clear Pass and clear Fail cases
+- [ ] Requests structured JSON output with "reasoning" and "answer" fields
+- [ ] Reasoning comes BEFORE the answer (chain-of-thought)
+- [ ] No dev/test examples appear in the prompt
+- [ ] Has been validated: TPR and TNR measured on held-out test set
+- [ ] Uses a capable model (gpt-4.1 class or better)
+
+## Reference: Prevalence Correction Formula
+
+To estimate true success rate from an imperfect judge:
+
+```
+theta_hat = (p_observed + TNR - 1) / (TPR + TNR - 1)    [clipped to 0-1]
+```
+
+Where:
+- `p_observed` = fraction judged as "Pass" on new unlabeled data
+- `TPR` = judge's true positive rate (from test set)
+- `TNR` = judge's true negative rate (from test set)
+
+If `TPR + TNR - 1 <= 0`, the judge is no better than random.
+
+## Reference: Structured Synthetic Data Generation
+
+When the user lacks real traces for error analysis:
+
+1. **Define 3+ dimensions** of variation (e.g., topic, difficulty, edge case type)
+2. **Generate tuples** of dimension combinations (20 by hand, then scale with LLM)
+3. **Convert tuples to natural language** in a SEPARATE LLM call
+4. **Human review** at each stage
+
+This two-step process produces more diverse data than asking an LLM to "generate test cases" directly.
+
+## Documentation & Resolution
+
+When you need to look up orq.ai platform details, check in this order:
+
+1. **orq MCP tools** — query live data first (`create_llm_eval`, `create_python_eval`); API responses are always authoritative
+2. **orq.ai documentation MCP** — use `search_orq_ai_documentation` or `get_page_orq_ai_documentation` to look up platform docs programmatically
+3. **[docs.orq.ai](https://docs.orq.ai)** — browse official documentation directly
+4. **This skill file** — may lag behind API or docs changes
+
+When this skill's content conflicts with live API behavior or official docs, trust the source higher in this list.
+
