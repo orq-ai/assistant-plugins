@@ -25,7 +25,8 @@ Built on the [Agent Skills](https://agentskills.io/home#adoption) standard forma
 
 | Tool | Recommended install |
 |------|---------------------|
-| Claude Code | [Claude Code plugin](#claude-code-plugin) |
+| Claude Code (CLI) | [Claude Code plugin](#claude-code-plugin) |
+| Claude Cowork (Desktop) | [Claude Cowork install guide](docs/install-claude-cowork.md) |
 | Cursor | [Cursor install guide](docs/install-cursor.md) |
 | Codex | [Codex install guide](docs/install-codex.md) |
 | Gemini CLI, Cline, Copilot, Windsurf | [Skills-only install (npx)](#skills-only-install) |

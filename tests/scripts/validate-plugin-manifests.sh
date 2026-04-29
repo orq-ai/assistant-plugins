@@ -142,5 +142,16 @@ assert_symlink "mcp.json" ".mcp.json"
 assert_symlink "plugins/orq/.mcp.json" "../../.mcp.json"
 assert_symlink "plugins/orq/mcp.json" "../../.mcp.json"
 assert_symlink "plugins/orq/skills" "../../skills"
+assert_symlink ".claude-plugin/.mcp.json" "../.mcp.json"
+assert_symlink ".claude-plugin/skills" "../skills"
+
+# --- Claude Cowork Desktop: symlinks resolve to real targets ---
+
+assert_path -f ".claude-plugin/.mcp.json" \
+  ".claude-plugin/.mcp.json must resolve to a readable file"
+assert_path -d ".claude-plugin/skills" \
+  ".claude-plugin/skills must resolve to a readable directory"
+assert_path -f ".claude-plugin/skills/build-agent/SKILL.md" \
+  ".claude-plugin/skills/build-agent/SKILL.md must exist (verifies symlink resolves)"
 
 echo "Plugin manifest validation passed."
