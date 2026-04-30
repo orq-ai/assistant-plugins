@@ -5,15 +5,17 @@
 // promises.
 //
 // Usage: node test-resolution.mjs
-// Env: requires ~/.config/orq/config.json with at least two profiles named
-//      RESEARCH_PROFILE and TRACE_PROFILE (see top of file).
+// Env: requires ~/.config/orq/config.json with at least two profiles. Defaults
+// assume profiles named `default` (acts as the "general/CLI" profile) and
+// `trace` (acts as the trace-specific profile). Override with
+// TEST_SECONDARY_PROFILE / TEST_TRACE_PROFILE env vars.
 
 import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
 
-const RESEARCH_PROFILE = process.env.TEST_RESEARCH_PROFILE || "research";
-const TRACE_PROFILE = process.env.TEST_TRACE_PROFILE || "prod-claude-code";
+const SECONDARY_PROFILE = process.env.TEST_SECONDARY_PROFILE || "default";
+const TRACE_PROFILE = process.env.TEST_TRACE_PROFILE || "trace";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const configJs = path.join(repoRoot, "src/config.js");
@@ -44,7 +46,7 @@ function resolveInChild(envOverrides) {
   return { workspace_id: key ? workspaceFromKey(key) : null, base_url };
 }
 
-const expectedResearch = workspaceFromKey(orqConfig.profiles[RESEARCH_PROFILE].api_key);
+const expectedSecondary = workspaceFromKey(orqConfig.profiles[SECONDARY_PROFILE].api_key);
 const expectedTrace = workspaceFromKey(orqConfig.profiles[TRACE_PROFILE].api_key);
 
 const cases = [
@@ -56,16 +58,16 @@ const cases = [
   {
     name: "T2: ORQ_API_KEY only",
     env: {
-      ORQ_API_KEY: orqConfig.profiles[RESEARCH_PROFILE].api_key,
+      ORQ_API_KEY: orqConfig.profiles[SECONDARY_PROFILE].api_key,
       ORQ_TRACE_PROFILE: null,
       ORQ_PROFILE: null,
     },
-    expected: expectedResearch,
+    expected: expectedSecondary,
   },
   {
     name: "T3: BOTH (ORQ_TRACE_PROFILE wins)",
     env: {
-      ORQ_API_KEY: orqConfig.profiles[RESEARCH_PROFILE].api_key,
+      ORQ_API_KEY: orqConfig.profiles[SECONDARY_PROFILE].api_key,
       ORQ_TRACE_PROFILE: TRACE_PROFILE,
       ORQ_PROFILE: null,
     },
