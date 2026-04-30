@@ -21,8 +21,8 @@ Always prefer the `orq` CLI over MCP tools for inspecting traces and spans. Use 
 
 The trace hook resolves API key and base URL using this priority chain:
 
-1. **Environment variables** — `ORQ_API_KEY` and `ORQ_BASE_URL` (highest priority)
-2. **`ORQ_TRACE_PROFILE` env var** — trace-specific profile override
+1. **`ORQ_TRACE_PROFILE` env var** — trace-specific profile override (highest priority for API key, so traces can be pinned to a workspace independent of `ORQ_API_KEY`)
+2. **`ORQ_API_KEY` / `ORQ_BASE_URL` env vars** — explicit overrides
 3. **`ORQ_PROFILE` env var** — names a profile in `~/.config/orq/config.json`
 4. **orq CLI current profile** — whatever `orq profile set <name>` is set to
 

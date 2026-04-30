@@ -29,3 +29,7 @@ This repo follows [Semantic Versioning](https://semver.org/). Version is tracked
 - All 4 plugin.json `version` fields must match — `validate-plugin-manifests.sh` does not enforce this yet, but drift is a bug.
 - `plugins/orq/.mcp.json`, `plugins/orq/mcp.json`, `plugins/orq/skills` are symlinks. Do not replace with copies.
 - New skill = add to: `skills/<name>/SKILL.md`, `agents/AGENTS.md` (path list + `<available_skills>` block), `README.md` skills table, `tests/skills.md` (smoke tests + Critical Files).
+
+## Sub-plugin versioning
+
+`plugins/trace-hooks` has its own independent version in `plugins/trace-hooks/.claude-plugin/plugin.json`. Bump it whenever files under `plugins/trace-hooks/` are touched in a commit — same semver rules apply. Do **not** bump the root 4-manifest version for trace-hooks-only changes.

@@ -32,8 +32,9 @@ function loadOrqConfig() {
  * ├─────────────────────────────────────────────────────────────────┤
  * │                                                                │
  * │  API Key:                                                      │
- * │    1. ORQ_API_KEY env var              (explicit override)      │
- * │    2. Profile resolved below                                   │
+ * │    1. ORQ_TRACE_PROFILE profile        (trace-specific)         │
+ * │    2. ORQ_API_KEY env var              (general key)             │
+ * │    3. Profile resolved below                                   │
  * │                                                                │
  * │  Profile (determines api_key + base_url):                      │
  * │    1. ORQ_TRACE_PROFILE env var        (trace-specific)         │
@@ -81,12 +82,23 @@ function resolveProfileName() {
 
 /**
  * Resolve the API key with the following priority:
- * 1. ORQ_API_KEY env var
- * 2. Profile from ORQ_TRACE_PROFILE env var
- * 3. Profile from ORQ_PROFILE env var
+ * 1. ORQ_TRACE_PROFILE profile's api_key (trace-specific override)
+ * 2. ORQ_API_KEY env var (general key)
+ * 3. ORQ_PROFILE profile's api_key
  * 4. Current profile in ~/.config/orq/config.json
+ *
+ * ORQ_TRACE_PROFILE wins over ORQ_API_KEY so users can decouple
+ * where traces go from the key used for CLI/MCP operations.
  */
 export function getApiKey() {
+  // If a trace-specific profile is set, its key takes priority over everything
+  if (process.env.ORQ_TRACE_PROFILE) {
+    const config = loadOrqConfig();
+    const profile = config.profiles?.[process.env.ORQ_TRACE_PROFILE];
+    if (profile?.api_key) {
+      return profile.api_key;
+    }
+  }
   if (process.env.ORQ_API_KEY) {
     return process.env.ORQ_API_KEY;
   }
@@ -95,13 +107,20 @@ export function getApiKey() {
 
 /**
  * Resolve the base URL with the following priority:
- * 1. ORQ_BASE_URL env var
- * 2. Profile from ORQ_TRACE_PROFILE env var
- * 3. Profile from ORQ_PROFILE env var
+ * 1. ORQ_TRACE_PROFILE profile's base_url (trace-specific override)
+ * 2. ORQ_BASE_URL env var (general override)
+ * 3. ORQ_PROFILE profile's base_url
  * 4. Current profile in ~/.config/orq/config.json
  * 5. Default: https://my.orq.ai
  */
 export function getBaseUrl() {
+  if (process.env.ORQ_TRACE_PROFILE) {
+    const config = loadOrqConfig();
+    const profile = config.profiles?.[process.env.ORQ_TRACE_PROFILE];
+    if (profile?.base_url) {
+      return profile.base_url;
+    }
+  }
   if (process.env.ORQ_BASE_URL) {
     return process.env.ORQ_BASE_URL;
   }
