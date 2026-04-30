@@ -121,7 +121,8 @@ export async function drainQueue() {
     try {
       await postPayload(payload);
       await deleteQueuedFile(filePath);
-    } catch {
+    } catch (retryErr) {
+      process.stderr.write(`[orq-trace] WARN: drain retry failed for queued span: ${retryErr?.message}\n`);
       // Network/endpoint failure — stop draining and retry next invocation.
       break;
     }

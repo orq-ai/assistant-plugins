@@ -27,7 +27,7 @@ function getGitInfo(args, cwd) {
   } catch (err) {
     // Exit code 128 = not a git repo, ENOENT = git not installed — both expected
     if (err?.status === 128 || err?.code === "ENOENT") return null;
-    process.stderr.write(`[orq-trace] WARN: git ${args[0]} failed: ${err?.message}\n`);
+    process.stderr.write(`[orq-trace] WARN: git ${args[0]} failed (cwd=${cwd}): ${err?.message}\n`);
     return null;
   }
 }
@@ -38,6 +38,15 @@ function getGitBranch(cwd) {
 
 function getGitRepo(cwd) {
   return getGitInfo(["rev-parse", "--show-toplevel"], cwd);
+}
+
+function getGitCommit(cwd) {
+  return getGitInfo(["rev-parse", "HEAD"], cwd);
+}
+
+function getUserIdentity(cwd) {
+  if (process.env.ORQ_TRACE_USER) return process.env.ORQ_TRACE_USER;
+  return getGitInfo(["config", "user.email"], cwd);
 }
 
 function getSessionId(payload) {
@@ -73,6 +82,8 @@ function usageAttrs(usage) {
   const prompt = usage.input_tokens ?? usage.prompt_tokens;
   const completion = usage.output_tokens ?? usage.completion_tokens;
   const total = usage.total_tokens ?? ((prompt || 0) + (completion || 0));
+  const cacheCreation = usage.cache_creation_input_tokens ?? null;
+  const cacheRead = usage.cache_read_input_tokens ?? null;
 
   return compact([
     attr("gen_ai.usage.input_tokens", prompt),
@@ -81,6 +92,9 @@ function usageAttrs(usage) {
     attr("gen_ai.usage.prompt_tokens", prompt),
     attr("gen_ai.usage.completion_tokens", completion),
     attr("gen_ai.usage.total_tokens", total),
+    // Anthropic prompt caching fields — only present when caching is active
+    attr("gen_ai.usage.cache_creation_input_tokens", cacheCreation),
+    attr("gen_ai.usage.cache_read_input_tokens", cacheRead),
   ]);
 }
 
@@ -150,6 +164,8 @@ export async function handleSessionStart() {
       cwd,
       git_branch: getGitBranch(cwd),
       git_repo: getGitRepo(cwd),
+      git_commit: getGitCommit(cwd),
+      user: getUserIdentity(cwd),
       last_processed_line: 0,
       subagents: {},
     };
@@ -305,16 +321,18 @@ async function emitTranscriptSpans(state, payload, { emitPending = false } = {})
         endTimeUnixNano: toolEndNs,
         attributes: compact([
           attr("orq.span.kind", "tool"),
-          // Don't set gen_ai.operation.name — the adapter falls through to
-          // gen_ai.tool.name for the display name, matching canonical behavior.
           attr("gen_ai.tool.name", tool.name),
           attr("gen_ai.tool.call.arguments", toStringValue(inputValue)),
           attr("gen_ai.tool.call.result", toStringValue(outputValue)),
+          // Set gen_ai.input/output so the backend uses these directly
+          // instead of constructing a messages-wrapped version.
+          attr("gen_ai.input", toStringValue(inputValue)),
+          attr("gen_ai.output", toStringValue(outputValue)),
           attr("orq.input.value", toStringValue(inputValue)),
           attr("orq.output.value", toStringValue(outputValue)),
-          attr("input", toStringValue(inputValue)),
-          attr("output", toStringValue(outputValue)),
           tool.incomplete ? attr("claude_code.tool.incomplete", true) : null,
+          tool.name === "Skill" ? attr("claude_code.skill.name", tool.input?.skill ?? "unknown") : null,
+          tool.name === "Skill" ? attr("claude_code.skill.args", tool.input?.args || "") : null,
         ]),
       }));
       previousEndNs = toolEndNs || toolStartNs || previousEndNs;
@@ -423,6 +441,41 @@ export async function handleStop() {
   }
 }
 
+export async function handleStopFailure() {
+  const payload = await readStdinJson();
+  const sessionId = getSessionId(payload);
+  if (!sessionId) {
+    return;
+  }
+
+  const reason = payload.reason || payload.stop_reason || "unknown";
+
+  let span;
+  await withSessionLock(sessionId, async () => {
+    const state = await loadSessionState(sessionId);
+    if (!state) return;
+
+    span = createSpan({
+      traceId: state.trace_id,
+      spanId: randomHex(8),
+      parentSpanId: state.current_turn_span_id || state.root_span_id,
+      name: `claude_code.error.${reason}`,
+      kind: 1,
+      attributes: compact([
+        attr("orq.span.kind", "event"),
+        attr("error.type", reason),
+        attr("otel.status_code", "ERROR"),
+        attr("claude_code.event", "stop_failure"),
+        attr("claude_code.error.message", payload.error || payload.message || ""),
+      ]),
+    });
+  });
+
+  if (span) {
+    await sendSpan(span);
+  }
+}
+
 export async function handleSessionEnd() {
   const payload = await readStdinJson();
   const sessionId = getSessionId(payload);
@@ -466,6 +519,11 @@ export async function handleSessionEnd() {
         attr("claude_code.model", state.model || payload.model || ""),
         attr("claude_code.git.branch", state.git_branch || ""),
         attr("claude_code.git.repo", state.git_repo || ""),
+        attr("claude_code.git.commit", state.git_commit || ""),
+        attr("metadata.git.commit", state.git_commit || null),
+        attr("metadata.git.branch", state.git_branch || null),
+        attr("metadata.git.repo", state.git_repo || null),
+        attr("metadata.user", state.user || null),
         attr("claude_code.total_turns", state.turn_count || 0),
         attr("claude_code.total_tool_calls", state.total_tool_calls || 0),
         attr("claude_code.failed_tool_calls", (state.failed_tool_calls || []).length),
@@ -490,14 +548,12 @@ export async function handleSessionEnd() {
 
   if (!rootSpan) return;
 
-  // Send order matters: parent spans first so child $inc upserts find them.
-  await sendSpan(rootSpan);
-  if (turnSpan) {
-    await sendSpan(turnSpan);
-  }
-  if (transcriptSpans.length > 0) {
-    await sendSpans(transcriptSpans);
-  }
+  // Batch all spans in one HTTP request — parents first in the array so the
+  // backend processes them before child $inc upserts arrive. Single request
+  // also avoids triple drainQueue overhead and the queue-eviction problem
+  // where root/turn spans (sent first) would be the oldest queued entries.
+  const batch = [rootSpan, turnSpan, ...transcriptSpans].filter(Boolean);
+  await sendSpans(batch);
 }
 
 export async function handleSubagentStart() {

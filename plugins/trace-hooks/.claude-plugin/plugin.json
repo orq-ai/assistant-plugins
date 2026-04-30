@@ -1,10 +1,139 @@
 {
   "name": "orq-trace",
   "description": "Automatically trace Claude Code sessions to Orq. Captures sessions, turns, tool calls, and LLM responses as hierarchical OTLP spans.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "Orq AI"
   },
   "license": "MIT",
-  "keywords": ["orq", "claude-code", "otel", "otlp", "tracing"]
+  "keywords": ["orq", "claude-code", "otel", "otlp", "tracing"],
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/session-start.js",
+            "async": true,
+            "silent": true,
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit.js",
+            "async": true,
+            "silent": true,
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-use-failure.js",
+            "async": true,
+            "silent": true,
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/stop.js",
+            "async": true,
+            "silent": true,
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/stop-failure.js",
+            "async": true,
+            "silent": true,
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/pre-compact.js",
+            "async": true,
+            "silent": true,
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/session-end.js",
+            "async": true,
+            "silent": true,
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/subagent-start.js",
+            "async": true,
+            "silent": true,
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/subagent-stop.js",
+            "async": true,
+            "silent": true,
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
+  "userConfig": {
+    "ORQ_API_KEY": {
+      "title": "Orq API Key",
+      "description": "Optional. Leave blank to use ORQ_API_KEY env var or the orq CLI profile (see plugin docs for resolution order).",
+      "type": "string",
+      "sensitive": true,
+      "required": false
+    }
+  }
 }
