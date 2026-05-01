@@ -36,11 +36,11 @@ Built on the [Agent Skills](https://agentskills.io/home#adoption) standard forma
 
 ### Claude Code plugin
 
-Use this if you want easy access to all components — skills, MCP tools, and trace hooks — in one install. Installed via the [orq-ai/claude-plugins](https://github.com/orq-ai/claude-plugins) marketplace.
+Use this if you want easy access to all components — skills, MCP tools, and trace hooks — in one install. Installed via the [orq-ai/assistant-plugins](https://github.com/orq-ai/assistant-plugins) marketplace.
 
 ```bash
 # In Claude Code:
-/plugin marketplace add orq-ai/claude-plugins
+/plugin marketplace add orq-ai/assistant-plugins
 
 # Install all 3 plugins
 /plugin install orq-skills@orq-claude-plugin
