@@ -6,7 +6,7 @@ Automatically trace Claude Code sessions to Orq. Captures sessions, turns, tool 
 
 ```bash
 claude plugin marketplace add orq-ai/assistant-plugins
-claude plugin install orq-trace@orq-claude-plugin
+claude plugin install orq-trace@assistant-plugins
 ```
 
 ## Span Hierarchy
