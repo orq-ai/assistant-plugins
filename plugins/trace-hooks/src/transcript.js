@@ -70,6 +70,10 @@ export async function parseTranscript(transcriptPath, lastProcessedLine = 0, { e
   const messages = [];
   const pendingTools = new Map(); // tool_use_id -> { name, input, startTimestamp }
   const toolCalls = [];
+  // Skill tool_result is just "Launching skill: X". The actual skill body is
+  // injected on the next user turn as a plain text message. Capture it and
+  // append to the Skill tool's output so the span carries the loaded content.
+  let pendingSkillCall = null;
 
   for (let index = lastProcessedLine; index < lines.length; index += 1) {
     const line = lines[index].trim();
@@ -149,24 +153,47 @@ export async function parseTranscript(transcriptPath, lastProcessedLine = 0, { e
     if (parsed?.type === "user" && parsed?.message) {
       const userContent = parsed.message.content;
       if (Array.isArray(userContent)) {
+        let hadToolResult = false;
         for (const block of userContent) {
           if (block?.type === "tool_result" && block.tool_use_id) {
+            hadToolResult = true;
             const pending = pendingTools.get(block.tool_use_id);
             if (pending) {
               const resultContent = Array.isArray(block.content)
                 ? textFromContent(block.content)
                 : block.content;
-              toolCalls.push({
+              const call = {
                 name: pending.name,
                 input: pending.input,
                 output: resultContent,
                 startTimestamp: pending.startTimestamp,
                 endTimestamp: parsed.timestamp,
-              });
+              };
+              toolCalls.push(call);
               pendingTools.delete(block.tool_use_id);
+              if (pending.name === "Skill") {
+                pendingSkillCall = call;
+              }
             }
           }
         }
+        // After a Skill tool_result, the next plain user text message holds the
+        // loaded skill body. Capture it once and append to the Skill span output.
+        if (!hadToolResult && pendingSkillCall) {
+          const text = userContent
+            .map((b) => (b?.type === "text" && typeof b.text === "string" ? b.text : ""))
+            .filter(Boolean)
+            .join("\n");
+          if (text) {
+            const baseOutput = pendingSkillCall.output ? `${pendingSkillCall.output}\n\n` : "";
+            pendingSkillCall.output = `${baseOutput}${text}`;
+            pendingSkillCall = null;
+          }
+        }
+      } else if (typeof userContent === "string" && pendingSkillCall) {
+        const baseOutput = pendingSkillCall.output ? `${pendingSkillCall.output}\n\n` : "";
+        pendingSkillCall.output = `${baseOutput}${userContent}`;
+        pendingSkillCall = null;
       }
     }
   }

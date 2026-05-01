@@ -1,7 +1,7 @@
 {
   "name": "orq-trace",
   "description": "Automatically trace Claude Code sessions to Orq. Captures sessions, turns, tool calls, and LLM responses as hierarchical OTLP spans.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "author": {
     "name": "Orq AI"
   },
