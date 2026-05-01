@@ -43,9 +43,9 @@ Use this if you want easy access to all components — skills, MCP tools, and tr
 /plugin marketplace add orq-ai/assistant-plugins
 
 # Install all 3 plugins
-/plugin install orq-skills@orq-claude-plugin
-/plugin install orq-mcp@orq-claude-plugin
-/plugin install orq-trace@orq-claude-plugin
+/plugin install orq-skills@assistant-plugins
+/plugin install orq-mcp@assistant-plugins
+/plugin install orq-trace@assistant-plugins
 ```
 
 | Plugin | What it gives you |
