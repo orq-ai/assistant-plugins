@@ -225,6 +225,30 @@ export async function handlePostToolUseFailure() {
   });
 }
 
+export async function handlePostToolUse() {
+  const payload = await readStdinJson();
+  const sessionId = getSessionId(payload);
+  if (!sessionId) {
+    return;
+  }
+
+  await withSessionLock(sessionId, async () => {
+    const state = await loadSessionState(sessionId);
+    if (!state || !state.current_turn_span_id) return;
+
+    state.successful_tool_calls ||= [];
+    state.successful_tool_calls.push({
+      tool_use_id: payload.tool_use_id || payload.toolUseId || null,
+      tool_name: payload.tool_name || payload.toolName || "unknown",
+      tool_input: payload.tool_input || payload.toolInput || null,
+      tool_response: payload.tool_response || payload.toolResponse || null,
+      timestamp: nowUnixNano(),
+    });
+
+    await saveSessionState(sessionId, state);
+  });
+}
+
 export async function handlePreCompact() {
   const payload = await readStdinJson();
   const sessionId = getSessionId(payload);
@@ -526,6 +550,7 @@ export async function handleSessionEnd() {
         attr("metadata.user", state.user || null),
         attr("claude_code.total_turns", state.turn_count || 0),
         attr("claude_code.total_tool_calls", state.total_tool_calls || 0),
+        attr("claude_code.successful_tool_calls", (state.successful_tool_calls || []).length),
         attr("claude_code.failed_tool_calls", (state.failed_tool_calls || []).length),
         attr("claude_code.end_reason", payload.reason || ""),
       ]),
