@@ -67,6 +67,30 @@ function enabledTracing() {
   return Boolean(getApiKey());
 }
 
+const DEFAULT_STATE_MAX_FIELD_CHARS = 10_240;
+
+// Sanitize a PostToolUse payload field for storage in the session state file.
+// State files are read+rewritten on every hook invocation, so storing raw
+// tool_input/tool_response (which can be megabytes for file reads) is a
+// real source of bloat. We redact secrets first, then cap the string length;
+// the original size is preserved so consumers can detect truncation.
+function compactForState(value) {
+  if (value === null || value === undefined) {
+    return { value: null, size_bytes: 0 };
+  }
+  const sanitized = sanitizeContent(value);
+  if (sanitized === null || sanitized === undefined) {
+    return { value: null, size_bytes: 0 };
+  }
+  const str = typeof sanitized === "string" ? sanitized : JSON.stringify(sanitized);
+  const sizeBytes = Buffer.byteLength(str, "utf8");
+  const cap = parseInt(process.env.ORQ_TRACE_STATE_MAX_FIELD_CHARS, 10) || DEFAULT_STATE_MAX_FIELD_CHARS;
+  if (str.length > cap) {
+    return { value: `${str.slice(0, cap)}... [truncated]`, size_bytes: sizeBytes };
+  }
+  return { value: sanitized, size_bytes: sizeBytes };
+}
+
 function asMessages(role, content) {
   if (!content) {
     return [];
@@ -225,6 +249,35 @@ export async function handlePostToolUseFailure() {
   });
 }
 
+export async function handlePostToolUse() {
+  const payload = await readStdinJson();
+  const sessionId = getSessionId(payload);
+  if (!sessionId) {
+    return;
+  }
+
+  await withSessionLock(sessionId, async () => {
+    const state = await loadSessionState(sessionId);
+    if (!state || !state.current_turn_span_id) return;
+
+    const inputRec = compactForState(payload.tool_input ?? payload.toolInput);
+    const responseRec = compactForState(payload.tool_response ?? payload.toolResponse);
+
+    state.successful_tool_calls ||= [];
+    state.successful_tool_calls.push({
+      tool_use_id: payload.tool_use_id || payload.toolUseId || null,
+      tool_name: payload.tool_name || payload.toolName || "unknown",
+      tool_input: inputRec.value,
+      tool_input_size_bytes: inputRec.size_bytes,
+      tool_response: responseRec.value,
+      tool_response_size_bytes: responseRec.size_bytes,
+      timestamp: nowUnixNano(),
+    });
+
+    await saveSessionState(sessionId, state);
+  });
+}
+
 export async function handlePreCompact() {
   const payload = await readStdinJson();
   const sessionId = getSessionId(payload);
@@ -259,6 +312,16 @@ export async function handlePreCompact() {
 async function emitTranscriptSpans(state, payload, { emitPending = false } = {}) {
   const transcriptPath = payload.transcript_path || payload.transcriptPath;
   const parsed = await parseTranscript(transcriptPath, state.last_processed_line || 0, { emitPending });
+
+  // Build a lookup of PostToolUse records by tool_use_id. When a transcript
+  // tool call matches by id, prefer the recorded payload — it's the exact
+  // tool_response captured at execution time, not the parsed approximation.
+  // Skip Skill: its transcript output gets the loaded skill body appended
+  // after the result, which PostToolUse fires too early to see.
+  const recordedByToolUseId = new Map();
+  for (const rec of (state.successful_tool_calls || [])) {
+    if (rec?.tool_use_id) recordedByToolUseId.set(rec.tool_use_id, rec);
+  }
 
   // Merge tool calls and LLM messages into a single timeline sorted by timestamp
   const timeline = [];
@@ -301,8 +364,9 @@ async function emitTranscriptSpans(state, payload, { emitPending = false } = {})
   for (const entry of timeline) {
     if (entry.type === "tool") {
       const tool = entry.data;
-      const inputValue = sanitizeContent(tool.input);
-      const outputValue = sanitizeContent(tool.output);
+      const recorded = tool.id && tool.name !== "Skill" ? recordedByToolUseId.get(tool.id) : null;
+      const inputValue = sanitizeContent(recorded?.tool_input ?? tool.input);
+      const outputValue = sanitizeContent(recorded?.tool_response ?? tool.output);
 
       // Agent tool calls are emitted as tool spans here too. If
       // SubagentStart/Stop hooks fire they add richer sibling subagent.*
@@ -331,6 +395,7 @@ async function emitTranscriptSpans(state, payload, { emitPending = false } = {})
           attr("orq.input.value", toStringValue(inputValue)),
           attr("orq.output.value", toStringValue(outputValue)),
           tool.incomplete ? attr("claude_code.tool.incomplete", true) : null,
+          recorded ? attr("claude_code.tool.enriched", true) : null,
           tool.name === "Skill" ? attr("claude_code.skill.name", tool.input?.skill ?? "unknown") : null,
           tool.name === "Skill" ? attr("claude_code.skill.args", tool.input?.args || "") : null,
         ]),
@@ -526,6 +591,7 @@ export async function handleSessionEnd() {
         attr("metadata.user", state.user || null),
         attr("claude_code.total_turns", state.turn_count || 0),
         attr("claude_code.total_tool_calls", state.total_tool_calls || 0),
+        attr("claude_code.successful_tool_calls", (state.successful_tool_calls || []).length),
         attr("claude_code.failed_tool_calls", (state.failed_tool_calls || []).length),
         attr("claude_code.end_reason", payload.reason || ""),
       ]),
