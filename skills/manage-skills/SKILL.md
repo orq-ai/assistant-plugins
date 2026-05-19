@@ -33,6 +33,8 @@ This skill manages the **platform Skill entity on orq.ai** (`/v2/skills`, surfac
 
 When the user says "create a Skill" without context, ask which one they mean. The rest of this document is exclusively about the platform entity.
 
+> **Template-placeholder gotcha:** because the entity was renamed from *Prompt Snippet* to *Skill*, users sometimes try `{{skill.<display_name>}}` expecting it to mirror the new name. **It does not resolve.** The only working placeholder today is `{{snippet.<display_name>}}` — the resolver still keys off the legacy snippet prefix. If a referenced Skill renders to empty, check for this first.
+
 ## When to use
 
 - "List the Skills in my workspace" / "audit my Skills"
@@ -120,7 +122,7 @@ tagged_skills  = [s for s in all_skills if "policy" in s.tags]
 | `path` | create / update / read | Finder-style location, e.g. `Default/Skills` or `cs/policies`. Defaults to project's default skill folder. |
 | `project_id` | create / update / read | Optional — omit for workspace-wide. |
 | `instructions` | create / update / read | The actual Skill body — modular markdown that gets inlined wherever the Skill is referenced. |
-| `enabled` | create / update / read | Boolean (default `true`). Whether `{{snippet.<display_name>}}` references for a disabled Skill render to empty/pass-through depends on workspace renderer wiring (verified at the time of writing: the resolver reads from the legacy snippet KV cache, which has no notion of `enabled`; behavior may change). Treat `enabled: false` as a soft-disable signal in the API and audit log; verify the actual render effect before relying on it. |
+| `enabled` | create / update / read | Boolean (default `true`). Whether `{{snippet.<display_name>}}` references for a disabled Skill render to empty/pass-through depends on workspace renderer wiring (observed at the time of writing: the resolver reads from the legacy snippet KV cache, which has no notion of `enabled`; behavior may change). Treat `enabled: false` as a soft-disable signal in the API and audit log; verify the actual render effect before relying on it. |
 | `skill_id` | read / update / delete | Server-generated id. **The list/get response surfaces it as `id`** but the update/delete inputs take it as `skill_id`. Same value. |
 | `workspace_id` | read only | Audit. |
 | `created_at`, `updated_at`, `created_by_id`, `updated_by_id` | read only | Audit metadata. |
@@ -213,8 +215,9 @@ Use when the user wants to edit an existing Skill.
 Use when the user wants to permanently retire a Skill. **`delete_skill` is irreversible** and does not scrub `{{snippet.<display_name>}}` references elsewhere — those references silently fail to resolve after delete. Always offer `enabled: false` first (Phase 4 step 4) and only proceed to delete when the user is sure.
 
 1. **Reference scan.** Find places that may reference the Skill by its `display_name`:
-   - Run `search_entities` to enumerate prompts, deployments, agents, and other Skills in the workspace.
-   - For each candidate, fetch its full body (`get_deployment` for deployments; `get_agent` for agents; `get_skill` for other Skills' `instructions`) and grep the body for `{{snippet.<display_name>}}` (case-sensitive — match the Skill's exact `display_name`).
+   - Run `search_entities` to enumerate `prompt`, `deployment`, and `agent` candidates (`search_entities` does **not** expose a `skill` type — sibling Skills are enumerated separately).
+   - Paginate `list_skills` to enumerate every other Skill in the workspace whose `instructions` could contain the reference.
+   - For each candidate, fetch its full body (`get_deployment` for deployments; `get_agent` for agents; `get_skill` for sibling Skills' `instructions`; prompt bodies come back from `search_entities`/the prompt-fetch tool) and grep the body for `{{snippet.<display_name>}}` (case-sensitive — match the Skill's exact `display_name`).
    - Note: this scan can be expensive in large workspaces. Cache results within the session.
    - If the user has a faster way to grep their workspace (e.g., a synced repo of prompts), prefer that.
 2. **Warn and confirm.** Show the user:

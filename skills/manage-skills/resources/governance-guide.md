@@ -28,8 +28,12 @@ You can chain references: a Skill's `instructions` may itself contain `{{snippet
 There is no `list_consumers(skill_id)` API. To find every place a Skill is referenced, you have to text-search the rendered surface:
 
 ```text
-1. Enumerate candidates with search_entities (deployments, prompts, agents, other Skills).
-2. For each candidate, fetch its full body with the appropriate get_* tool.
+1. Enumerate prompt / deployment / agent candidates with search_entities.
+   search_entities does NOT accept type="skill" — paginate list_skills
+   separately to cover sibling Skills whose `instructions` might inline this one.
+2. For each candidate, fetch its full body with the appropriate get_* tool
+   (get_deployment, get_agent, get_skill, or the prompt body returned by
+   search_entities).
 3. Substring-match {{snippet.<display_name>}} (case-sensitive) in the body.
 4. Collect the matches.
 ```

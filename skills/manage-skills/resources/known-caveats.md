@@ -46,7 +46,12 @@ After the delete, any leftover `{{snippet.<deleted-name>}}` placeholder will sil
 
 ```text
 # 1. Enumerate candidate consumers
-candidates = search_entities()  # prompts, deployments, agents, other Skills
+#    search_entities covers prompts / deployments / agents (no `skill` type).
+#    Use list_skills (paginated) for sibling Skills whose instructions might
+#    inline {{snippet.<display_name>}}.
+prompt_like_candidates = search_entities()
+sibling_skills = list_skills(paginated=True)
+candidates = prompt_like_candidates + sibling_skills
 
 # 2. For each candidate, fetch its full body and look for the placeholder
 references = []

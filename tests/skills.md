@@ -156,7 +156,7 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 - Ask: "Create a Skill called `extract-receipt-fields`"
 - Verify Phase 3: asks for `description`, `tags`, `project_id` (default project-scoped, not workspace-wide), and `path`
 - Verify: warns if the proposed `instructions` contain `+NEVER+` / "you MUST refuse" prose constraints and recommends an MCP tool gate instead
-- Verify: does NOT call a fictional `:checkDisplayNameAvailability` endpoint — instead, calls `create_skill` and handles `AlreadyExists` if the name is taken
+- Verify: relies on `create_skill` + `AlreadyExists` error handling for the uniqueness check rather than a separate pre-flight lookup (works whether or not a `:checkDisplayNameAvailability` helper endpoint is exposed in the workspace)
 - Verify: `create_skill` payload uses `display_name` and `instructions` (not `name` / `body` / `doc`); includes `enabled` only if user requested non-default
 - Verify: echoes back the consumption pattern after create — `{{snippet.<display_name>}}`, NOT `{{skill.<...>}}`
 
