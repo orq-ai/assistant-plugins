@@ -14,6 +14,7 @@ These skills are:
  - compare-agents -> "skills/compare-agents/SKILL.md"
  - generate-synthetic-dataset -> "skills/generate-synthetic-dataset/SKILL.md"
  - invoke-deployment -> "skills/invoke-deployment/SKILL.md"
+ - manage-skills -> "skills/manage-skills/SKILL.md"
  - optimize-prompt -> "skills/optimize-prompt/SKILL.md"
  - run-experiment -> "skills/run-experiment/SKILL.md"
  - setup-observability -> "skills/setup-observability/SKILL.md"
@@ -39,6 +40,8 @@ optimize-prompt: `Analyze and optimize system prompts using a structured prompti
 compare-agents: `Run cross-framework agent comparisons using evaluatorq — compares any combination of agents (orq.ai, LangGraph, CrewAI, OpenAI Agents SDK, Vercel AI SDK) head-to-head on the same dataset with LLM-as-a-judge scoring. Do NOT use when comparing only orq.ai configurations with no external agents (use run-experiment instead).`
 
 setup-observability: `Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment. Use when setting up tracing, adding the AI Router proxy, integrating OpenTelemetry, auditing existing instrumentation, or enriching traces with metadata. Do NOT use when traces already exist and you need to debug failures (use analyze-trace-failures).`
+
+manage-skills: `Manage orq.ai Skills (the platform entity, formerly Snippets — distinct from this repo's code-assistant skills) end-to-end: list, get, create, update, enable/disable, and delete Skills via the /v2/skills API. Covers authoring guidance (display_name, description, tags, project_id, path, enabled), how Skills get consumed via the {{snippet.<display_name>}} placeholder in prompts and agent instructions, the reference-scan-before-delete workflow, the rename-breaks-references warning, and the +NEVER+ prose anti-pattern. Use when the user wants to create, audit, edit, soft-disable, or retire orq.ai Skills.`
 
 </available_skills>
 
