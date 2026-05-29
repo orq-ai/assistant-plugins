@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-05-13
 
 ### Added
-- `simulate-agent` skill: run multi-turn agent simulations with defined user personas using evaluatorq. Covers persona definition (role, tone, goals, constraints), conversation control (`max_turns`, stop tokens, simulator model selection), and output storage (orq.ai threads, `~/.evaluatorq/runs/`, auto-uploaded Experiment runs). Resources: `persona-template.md`, `simulation-loop.md` (Python + TypeScript), `redteam-mode.md` (when to switch to `evaluatorq.red_team()`). RES-732.
+- `simulate-agent` skill: run multi-turn agent simulations using evaluatorq's first-class primitives (`simulate()`, `generate_and_simulate()`, `wrap_simulation_agent()`). Covers the real `Persona` schema (`patience` / `assertiveness` / `politeness` / `technical_level` scalars, `communication_style`, `background`, optional `emotional_arc` and `cultural_context`), `Scenario` schema (goal, criteria-driven judge termination, starting emotion, conversation strategy, edge-case flag), three target shapes (`agent_key`, `target_callback` via `from_orq_deployment` / `from_chat_completions`, custom `AgentTarget`), and where outputs land (OTel spans auto-emitted to orq.ai, `SimulationResult` in memory, auto-uploaded Experiments via `evaluatorq()` routing, JSONL export). Resources: `persona-scenario-template.md`, `simulation-loop.md`, `redteam-mode.md`. RES-732.
 
 ## [0.0.2] - 2026-04-21
 

@@ -41,7 +41,7 @@ compare-agents: `Run cross-framework agent comparisons using evaluatorq — comp
 
 setup-observability: `Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment. Use when setting up tracing, adding the AI Router proxy, integrating OpenTelemetry, auditing existing instrumentation, or enriching traces with metadata. Do NOT use when traces already exist and you need to debug failures (use analyze-trace-failures).`
 
-simulate-agent: `Run multi-turn agent simulations with defined user personas using evaluatorq — drive an agent under test with a simulated user LLM, control turn limits and stop conditions, and store conversations as orq.ai threads. Use when generating realistic multi-turn data, stress-testing conversational agents, or producing seed transcripts. Do NOT use when real production conversations exist (use analyze-trace-failures) or for adversarial red-teaming sweeps (call evaluatorq.red_team() directly).`
+simulate-agent: `Run multi-turn agent simulations using evaluatorq's first-class simulation primitives (simulate(), generate_and_simulate(), wrap_simulation_agent()). Drive an agent under test with a UserSimulatorAgent and built-in JudgeAgent that terminates on goal achievement or rule violations. Use when generating realistic multi-turn data, stress-testing conversational agents, or producing seed transcripts. Do NOT use when real production conversations exist (use analyze-trace-failures) or for adversarial red-teaming sweeps (call evaluatorq.red_team() directly).`
 
 </available_skills>
 

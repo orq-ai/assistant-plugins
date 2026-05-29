@@ -145,12 +145,12 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 ### Scenario 1: Persona-driven multi-turn simulation
 
 - Ask: "Simulate a skeptical founder talking to my agent `support-agent` for 6 turns"
-- Verify Phase 1: confirms the agent key, runs a single-turn invocation to verify it works
-- Verify Phase 2: asks for or generates `role`, `tone`, `goals`, `constraints`
-- Verify Phase 3: sets `max_turns`, defines at least one stop condition, picks a simulator model in a different family than the agent under test
-- Verify Phase 4: script uses `thread: { id: <stable-id> }` per persona, uses `agents.responses.create()` (not `agents.invoke()`)
-- Verify Phase 5: prints one full transcript and asks the user to review before scaling
-- Verify Phase 6: reports the orq.ai thread URL and the `~/.evaluatorq/runs/...` path
+- Verify Phase 1: confirms the agent under test and picks a target shape (`agent_key` / `target_callback` via `from_orq_deployment` or `from_chat_completions` / custom `AgentTarget`)
+- Verify Phase 2: builds a `Persona` with the real scalars (`patience`, `assertiveness`, `politeness`, `technical_level` as floats `[0-1]`), a `communication_style` enum, and `background` — not the old `role/tone/goals/constraints` shape
+- Verify Phase 3: builds a `Scenario` with `goal` plus at least one `Criterion` (`must_happen` or `must_not_happen`); does NOT hand-roll a `should_stop()` function
+- Verify Phase 4: uses `wrap_simulation_agent()` (when routing through `evaluatorq()` for auto-upload) or `simulate()` directly — not a custom loop around `agents.responses.create()`
+- Verify Phase 5: dry-runs one persona × one scenario at `max_turns=3`, prints `terminated_by` / `goal_completion_score` / `rules_broken`, asks the user to review before scaling
+- Verify Phase 6: surfaces OTel spans in orq.ai, the `SimulationResult` fields, and (when wrapped) the Experiment URL printed by `evaluatorq()`
 
 ### Scenario 2: Red-teaming intent
 
@@ -178,6 +178,6 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 - `skills/analyze-trace-failures/SKILL.md`
 - `skills/run-experiment/SKILL.md`
 - `skills/simulate-agent/SKILL.md`
-- `skills/simulate-agent/resources/persona-template.md`
+- `skills/simulate-agent/resources/persona-scenario-template.md`
 - `skills/simulate-agent/resources/simulation-loop.md`
 - `skills/simulate-agent/resources/redteam-mode.md`
