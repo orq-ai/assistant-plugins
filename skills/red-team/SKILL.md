@@ -127,7 +127,7 @@ Use `--target` to set both legs to the same target. Use `--dynamic-target` / `--
 ### `redteam report summarize` — print a concise report summary
 
 ```bash
-uv run redteam report summarize ./output/my-run/unified_report.json
+uv run redteam report summarize ./output/my-run/report.json
 ```
 
 ## Output structure
@@ -136,10 +136,15 @@ After a run, the output directory contains:
 
 ```
 output/my-run/
-├── unified_report.json        # Full report — use this for summarize and further analysis
-├── staged/                    # Intermediate per-category artifacts (if --save-intermediates)
-└── evaluated_*.jsonl          # Per-target evaluated rows
+├── report.json                 # Full report — pass this to `redteam report summarize`
+├── 01_agent_context.json       # Agent metadata (adaptive, if --save-intermediates)
+├── 02_strategy_selection.json  # Attack strategies chosen per category
+├── 03_generated_prompts.json   # Adversarial prompts generated
+├── 04_attack_results.json      # Raw attack results
+└── 05_summary_report.json      # Aggregated summary
 ```
+
+When targeting multiple agents, each gets its own subdirectory containing a `report.json`.
 
 ### Reading the report
 
@@ -187,7 +192,7 @@ uv run redteam run adaptive \
   --yes
 
 # 4. Read the summary
-uv run redteam report summarize ./output/customer-support-$(date +%Y%m%d)/unified_report.json
+uv run redteam report summarize ./output/customer-support-$(date +%Y%m%d)/report.json
 ```
 
 Expected summary output (JSON):
@@ -223,7 +228,7 @@ Expected summary output (JSON):
 ## Done when
 
 - Run completes without errors
-- `unified_report.json` exists in the output directory
+- `report.json` exists in the output directory
 - `redteam report summarize` output has been printed and shared with the user
 - Categories tested and coverage gaps are noted (e.g. "only ASI01–ASI02 tested; fairness not covered")
 
