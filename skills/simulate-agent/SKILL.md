@@ -73,14 +73,15 @@ Simulation Progress:
 
 ## Phase 1: Identify the agent under test
 
-Pick one of the four target shapes that `simulate()` accepts:
+Pick one of the three target shapes that `simulate()` accepts:
 
 | Shape | When | How |
 |---|---|---|
 | `agent_key="..."` | Agent lives in orq.ai as a deployment | Pass the deployment key directly |
 | `target_callback=fn` | Agent is a local function or third-party SDK | Wrap with `from_chat_completions(...)` or write a `Callable[[list[Message]], str]` |
-| `target=OrqResponsesTarget(...)` | Agent lives behind the orq.ai Responses API and you want it driven directly | Use the bundled `OrqResponsesTarget` from `evaluatorq.simulation` |
 | `target=AgentTarget(...)` | Full control over memory, clone, agent context | Implement the `AgentTarget` protocol from `evaluatorq.contracts` |
+
+For driving an LLM directly through the orq.ai Responses API (rather than an agent deployment), see `OrqResponsesTarget(config=LLMCallConfig(...))` from `evaluatorq.simulation`.
 
 If the user wants to drive an existing orq agent, use `search_entities` with `type: "agent"` to resolve the key. Verify it answers one turn end-to-end before wrapping it in a loop.
 

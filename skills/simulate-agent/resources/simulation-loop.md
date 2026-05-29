@@ -8,18 +8,13 @@ The framework provides three entry points. Pick by what you have on hand.
 | `simulate()` | Lists of personas and scenarios (or pre-built datapoints) | Runs the simulation directly, returns `list[SimulationResult]` |
 | `generate_and_simulate()` | Only an `agent_description` | Synthesizes personas and scenarios first, then simulates |
 
-All three accept the same four target shapes for the agent under test:
-`agent_key`, `target_callback`, `OrqResponsesTarget`, or a custom
-`AgentTarget`.
+All three accept the same target shapes for the agent under test:
+`agent_key`, `target_callback`, or a custom `AgentTarget`.
 
 ## Target shapes
 
 ```python
-from evaluatorq.simulation import (
-    from_orq_deployment,
-    from_chat_completions,
-    OrqResponsesTarget,
-)
+from evaluatorq.simulation import from_orq_deployment, from_chat_completions
 from openai import AsyncOpenAI
 
 # (1) Orq deployment, use the agent_key argument directly OR build a callback:
@@ -34,10 +29,7 @@ async def chat_fn(messages):
     return resp.choices[0].message.content
 callback = from_chat_completions(chat_fn)
 
-# (3) Orq Responses API target:
-target = OrqResponsesTarget(agent_key="agent_xyz")
-
-# (4) Vercel AI SDK / LangChain / custom, write your own callback:
+# (3) Vercel AI SDK / LangChain / custom, write your own callback:
 async def callback(messages):
     history = [{"role": m.role, "content": m.content or ""} for m in messages]
     return await my_agent.generate(history)
@@ -45,6 +37,12 @@ async def callback(messages):
 
 For full control over memory, clone, and agent context, implement
 `AgentTarget` from `evaluatorq.contracts` and pass it as `target=` instead.
+
+For driving an LLM directly through the orq.ai Responses API (rather than a
+deployed agent), use `OrqResponsesTarget(config=LLMCallConfig(model=...,
+api="responses"), instructions=..., tools=...)` from
+`evaluatorq.simulation`. This builds a custom agent on top of orq.ai's
+Responses API rather than wrapping an existing deployment.
 
 ## Pattern 1: `wrap_simulation_agent()`, recommended
 
