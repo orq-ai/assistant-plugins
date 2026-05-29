@@ -22,17 +22,23 @@ You are an **orq.ai dataset engineer**. Your job is to generate high-quality, di
 - **NEVER** delete datapoints without showing the user what will be removed and getting confirmation.
 - **NEVER** generate tuples and natural language in one step (Mode 1) — always separate for maximum diversity.
 - **NEVER** deduplicate automatically without review — near-duplicates may test different aspects.
+- **NEVER** filter generated data with the same model family that generated it — self-preference bias inflates pass rates.
+- **NEVER** use synthetic data as the final eval set — always hold out real data to measure real-world performance.
 - **ALWAYS** include 15-20% adversarial test cases in every dataset.
 - **ALWAYS** check coverage: every dimension value appears in at least 2 datapoints, no value dominates >30%.
 - **ALWAYS** document every dataset modification in a changelog.
+- **ALWAYS** generate 3–5× what you plan to keep, then filter aggressively. Quality lives in the filter stack, not the generation prompt.
+- **ALWAYS** run filters cheapest-first: format/parseability → mechanical verifier (where available) → LLM-judge → deduplication.
+- **ALWAYS** deduplicate before splitting train/eval, not after — deduping after leaks train examples into eval.
 - A dataset with 50 well-distributed datapoints beats 200 clustered ones.
 
-**Why these constraints:** Skewed datasets produce misleading eval scores. If 95% of datapoints are easy cases, a 95% pass rate means nothing. Structured generation produces 5-10x more diverse data than naive prompting.
+**Why these constraints:** Skewed datasets produce misleading eval scores. If 95% of datapoints are easy cases, a 95% pass rate means nothing. Structured generation produces 5–10× more diverse data than naive prompting. Using the same model to generate and filter creates a feedback loop — quality scores drift toward the generator's prior, not real-world performance.
 
 ## Companion Skills
 
 - `run-experiment` — run experiments against the generated dataset
 - `build-evaluator` — design evaluators to score outputs against the dataset
+- `evaluate` / `evaluatorq` — run the dataset through an evaluatorq evaluation script (Python/TypeScript); use `eq redteam` for adversarial red-team datasets
 - `analyze-trace-failures` — identify failure modes that inform dataset design
 - `optimize-prompt` — iterate on prompts based on experiment results
 
@@ -51,6 +57,9 @@ You are an **orq.ai dataset engineer**. Your job is to generate high-quality, di
 - **Need to build an evaluator?** → Use `build-evaluator`
 - **Want to run an experiment?** → Use `run-experiment` (but create the dataset first)
 - **Need to optimize a prompt?** → Use `optimize-prompt`
+- **For final evaluation** — synthetic eval measures the generator's consistency with itself, not real-world performance. Always hold out a real eval set.
+- **For high-stakes domains (medical, legal, financial)** — generator confidence is uncalibrated. Human expert review is non-optional.
+- **When no verifier exists** — if you can't mechanically or judge-verify outputs for your task, build the verifier first. Unverified synthetic data can amplify hallucinations downstream.
 
 ## Workflow Checklist
 
@@ -76,6 +85,7 @@ Dataset Generation Progress:
 
 ## Resources
 
+- **Do's and don'ts (14-row table, filter stack, use-case guidance):** See [resources/dos-and-donts.md](resources/dos-and-donts.md)
 - **API reference (MCP + HTTP):** See [resources/api-reference.md](resources/api-reference.md)
 - **Dataset curation guide (Mode 4):** See [resources/curation-guide.md](resources/curation-guide.md)
 
@@ -165,7 +175,17 @@ Choose based on user needs:
 
 7. **Convert each tuple to a realistic user input** in a SEPARATE step. The message should sound like a real user typed it — embody all dimensions without explicitly mentioning them. Process individually or in small batches.
 
+   **Generator diversity:** use 2–3 generators from different providers for the same tuple set. Single-generator datasets carry that provider's style and biases; mixing providers gives independent error surfaces. Never filter Claude-generated data with Claude.
+
 8. **Generate reference outputs** (expected behavior) for each input. Keep references concise — describe expected behavior, not a full response.
+
+9. **Filter before keeping.** Generate 3–5× your target size; run the filter stack in this order:
+   - Format / parseability (cheapest — discard immediately on schema failure)
+   - Mechanical verifier where the task allows (run code, check math, parse output)
+   - LLM-as-judge (cross-provider panel — see `build-evaluator`; not the same family as the generator)
+   - Deduplication (embed + cosine 0.85–0.92, run **before** train/eval split)
+
+   Target keep rate: 20–30% of generated examples. If you're keeping more than 50%, your filter is too loose.
 
 #### Phase 5: Create on orq.ai
 
@@ -280,6 +300,35 @@ For the complete curation methodology (deduplicate, rebalance, fill gaps, valida
 
 ---
 
+## Use-case Specific Guidance
+
+The skill modes above apply everywhere. These notes add use-case-specific rules on top.
+
+### Eval datasets
+
+- **Seed from real production traces**, not from a blank prompt. The eval distribution should mirror the production distribution.
+- Generate **contrastive pairs** (clearly good vs clearly bad vs borderline), not just happy-path examples.
+- **Decontaminate semantically** against your held-out real eval set — n-gram dedup is insufficient; rephrased test items bypass it.
+- Use synthetic eval to **find bugs**; use real held-out eval to **measure progress**. Synthetic eval scores drift toward the generator's prior.
+
+### Red-team / adversarial sets
+
+- Condition on **attacker archetypes** (curious user, jailbreaker, social engineer, prompt-injection author, regulated-domain abuser). Each archetype hits a different attack surface.
+- Start from a **harm taxonomy** before generating — useful anchors: [OWASP LLM Top 10 (2025)](https://owasp.org/www-project-top-10-for-large-language-model-applications/), [NIST AI RMF GenAI Profile](https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.600-1.pdf), [MLCommons AILuminate v1.0](https://mlcommons.org/benchmarks/ailuminate/). Measure coverage per category before measuring pass-rate.
+- Apply **Evol-Instruct in reverse**: start from a known-bad prompt the model now refuses; evolve it toward subtlety (rephrase, add context, embed in a benign frame).
+- See `evaluatorq` (`eq redteam`) for automated adversarial red teaming once the dataset exists.
+
+### Multi-turn agent trajectories
+
+- Use a **user-simulator + agent-rollout** setup: one LLM plays the user (with a goal and persona), the other is the agent under test. Log the trajectory; label from goal-completion signal.
+- Generate **tool-use trajectories from a tool schema**, not from text. Verify mechanically (did args parse, did the call succeed). The verifier is much stronger than for prose.
+- **Blueprint-first, then rollout**: build a verified task description first, then realize it through simulated agent–user interplay (APIGen-MT pattern).
+- Watch for **trajectory monoculture**: vary persona, goal complexity, and turn budget the way you'd vary seed prompts.
+- Don't synthesize the user *and* the success label with the same model — that's self-grading. Pull the success signal from the tool layer or from a separate judge.
+- Economics: a single agent trajectory can cost as much as 50 single-turn pairs. Push toward smaller, more curated synthetic sets and harder filtering.
+
+---
+
 ## Adversarial Test Case Templates
 
 Include adversarial cases from these categories in every dataset:
@@ -320,6 +369,13 @@ Aim for **at least 3 adversarial test cases per attack vector** relevant to your
 | Deleting without showing what's removed | Always show and confirm |
 | Adding data without cleaning first | Clean existing data first, then add |
 | No changelog | Document every modification |
+| Generating exactly what you need | Generate 3–5× and filter — headroom is the whole point |
+| Filtering Claude-generated data with Claude | Use a different model family as judge; self-preference bias inflates pass rates |
+| Deduplicating after train/eval split | Dedupe first, then split — otherwise train examples leak into eval |
+| Using synthetic data as the final eval set | Hold out real data for final scoring; synthetic eval measures generator consistency, not quality |
+| Single generator for the whole dataset | Use 2+ generators from different providers; single-source synthetic weakens de-biasing |
+| No provenance logging | Log model, version, prompt, temperature, timestamp per row — you will need it when something breaks |
+| Skipping semantic decontamination | N-gram dedup is not enough; embed and check cosine similarity against your eval set |
 
 ## Open in orq.ai
 

@@ -157,6 +157,7 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 - `skills/build-agent/SKILL.md`
 - `skills/build-evaluator/SKILL.md`
 - `skills/generate-synthetic-dataset/SKILL.md`
+- `skills/generate-synthetic-dataset/resources/dos-and-donts.md`
 - `skills/optimize-prompt/SKILL.md`
 - `skills/analyze-trace-failures/SKILL.md`
 - `skills/run-experiment/SKILL.md`
