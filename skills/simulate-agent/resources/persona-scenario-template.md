@@ -139,18 +139,25 @@ the run immediately depending on the judge's verdict.
 
 ## Sanitization
 
-When persona `background`, scenario `context`, or `goal` come from external
-input (a CSV, a ticket export, anything user-supplied), wrap them through
-`evaluatorq.common.sanitize.delimit()` before passing to the runner. The
-shared sanitize util wraps content in `<data>` tags and escapes closing tags
-to prevent prompt injection from leaking into the simulator's system prompt.
+When persona `background` or scenario `context` come from external input
+(a CSV, a ticket export, anything user-supplied), wrap them through
+`evaluatorq.common.sanitize.delimit()` before passing to the runner. These
+two fields feed the simulator's system prompt, so unsanitized content can
+inject instructions. The `goal` is shown to the simulator as a goal
+statement, not as system context, so leave it as plain text.
 
 ```python
 from evaluatorq.common.sanitize import delimit
 
+persona = Persona(
+    name="from-ticket-author",
+    patience=0.5, assertiveness=0.5, politeness=0.5, technical_level=0.5,
+    communication_style=CommunicationStyle.casual,
+    background=delimit(row["author_bio"]),
+)
 scenario = Scenario(
     name="from-ticket",
-    goal=delimit(row["ticket_summary"]),
+    goal=row["ticket_summary"],
     context=delimit(row["ticket_body"]),
 )
 ```

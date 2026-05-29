@@ -79,9 +79,7 @@ Pick one of the three target shapes that `simulate()` accepts:
 |---|---|---|
 | `agent_key="..."` | Agent lives in orq.ai as a deployment | Pass the deployment key directly |
 | `target_callback=fn` | Agent is a local function or third-party SDK | Wrap with `from_chat_completions(...)` or write a `Callable[[list[Message]], str]` |
-| `target=AgentTarget(...)` | Full control over memory, clone, agent context | Implement the `AgentTarget` protocol from `evaluatorq.contracts` |
-
-For driving an LLM directly through the orq.ai Responses API (rather than an agent deployment), see `OrqResponsesTarget(config=LLMCallConfig(...))` from `evaluatorq.simulation`.
+| `target=AgentTarget(...)` | Full control over memory, clone, agent context, or building a custom agent on top of the orq.ai Responses API | Implement the `AgentTarget` protocol from `evaluatorq.contracts`, or use the bundled `OrqResponsesTarget(config=LLMCallConfig(...))`. See [resources/simulation-loop.md](resources/simulation-loop.md) for the full signature |
 
 If the user wants to drive an existing orq agent, use `search_entities` with `type: "agent"` to resolve the key. Verify it answers one turn end-to-end before wrapping it in a loop.
 
@@ -139,7 +137,7 @@ Three entry points, in order of preference:
 
 **Default to `wrap_simulation_agent()`** if the goal is to land results in an orq.ai experiment. It returns a job for `evaluatorq()` which inherits auto-upload, OTel, and the results table.
 
-Note the kwarg naming differs across entry points: `simulate()` takes `evaluator_names=[...]` (defaults to `["goal_achieved", "criteria_met"]`); `wrap_simulation_agent()` takes `evaluators=[...]` for the same purpose.
+Note the kwarg naming differs across entry points: `simulate()` and `generate_and_simulate()` take `evaluator_names=[...]` and default to `["goal_achieved", "criteria_met"]` when omitted; `wrap_simulation_agent()` takes `evaluators=[...]` and passes whatever you give it straight through (omitting it means no scorers run inside the job).
 
 Full code in [resources/simulation-loop.md](resources/simulation-loop.md).
 
