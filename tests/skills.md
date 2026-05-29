@@ -150,7 +150,7 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 - Verify: confirms the deployment key with the user before running
 - Verify: checks `ORQ_API_KEY` is set before invoking
 - Verify: invokes `uv run redteam run adaptive --target agent:<key>` from `research/projects/red-teaming/`
-- Verify: prints the ASR summary from `unified_report.json` after the run
+- Verify: runs `uv run redteam report summarize <out>/unified_report.json` after the run
 
 ### Scenario 2: Scoped run with category filter
 
@@ -161,8 +161,8 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 ### Scenario 3: Read an existing report
 
 - Ask: "Summarize the red team results from ./output/my-run"
-- Verify: runs `uv run redteam summarize ./output/my-run/unified_report.json`
-- Verify: explains ASR, total attacks, successful attacks, and per-category breakdown
+- Verify: runs `uv run redteam report summarize ./output/my-run/unified_report.json`
+- Verify: explains `resistance_rate`, `vulnerabilities_found`, `total_results`, and `categories_tested`
 - Verify: notes which categories were NOT tested
 
 ### Scenario 4: Missing env var

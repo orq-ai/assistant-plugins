@@ -28,14 +28,14 @@ This skill is a **reference guide and invocation helper — not a wrapper**. You
 ## Library location
 
 ```
-research/projects/red-teaming/
+~/Documents/orq/research/projects/red-teaming/
 ```
 
 The project is a `uv` workspace. The CLI entry point is `redteam` (defined in `pyproject.toml` as `red_teaming.cli.main:app`).
 
 **Always invoke via:**
 ```bash
-cd /path/to/research/projects/red-teaming
+cd ~/Documents/orq/research/projects/red-teaming
 uv run redteam <command> [options]
 ```
 
@@ -115,10 +115,10 @@ uv run redteam run hybrid \
   [--out ./output/my-run]
 ```
 
-### `redteam summarize` — print a concise report summary
+### `redteam report summarize` — print a concise report summary
 
 ```bash
-uv run redteam summarize ./output/my-run/unified_report.json
+uv run redteam report summarize ./output/my-run/unified_report.json
 ```
 
 ## Output structure
@@ -134,16 +134,19 @@ output/my-run/
 
 ### Reading the report
 
-Key fields in `unified_report.json`:
+`redteam report summarize` returns a `ReportSnapshot` with these fields:
 
 | Field | Meaning |
 |-------|---------|
-| `asr` | Attack Success Rate (0.0–1.0) — fraction of attacks that succeeded |
-| `total_attacks` | Total attack datapoints sent |
-| `successful_attacks` | How many were flagged as successful by the evaluator |
-| `results_by_category` | ASR broken down by OWASP category |
+| `resistance_rate` | Fraction of attacks the agent resisted (0.0–1.0). Higher = more robust. |
+| `vulnerabilities_found` | Count of attacks the agent failed (lower is better) |
+| `total_results` | Total attack datapoints evaluated |
+| `categories_tested` | List of OWASP categories covered in this run |
+| `top_techniques` | Top 5 attack techniques by success count `{technique: count}` |
+| `pipeline` | Target agent / pipeline identifier |
+| `framework` | OWASP framework used (e.g. `OWASP-AGENTIC`, `OWASP-LLM`) |
 
-A result is flagged **successful** (attack succeeded) when the evaluator judges that the agent produced a vulnerable response. Higher ASR = more vulnerable.
+**Interpreting resistance_rate:** `1.0 - resistance_rate` = Attack Success Rate. A `resistance_rate` of `0.65` means 35% of attacks succeeded.
 
 ## OWASP category reference
 
@@ -175,21 +178,26 @@ uv run redteam run adaptive \
   --yes
 
 # 4. Read the summary
-uv run redteam summarize ./output/customer-support-$(date +%Y%m%d)/unified_report.json
+uv run redteam report summarize ./output/customer-support-$(date +%Y%m%d)/unified_report.json
 ```
 
 Expected summary output (JSON):
 ```json
 {
-  "asr": 0.35,
-  "total_attacks": 20,
-  "successful_attacks": 7,
-  "results_by_category": {
-    "ASI01": {"asr": 0.4, "total": 10, "successful": 4},
-    "ASI02": {"asr": 0.3, "total": 10, "successful": 3}
+  "pipeline": "customer-support-v2",
+  "framework": "OWASP-AGENTIC",
+  "total_results": 20,
+  "categories_tested": ["ASI01", "ASI02"],
+  "resistance_rate": 0.65,
+  "vulnerabilities_found": 7,
+  "top_techniques": {
+    "indirect-injection": 4,
+    "goal-hijacking": 3
   }
 }
 ```
+
+`resistance_rate: 0.65` → 35% attack success rate across 20 attempts.
 
 ## Troubleshooting common failures
 
@@ -207,7 +215,7 @@ Expected summary output (JSON):
 
 - Run completes without errors
 - `unified_report.json` exists in the output directory
-- ASR summary has been printed and shared with the user
+- `redteam report summarize` output has been printed and shared with the user
 - Categories tested and coverage gaps are noted (e.g. "only ASI01–ASI02 tested; fairness not covered")
 
 ## Companion skills
