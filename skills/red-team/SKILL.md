@@ -134,14 +134,21 @@ uv run redteam report summarize ./output/my-run/report.json
 
 After a run, the output directory contains:
 
+**Adaptive run** (`run adaptive`, default `--save-intermediates`):
 ```
 output/my-run/
 ├── report.json                 # Full report — pass this to `redteam report summarize`
-├── 01_agent_context.json       # Agent metadata (adaptive, if --save-intermediates)
+├── 01_agent_context.json       # Agent metadata
 ├── 02_strategy_selection.json  # Attack strategies chosen per category
 ├── 03_generated_prompts.json   # Adversarial prompts generated
 ├── 04_attack_results.json      # Raw attack results
 └── 05_summary_report.json      # Aggregated summary
+```
+
+**Dataset run** (`run dataset`):
+```
+output/my-run/
+└── report.json                 # Full report only (no staged files)
 ```
 
 When targeting multiple agents, each gets its own subdirectory containing a `report.json`.
