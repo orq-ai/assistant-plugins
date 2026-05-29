@@ -22,20 +22,22 @@ This skill is a **reference guide and invocation helper — not a wrapper**. You
 - **NEVER** run without confirming the target key with the user first.
 - **NEVER** skip the env var check — missing `ORQ_API_KEY` will silently fail.
 - **ALWAYS** use `uv run` to invoke the CLI (manages the Python environment).
-- **ALWAYS** show the ASR summary after a run completes.
+- **ALWAYS** run `redteam report summarize` and show the output after a run completes.
 - **NEVER** interpret a passing run (low ASR) as "the agent is safe" — coverage depends on categories tested.
 
 ## Library location
 
+The red teaming library lives in the `research` repo under:
+
 ```
-~/Documents/orq/research/projects/red-teaming/
+research/projects/red-teaming/
 ```
 
-The project is a `uv` workspace. The CLI entry point is `redteam` (defined in `pyproject.toml` as `red_teaming.cli.main:app`).
+Locate it relative to where you cloned the research repo (ask the user if unsure). The project is a `uv` workspace. The CLI entry point is `redteam` (defined in `pyproject.toml` as `red_teaming.cli.main:app`).
 
 **Always invoke via:**
 ```bash
-cd ~/Documents/orq/research/projects/red-teaming
+cd <path-to-research-repo>/projects/red-teaming
 uv run redteam <command> [options]
 ```
 
@@ -111,9 +113,16 @@ Combines a live adaptive leg and a static dataset leg against the same target.
 ```bash
 uv run redteam run hybrid \
   --target agent:<deployment-key> \
+  [--dynamic-target agent:<key>] \
+  [--static-target agent:<key>] \
   [--categories ASI01,ASI02] \
-  [--out ./output/my-run]
+  [--max-attacks 50] \
+  [--evaluator-model azure/gpt-5-mini] \
+  [--out ./output/my-run] \
+  [--yes]
 ```
+
+Use `--target` to set both legs to the same target. Use `--dynamic-target` / `--static-target` to send each leg to a different target.
 
 ### `redteam report summarize` — print a concise report summary
 
@@ -163,8 +172,8 @@ output/my-run/
 **Goal:** Red team the `customer-support-v2` deployment against prompt injection and excessive agency.
 
 ```bash
-# 1. Navigate to the library
-cd ~/Documents/orq/research/projects/red-teaming
+# 1. Navigate to the library (adjust path to your research repo clone)
+cd <path-to-research-repo>/projects/red-teaming
 
 # 2. Verify env
 echo "ORQ_API_KEY set: $([ -n "$ORQ_API_KEY" ] && echo yes || echo NO)"
@@ -204,7 +213,7 @@ Expected summary output (JSON):
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
 | `ORQ_API_KEY not set` or 401 errors | Missing env var | Export `ORQ_API_KEY` in your shell or `.env` |
-| `ModuleNotFoundError: red_teaming` | Wrong working directory or venv | `cd research/projects/red-teaming && uv run redteam ...` |
+| `ModuleNotFoundError: red_teaming` | Wrong working directory or venv | `cd <research-repo>/projects/red-teaming && uv run redteam ...` |
 | `Python 3.12+ required` | System Python too old | `uv` handles this — ensure `uv` is installed (`brew install uv`) |
 | `ImportError: evaluatorq` | Dependency not installed | `uv sync` in the project directory |
 | Run hangs at attack generation | Attack model API key missing | Set `OPENAI_API_KEY` or switch `--attack-model` to a configured provider |
