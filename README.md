@@ -171,6 +171,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 | **compare-agents** | Run cross-framework agent comparisons using evaluatorq — compare orq.ai, LangGraph, CrewAI, OpenAI Agents SDK, and others | [SKILL.md](skills/compare-agents/SKILL.md) |
 | **generate-synthetic-dataset** | Generate and curate evaluation datasets — structured generation, quick from description, expansion, and dataset maintenance | [SKILL.md](skills/generate-synthetic-dataset/SKILL.md) |
 | **optimize-prompt** | Analyze and optimize system prompts using a structured prompting guidelines framework | [SKILL.md](skills/optimize-prompt/SKILL.md) |
+| **red-team** | Run adversarial red teaming against deployed orq agents or static datasets using the orq red teaming library — adaptive attacks, OWASP coverage, ASR reporting | [SKILL.md](skills/red-team/SKILL.md) |
 <!-- END_SKILLS_TABLE -->
 
 ---

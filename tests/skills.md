@@ -142,6 +142,37 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 
 ---
 
+## `red-team`
+
+### Scenario 1: Run adaptive red team
+
+- Ask: "Red team my `customer-support` deployment"
+- Verify: confirms the deployment key with the user before running
+- Verify: checks `ORQ_API_KEY` is set before invoking
+- Verify: invokes `uv run redteam run adaptive --target agent:<key>` from `research/projects/red-teaming/`
+- Verify: prints the ASR summary from `unified_report.json` after the run
+
+### Scenario 2: Scoped run with category filter
+
+- Ask: "Run a red team on `my-agent` focused on prompt injection only"
+- Verify: maps "prompt injection" to `ASI01` and passes `--categories ASI01`
+- Verify: does NOT run all categories unless explicitly asked
+
+### Scenario 3: Read an existing report
+
+- Ask: "Summarize the red team results from ./output/my-run"
+- Verify: runs `uv run redteam summarize ./output/my-run/unified_report.json`
+- Verify: explains ASR, total attacks, successful attacks, and per-category breakdown
+- Verify: notes which categories were NOT tested
+
+### Scenario 4: Missing env var
+
+- Simulate `ORQ_API_KEY` unset
+- Verify: surfaces the missing env var before attempting the run
+- Verify: does NOT proceed with the CLI invocation
+
+---
+
 ## Critical Files
 
 - `skills/setup-observability/SKILL.md`
@@ -160,3 +191,4 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 - `skills/optimize-prompt/SKILL.md`
 - `skills/analyze-trace-failures/SKILL.md`
 - `skills/run-experiment/SKILL.md`
+- `skills/red-team/SKILL.md`

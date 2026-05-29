@@ -15,6 +15,7 @@ These skills are:
  - generate-synthetic-dataset -> "skills/generate-synthetic-dataset/SKILL.md"
  - invoke-deployment -> "skills/invoke-deployment/SKILL.md"
  - optimize-prompt -> "skills/optimize-prompt/SKILL.md"
+ - red-team -> "skills/red-team/SKILL.md"
  - run-experiment -> "skills/run-experiment/SKILL.md"
  - setup-observability -> "skills/setup-observability/SKILL.md"
 
@@ -39,6 +40,9 @@ optimize-prompt: `Analyze and optimize system prompts using a structured prompti
 compare-agents: `Run cross-framework agent comparisons using evaluatorq — compares any combination of agents (orq.ai, LangGraph, CrewAI, OpenAI Agents SDK, Vercel AI SDK) head-to-head on the same dataset with LLM-as-a-judge scoring. Do NOT use when comparing only orq.ai configurations with no external agents (use run-experiment instead).`
 
 setup-observability: `Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment. Use when setting up tracing, adding the AI Router proxy, integrating OpenTelemetry, auditing existing instrumentation, or enriching traces with metadata. Do NOT use when traces already exist and you need to debug failures (use analyze-trace-failures).`
+
+red-team: `Run adversarial red teaming against deployed orq agents or static datasets using the orq red teaming library — adaptive attacks, OWASP Agentic/LLM category coverage, ASR reporting. Use when asked to run a red team, test an agent for vulnerabilities, or check OWASP coverage. Do NOT use when you only need evaluators (use build-evaluator) or trace analysis (use analyze-trace-failures).`
+
 
 </available_skills>
 
