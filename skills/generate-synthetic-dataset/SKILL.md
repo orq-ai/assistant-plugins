@@ -212,6 +212,7 @@ Choose based on user needs:
    - Explicitly name the variable names for the `inputs` object
    - Request diversity across categories, edge cases, and input lengths
    - Present draft to user for validation before generating
+   - Use persona conditioning or Evol-Instruct prompts to break monoculture — see [resources/dos-and-donts.md](resources/dos-and-donts.md) for techniques
 
 #### Phase 3: Generate and Review
 

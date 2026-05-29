@@ -73,6 +73,27 @@ Run filters cheapest-first:
 
 ---
 
+## Filter tooling
+
+You don't have to build the filter stack from scratch:
+
+- **[Distilabel](https://github.com/argilla-io/distilabel)** — most-used open-source framework for chaining generation + AI-feedback + filtering steps. Fastest way to wire the full stack without writing it yourself.
+- **[NVIDIA NeMo Curator](https://github.com/NVIDIA-NeMo/Curator)** — GPU-scale deduplication and filtering; powers Nemotron-CC.
+- **[DataDreamer](https://github.com/datadreamer-dev/DataDreamer)** (ACL 2024) — emphasizes reproducibility and provenance logging.
+
+---
+
+## Generation diversity techniques
+
+When you need to break generator monoculture cheaply:
+
+- **Persona conditioning** (Persona Hub approach) — condition generation on a persona description: "as a structural engineer in Lagos, write a math problem…" generates semantically different data than "as a high school teacher in Texas." Tencent released 1B personas at [HuggingFace](https://huggingface.co/datasets/proj-persona/PersonaHub).
+- **Evol-Instruct** — take an existing instruction and prompt the LLM to make it harder along specific axes: add constraints, deepen reasoning, increase complexity. Generates harder examples without harder seeds. [Reference implementation](https://github.com/nlpxucan/WizardLM/tree/main/Evol_Instruct).
+- **Magpie** — prompt an aligned model with only the template prefix (no user message); it generates plausible user messages. No seeds required. Weakness: underperforms on narrow domains (specialized code, internal tooling). [GitHub](https://github.com/magpie-align/magpie).
+- **Self-training** — have the model generate outputs for prompts from its own distribution. Often matches teacher distillation on quality metrics, and avoids exposure-bias mismatch between training and inference distributions.
+
+---
+
 ## When NOT to use synthetic data
 
 - **Real data exists and is accessible.** Synthetic is a substitute for missing real data. If you have real data, use it.
