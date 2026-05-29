@@ -175,19 +175,23 @@ await evaluatorq("<experiment-name>", {
 ### CLI — Red Teaming
 
 ```bash
-# Adaptive mode (generates adversarial prompts dynamically)
-eq redteam run adaptive \
+# Dynamic mode — LLM-generated adversarial prompts (default)
+eq redteam run \
   --target agent:<AGENT_KEY> \
-  --framework owasp-llm \
-  --num-attacks 20
+  --mode dynamic
 
-# Dataset mode (static OWASP dataset)
-eq redteam run dataset \
+# Static mode — uses OWASP dataset
+eq redteam run \
   --target agent:<AGENT_KEY> \
-  --framework owasp-llm
+  --mode static
 
-# View a summary report
-eq redteam report summarize <path-to-report.json>
+# Hybrid mode — both dynamic and static
+eq redteam run \
+  --target agent:<AGENT_KEY> \
+  --mode hybrid
+
+# Open the interactive Streamlit dashboard for a saved report
+eq redteam ui report.json
 ```
 
 See [resources/cli-reference.md](resources/cli-reference.md) for full CLI flags and output format.
@@ -273,14 +277,18 @@ npx tsx evaluate.ts
 
 Results print to terminal. If `ORQ_API_KEY` is set, results also appear in orq.ai → Experiments.
 
-### CLI — common flags
+### CLI — selected flags
 
-| Flag | Both CLIs | Purpose |
-|------|-----------|---------|
-| `--output <file>` | ✅ | Write results JSONL to a file |
-| `--model <model>` | sim only | User-simulator / judge model |
-| `--parallelism <n>` | sim only | Concurrent simulations (default 5) |
-| `--no-save` | sim only | Skip writing to `.evaluatorq/sim-runs/` |
+| Flag | CLI | Purpose |
+|------|-----|---------|
+| `--mode dynamic\|static\|hybrid` | redteam | Execution mode (default: `dynamic`) |
+| `--category` / `-c` | redteam | OWASP category to test, repeatable |
+| `--save final\|detail\|none` | redteam | What to persist (default: `final`) |
+| `--output-dir` | redteam | Directory for saved files (required with `--save detail`) |
+| `--output <file>` | sim | Write results JSONL to a file |
+| `--model <model>` | sim | User-simulator / judge model |
+| `--parallelism <n>` | sim | Concurrent simulations (default 5) |
+| `--no-save` | sim | Skip writing to `.evaluatorq/sim-runs/` |
 | `--verbose` / `--quiet` | both | Logging verbosity |
 
 ---

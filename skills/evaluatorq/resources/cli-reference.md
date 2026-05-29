@@ -16,24 +16,42 @@ Adversarial red teaming against OWASP vulnerability categories.
 
 | Subcommand | Description |
 |-----------|-------------|
-| `eq redteam run adaptive` | Dynamic attack generation (LLM-generated prompts) |
-| `eq redteam run dataset` | Static OWASP dataset evaluation |
-| `eq redteam run hybrid` | Both adaptive and dataset in one run |
-| `eq redteam report summarize <file>` | Print resistance summary from a report.json |
-| `eq redteam ui <file>` | Open Streamlit report viewer |
+| `eq redteam run` | Run a red team evaluation (dynamic, static, or hybrid mode) |
+| `eq redteam ui [report.json]` | Open the interactive Streamlit dashboard |
+| `eq redteam validate-dataset [source]` | Validate a local or HuggingFace dataset |
+| `eq redteam runs` | List previous runs saved to `.evaluatorq/runs/` |
 
-### `eq redteam run adaptive`
+### `eq redteam run`
 
 ```bash
-eq redteam run adaptive \
-  --target agent:<AGENT_KEY>         # or model:<MODEL>, openai:<MODEL>
-  --framework owasp-llm              # owasp-llm | owasp-asi
-  --num-attacks 20                   # number of adversarial prompts
-  --output-dir ./results             # where to write output files
-  --verbose
+eq redteam run \
+  --target agent:<AGENT_KEY> \     # repeatable; also accepts deployment:<KEY>
+  --mode dynamic \                 # dynamic (default) | static | hybrid
+  --category ASI01 \               # repeatable; defaults to all categories
+  --save final \                   # none | final (default) | detail
+  --output-dir ./results \         # required when --save detail
+  --parallelism 10 \
+  --yes                            # skip confirmation prompt
 ```
 
-**Output files** (written to `--output-dir`):
+**Modes:**
+
+| Mode | Description |
+|------|-------------|
+| `dynamic` (default) | LLM-generated adversarial prompts — broadest coverage |
+| `static` | Runs against the OWASP static dataset only |
+| `hybrid` | Both dynamic and static in one run |
+
+**`--save` values:**
+
+| Value | What is written |
+|-------|----------------|
+| `none` | Nothing saved to disk |
+| `final` (default) | `report.json` summary only |
+| `detail` | All stage artifacts + `report.json` (requires `--output-dir`) |
+
+When `--save detail` is used, the following files are written to `--output-dir`:
+
 ```
 01_agent_context.json
 02_attack_objectives.json
@@ -42,33 +60,26 @@ eq redteam run adaptive \
 05_summary_report.json    ← same schema as report.json
 ```
 
-### `eq redteam run dataset`
+**Key flags:**
 
-```bash
-eq redteam run dataset \
-  --target agent:<AGENT_KEY> \
-  --framework owasp-llm \
-  --output-dir ./results
-```
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--target` | required | Target ID(s), e.g. `agent:<key>` or `deployment:<key>`. Repeatable. |
+| `--mode` | `dynamic` | Execution mode: `dynamic`, `static`, or `hybrid` |
+| `--category` / `-c` | all | OWASP category codes to test (e.g. `ASI01`, `LLM01`). Repeatable. |
+| `--vulnerability` / `-V` | — | Specific vulnerability IDs (takes precedence over `--category`). Repeatable. |
+| `--save` | `final` | `none`, `final`, or `detail` |
+| `--output-dir` | — | Directory for saved files (required with `--save detail`) |
+| `--parallelism` | `10` | Concurrent evaluatorq jobs |
+| `--max-turns` | `5` | Max conversation turns for multi-turn attacks |
+| `--attack-model` | platform default | Model for adversarial prompt generation |
+| `--evaluator-model` | platform default | Model for OWASP evaluation scoring |
+| `--attacker-instructions` | — | Domain context to steer attack generation |
+| `--yes` / `-y` | `False` | Skip confirmation prompt |
+| `--verbose` / `-v` | 0 | `-v` for progress, `-vv` for debug |
+| `--quiet` / `-q` | `False` | Suppress progress bars |
 
-**Output:** `report.json` only (no staged files).
-
-### `eq redteam run hybrid`
-
-```bash
-eq redteam run hybrid \
-  --dynamic-target agent:<AGENT_KEY> \
-  --static-target agent:<AGENT_KEY> \
-  --framework owasp-llm
-```
-
-### `eq redteam report summarize`
-
-```bash
-eq redteam report summarize ./results/report.json
-```
-
-**Key fields in report.json:**
+**report.json key fields:**
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -78,15 +89,26 @@ eq redteam report summarize ./results/report.json
 | `categories_tested` | list | OWASP categories covered |
 | `top_techniques` | list | Most effective attack techniques |
 | `framework` | str | `"owasp-llm"` or `"owasp-asi"` |
-| `pipeline` | str | `"adaptive"`, `"dataset"`, or `"hybrid"` |
+| `pipeline` | str | `"dynamic"`, `"static"`, or `"hybrid"` |
+
+### `eq redteam ui`
+
+```bash
+eq redteam ui report.json        # open a specific report
+eq redteam ui --latest           # open the most recent run
+eq redteam ui                    # same as --latest
+```
+
+Requires: `pip install 'evaluatorq[ui]'`
 
 ### Target formats
 
 | Format | Example | Notes |
 |--------|---------|-------|
 | `agent:<key>` | `agent:my-support-agent` | Requires `ORQ_API_KEY` |
-| `model:<id>` | `model:gpt-4o` | Via orq.ai AI Router; requires `ORQ_API_KEY` |
-| `openai:<id>` | `openai:gpt-4o-mini` | Direct OpenAI; requires `OPENAI_API_KEY` |
+| `deployment:<key>` | `deployment:my-prompt` | Requires `ORQ_API_KEY` |
+
+For OpenAI models, use the Python API (`OpenAIModelTarget`) — not supported via CLI target string.
 
 ---
 
@@ -188,18 +210,18 @@ Each line is a JSON object with:
 
 ## Common patterns
 
-### Run red team then summarize
+### Run red team then view report
 
 ```bash
 export ORQ_API_KEY="..."
 
-eq redteam run adaptive \
+eq redteam run \
   --target agent:my-agent \
-  --framework owasp-llm \
-  --num-attacks 30 \
+  --mode dynamic \
+  --save detail \
   --output-dir ./redteam-results
 
-eq redteam report summarize ./redteam-results/05_summary_report.json
+eq redteam ui ./redteam-results/05_summary_report.json
 ```
 
 ### Generate + simulate + export
