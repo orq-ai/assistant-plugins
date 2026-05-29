@@ -116,30 +116,29 @@ If no dataset exists, delegate to `generate-synthetic-dataset`. Target 10–30 d
 
 ```python
 import asyncio
-from evaluatorq import evaluatorq, job, DataPoint, EvaluationResult
+from typing import Any
+from evaluatorq import evaluatorq, job, DataPoint, ScorerParameter
 
 @job("MyAgent")
-async def agent_job(data: DataPoint, row: int):
+async def agent_job(data: DataPoint, _row: int = 0) -> str:
     # Replace with your actual agent call
-    return {
-        "agent": "MyAgent",
-        "query": data.inputs["query"],
-        "response": "<your agent response here>",
-    }
+    return "<your agent response here>"
 
-async def quality_scorer(params):
+async def quality_scorer(params: ScorerParameter) -> dict[str, Any]:
     data: DataPoint = params["data"]
     output = params["output"]
     # Replace with your scoring logic or orq.ai evaluator call
-    return EvaluationResult(value=1.0, explanation="Looks good")
+    return {"value": 1.0, "explanation": "Looks good"}
 
 async def main():
     await evaluatorq(
         "<experiment-name>",
-        data={"dataset_id": "<DATASET_ID>"},  # or inline DataPoint list
-        jobs=[agent_job],
-        evaluators=[{"name": "quality", "scorer": quality_scorer}],
-        parallelism=5,
+        {
+            "data": {"dataset_id": "<DATASET_ID>"},  # or inline DataPoint list
+            "jobs": [agent_job],
+            "evaluators": [{"name": "quality", "scorer": quality_scorer}],
+            "parallelism": 5,
+        },
     )
 
 asyncio.run(main())
@@ -148,26 +147,26 @@ asyncio.run(main())
 ### Library — TypeScript
 
 ```typescript
+import type { DataPoint, Evaluator } from "@orq-ai/evaluatorq";
 import { evaluatorq, job } from "@orq-ai/evaluatorq";
 
-const agentJob = job("MyAgent", async (data) => {
+const agentJob = job("MyAgent", async (data: DataPoint) => {
   // Replace with your actual agent call
-  return {
-    agent: "MyAgent",
-    query: data.inputs.query,
-    response: "<your agent response here>",
-  };
+  return "<your agent response here>";
 });
 
-const qualityScorer = async ({ data, output }) => ({
-  value: 1.0,
-  explanation: "Looks good",
-});
+const qualityEvaluator: Evaluator = {
+  name: "quality",
+  scorer: async ({ data, output }) => ({
+    value: 1.0,
+    explanation: "Looks good",
+  }),
+};
 
 await evaluatorq("<experiment-name>", {
   data: { datasetId: "<DATASET_ID>" },  // or inline DataPoint array
   jobs: [agentJob],
-  evaluators: [{ name: "quality", scorer: qualityScorer }],
+  evaluators: [qualityEvaluator],
   parallelism: 5,
 });
 ```
@@ -225,27 +224,28 @@ eq sim runs
 ### Use an orq.ai LLM-as-a-Judge evaluator
 
 ```python
+from typing import Any
 from orq_ai_sdk import Orq
 import os
 
 EVALUATOR_ID = "<EVALUATOR_ID>"
 
-async def orq_eval_scorer(params):
+async def orq_eval_scorer(params: ScorerParameter) -> dict[str, Any]:
     data: DataPoint = params["data"]
     output = params["output"]
 
     orq = Orq(api_key=os.environ["ORQ_API_KEY"])
-    result = orq.evals.invoke(         # NOTE: evals.invoke, NOT evaluators.invoke
+    result = await orq.evals.invoke_async(   # NOTE: evals.invoke_async, NOT evaluators
         id=EVALUATOR_ID,
         query=data.inputs["query"],
-        output=output["response"],
+        output=str(output),
         reference=data.expected_output or "",
     )
 
-    return EvaluationResult(
-        value=1.0 if result.value.value else 0.0,
-        explanation=result.value.explanation or "",
-    )
+    return {
+        "value": 1.0 if result.value.value else 0.0,
+        "explanation": result.value.explanation or "",
+    }
 ```
 
 ### Built-in evaluators (Python)
