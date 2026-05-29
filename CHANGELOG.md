@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-06-08
+
+### Added
+- `evaluatorq`: new skill for writing evaluatorq evaluation scripts (Python + TypeScript) and operating the `eq` CLI. Covers single-agent evaluation, custom scorers, built-in evaluators. Routes to `red-team` skill for `eq redteam` and `simulate-agent` skill for `eq sim`.
+- `evaluatorq/resources/cli-reference.md`: full flag reference for `eq redteam` and `eq sim`, output file schemas, and common usage patterns.
+
 ## [0.4.0] - 2026-06-06
 
 ### Added

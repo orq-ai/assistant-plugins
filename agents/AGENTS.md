@@ -18,6 +18,7 @@ These skills are:
  - optimize-prompt -> "skills/optimize-prompt/SKILL.md"
  - orq-red-team -> "skills/orq-red-team/SKILL.md"
  - run-experiment -> "skills/run-experiment/SKILL.md"
+ - evaluatorq -> "skills/evaluatorq/SKILL.md"
  - setup-observability -> "skills/setup-observability/SKILL.md"
  - simulate-agent -> "skills/simulate-agent/SKILL.md"
 
@@ -38,6 +39,8 @@ run-experiment: `Create and run orq.ai experiments — compare configurations ag
 generate-synthetic-dataset: `Generate and curate evaluation datasets — structured generation, quick from description, expansion from existing data, plus dataset maintenance and quality improvement`
 
 optimize-prompt: `Analyze and optimize system prompts using a structured prompting guidelines framework — AI-powered analysis and rewriting`
+
+evaluatorq: `Write and run evaluatorq evaluation scripts (Python or TypeScript) for a single agent, use custom or built-in scorers, or run the evaluatorq CLI — eq redteam for adversarial testing, eq sim for multi-turn simulation. Do NOT use when comparing multiple agents (use compare-agents).`
 
 compare-agents: `Run cross-framework agent comparisons using evaluatorq — compares any combination of agents (orq.ai, LangGraph, CrewAI, OpenAI Agents SDK, Vercel AI SDK) head-to-head on the same dataset with LLM-as-a-judge scoring. Do NOT use when comparing only orq.ai configurations with no external agents (use run-experiment instead).`
 
