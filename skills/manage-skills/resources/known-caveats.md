@@ -4,29 +4,29 @@ Active platform behaviors and authoring anti-patterns to handle while working wi
 
 ---
 
-## Renderer wiring lag — verify in a test prompt before relying on a new Skill
+## Verify new Skills render before promoting to production
 
-**Status:** Verify per workspace
+**Status:** Rolling-out API surface — preflight recommended per workspace
 
 ### Symptom
 
-The `{{snippet.<display_name>}}` template placeholder is resolved by a Redis-backed snippet cache (`PROMPT_SNIPPETS_KV`). Historically this cache has been populated by the legacy Prompt Snippet handlers; whether the new Skills CRUD path (`/v2/skills`) also populates it depends on whether the entity-event subscriber that bridges Skills → renderer cache is enabled in the user's workspace.
+The `/v2/skills` REST surface and `*_skill` MCP tools are still rolling out. If they are unavailable in a workspace, the legacy `/v2/prompts/snippets` controller is still mounted and provides full CRUD.
 
-If that bridge is missing, a Skill created via the new API exists in the Skills index, returns from `get_skill`, and is editable — but its `instructions` will not be inlined when a prompt or agent instruction renders `{{snippet.<display_name>}}`.
+Both `{{skill.<display_name>}}` (canonical) and `{{snippet.<display_name>}}` (backward-compatible alias) resolve in the renderer once the skills service is deployed in the workspace. If a newly created Skill's placeholder renders to empty or passes through unchanged, the Skills service may not yet be active for that workspace — treat the Skill as a draft entity until confirmed.
 
 ### Workaround
 
 After creating or substantively editing a Skill, run a single test render before broadcasting the Skill to other consumers:
 
-1. Create a one-off prompt/deployment/agent that contains only `{{snippet.<display_name>}}` (and optionally a delimiter).
+1. Create a one-off prompt/deployment/agent that contains only `{{skill.<display_name>}}` (and optionally a delimiter).
 2. Invoke it.
 3. Confirm the rendered output contains the Skill's `instructions`.
 
-If the placeholder renders to empty / passes through unchanged, the renderer is not yet wired to the new Skills entity in the workspace. Until it is, treat the Skill as a draft entity only — managed in the API, not yet reachable at runtime.
+If the placeholder renders to empty, check: (a) the `display_name` matches exactly (case-sensitive), or (b) the Skills service is not yet active for the workspace — in that case, manage the entity via the legacy `/v2/prompts/snippets` endpoints until it is.
 
 ### When this gets resolved
 
-When a backend change-stream consumer or NATS subscriber lands that mirrors `skill.created` / `skill.updated` / `skill.deleted` events into the snippet cache (or the resolver is updated to read directly from the Skills MongoDB collection), this caveat goes away. Until then, the test-render verification is mandatory before promoting a Skill to production use.
+When the Skills service is fully deployed to all workspaces, the preflight step can be skipped. Until then, the test-render verification is recommended before promoting a Skill to production use.
 
 ---
 
@@ -42,7 +42,7 @@ After the delete, any leftover `{{snippet.<deleted-name>}}` placeholder will sil
 
 ### Workaround
 
-**Always run a reference scan before `delete_skill`**, and prefer `enabled: false` (soft disable) as a first step:
+**Always run a reference scan before `delete_skill`**, and prefer tagging the Skill with `retired` as a reversible first step:
 
 ```text
 # 1. Enumerate candidate consumers
@@ -57,7 +57,8 @@ candidates = prompt_like_candidates + sibling_skills
 references = []
 for entity in candidates:
     body = fetch_full_body(entity)  # get_deployment / get_agent / get_skill etc.
-    if f"{{{{snippet.{skill.display_name}}}}}" in body:   # case-sensitive substring
+    if (f"{{{{skill.{skill.display_name}}}}}" in body      # canonical form
+            or f"{{{{snippet.{skill.display_name}}}}}" in body):  # backward-compat alias
         references.append(entity)
 
 # 3. Show references to the user; default to soft-disable when any are found.
@@ -66,7 +67,7 @@ for entity in candidates:
 Key points:
 - **Match `display_name` exactly.** The placeholder is case-sensitive; substring-matching `display_name` casually can produce false positives if names overlap.
 - **`search_entities` is not exhaustive.** It surfaces what the orq workspace indexes; downstream consumers (external apps that pull prompts via the API and inline them themselves) are invisible to it. If the team has a synced repo of prompts, grep there too.
-- **Soft-disable first.** Setting `enabled: false` is reversible; `delete_skill` is not. Disabling preserves the Skill so a missed reference can be diagnosed by enabling it again.
+- **Tag as `retired` first.** Adding a `retired` tag is reversible; `delete_skill` is not. The Skill remains resolvable while tagged, so a missed reference can be diagnosed without any data loss.
 
 ### When this gets fixed
 
@@ -80,7 +81,7 @@ When the platform either (a) returns a list of identified references on `delete_
 
 ### Symptom
 
-`update_skill` accepts a new `display_name`. The Skill is renamed in place. Every prompt or agent instruction that referenced the old name via `{{snippet.<old-name>}}` continues to render, but now resolves to nothing — the same silent-empty failure mode as a deleted Skill.
+`update_skill` accepts a new `display_name`. The Skill is renamed in place. Every prompt or agent instruction that referenced the old name via `{{skill.<old-name>}}` or `{{snippet.<old-name>}}` continues to render, but now resolves to nothing — the same silent-empty failure mode as a deleted Skill.
 
 ### Workaround
 

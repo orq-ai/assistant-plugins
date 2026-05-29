@@ -2,9 +2,9 @@
 name: manage-skills
 description: >
   Manage orq.ai Skills (the platform entity, formerly called Snippets) end-to-end —
-  list, get, create, update, enable/disable, and delete Skills, plus authoring
+  list, get, create, update, and delete Skills, plus authoring
   guidance (display name, description, tags, project scoping, path placement),
-  and how Skills get consumed (the `{{snippet.<key>}}` template placeholder
+  and how Skills get consumed (the `{{skill.<display_name>}}` template placeholder
   inside prompts and agent instructions). Use when the user wants to create,
   audit, edit, retire, or hook up orq.ai Skills.
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__list_skills, mcp__orq-workspace__get_skill, mcp__orq-workspace__create_skill, mcp__orq-workspace__update_skill, mcp__orq-workspace__delete_skill, mcp__orq-workspace__search_entities, mcp__orq-workspace__get_deployment, mcp__orq-workspace__get_agent
@@ -12,16 +12,15 @@ allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuest
 
 # Manage Skills
 
-You are an **orq.ai Skills lifecycle specialist**. Your job is the full CRUD workflow for the **Skills entity on the orq.ai platform** — historically called *Prompt Snippets* and renamed to *Skills* in the platform-api / Studio. Skills are modular, reusable instruction blocks intended to be inlined into prompts and agent instructions via the `{{snippet.<key>}}` template placeholder. (The placeholder kept the legacy `snippet.` prefix for backwards compatibility.)
+You are an **orq.ai Skills lifecycle specialist**. Your job is the full CRUD workflow for the **Skills entity on the orq.ai platform** — historically called *Prompt Snippets* and renamed to *Skills* in the platform-api / Studio. Skills are modular, reusable instruction blocks intended to be inlined into prompts and agent instructions via the `{{skill.<display_name>}}` template placeholder (with `{{snippet.<display_name>}}` as a backward-compatible alias).
 
 ## Production-readiness notice (verify before relying on this skill)
 
-The Skills entity (`/v2/skills` REST + `*_skill` MCP tools) is delivered on a backend feature branch and may not be available in every workspace yet. **Run the preflight check** in [Prerequisites](#prerequisites) before any phase. If the MCP `*_skill` tools or the REST endpoints are missing, fall back to managing Prompt Snippets via the legacy `/v2/prompts/snippets` endpoints — the *entity is the same*, just under the older name.
+The `/v2/skills` REST surface and `*_skill` MCP tools are still rolling out — **run the preflight check** in [Prerequisites](#prerequisites) before any phase. If the MCP tools or REST endpoints are unavailable, fall back to the legacy `/v2/prompts/snippets` controller which is still mounted and provides full CRUD. Both `{{skill.<display_name>}}` and `{{snippet.<display_name>}}` placeholders resolve in the renderer once the skills service is deployed; verify by running a test render after creating a Skill before promoting it to production.
 
-Two known wiring gaps to surface to the user when relevant:
+One known migration behavior to surface when relevant:
 
 1. **Snippet→Skill migration is one-way and asynchronous.** Existing Prompt Snippets are migrated to Skills via a backend cronjob; Skills created via the new API are *not* back-propagated to the snippet representation.
-2. **Renderer wiring may lag.** The `{{snippet.<display_name>}}` template resolver reads from a Redis cache that has historically been populated by the legacy snippet handlers. Whether Skills created through the new API land in that cache depends on whether the entity-event subscriber that bridges them is live in the user's workspace. **Always verify in a test prompt that a newly created Skill actually renders before promoting it to production.**
 
 ## Disambiguation: which "Skill" are we talking about?
 
@@ -33,14 +32,14 @@ This skill manages the **platform Skill entity on orq.ai** (`/v2/skills`, surfac
 
 When the user says "create a Skill" without context, ask which one they mean. The rest of this document is exclusively about the platform entity.
 
-> **Template-placeholder gotcha:** because the entity was renamed from *Prompt Snippet* to *Skill*, users sometimes try `{{skill.<display_name>}}` expecting it to mirror the new name. **It does not resolve.** The only working placeholder today is `{{snippet.<display_name>}}` — the resolver still keys off the legacy snippet prefix. If a referenced Skill renders to empty, check for this first.
+> **Template-placeholder note:** Both `{{skill.<display_name>}}` (canonical) and `{{snippet.<display_name>}}` (backward-compatible alias, falls back to the Skill whose `display_name` matches) resolve at render time. The lookup key is `display_name` in both cases. Prefer `{{skill.<display_name>}}` in new authoring. If a referenced Skill renders to empty, verify the `display_name` matches exactly (case-sensitive).
 
 ## When to use
 
 - "List the Skills in my workspace" / "audit my Skills"
 - "Create a Skill called X" / "make a snippet for Y"
 - "Update / rename / re-tag this Skill"
-- "Disable this Skill" (soft retire) or "delete this Skill"
+- "Retire / tag as retired" or "delete this Skill"
 - "How do I reference a Skill from a prompt or agent instruction?"
 - "I deleted a Skill — what breaks?"
 
@@ -54,7 +53,7 @@ When the user says "create a Skill" without context, ask which one they mean. Th
 
 ## Companion Skills
 
-- `build-agent` — author the agents whose instructions reference these Skills via `{{snippet.<key>}}`
+- `build-agent` — author the agents whose instructions reference these Skills via `{{skill.<key>}}`
 - `optimize-prompt` — review prose quality for `instructions`
 - `run-experiment` — verify a Skill change improves downstream behavior
 - `analyze-trace-failures` — diagnose Skills that aren't producing the expected output in production
@@ -63,8 +62,8 @@ When the user says "create a Skill" without context, ask which one they mean. Th
 
 - **ALWAYS** confirm the project scope (`project_id` set vs. workspace-wide) before `create_skill`. Default to project-scoped unless the user is explicit.
 - **ALWAYS** read the current Skill with `get_skill` before `update_skill` — never blind-overwrite tags, description, or instructions.
-- **ALWAYS** before `delete_skill`, find places that may reference the Skill via `{{snippet.<display_name>}}` (other Skills' `instructions`, deployment prompts, agent instructions) and warn the user — those references will silently render to empty/missing content after the Skill is gone.
-- **ALWAYS** offer `enabled: false` (soft disable) as an alternative to `delete_skill`. A disabled Skill is still resolvable and is a safer first step when you're not sure who depends on it.
+- **ALWAYS** before `delete_skill`, find places that may reference the Skill via `{{skill.<display_name>}}` or `{{snippet.<display_name>}}` (other Skills' `instructions`, deployment prompts, agent instructions) and warn the user — those references will silently render to empty/missing content after the Skill is gone.
+- **ALWAYS** offer tagging the Skill with `retired` (via `update_skill`) as an alternative to `delete_skill`. This is a reversible soft-retire signal visible in the Studio; `delete_skill` is permanent.
 - **NEVER** rely on `+NEVER+` (or any prose negation) inside `instructions` as a hard guardrail. Skill instructions are *soft* hints to the model; hard constraints belong in **MCP tool gates** (refuse the call at the tool layer). See [resources/known-caveats.md](resources/known-caveats.md).
 
 ## orq.ai Documentation
@@ -79,10 +78,10 @@ When the user says "create a Skill" without context, ask which one they mean. Th
 |------|---------|
 | `list_skills` | List Skills in the workspace; cursor-paginated, **no server-side filters beyond pagination** — see Pagination & Filtering below |
 | `get_skill` | Fetch a single Skill by `skill_id` (returns full Skill object) |
-| `create_skill` | Create a new Skill (`display_name`, `description`, `tags`, `path`, `project_id`, `instructions`, `enabled`). Returns `AlreadyExists` if the `display_name` is taken in the workspace — handle that error rather than pre-checking. |
-| `update_skill` | Patch an existing Skill by `skill_id` (any of: `display_name`, `description`, `tags`, `path`, `instructions`, `enabled`). PATCH semantics — only sent fields change. |
+| `create_skill` | Create a new Skill (`display_name`, `description`, `tags`, `path`, `project_id`, `instructions`). Returns `AlreadyExists` if the `display_name` is taken in the workspace — handle that error rather than pre-checking. |
+| `update_skill` | Patch an existing Skill by `skill_id` (any of: `display_name`, `description`, `tags`, `path`, `instructions`, `project_id`). PATCH semantics — only sent fields change. |
 | `delete_skill` | Permanently delete a Skill by `skill_id`. Does not scrub references in prompts/agent instructions — see Phase 5. |
-| `search_entities` | Used to find deployments/agents that may inline the Skill via `{{snippet.<display_name>}}`; combine with `get_deployment` / `get_agent` for the actual reference scan. |
+| `search_entities` | Used to find deployments/agents that may inline the Skill via `{{skill.<display_name>}}` or `{{snippet.<display_name>}}`; combine with `get_deployment` / `get_agent` for the actual reference scan. |
 
 > **Tool discovery:** Before the first run, list the connected MCP server's tools (`/mcp` in Claude Code, or inspect via the client) and confirm the `*_skill` tools above exist. Tool names sometimes vary by workspace or MCP server version.
 >
@@ -90,7 +89,7 @@ When the user says "create a Skill" without context, ask which one they mean. Th
 
 ### Pagination & Filtering
 
-`GET /v2/skills` (and the `list_skills` MCP tool) accepts **only** cursor-pagination parameters: `limit` (default 10, max 200), `starting_after`, `ending_before`. **There is no server-side filter for `project_id`, `tags`, `display_name`, or free text.** Filter by those facets **client-side** after pagination, or use `search_entities` if it indexes Skills.
+`GET /v2/skills` (and the `list_skills` MCP tool) accepts **only** cursor-pagination parameters: `limit` (server default 25, max 200), `starting_after`, `ending_before`. **There is no server-side filter for `project_id`, `tags`, `display_name`, or free text.** Filter by those facets **client-side** after pagination, or use `search_entities` if it indexes Skills.
 
 **Pagination loop (pseudocode):**
 
@@ -116,20 +115,19 @@ tagged_skills  = [s for s in all_skills if "policy" in s.tags]
 
 | Field | Direction | Notes |
 |------|------|------|
-| `display_name` | create / update / read | Human-facing label and the **lookup key** used by `{{snippet.<display_name>}}`. Regex: `^[A-Za-z0-9]+(?:[_-][A-Za-z0-9]+)*$`, max 255 chars. Must be unique within the workspace; `create_skill` returns `AlreadyExists` on conflict. |
+| `display_name` | create / update / read | Human-facing label and the **lookup key** used by `{{skill.<display_name>}}` (and `{{snippet.<display_name>}}`). Regex: `^[A-Za-z0-9]+(?:[_-][A-Za-z0-9]+)*$`, max 255 chars. Must be unique within the workspace; `create_skill` returns `AlreadyExists` on conflict. |
 | `description` | create / update / read | Short explanation of what the Skill does. Surfaces in the Studio's Skill picker. |
 | `tags` | create / update / read | Array of strings. Filtering is client-side (see above). |
 | `path` | create / update / read | Finder-style location, e.g. `Default/Skills` or `cs/policies`. Defaults to project's default skill folder. |
 | `project_id` | create / update / read | Optional — omit for workspace-wide. |
 | `instructions` | create / update / read | The actual Skill body — modular markdown that gets inlined wherever the Skill is referenced. |
-| `enabled` | create / update / read | Boolean (default `true`). Whether `{{snippet.<display_name>}}` references for a disabled Skill render to empty/pass-through depends on workspace renderer wiring (observed at the time of writing: the resolver reads from the legacy snippet KV cache, which has no notion of `enabled`; behavior may change). Treat `enabled: false` as a soft-disable signal in the API and audit log; verify the actual render effect before relying on it. |
 | `skill_id` | read / update / delete | Server-generated id. **The list/get response surfaces it as `id`** but the update/delete inputs take it as `skill_id`. Same value. |
 | `workspace_id` | read only | Audit. |
 | `created_at`, `updated_at`, `created_by_id`, `updated_by_id` | read only | Audit metadata. |
 
-> **Note on versioning:** The Skill object does **not** carry a `version` field. The platform records a semantic-version *activity log entry* on each create/update (visible in the Skill's history in the Studio), but you cannot read or set a version on the Skill itself. Don't ask the user "is this a major/minor/patch change?" — there's no field to write it to.
+> **Note on versioning:** `version` is a **read-only, server-stamped** field on the Skill object. The platform assigns it on each `create_skill` / `update_skill` call (visible in the Skill's history in the Studio). You cannot set `version` via the API — do not ask the user "is this a major/minor/patch change?" and do not include `version` in update payloads.
 
-> **`{{snippet.<display_name>}}` template placeholder:** The primary way Skills get consumed is by referencing them inside any prompt template or agent instruction with `{{snippet.<display_name>}}`. At render time the placeholder is replaced with the Skill's `instructions`. The `snippet.` prefix is a backwards-compatibility holdover from when the entity was called Prompt Snippets — there is no `{{skill.<...>}}` equivalent. Keep this in mind when authoring user-facing copy.
+> **Template placeholders:** The primary way Skills get consumed is by referencing them inside any prompt template or agent instruction. Both `{{skill.<display_name>}}` (canonical) and `{{snippet.<display_name>}}` (backward-compatible alias) resolve at render time — the placeholder is replaced with the Skill's `instructions`. The `snippet.` form is retained for backward compatibility with entities originally created as Prompt Snippets. Prefer `{{skill.<display_name>}}` in new authoring.
 
 ## Resources
 
@@ -164,19 +162,19 @@ Use when the user wants visibility into existing Skills.
 3. Present a scannable table:
    ```
    Skills (12)
-     - customer-support-tone (cs, [tone, voice], path: cs/style) — enabled
-     - extract-receipt-fields (finance, [extraction], path: Default/Skills) — enabled
-     - refund-policy (workspace-wide, [policy, cs], path: Default/Skills) — DISABLED
+     - customer-support-tone (cs, [tone, voice], path: cs/style)
+     - extract-receipt-fields (finance, [extraction], path: Default/Skills)
+     - refund-policy (workspace-wide, [policy, cs, retired], path: Default/Skills)
      ...
    ```
-4. For each Skill, surface: `display_name`, project (or "workspace-wide"), `tags`, `path`, `enabled` state. **Reference counts are expensive** — they require text-searching prompts/agent instructions for `{{snippet.<display_name>}}`. Compute them lazily on user request, not for every row. (See Phase 5 for the reference-scan pattern.)
+4. For each Skill, surface: `display_name`, project (or "workspace-wide"), `tags`, `path`. **Reference counts are expensive** — they require text-searching prompts/agent instructions for `{{skill.<display_name>}}` / `{{snippet.<display_name>}}`. Compute them lazily on user request, not for every row. (See Phase 5 for the reference-scan pattern.)
 
 ### Phase 2: Get / inspect
 
 Use before any update or delete, and whenever the user asks "what does Skill X do?"
 
 1. Call `get_skill(skill_id=...)`.
-2. Display: `display_name`, `description`, `tags`, `project_id` (or "workspace-wide"), `path`, `enabled`, `instructions` (truncated). Mention how it's likely consumed: `{{snippet.<display_name>}}` inside prompts or agent instructions.
+2. Display: `display_name`, `description`, `tags`, `project_id` (or "workspace-wide"), `path`, `version`, `instructions` (truncated). Mention how it's likely consumed: `{{skill.<display_name>}}` (or `{{snippet.<display_name>}}`) inside prompts or agent instructions.
 3. If the user asks "where is this used?", run a reference scan (see Phase 5 step 1).
 
 ### Phase 3: Create
@@ -190,14 +188,13 @@ Use when the user wants a new Skill.
    - **`project_id`** — the target project's id, OR omit for workspace-wide. Default to **project-scoped**; confirm before going workspace-wide. If the user gives a project key, resolve it to an id via `search_directories`.
    - **`path`** — finder location for the Skill, e.g. `Default/Skills` or `policies/refunds`. Default to the project's standard Skill folder.
    - **`instructions`** — the actual content that will be inlined wherever the Skill is referenced. Keep it focused on one capability.
-   - **`enabled`** — defaults to `true` on create. Ask only if the user wants to seed a disabled Skill.
 2. **Validate** before submitting:
    - Description starts with "Use when…" or describes a trigger condition.
    - `instructions` does NOT rely on `+NEVER+` / "always refuse" prose for hard guardrails — link the user to [known-caveats](resources/known-caveats.md) and recommend an MCP tool gate instead.
 3. Call `create_skill` with the validated payload.
    - **Error: `AlreadyExists`** — the `display_name` is already taken in the workspace. Show the conflicting Skill (paginate `list_skills`, find by `display_name`) and offer either a renamed create or an `update_skill` against the existing one.
    - **Error: project / path validation failure** — the API will return a `CodeInvalidArgument`. Re-ask for `project_id` / `path` and retry.
-4. Echo back the new Skill's `id`, `path`, and a one-line summary. Tell the user how to consume it: `{{snippet.<display_name>}}` inside any prompt template or agent instruction.
+4. Echo back the new Skill's `id`, `path`, and a one-line summary. Tell the user how to consume it: `{{skill.<display_name>}}` inside any prompt template or agent instruction (or the backward-compat `{{snippet.<display_name>}}`).
 
 ### Phase 4: Update
 
@@ -205,25 +202,25 @@ Use when the user wants to edit an existing Skill.
 
 1. **Always `get_skill` first.** Show the current state and confirm the diff the user is about to apply.
 2. **Patch fields explicitly.** Only send the fields being changed (`update_skill` is a patch — don't echo back unchanged tags or `instructions`).
-3. **`display_name` rename — DANGER.** The `display_name` IS the lookup key for `{{snippet.<display_name>}}`. Renaming it silently breaks every prompt or agent instruction that references the old name. Before sending a rename, run the reference scan from Phase 5 step 1 and warn the user. Offer to update the references in the same session.
-4. **`enabled: false`** — flipping a Skill to disabled is the soft-retirement path. Existing references stop resolving (verify in your workspace what they render to — empty string, missing, or pass-through). Recommend this as the default first step when retiring; reserve `delete_skill` for actual cleanup.
+3. **`display_name` rename — DANGER.** The `display_name` IS the lookup key for `{{skill.<display_name>}}` and `{{snippet.<display_name>}}`. Renaming it silently breaks every prompt or agent instruction that references the old name. Before sending a rename, run the reference scan from Phase 5 step 1 and warn the user. Offer to update the references in the same session.
+4. **Soft-retire pattern** — adding a `retired` tag via `update_skill` is the recommended first step before deletion. It's visible in the Studio, reversible, and leaves a clear signal for audits. Reserve `delete_skill` for actual cleanup after the Skill has been confirmed unused.
 5. **`instructions` changes:** if the user is rewriting the body, run a clarity pass first — reuse `optimize-prompt`'s heuristics (clarity, structure, no soft-constraint anti-patterns) but adapt; Skill `instructions` are typically shorter and capability-scoped, not full system prompts.
 6. **Verify** by calling `get_skill` post-update and confirming the change landed.
 
 ### Phase 5: Delete (with reference scan)
 
-Use when the user wants to permanently retire a Skill. **`delete_skill` is irreversible** and does not scrub `{{snippet.<display_name>}}` references elsewhere — those references silently fail to resolve after delete. Always offer `enabled: false` first (Phase 4 step 4) and only proceed to delete when the user is sure.
+Use when the user wants to permanently retire a Skill. **`delete_skill` is irreversible** and does not scrub `{{skill.<display_name>}}` / `{{snippet.<display_name>}}` references elsewhere — those references silently fail to resolve after delete. Always offer tagging the Skill with `retired` first (Phase 4 step 4) and only proceed to delete when the user is sure.
 
 1. **Reference scan.** Find places that may reference the Skill by its `display_name`:
    - Run `search_entities` to enumerate `prompt`, `deployment`, and `agent` candidates (`search_entities` does **not** expose a `skill` type — sibling Skills are enumerated separately).
    - Paginate `list_skills` to enumerate every other Skill in the workspace whose `instructions` could contain the reference.
-   - For each candidate, fetch its full body (`get_deployment` for deployments; `get_agent` for agents; `get_skill` for sibling Skills' `instructions`; prompt bodies come back from `search_entities`/the prompt-fetch tool) and grep the body for `{{snippet.<display_name>}}` (case-sensitive — match the Skill's exact `display_name`).
+   - For each candidate, fetch its full body (`get_deployment` for deployments; `get_agent` for agents; `get_skill` for sibling Skills' `instructions`; prompt bodies come back from `search_entities`/the prompt-fetch tool) and grep the body for both `{{skill.<display_name>}}` and `{{snippet.<display_name>}}` (case-sensitive — match the Skill's exact `display_name`).
    - Note: this scan can be expensive in large workspaces. Cache results within the session.
    - If the user has a faster way to grep their workspace (e.g., a synced repo of prompts), prefer that.
 2. **Warn and confirm.** Show the user:
-   - The Skill's `display_name`, `id`, project scope, and `enabled` state.
+   - The Skill's `display_name`, `id`, project scope, and tags (including any `retired` tag).
    - The list of references found (or "no references found in scanned entities — but the scan only covers prompts/agents/Skills surfaced via `search_entities`; manual checks may be needed").
-   - **The two-option choice:** *"(a) Soft-disable now (`enabled: false`) and revisit in N days, or (b) hard-delete and accept that any reference I missed will silently fail to render?"* Default to (a) when the scan found references; default to (b) only when the scan was comprehensive AND empty AND the user has confirmed.
+   - **The two-option choice:** *"(a) Tag as `retired` now and revisit in N days (reversible), or (b) hard-delete and accept that any reference I missed will silently fail to render?"* Default to (a) when the scan found references; default to (b) only when the scan was comprehensive AND empty AND the user has confirmed.
 3. **If the user picks delete:** call `delete_skill(skill_id=...)`. Confirm the API success.
 4. **Report.** Summarize: Skill deleted (or disabled); references that the user should manually check or update; recommended follow-up if any.
 
@@ -233,12 +230,12 @@ See [resources/known-caveats.md](resources/known-caveats.md) for the full caveat
 
 ## Done When
 
-- The user's intent (list / get / create / update / disable / delete) is fully resolved.
+- The user's intent (list / get / create / update / retire / delete) is fully resolved.
 - Any `delete_skill` was preceded by a reference scan AND an explicit choice to delete-rather-than-disable.
 - `display_name` renames are gated behind a reference scan and the user understands the breakage risk.
 - `instructions` changes were sanity-checked for clarity and for prose-negation anti-patterns before save.
 - New or updated Skills have a non-empty `description`, at least one tag, an explicit project scope, and a sensible `path`.
-- The user has a clear pointer to how the Skill is (or will be) consumed: `{{snippet.<display_name>}}` inside prompts or agent instructions.
+- The user has a clear pointer to how the Skill is (or will be) consumed: `{{skill.<display_name>}}` (or `{{snippet.<display_name>}}`) inside prompts or agent instructions.
 
 ## Open in orq.ai
 

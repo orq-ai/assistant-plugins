@@ -9,17 +9,17 @@ How Skills get consumed, who owns them, and how they retire.
 A platform Skill reaches the model in exactly one way: as a **template placeholder inside a prompt or agent instruction**. Anywhere a prompt template is rendered (deployments, agent system prompts, other Skills), the placeholder
 
 ```text
-{{snippet.<display_name>}}
+{{skill.<display_name>}}
 ```
 
-is replaced with the Skill's `instructions` at render time. The `snippet.` prefix is a backwards-compatibility holdover from when the entity was called Prompt Snippets — there is no `{{skill.<...>}}` equivalent today.
+is replaced with the Skill's `instructions` at render time. The backward-compatible alias `{{snippet.<display_name>}}` also resolves and falls back to the Skill whose `display_name` matches — prefer `{{skill.<...>}}` in new authoring.
 
 You can chain references: a Skill's `instructions` may itself contain `{{snippet.<other-display-name>}}` placeholders that the renderer expands recursively.
 
 **Implications:**
 - The `display_name` is load-bearing. Renaming a Skill changes the lookup key and silently breaks every existing reference. See [known-caveats.md](known-caveats.md).
 - There is no per-agent attachment list. The relationship between an agent and a Skill is implicit — it lives in the agent's `instructions` text, not in a structured `skills[]` array on the agent. (The `AgentCard.skills` field is unrelated AI-generated capability metadata. See [known-caveats.md](known-caveats.md).)
-- Disabling a Skill (`enabled: false`) takes effect at render time; existing references stop pulling in the `instructions`. Verify the exact behavior in your workspace — it may render to empty, pass-through, or skip silently.
+- To soft-retire a Skill, add a `retired` tag via `update_skill`. There is no `enabled` field — the `retired` tag convention is visible in the Studio and reversible.
 
 ---
 
@@ -34,7 +34,7 @@ There is no `list_consumers(skill_id)` API. To find every place a Skill is refer
 2. For each candidate, fetch its full body with the appropriate get_* tool
    (get_deployment, get_agent, get_skill, or the prompt body returned by
    search_entities).
-3. Substring-match {{snippet.<display_name>}} (case-sensitive) in the body.
+3. Substring-match both `{{skill.<display_name>}}` and `{{snippet.<display_name>}}` (case-sensitive) in the body.
 4. Collect the matches.
 ```
 
@@ -88,12 +88,12 @@ Retire a Skill when:
 
 1. Run the reference scan (above) to identify every consumer of the Skill.
 2. Decide per consumer: replace (point them at the new Skill name) or remove (drop the placeholder).
-3. **Disable first, delete later.** Set `enabled: false` and wait at least one full traffic cycle (a day, a week — depends on how the prompts run). If nothing breaks, proceed to delete. If something breaks, re-enable, investigate, fix the missed reference.
+3. **Tag as retired first, delete later.** Add a `retired` tag via `update_skill` and wait at least one full traffic cycle (a day, a week — depends on how the prompts run). If nothing breaks, proceed to delete. If something breaks, remove the `retired` tag, investigate, and fix the missed reference.
 4. **Wire replacements before deleting**, not after — atomicity matters.
 5. Run `delete_skill`.
 6. Note retirement in the workspace changelog if your team keeps one.
 
-The platform records a semantic-version *activity log entry* on each create/update (visible in the Skill's history view), but there is no `version` field on the Skill object — don't invent a versioning workflow that pretends otherwise.
+The platform records a semantic-version *activity log entry* on each create/update (visible in the Skill's history view). The Skill object carries a read-only `version` field stamped server-side — you cannot set it via the API, so don't design workflows that treat it as a user-settable value.
 
 ---
 
@@ -102,8 +102,8 @@ The platform records a semantic-version *activity log entry* on each create/upda
 Periodic Skills audit (suggested quarterly):
 
 - [ ] Any workspace-wide Skill with no `owner:` tag? — assign or move to project-scoped.
-- [ ] Any Skill with no `{{snippet.<display_name>}}` references in scanned entities? — candidate for `enabled: false`, then deletion.
-- [ ] Any Skill with `enabled: false` for >30 days and no recent toggles? — candidate for deletion.
-- [ ] Any prompt/agent instruction with a `{{snippet.<display_name>}}` placeholder whose target Skill no longer exists? — orphan reference; either restore the Skill, point the placeholder at a replacement, or remove the placeholder.
+- [ ] Any Skill with no `{{skill.<display_name>}}` / `{{snippet.<display_name>}}` references in scanned entities? — candidate for tagging `retired`, then deletion.
+- [ ] Any Skill tagged `retired` for >30 days with no consumer references? — candidate for deletion.
+- [ ] Any prompt/agent instruction with a `{{skill.<display_name>}}` or `{{snippet.<display_name>}}` placeholder whose target Skill no longer exists? — orphan reference; either restore the Skill, point the placeholder at a replacement, or remove the placeholder.
 - [ ] Any two Skills with near-duplicate `instructions`? — consolidate; rename references.
 - [ ] Any Skill `instructions` containing `NEVER`, `MUST NOT`, or "you must refuse"? — prose-negation anti-pattern, replace with MCP tool gate (see [known-caveats.md](known-caveats.md#anti-pattern-never-prose-constraints-in-instructions)).

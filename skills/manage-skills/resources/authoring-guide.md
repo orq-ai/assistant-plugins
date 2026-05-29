@@ -6,7 +6,7 @@ How to author an orq.ai Skill so it's discoverable, scoped correctly, and render
 
 ## `display_name` (the lookup key)
 
-`display_name` is both the human-facing label AND the lookup key used by `{{snippet.<display_name>}}` placeholders. Pick it carefully — renaming it after consumers exist silently breaks every reference. See [known-caveats.md](known-caveats.md).
+`display_name` is both the human-facing label AND the lookup key used by `{{skill.<display_name>}}` (and the backward-compatible `{{snippet.<display_name>}}`) placeholders. Pick it carefully — renaming it after consumers exist silently breaks every reference. See [known-caveats.md](known-caveats.md).
 
 **Platform constraints (enforced):**
 - Regex: `^[A-Za-z0-9]+(?:[_-][A-Za-z0-9]+)*$` (alphanumeric with optional single dash/underscore separators)
@@ -23,7 +23,7 @@ How to author an orq.ai Skill so it's discoverable, scoped correctly, and render
 These are recommendations, not enforced by the API. Diverge if a stronger convention already exists in the workspace, but stay consistent.
 
 **Good (recommended convention):**
-- `extract-invoice-line-items` → referenced as `{{snippet.extract-invoice-line-items}}`
+- `extract-invoice-line-items` → referenced as `{{skill.extract-invoice-line-items}}`
 - `redact-pii-from-transcript`
 - `format-currency-eur`
 
@@ -36,7 +36,7 @@ These are recommendations, not enforced by the API. Diverge if a stronger conven
 
 ## `description`
 
-`description` is human-facing copy shown in the Studio's Skill picker and audit views. **It is not a runtime trigger** — Skills are inlined wherever a `{{snippet.<display_name>}}` placeholder exists in a prompt/agent instruction; the model doesn't pick them based on description.
+`description` is human-facing copy shown in the Studio's Skill picker and audit views. **It is not a runtime trigger** — Skills are inlined wherever a `{{skill.<display_name>}}` (or `{{snippet.<display_name>}}`) placeholder exists in a prompt/agent instruction; the model doesn't pick them based on description.
 
 **Rules:**
 - **One sentence.** Keep it scannable.
@@ -105,18 +105,6 @@ Every Skill is either **project-scoped** (`project_id` set to a project's id) or
 - **Mirror existing folders.** Paginate `list_skills` and reuse paths already in the target project — divergent paths fragment the Studio.
 - **Use slashes, not backslashes**, and keep segment names short and descriptive.
 - **Group by purpose, not by owner.** Folder-by-team becomes wrong the moment a Skill moves teams; folder-by-purpose ages better.
-
----
-
-## `enabled`
-
-`enabled` is a boolean that defaults to `true` on create. When `false`, the Skill is preserved in the workspace but `{{snippet.<display_name>}}` references stop resolving (verify the exact render behavior in your workspace — empty, pass-through, or skip).
-
-**When to seed `enabled: false`:**
-- You're staging the Skill for review before any consumer points at it.
-- You're setting up parallel versions for a controlled cutover.
-
-In practice you almost always create with `enabled: true` (the default) and use `enabled` later as the soft-retirement lever (see [governance-guide.md](governance-guide.md#retire)).
 
 ---
 
