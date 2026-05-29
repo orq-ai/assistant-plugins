@@ -82,11 +82,22 @@ function compactForState(value) {
   if (sanitized === null || sanitized === undefined) {
     return { value: null, size_bytes: 0 };
   }
-  const str = typeof sanitized === "string" ? sanitized : JSON.stringify(sanitized);
+  let str;
+  if (typeof sanitized === "string") {
+    str = sanitized;
+  } else {
+    try {
+      str = JSON.stringify(sanitized);
+    } catch (e) {
+      str = `[unserializable: ${e.message}]`;
+    }
+  }
   const sizeBytes = Buffer.byteLength(str, "utf8");
   const cap = parseInt(process.env.ORQ_TRACE_STATE_MAX_FIELD_CHARS, 10) || DEFAULT_STATE_MAX_FIELD_CHARS;
-  if (str.length > cap) {
-    return { value: `${str.slice(0, cap)}... [truncated]`, size_bytes: sizeBytes };
+  if (sizeBytes > cap) {
+    // Slice by bytes: encode, slice, decode to avoid splitting surrogate pairs.
+    const truncated = Buffer.from(str, "utf8").slice(0, cap).toString("utf8");
+    return { value: `${truncated}... [truncated]`, size_bytes: sizeBytes };
   }
   return { value: sanitized, size_bytes: sizeBytes };
 }
@@ -395,7 +406,7 @@ async function emitTranscriptSpans(state, payload, { emitPending = false } = {})
           attr("orq.input.value", toStringValue(inputValue)),
           attr("orq.output.value", toStringValue(outputValue)),
           tool.incomplete ? attr("claude_code.tool.incomplete", true) : null,
-          recorded ? attr("claude_code.tool.enriched", true) : null,
+          attr("claude_code.tool.enriched", recorded ? "recorded" : tool.name === "Skill" ? "skipped_skill" : "transcript_only"),
           tool.name === "Skill" ? attr("claude_code.skill.name", tool.input?.skill ?? "unknown") : null,
           tool.name === "Skill" ? attr("claude_code.skill.args", tool.input?.args || "") : null,
         ]),

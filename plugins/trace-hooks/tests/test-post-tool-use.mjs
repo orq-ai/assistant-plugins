@@ -203,5 +203,84 @@ test("append: two PostToolUse calls produce two entries in order", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// --- Test 8: tool_input redaction ---
+test("redaction: API key in tool_input is redacted", () => {
+  const dir = makeTempStateDir();
+  const stateFile = seedSession(dir, "sess8");
+  const res = runHook({
+    session_id: "sess8",
+    tool_name: "Bash",
+    tool_use_id: "toolu_08",
+    tool_input: { command: "curl -H 'Authorization: Bearer sk-abc123def456ghi789jkl012' https://api.example.com" },
+    tool_response: "ok",
+  }, dir);
+  assert.equal(res.status, 0, res.stderr);
+  const entry = loadState(stateFile).successful_tool_calls[0];
+  const inputStr = JSON.stringify(entry.tool_input);
+  assert.ok(!inputStr.includes("sk-abc123def456ghi789jkl012"),
+    `raw key should not appear in stored input, got: ${inputStr}`);
+  assert.ok(inputStr.includes("[REDACTED]"), "tool_input should contain redaction marker");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// --- Test 9: ORQ_TRACE_STATE_MAX_FIELD_CHARS env override ---
+test("env override: ORQ_TRACE_STATE_MAX_FIELD_CHARS caps at custom value", () => {
+  const dir = makeTempStateDir();
+  const stateFile = seedSession(dir, "sess9");
+  const res = runHook({
+    session_id: "sess9",
+    tool_name: "Read",
+    tool_use_id: "toolu_09",
+    tool_input: { file_path: "/f" },
+    tool_response: "a".repeat(200),
+  }, dir, { ORQ_TRACE_STATE_MAX_FIELD_CHARS: "50" });
+  assert.equal(res.status, 0, res.stderr);
+  const entry = loadState(stateFile).successful_tool_calls[0];
+  assert.ok(entry.tool_response.length < 200, "response should be truncated by custom cap");
+  assert.ok(entry.tool_response.endsWith("[truncated]"), "should have truncation marker");
+  assert.equal(entry.tool_response_size_bytes, 200, "size_bytes must reflect original");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// --- Test 10: camelCase payload aliases (toolUseId / toolInput / toolResponse) ---
+test("aliases: camelCase payload keys are accepted", () => {
+  const dir = makeTempStateDir();
+  const stateFile = seedSession(dir, "sess10");
+  const res = runHook({
+    session_id: "sess10",
+    toolName: "Bash",
+    toolUseId: "toolu_10",
+    toolInput: { command: "pwd" },
+    toolResponse: "/home/user",
+  }, dir);
+  assert.equal(res.status, 0, res.stderr);
+  const entry = loadState(stateFile).successful_tool_calls[0];
+  assert.equal(entry.tool_use_id, "toolu_10");
+  assert.deepEqual(entry.tool_input, { command: "pwd" });
+  assert.equal(entry.tool_response, "/home/user");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// --- Test 11: object tool_response is serialized without crashing ---
+test("object tool_response: JSON-serializable object is stored correctly", () => {
+  const dir = makeTempStateDir();
+  const stateFile = seedSession(dir, "sess11");
+  const res = runHook({
+    session_id: "sess11",
+    tool_name: "mcp__orq-workspace__list_skills",
+    tool_use_id: "toolu_11",
+    tool_input: {},
+    tool_response: { data: [{ skill_id: "abc", display_name: "my-skill" }], has_more: false },
+  }, dir);
+  assert.equal(res.status, 0, res.stderr);
+  const entry = loadState(stateFile).successful_tool_calls[0];
+  // stored value may be the object itself or its JSON string — either is valid
+  const stored = typeof entry.tool_response === "string"
+    ? entry.tool_response
+    : JSON.stringify(entry.tool_response);
+  assert.ok(stored.includes("my-skill"), `object response should be stored; got: ${stored}`);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
