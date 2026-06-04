@@ -21,7 +21,7 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 ## Constraints
 
 - **NEVER** write inline datasets of fewer than 5 datapoints without asking the user — small datasets produce misleading scores. Delegate to `generate-synthetic-dataset` when a dataset does not exist.
-- **NEVER** use `orq.evaluators.invoke()` — the correct method is `orq.evals.invoke()`.
+- **NEVER** use `orq.evaluators.invoke()` — use `orq.evals.invoke_async()` inside async scorers or `orq.evals.invoke()` for synchronous calls.
 - **NEVER** invent evaluator IDs — fetch them from the user or via `search_entities` MCP tool (`type: "evaluator"`).
 - **ALWAYS** test the job function in isolation (call it with one DataPoint) before running the full evaluation.
 - **ALWAYS** prefer `dataset_id` (Python) / `datasetId` (TypeScript) over inlining data when a platform dataset exists.
@@ -286,7 +286,7 @@ Results print to terminal. If `ORQ_API_KEY` is set, results also appear in orq.a
 | `--save final\|detail\|none` | redteam | What to persist (default: `final`) |
 | `--output-dir` | redteam | Directory for saved files (required with `--save detail`) |
 | `--output <file>` | sim | Write results JSONL to a file |
-| `--model <model>` | sim | User-simulator / judge model |
+| `--sim-model <model>` | sim | User-simulator / judge model |
 | `--parallelism <n>` | sim | Concurrent simulations (default 5) |
 | `--no-save` | sim | Skip writing to `.evaluatorq/sim-runs/` |
 | `--verbose` / `--quiet` | both | Logging verbosity |
@@ -313,7 +313,7 @@ Environment variables:
 ## Resources
 
 - **Full CLI reference** (redteam + sim flags, output format): [resources/cli-reference.md](resources/cli-reference.md)
-- **evaluatorq API reference** (jobs, scorers, full signatures): See `compare-agents` → [resources/evaluatorq-api.md](skills/compare-agents/resources/evaluatorq-api.md)
+- **evaluatorq API reference** (jobs, scorers, full signatures): See `compare-agents` → [compare-agents/resources/evaluatorq-api.md](skills/compare-agents/resources/evaluatorq-api.md)
 
 ## orq.ai Documentation
 

@@ -92,15 +92,15 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 - Ask: "Help me evaluate my agent `my-support-agent` using evaluatorq"
 - Verify Phase 1: asks for agent key or confirms via `search_entities`
 - Verify Phase 3: generates a Python script with `@job`, `DataPoint`, `evaluatorq()`, and `await` call
-- Verify: uses `orq.evals.invoke()` not `orq.evaluators.invoke()` for orq.ai scorers
+- Verify: uses `orq.evals.invoke_async()` (inside async scorers) or `orq.evals.invoke()` (sync), never `orq.evaluators.invoke()`
 - Verify: suggests `dataset_id` if dataset exists, inline only for quick tests
 
 ### Scenario 2: Run red team from CLI
 
 - Ask: "Run a red team test on my agent using the evaluatorq CLI"
-- Verify: shows `eq redteam run adaptive --target agent:<KEY> --framework owasp-llm`
-- Verify: explains the 5 output files for adaptive mode (`01_agent_context.json` … `05_summary_report.json`)
-- Verify: shows `eq redteam report summarize` to view results
+- Verify: shows `eq redteam run --target agent:<KEY> --mode dynamic` (not `run adaptive` or `--framework`)
+- Verify: explains that the 5 detail files (`01_agent_context.json` … `05_summary_report.json`) come from `--save detail`
+- Verify: shows `eq redteam ui report.json` to view results (not `eq redteam report summarize`)
 
 ### Scenario 3: Run simulation from CLI
 

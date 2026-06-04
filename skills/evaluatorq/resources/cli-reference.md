@@ -134,7 +134,7 @@ eq sim run \
   --agent-key <AGENT_KEY> \         # exactly one of these three
   # --openai-model gpt-4o-mini \
   # --vercel-url https://...
-  --model azure/gpt-4o-mini \       # user-simulator + judge model
+  --sim-model azure/gpt-4o-mini \   # user-simulator + judge model
   --max-turns 10 \
   --parallelism 5 \
   --output results.jsonl \          # optional: write results JSONL
