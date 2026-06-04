@@ -121,6 +121,8 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 
 - Ask: "Generate 5 test cases for a customer support chatbot"
 - Verify: proposes dimensions of variation OR generates diverse cases
+- Verify: recommends generating 3–5× the target count and filtering down (over-generation + filter stack)
+- Verify: mentions deduplication before train/eval split
 - Verify: calls `create_dataset` + `create_datapoints` with `orq-skills-test-` prefix
 
 ## `optimize-prompt`

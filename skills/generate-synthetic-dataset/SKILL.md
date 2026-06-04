@@ -38,7 +38,7 @@ You are an **orq.ai dataset engineer**. Your job is to generate high-quality, di
 
 - `run-experiment` — run experiments against the generated dataset
 - `build-evaluator` — design evaluators to score outputs against the dataset
-- `evaluate` / `evaluatorq` — run the dataset through an evaluatorq evaluation script (Python/TypeScript); use `eq redteam` for adversarial red-team datasets
+- `evaluate` / `evaluatorq` — run the dataset through an evaluatorq evaluation script (Python/TypeScript); use `eq redteam run` for adversarial red-team datasets
 - `analyze-trace-failures` — identify failure modes that inform dataset design
 - `optimize-prompt` — iterate on prompts based on experiment results
 
@@ -189,12 +189,12 @@ Choose based on user needs:
 
 #### Phase 5: Create on orq.ai
 
-9. **Create the dataset** using orq MCP tools:
-   - `create_dataset` with a descriptive name
-   - `create_datapoints` to add each test case (HTTP API for >50)
-   - Structure: `messages` array with `{role: "user", content: "..."}` and optionally `{role: "assistant", content: "..."}`, plus `inputs` for variables and `expected_output` for evaluator references
+10. **Create the dataset** using orq MCP tools:
+    - `create_dataset` with a descriptive name
+    - `create_datapoints` to add each test case (HTTP API for >50)
+    - Structure: `messages` array with `{role: "user", content: "..."}` and optionally `{role: "assistant", content: "..."}`, plus `inputs` for variables and `expected_output` for evaluator references
 
-10. **Verify:** Confirm all entries created, review a sample, check adversarial cases present, check dimension coverage.
+11. **Verify:** Confirm all entries created, review a sample, check adversarial cases present, check dimension coverage.
 
 ---
 
@@ -317,7 +317,7 @@ The skill modes above apply everywhere. These notes add use-case-specific rules 
 - Condition on **attacker archetypes** (curious user, jailbreaker, social engineer, prompt-injection author, regulated-domain abuser). Each archetype hits a different attack surface.
 - Start from a **harm taxonomy** before generating — useful anchors: [OWASP LLM Top 10 (2025)](https://owasp.org/www-project-top-10-for-large-language-model-applications/), [NIST AI RMF GenAI Profile](https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.600-1.pdf), [MLCommons AILuminate v1.0](https://mlcommons.org/benchmarks/ailuminate/). Measure coverage per category before measuring pass-rate.
 - Apply **Evol-Instruct in reverse**: start from a known-bad prompt the model now refuses; evolve it toward subtlety (rephrase, add context, embed in a benign frame).
-- See `evaluatorq` (`eq redteam`) for automated adversarial red teaming once the dataset exists.
+- See `evaluatorq` (`eq redteam run`) for automated adversarial red teaming once the dataset exists.
 
 ### Multi-turn agent trajectories
 

@@ -60,7 +60,7 @@ Run filters cheapest-first:
 - Start from a harm taxonomy before generating — external anchors: [OWASP LLM Top 10 (2025)](https://owasp.org/www-project-top-10-for-large-language-model-applications/), [NIST AI RMF GenAI Profile (AI 600-1)](https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.600-1.pdf), [MLCommons AILuminate v1.0](https://mlcommons.org/benchmarks/ailuminate/). Measure coverage per category before measuring pass-rate.
 - Apply Evol-Instruct in reverse: start from a known-bad prompt the model now refuses, evolve it toward subtlety (rephrase, add context, embed in a benign frame).
 - Always judge with a separate-family model. A red-team set is worthless if the safety classifier was trained by the same lab that wrote the generator.
-- See the `evaluatorq` skill (`eq redteam`) for automated adversarial red teaming.
+- See the `evaluatorq` skill (`eq redteam run`) for automated adversarial red teaming.
 
 ### Multi-turn agent trajectories
 
