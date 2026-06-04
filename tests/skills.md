@@ -142,6 +142,55 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 - Ask: "Run an experiment using orq-skills-test-dataset with orq-skills-test-eval-length"
 - Verify: calls `create_experiment` with correct references
 
+## `manage-skills`
+
+### Scenario 1: List skills
+
+- Ask: "Show me the Skills in my workspace"
+- Verify: calls `list_skills` (or REST `GET /v2/skills` fallback) and **paginates to completion** (cursor-based — `limit`, `starting_after`, `ending_before`)
+- Verify: any user-requested filter (project, tags, name substring) is applied **client-side** after pagination — does NOT pass `project_id`/`tags`/`q` to `list_skills` (the endpoint does not accept them)
+- Verify: presents `display_name`, project scope, `tags`, `path` per Skill
+- Verify: treats `version` as read-only and server-stamped — does NOT include it in create/update payloads
+- Verify: does NOT compute reference counts eagerly — defers them as on-demand work
+
+### Scenario 2: Create skill (authoring guidance)
+
+- Ask: "Create a Skill called `extract_receipt_fields`"
+- Verify Phase 3: asks for `description`, `tags`, `project_id` (default project-scoped, not workspace-wide), and `path`
+- Verify: warns if the proposed `instructions` contain `+NEVER+` / "you MUST refuse" prose constraints and recommends an MCP tool gate instead
+- Verify: relies on `create_skill` + `AlreadyExists` error handling for the uniqueness check rather than a separate pre-flight lookup (works whether or not a `:checkDisplayNameAvailability` helper endpoint is exposed in the workspace)
+- Verify: `create_skill` payload uses `display_name` and `instructions` (not `name` / `body` / `doc`); does NOT include `enabled` (field does not exist)
+- Verify: echoes back the consumption pattern after create — `{{skill.<display_name>}}` (canonical) with `{{snippet.<display_name>}}` noted as the backward-compatible alias
+
+### Scenario 3: Delete skill — reference scan
+
+- Provide context: a Skill referenced by 2 prompts via `{{skill.<display_name>}}` / `{{snippet.<display_name>}}`
+- Ask: "Delete this Skill"
+- Verify: runs a reference scan BEFORE deletion (`search_entities` then per-entity body fetch with `get_deployment` / `get_agent` / `get_skill`, substring-matching both `{{skill.<display_name>}}` and `{{snippet.<display_name>}}` case-sensitively)
+- Verify: surfaces the references found and offers tagging the Skill with `retired` as the default first step (NOT `enabled: false` — that field does not exist)
+- Verify: does NOT call `update_agent` to "prune" `agent.skills[]` — that field is unrelated A2A AgentCard metadata
+- Verify: never auto-deletes; always requires explicit consent after the user has seen the reference list
+- Verify: final report lists what was deleted (or tagged `retired`) and any references the user should manually update
+
+### Scenario 4: Update skill (no blind overwrite, rename warning)
+
+- Ask: "Update the description of the `refund_policy` Skill"
+- Verify: calls `get_skill(skill_id=...)` first, shows the user the current state
+- Verify: only patches the changed field — does not echo back unchanged `tags`/`instructions`
+- Verify: does NOT pass `version` in `update_skill` (`version` is read-only / server-stamped, not a settable field)
+- Verify: confirms the diff with the user before `update_skill`
+- Then ask: "Rename `refund_policy` to `refund_policy_eu`"
+- Verify: warns that renaming `display_name` silently breaks every `{{skill.refund_policy}}` / `{{snippet.refund_policy}}` reference and runs the reference scan before sending the rename
+- Verify: when rewriting `instructions`, applies clarity heuristics from `optimize-prompt` rather than blindly delegating
+
+### Scenario 5: Failure-mode handling
+
+- Ask: "Create a Skill called `refund_policy`" (in a workspace that already has one)
+- Verify: handles `AlreadyExists` gracefully — surfaces the conflicting Skill and offers either a renamed create or `update_skill`
+- Ask: "Retire the `refund_policy` Skill"
+- Verify: routes to Phase 4 (update, add `retired` tag), NOT to Phase 5 (delete)
+- Verify: explains that tagging as `retired` is reversible; does NOT suggest `enabled: false` (field does not exist)
+
 ---
 
 ## Critical Files
@@ -163,3 +212,8 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 - `skills/optimize-prompt/SKILL.md`
 - `skills/analyze-trace-failures/SKILL.md`
 - `skills/run-experiment/SKILL.md`
+- `skills/manage-skills/SKILL.md`
+- `skills/manage-skills/resources/authoring-guide.md`
+- `skills/manage-skills/resources/governance-guide.md`
+- `skills/manage-skills/resources/known-caveats.md`
+- `commands/manage-skills.md`

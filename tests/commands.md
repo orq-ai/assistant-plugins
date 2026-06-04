@@ -32,6 +32,13 @@ Tests the orq-skills slash commands. These verify our command `.md` files produc
 - Verify it detects MCP is available and skips MCP setup step
 - Verify it shows workspace snapshot on successful connection
 
+## `/orq:manage-skills`
+
+- Run with no args → verify it asks which action (list/get/create/update/delete) via `AskUserQuestion`
+- Run with `list` → verify it calls `list_skills` (or `/v2/skills` fallback) and prints a scannable table
+- Run with `delete <name>` → verify it routes to Phase 5 (lists referencing agents BEFORE deleting; never auto-prunes; asks twice)
+- Run with `create` → verify it asks for description, tags, and project scope (defaults to project-scoped)
+
 ---
 
 ## Critical Files
@@ -41,3 +48,4 @@ Tests the orq-skills slash commands. These verify our command `.md` files produc
 - `commands/traces.md`
 - `commands/analytics.md`
 - `commands/quickstart.md`
+- `commands/manage-skills.md`

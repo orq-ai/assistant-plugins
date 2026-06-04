@@ -163,6 +163,7 @@ export async function parseTranscript(transcriptPath, lastProcessedLine = 0, { e
                 ? textFromContent(block.content)
                 : block.content;
               const call = {
+                id: block.tool_use_id,
                 name: pending.name,
                 input: pending.input,
                 output: resultContent,
@@ -201,8 +202,9 @@ export async function parseTranscript(transcriptPath, lastProcessedLine = 0, { e
   // Emit incomplete tool calls (no matching tool_result) so they don't vanish
   // from the trace. Only done at session end to avoid double-emission when
   // the tool_result arrives in a later parse window.
-  if (emitPending) for (const pending of pendingTools.values()) {
+  if (emitPending) for (const [id, pending] of pendingTools.entries()) {
     toolCalls.push({
+      id,
       name: pending.name,
       input: pending.input,
       output: "",
