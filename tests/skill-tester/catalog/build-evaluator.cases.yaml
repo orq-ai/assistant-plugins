@@ -1,0 +1,51 @@
+# Behavioural specs for build-evaluator. Machine-readable companion to
+# catalog/build-evaluator.md. Gating = routing + tool calls + text + forbidden;
+# `notes` are non-gating prose assertions carried for reference.
+skill: build-evaluator
+skill_path: skills/build-evaluator/SKILL.md
+cases:
+  - id: B1
+    type: explicit
+    prompt: "Build an evaluator that checks if the output is valid JSON."
+    expect:
+      routing: build-evaluator
+      tool_calls:
+        - tool: create_python_eval
+      forbidden_tools: [create_llm_eval]
+      forbidden_text:
+        - { op: regex, value: "(?i)likert|1-?5 scale|1-?10 scale" }
+    notes:
+      - "explains code checks are cheaper/deterministic than an LLM judge for this"
+
+  - id: B2
+    type: explicit
+    prompt: "Build an evaluator for tone and helpfulness."
+    expect:
+      routing: build-evaluator
+      forbidden_text:
+        - { op: regex, value: "(?i)likert|\\b1-?5\\b|\\b1-?10\\b|bertscore|rouge" }
+    notes:
+      - "suggests splitting into separate evaluators (one criterion each)"
+      - "defaults to binary Pass/Fail; mentions validating against human labels (TPR/TNR)"
+
+  - id: B3
+    type: implicit
+    prompt: "My LLM sometimes returns malformed JSON and I want to automatically catch it in my pipeline."
+    expect:
+      routing: build-evaluator
+      tool_calls:
+        - tool: create_python_eval
+      forbidden_tools: [create_llm_eval]
+    notes:
+      - "routes here on the description alone; recommends a code-based check for JSON validity"
+
+  - id: N1
+    type: negative
+    prompt: "Write me a Python function that parses a JSON string and returns a dict."
+    expect:
+      not_routing: build-evaluator
+      forbidden_tools: [create_python_eval, create_llm_eval]
+      forbidden_text:
+        - { op: regex, value: "(?i)\\bTPR\\b|\\bTNR\\b|pass/fail judge" }
+    notes:
+      - "answers as ordinary coding; does not invoke build-evaluator or talk about TPR/TNR judges"

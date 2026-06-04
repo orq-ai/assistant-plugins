@@ -1,0 +1,14 @@
+skill: setup-observability
+# Functional cases — translated from setup-observability.md.
+# All three exercise the AI-router HTTP endpoint or the Python orq-ai-sdk, neither
+# of which is an MCP operation — out of scope for the MCP runner.
+cases:
+  - id: F1
+    title: AI Router endpoint works
+    skip: "HTTP POST to api.orq.ai/v2/router — not an MCP tool"
+  - id: F2
+    title: "@traced import path correct"
+    skip: "requires a Python venv + pip install orq-ai-sdk; no MCP operation"
+  - id: F3
+    title: Decorator parameters match SDK
+    skip: "introspects the installed Python orq-ai-sdk; no MCP operation"

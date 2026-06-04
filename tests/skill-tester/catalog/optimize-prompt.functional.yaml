@@ -1,0 +1,6 @@
+skill: optimize-prompt
+# Functional cases — translated from optimize-prompt.md.
+cases:
+  - id: F1
+    title: Analysis produces structured suggestions
+    skip: "prompt analysis is reasoning-only (no MCP operation); validated on the behavioural track instead"

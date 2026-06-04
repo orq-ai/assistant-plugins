@@ -1,0 +1,31 @@
+# Behavioural specs for build-agent. Companion to catalog/build-agent.md.
+# build-agent is discovery-first (asks clarifying questions before acting), so a
+# single headless turn may not reach list_models — it is gated on routing, with
+# list_models / discovery carried as non-gating notes.
+skill: build-agent
+skill_path: skills/build-agent/SKILL.md
+cases:
+  - id: B1
+    type: explicit
+    prompt: "Build a simple FAQ agent for a pizza restaurant."
+    expect:
+      routing: build-agent
+    notes:
+      - "asks clarifying questions about purpose, users, and success criteria before building"
+      - "consults list_models when selecting a model; starts with a capable model; does not add >8 tools"
+
+  - id: B2
+    type: implicit
+    prompt: "I want something that can automatically answer customer questions about our pizza menu and hours."
+    expect:
+      routing: build-agent
+    notes:
+      - "routes on the description; runs discovery before building; does not misroute to invoke-deployment"
+
+  - id: N1
+    type: negative
+    prompt: "My support agent keeps giving wrong answers in production — help me figure out why."
+    expect:
+      not_routing: build-agent
+    notes:
+      - "existing agent misbehaving -> should route to analyze-trace-failures, not a new-agent build"

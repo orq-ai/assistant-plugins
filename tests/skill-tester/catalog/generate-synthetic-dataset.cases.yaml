@@ -1,0 +1,30 @@
+# Behavioural specs for generate-synthetic-dataset. Companion to
+# catalog/generate-synthetic-dataset.md. A good agent proposes dimensions before
+# persisting, so create_* is a non-gating note; routing + anti-misroute are gated.
+skill: generate-synthetic-dataset
+skill_path: skills/generate-synthetic-dataset/SKILL.md
+cases:
+  - id: B1
+    type: explicit
+    prompt: "Generate 5 test cases for a customer support chatbot."
+    expect:
+      routing: generate-synthetic-dataset
+    notes:
+      - "proposes dimensions of variation (dimensions->tuples->NL) rather than a naive 'generate 5'"
+      - "produces diverse cases including adversarial ones; persists via create_dataset + create_datapoints"
+
+  - id: B2
+    type: implicit
+    prompt: "I need a bunch of varied example conversations to stress-test my support bot before launch."
+    expect:
+      routing: generate-synthetic-dataset
+    notes:
+      - "routes on the description; designs dimensions and includes adversarial coverage"
+
+  - id: N1
+    type: negative
+    prompt: "I already have 500 real production traces — help me understand the failure patterns."
+    expect:
+      not_routing: generate-synthetic-dataset
+    notes:
+      - "ample real data exists -> should route to analyze-trace-failures, not synthetic generation"

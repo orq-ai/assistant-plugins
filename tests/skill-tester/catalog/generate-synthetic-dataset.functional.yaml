@@ -1,0 +1,49 @@
+skill: generate-synthetic-dataset
+# Functional cases — live MCP operations. Translated from generate-synthetic-dataset.md.
+cases:
+  - id: F1
+    title: Create dataset + datapoints, verify rows
+    steps:
+      - call: create_dataset
+        args: { display_name: orq-skills-test-crud-dataset, path: "{{testPath}}" }
+        save: { dsId: id }
+      - call: create_datapoints
+        args:
+          dataset_id: "{{dsId}}"
+          datapoints:
+            - { inputs: { q: "1+1" }, expected_output: "2" }
+            - { inputs: { q: "2+2" }, expected_output: "4" }
+            - { inputs: { q: "3+3" }, expected_output: "6" }
+      - call: list_datapoints
+        args: { dataset_id: "{{dsId}}" }
+        verify:
+          - { path: "", op: contains, value: "1+1" }
+    cleanup:
+      - { call: delete_dataset, args: { dataset_id: "{{dsId}}" } }
+
+  - id: F2
+    title: Update a datapoint and read the change back
+    steps:
+      - call: create_dataset
+        args: { display_name: orq-skills-test-update-dataset, path: "{{testPath}}" }
+        save: { dsId: id }
+      - call: create_datapoints
+        args:
+          dataset_id: "{{dsId}}"
+          datapoints:
+            - { inputs: { q: "original" }, expected_output: "original" }
+      - call: list_datapoints
+        args: { dataset_id: "{{dsId}}" }
+        save: { dpId: "data[0]._id" }
+      - call: update_datapoint
+        args:
+          dataset_id: "{{dsId}}"
+          datapoint_id: "{{dpId}}"
+          inputs: { q: "updated" }
+          expected_output: "updated"
+      - call: list_datapoints
+        args: { dataset_id: "{{dsId}}" }
+        verify:
+          - { path: "", op: contains, value: "updated" }
+    cleanup:
+      - { call: delete_dataset, args: { dataset_id: "{{dsId}}" } }

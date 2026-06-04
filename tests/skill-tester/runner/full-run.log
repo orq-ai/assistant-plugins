@@ -1,0 +1,75 @@
+
+▶ analyze-trace-failures (3 cases, concurrency 6)
+   ✓ analyze-trace-failures/B2 [implicit]
+   ✓ analyze-trace-failures/N1 [negative]
+   ✓ analyze-trace-failures/B1 [explicit]
+
+▶ build-agent (3 cases, concurrency 6)
+   ✓ build-agent/B2 [implicit]
+   ✓ build-agent/B1 [explicit]
+   ✓ build-agent/N1 [negative]
+
+▶ build-evaluator (4 cases, concurrency 6)
+   ✓ build-evaluator/N1 [negative]
+   ✗ build-evaluator/B3 [implicit]
+   ✓ build-evaluator/B1 [explicit]
+   ✓ build-evaluator/B2 [explicit]
+
+▶ compare-agents (4 cases, concurrency 6)
+   ✓ compare-agents/N1 [negative]
+   ✓ compare-agents/B3 [implicit]
+   ✓ compare-agents/B2 [explicit]
+   ✗ compare-agents/B1 [explicit]
+
+▶ generate-synthetic-dataset (3 cases, concurrency 6)
+   ✓ generate-synthetic-dataset/B1 [explicit]
+   ✓ generate-synthetic-dataset/B2 [implicit]
+   ✗ generate-synthetic-dataset/N1 [negative]
+
+▶ invoke-deployment (5 cases, concurrency 6)
+   ✗ invoke-deployment/B5 [implicit]
+   ✗ invoke-deployment/B3 [explicit]
+   ✓ invoke-deployment/N1 [negative]
+   ✗ invoke-deployment/B2 [explicit]
+   ✗ invoke-deployment/B1 [explicit]
+
+▶ optimize-prompt (4 cases, concurrency 6)
+   ✓ optimize-prompt/N2 [negative]
+   ✓ optimize-prompt/N1 [negative]
+   ✓ optimize-prompt/B1 [explicit]
+   ✓ optimize-prompt/B2 [implicit]
+
+▶ run-experiment (3 cases, concurrency 6)
+   ✓ run-experiment/B2 [implicit]
+   ✓ run-experiment/N1 [negative]
+   ✓ run-experiment/B1 [explicit]
+
+▶ setup-observability (5 cases, concurrency 6)
+   ✓ setup-observability/B3 [explicit]
+   ✓ setup-observability/B4 [contextual]
+   ✗ setup-observability/B2 [implicit]
+   ✓ setup-observability/B1 [explicit]
+   ✓ setup-observability/N1 [negative]
+
+  ✓ analyze-trace-failures: 3/3
+  ✓ build-agent: 3/3
+  ✗ build-evaluator: 3/4
+      ✗ build-evaluator/B3 [implicit] routing=fail usage=fail — FAIL routing:build-evaluator: selected=[]
+  ✗ compare-agents: 3/4
+      ✗ compare-agents/B1 [explicit] routing=pass usage=fail — FAIL text:0: no match for {"op":"regex","value":"from\\s+orq_ai_sdk\\s+import\\s+Orq"}
+  ✗ generate-synthetic-dataset: 2/3
+      ✗ generate-synthetic-dataset/N1 [negative] routing=pass usage=n/a — FAIL run-completed: timed out
+  ✗ invoke-deployment: 1/5
+      ✗ invoke-deployment/B1 [explicit] routing=pass usage=fail — FAIL text:0: no match for {"op":"contains","value":"deployments.invoke"}
+      ✗ invoke-deployment/B2 [explicit] routing=pass usage=fail — FAIL text:0: no match for {"op":"contains","value":"responses.create"}
+      ✗ invoke-deployment/B3 [explicit] routing=fail usage=pass — FAIL routing:invoke-deployment: selected=[]
+      ✗ invoke-deployment/B5 [implicit] routing=pass usage=fail — FAIL text:0: no match for {"op":"contains","value":"deployments.invoke"}
+  ✓ optimize-prompt: 4/4
+  ✓ run-experiment: 3/3
+  ✗ setup-observability: 4/5
+      ✗ setup-observability/B2 [implicit] routing=pass usage=fail — FAIL text:0: no match for {"op":"regex","value":"(?i)openinference|instrument"}
+
+  TOTAL: 26/34 passed, 8 failed
+
+Report written to full-report.md
+DONE exit=1

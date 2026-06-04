@@ -1,0 +1,78 @@
+# Behavioural specs for setup-observability. Companion to catalog/setup-observability.md.
+# Codegen-heavy: gate on routing + generated-code text + forbidden wrong-import.
+skill: setup-observability
+skill_path: skills/setup-observability/SKILL.md
+cases:
+  - id: B1
+    type: explicit
+    prompt: "Add orq.ai tracing to my app."
+    context: |
+      ```python
+      # app.py
+      import openai
+      client = openai.OpenAI()
+      resp = client.chat.completions.create(
+          model="gpt-4o-mini",
+          messages=[{"role": "user", "content": "hi"}],
+      )
+      ```
+    expect:
+      routing: setup-observability
+      text:
+        - { op: contains, value: "api.orq.ai/v2/router" }
+      forbidden_text:
+        - { op: regex, value: "from\\s+orq_ai_sdk\\.tracing\\s+import" }
+    notes:
+      - "recommends AI Router mode; changes base_url; reports there was no existing tracing"
+
+  - id: B2
+    type: implicit
+    prompt: "I want to add tracing but keep my existing LLM calls exactly as they are."
+    context: |
+      ```python
+      from langchain_openai import ChatOpenAI
+      llm = ChatOpenAI(model="gpt-4o-mini")
+      ```
+    expect:
+      routing: setup-observability
+      text:
+        - { op: regex, value: "(?i)openinference|instrument" }
+    notes:
+      - "recommends Observability mode; initializes the instrumentor BEFORE the framework client"
+      - "sets OTEL env vars; warns if any OTEL_* vars already exist"
+
+  - id: B3
+    type: explicit
+    prompt: "Show me how to use the @traced decorator from the orq.ai SDK."
+    expect:
+      routing: setup-observability
+      text:
+        - { op: regex, value: "from\\s+orq_ai_sdk(\\.traced)?\\s+import\\s+traced" }
+        - { op: contains, value: "@traced" }
+      forbidden_text:
+        - { op: regex, value: "orq_traced_input|orq_traced_output|from\\s+orq_ai_sdk\\.tracing\\s+import" }
+    notes:
+      - "documents capture_input / capture_output defaulting to True"
+
+  - id: B4
+    type: contextual
+    prompt: "Add orq.ai tracing to this function."
+    context: |
+      ```python
+      def charge(card_number: str, user_email: str, amount: int):
+          return gateway.charge(card_number, user_email, amount)
+      ```
+    expect:
+      routing: setup-observability
+      text:
+        - { op: regex, value: "capture_(input|output)\\s*=\\s*False" }
+    notes:
+      - "explains capture defaults are True, so PII is sent unless disabled"
+
+  - id: N1
+    type: negative
+    prompt: "My traces are full of errors — help me figure out what's going wrong."
+    expect:
+      not_routing: setup-observability
+    notes:
+      - "traces already exist -> should route to analyze-trace-failures, not (re)install tracing"

@@ -1,0 +1,14 @@
+skill: analyze-trace-failures
+# Functional cases — live MCP operations. Translated from analyze-trace-failures.md.
+cases:
+  - id: F1
+    title: Trace listing works
+    steps:
+      - call: list_traces
+        args: { limit: 5 }
+        verify:
+          - { path: "", op: exists }
+
+  - id: F2
+    title: Spans + span detail
+    skip: "needs a concrete trace_id/span_id; the test workspace may have no traces — not deterministic"

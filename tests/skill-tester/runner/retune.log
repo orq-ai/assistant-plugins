@@ -1,0 +1,36 @@
+
+▶ invoke-deployment (5 cases, concurrency 6)
+   ✓ invoke-deployment/B1 [explicit]
+   ✗ invoke-deployment/B3 [explicit]
+   ✓ invoke-deployment/N1 [negative]
+   ✓ invoke-deployment/B2 [explicit]
+   ✓ invoke-deployment/B5 [implicit]
+
+▶ compare-agents (4 cases, concurrency 6)
+   ✓ compare-agents/B2 [explicit]
+   ✓ compare-agents/N1 [negative]
+   ✓ compare-agents/B3 [implicit]
+   ✓ compare-agents/B1 [explicit]
+
+▶ setup-observability (5 cases, concurrency 6)
+   ✓ setup-observability/B4 [contextual]
+   ✓ setup-observability/B3 [explicit]
+   ✓ setup-observability/B2 [implicit]
+   ✓ setup-observability/B1 [explicit]
+   ✓ setup-observability/N1 [negative]
+
+▶ generate-synthetic-dataset (3 cases, concurrency 6)
+   ✓ generate-synthetic-dataset/B1 [explicit]
+   ✓ generate-synthetic-dataset/B2 [implicit]
+   ✓ generate-synthetic-dataset/N1 [negative]
+
+  ✗ invoke-deployment: 4/5
+      ✗ invoke-deployment/B3 [explicit] routing=fail usage=pass — FAIL routing:invoke-deployment: selected=[setup-observability]
+  ✓ compare-agents: 4/4
+  ✓ setup-observability: 5/5
+  ✓ generate-synthetic-dataset: 3/3
+
+  TOTAL: 16/17 passed, 1 failed
+
+Report written to tests/skill-tester/runner/retune-report.md
+DONE exit=1

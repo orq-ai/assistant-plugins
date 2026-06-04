@@ -1,0 +1,5 @@
+node_modules/
+*-report.md
+last-report.md
+*.log
+*.local.md

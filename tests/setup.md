@@ -12,17 +12,19 @@ Shared infrastructure for all orq-skills test suites. Run this first, then run a
 
 ### MCP Delete Support
 
-Only **datasets** and **datapoints** can be deleted via MCP. The following resource types have **no MCP delete tool** — test resources will persist and require manual cleanup via the orq.ai dashboard:
+`delete_entity(type=…, id=…)` deletes most lifecycle entities — `agent`, `evaluator`, `experiment`, `deployment`, `prompt`, `knowledge`, `memory_store`, and more. Datasets/datapoints keep their dedicated tools and skills use `delete_skill`, so teardown can be **automatic for every type this suite creates**.
 
 | Resource | Can Create | Can Delete | Cleanup |
 |----------|-----------|-----------|---------|
 | Dataset | `create_dataset` | `delete_dataset` | Automatic |
 | Datapoints | `create_datapoints` | `delete_datapoints` | Automatic |
-| Agent | `create_agent` | — | Manual |
-| Evaluator | `create_python_eval` / `create_llm_eval` | — | Manual |
-| Experiment | `create_experiment` | — | Manual |
+| Agent | `create_agent` | `delete_entity(type=agent)` | Automatic |
+| Evaluator | `create_python_eval` / `create_llm_eval` | `delete_entity(type=evaluator)` | Automatic |
+| Experiment | `create_experiment` | `delete_entity(type=experiment)` | Automatic |
+| Deployment | `create_deployment` | `delete_entity(type=deployment)` | Automatic |
+| Skill | `create_skill` | `delete_skill` | Automatic |
 
-Keep the number of non-deletable test resources to a minimum. Reuse agents and evaluators across tests where possible instead of creating extras.
+If `delete_entity` is ever refused for a type, fall back to logging the ID for manual dashboard cleanup. Still keep created test resources minimal — reuse the seeded echo agent / length eval where a case allows.
 
 ---
 
@@ -32,9 +34,9 @@ Keep the number of non-deletable test resources to a minimum. Reuse agents and e
 2. Call `search_entities(type=agent)` to verify MCP connectivity
 3. Discover available projects via `search_entities(type=project)` — pick the first one and use `{project_name}/orq-skills-tests` as the test path
 4. Seed test data (all under the discovered test path):
-   - `create_agent` → key: `orq-skills-test-echo`, model: `openai/gpt-4.1-mini`, instructions: "Echo back the user's message verbatim" *(manual cleanup required)*
-   - `create_dataset` → `orq-skills-test-dataset` + `create_datapoints` (5 rows with inputs + expected_output) *(auto-deletable)*
-   - `create_python_eval` → key: `orq-skills-test-eval-length`, code: checks `len(log['output']) > 0` *(manual cleanup required)*
+   - `create_agent` → key: `orq-skills-test-echo`, model: `openai/gpt-4.1-mini`, instructions: "Echo back the user's message verbatim" *(delete via `delete_entity(type=agent)`)*
+   - `create_dataset` → `orq-skills-test-dataset` + `create_datapoints` (5 rows with inputs + expected_output) *(delete via `delete_dataset`)*
+   - `create_python_eval` → key: `orq-skills-test-eval-length`, code: checks `len(log['output']) > 0` *(delete via `delete_entity(type=evaluator)`)*
 
 Track each as PASS/FAIL. Store all created IDs for teardown.
 
@@ -53,26 +55,28 @@ search_entities(type=dataset, query="orq-skills-test-") → delete_dataset for e
 # Datapoints — already cleaned up when parent dataset is deleted
 ```
 
-### Manual cleanup required (no MCP delete tools)
+### Automatic cleanup via delete_entity
 
-The following resource types **cannot be deleted via MCP**. List them in the report so they can be cleaned up manually via the orq.ai dashboard:
+Agents, evaluators, experiments, and deployments delete through `delete_entity`:
 
 ```
-# Agents — NO delete_agent MCP tool
-search_entities(type=agent, query="orq-skills-test-") → log for manual cleanup
+# Agents
+search_entities(type=agent, query="orq-skills-test-") → delete_entity(type=agent, id=<id>) for each
 
-# Experiments — NO delete_experiment MCP tool
-search_entities(type=experiment, query="orq-skills-test-") → log for manual cleanup
+# Experiments
+search_entities(type=experiment, query="orq-skills-test-") → delete_entity(type=experiment, id=<id>) for each
 
-# Evaluators — NO delete_evaluator MCP tool, NO search_entities(type=evaluator)
-# Must track created evaluator IDs from setup → log for manual cleanup
+# Evaluators — no search_entities(type=evaluator); use the IDs tracked at create time
+delete_entity(type=evaluator, id=<id>) for each tracked evaluator
 ```
+
+If any `delete_entity` call is refused by the server, fall back to logging the ID for manual dashboard cleanup.
 
 ### Cleanup summary
 
 Report all resources in the test report with their cleanup status:
-- For each auto-deleted resource: confirm deletion succeeded
-- For each manual resource: list the ID, key, and type so the user can find and delete them in the dashboard
+- For each deleted resource: confirm deletion succeeded
+- For anything the server refused to delete (fallback): list the ID, key, and type so the user can remove it from the dashboard
 - Note: `delete_dataset` has a known output validation bug (returns error despite success) — verify deletion by calling `list_datapoints` on the deleted dataset ID
 
 ---

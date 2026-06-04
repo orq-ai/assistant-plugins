@@ -1,0 +1,31 @@
+skill: run-experiment
+# Functional cases — live MCP operations. Translated from run-experiment.md.
+# Reuses the seeded dataset + length eval rather than creating new ones.
+cases:
+  - id: F1
+    title: Create an experiment against the seeded dataset + evaluator
+    steps:
+      - call: create_experiment
+        args:
+          experiment:
+            key: orq-skills-test-experiment
+            dataset: { id: "{{datasetId}}" }
+            evaluators:
+              - { id: "{{lengthEvalId}}" }
+          task:
+            type: prompt
+            models:
+              - { model: openai/gpt-4.1-mini, instructions: "Answer briefly.", input: "Say hello." }
+        save: { expId: id }
+        verify:
+          - { path: "", op: exists }
+    cleanup:
+      - { call: delete_entity, args: { type: experiment, id: "{{expId}}" } }
+
+  - id: F2
+    title: List experiment runs
+    steps:
+      - call: list_experiment_runs
+        args: {}
+        verify:
+          - { path: "", op: exists }

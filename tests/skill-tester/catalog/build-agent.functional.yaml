@@ -1,0 +1,52 @@
+skill: build-agent
+# Functional cases — live MCP operations. Translated from build-agent.md.
+cases:
+  - id: F1
+    title: Create + read back an agent
+    steps:
+      - call: create_agent
+        args:
+          key: orq-skills-test-crud-agent
+          description: "skill-tester functional CRUD agent"
+          instructions: "You are a helpful test assistant."
+          path: "{{testPath}}"
+          model: openai/gpt-4.1-mini
+      - call: get_agent
+        args: { key: orq-skills-test-crud-agent }
+        save: { agentId: id }
+        verify:
+          - { path: instructions, op: contains, value: "helpful test assistant" }
+    cleanup:
+      - { call: delete_entity, args: { type: agent, id: "{{agentId}}" } }
+
+  - id: F2
+    title: Update an agent and read the change back
+    steps:
+      - call: create_agent
+        args:
+          key: orq-skills-test-update-agent
+          description: "skill-tester functional update agent"
+          instructions: "Original instructions."
+          path: "{{testPath}}"
+          model: openai/gpt-4.1-mini
+      - call: update_agent
+        args:
+          key: orq-skills-test-update-agent
+          versionIncrement: patch
+          versionDescription: "skill-tester functional update"
+          updates: { instructions: "Updated instructions." }
+      - call: get_agent
+        args: { key: orq-skills-test-update-agent }
+        save: { agentId: id }
+        verify:
+          - { path: instructions, op: contains, value: "Updated instructions" }
+    cleanup:
+      - { call: delete_entity, args: { type: agent, id: "{{agentId}}" } }
+
+  - id: F3
+    title: Model selection is actionable
+    steps:
+      - call: list_models
+        args: { modelType: chat }
+        verify:
+          - { path: "", op: contains, value: "gpt-4" }

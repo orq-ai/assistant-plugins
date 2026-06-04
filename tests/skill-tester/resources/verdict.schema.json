@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Behavioural scenario verdict",
+  "description": "Structured judge output for one behavioural scenario run by the skill-tester. Emitted per scenario so results are diffable and CI-gradeable.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["scenario_id", "skill", "invocation_type", "routing", "usage", "overall_pass", "score", "checks"],
+  "properties": {
+    "scenario_id": { "type": "string", "description": "Catalog scenario id, e.g. build-evaluator/B1" },
+    "skill": { "type": "string", "description": "Skill the scenario belongs to" },
+    "invocation_type": {
+      "type": "string",
+      "enum": ["explicit", "implicit", "contextual", "negative"],
+      "description": "explicit=names the skill/artifact; implicit=describes the need only; contextual=implicit + noisy context; negative=should NOT fire this skill"
+    },
+    "expected_skill": {
+      "type": ["string", "null"],
+      "description": "Skill that should fire. null for negative controls (no skill should fire, or a different one)."
+    },
+    "selected_skill": {
+      "type": ["string", "null"],
+      "description": "Skill the subagent actually routed to (read its SKILL.md / acted on it). null if none fired."
+    },
+    "routing": {
+      "type": "string",
+      "enum": ["pass", "fail"],
+      "description": "pass if selected_skill matches expectation (for negatives: pass if the skill under test did NOT fire)"
+    },
+    "usage": {
+      "type": "string",
+      "enum": ["pass", "fail", "n/a"],
+      "description": "Whether the skill was used within its constraints. n/a for negative controls."
+    },
+    "overall_pass": { "type": "boolean" },
+    "score": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "checks": {
+      "type": "array",
+      "description": "One entry per PASS/anti-pattern assertion from the catalog scenario.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "pass"],
+        "properties": {
+          "id": { "type": "string", "description": "Stable check id, e.g. 'uses-create_python_eval', 'no-likert'" },
+          "pass": { "type": "boolean" },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    "tool_calls": {
+      "type": "array",
+      "description": "Ordered operations the subagent actually performed (self-reported in v1; real tool events in headless/CI). Used to grade process goals.",
+      "items": { "type": "string" }
+    },
+    "flaky": { "type": "boolean", "description": "true if a re-run changed the result" },
+    "evidence": { "type": "string", "description": "Short quote from the transcript / tool trace supporting the verdict" },
+    "response_text": { "type": "string", "description": "The model's final response text, recorded for the report and --debug output" }
+  }
+}

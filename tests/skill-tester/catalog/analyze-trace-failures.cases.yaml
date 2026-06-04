@@ -1,0 +1,32 @@
+# Behavioural specs for analyze-trace-failures. Companion to
+# catalog/analyze-trace-failures.md.
+skill: analyze-trace-failures
+skill_path: skills/analyze-trace-failures/SKILL.md
+cases:
+  - id: B1
+    type: explicit
+    prompt: "Analyze recent trace failures."
+    expect:
+      routing: analyze-trace-failures
+      tool_calls:
+        - tool: list_traces
+    notes:
+      - "describes a mixed sampling strategy (random / failure-driven / outlier)"
+      - "uses open coding -> axial coding to build a 4-8 mode taxonomy; finds the FIRST upstream failure"
+      - "does not jump to building evaluators or changing prompts before reading traces"
+
+  - id: B2
+    type: implicit
+    prompt: "I don't understand why my agent keeps giving bad answers in production — where do I even start?"
+    expect:
+      routing: analyze-trace-failures
+    notes:
+      - "routes on the description; proposes reading traces first (open->axial coding) before any fix"
+
+  - id: N1
+    type: negative
+    prompt: "I'm building a brand-new app and want to start capturing traces in orq.ai."
+    expect:
+      not_routing: analyze-trace-failures
+    notes:
+      - "no traces exist yet -> should route to setup-observability, not analysis"

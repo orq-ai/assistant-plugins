@@ -1,0 +1,27 @@
+skill: invoke-deployment
+# Functional cases — live MCP operations. Translated from invoke-deployment.md.
+cases:
+  - id: F1
+    title: Invoke the seeded echo agent (responses API)
+    steps:
+      - call: invoke_agent
+        args:
+          model: agent/orq-skills-test-echo
+          input: "ping skill-tester"
+        verify:
+          - { path: "", op: exists }
+
+  - id: F2
+    title: AI Router model call (provider/model)
+    skip: "AI-router HTTP / OpenAI-compatible SDK call (base_url .../v2/router) — not an MCP tool; out of scope for the MCP runner"
+
+  - id: F3
+    title: Resolve a deployment key
+    steps:
+      - call: search_entities
+        args: { type: deployment }
+        verify:
+          - { path: "", op: exists }
+    drift:
+      # invoke-deployment resources reference `list_registry_keys`, not exposed by the server.
+      - { tool: list_registry_keys, expect: absent }

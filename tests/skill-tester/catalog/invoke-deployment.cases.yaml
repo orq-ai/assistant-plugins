@@ -1,0 +1,60 @@
+# Behavioural specs for invoke-deployment. Companion to catalog/invoke-deployment.md.
+# Codegen-heavy: the gold signal lives in the generated code (response text). The
+# explicit cases are phrased self-contained ("assume X exists, show the code") so
+# the agent emits code rather than stopping to verify a key that isn't in the test
+# workspace — that "verify first" behaviour is correct but un-gradeable as codegen.
+skill: invoke-deployment
+skill_path: skills/invoke-deployment/SKILL.md
+cases:
+  - id: B1
+    type: explicit
+    prompt: "Assume my orq.ai deployment `customer-support` exists and its prompt has a {{customer_name}} variable. Show me the complete Python code to invoke it with customer_name set to 'Jane'."
+    expect:
+      routing: invoke-deployment
+      text:
+        - { op: contains, value: "deployments.invoke" }
+        - { op: regex, value: "(?i)customer_name" }
+        - { op: regex, value: "os\\.environ|getenv" }
+    notes:
+      - "maps the {{customer_name}} variable into inputs; reads ORQ_API_KEY from env; includes identity"
+
+  - id: B2
+    type: explicit
+    prompt: "Show me the complete Python code to send a message to my orq.ai agent and then send a follow-up in the same conversation."
+    expect:
+      routing: invoke-deployment
+      text:
+        - { op: contains, value: "responses.create" }
+      forbidden_text:
+        - { op: regex, value: "agents\\.invoke\\(" }
+    notes:
+      - "uses A2A parts message format; saves task_id and passes it in the follow-up"
+
+  - id: B3
+    type: explicit
+    # "AI Router" alone is ambiguous — setup-observability headlines "AI Router mode"
+    # for tracing. Phrase as a pure one-off inference call so it routes to invocation.
+    prompt: "Show me the minimal Python code to make a single one-off chat completion call to the GPT-4.1 model via orq.ai, using the OpenAI client pointed at the orq.ai model proxy. Just the inference call — I do not want any tracing or observability setup."
+    expect:
+      routing: invoke-deployment
+      text:
+        - { op: contains, value: "v2/router" }
+        - { op: regex, value: "openai/gpt-4\\.1" }
+    notes:
+      - "uses provider/model format and points the OpenAI client at the router base_url"
+
+  - id: B5
+    type: implicit
+    prompt: "I set up a prompt in orq.ai — how do I get my Python app to actually run it and get responses back?"
+    expect:
+      routing: invoke-deployment
+    notes:
+      - "routes on the description; confirms the key via search_entities; generates SDK code reading ORQ_API_KEY from env"
+
+  - id: N1
+    type: negative
+    prompt: "Help me improve the system prompt on my customer-support deployment."
+    expect:
+      not_routing: invoke-deployment
+    notes:
+      - "editing a prompt -> should route to optimize-prompt, not generate an invocation call"

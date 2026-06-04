@@ -1,0 +1,47 @@
+# Behavioural specs for compare-agents. Companion to catalog/compare-agents.md.
+# Codegen-heavy (evaluatorq script): gate on routing + generated-code text +
+# forbidden anti-patterns. B2/B3 are routing-gated (their gold is delegation/setup).
+skill: compare-agents
+skill_path: skills/compare-agents/SKILL.md
+cases:
+  - id: B1
+    type: explicit
+    # Self-contained + cross-framework: the orq.ai-vs-orq.ai framing the prose
+    # catalog used actually routes to run-experiment per the skill's own guidance
+    # ("Do NOT use when comparing only orq.ai configurations"). This phrasing tests
+    # the evaluatorq codegen, which is what compare-agents exists for.
+    prompt: "Generate the complete evaluatorq script to compare my orq.ai agent against my LangGraph agent head-to-head on a shared dataset with one shared evaluator. Assume the agents, dataset, and evaluator already exist."
+    expect:
+      routing: compare-agents
+      text:
+        - { op: regex, value: "from\\s+orq_ai_sdk\\s+import\\s+Orq" }
+        - { op: contains, value: "responses.create" }
+      forbidden_text:
+        - { op: regex, value: "agents\\.invoke\\(|from\\s+orq\\s+import\\b" }
+    notes:
+      - "both @job functions share the same evaluator; orq.ai job uses agents.responses.create()"
+
+  - id: B2
+    type: explicit
+    prompt: "Compare my LangGraph agent against my orq.ai agent."
+    expect:
+      routing: compare-agents
+    notes:
+      - "delegates dataset creation to generate-synthetic-dataset and evaluator to build-evaluator"
+      - "generates one LangGraph job pattern and one orq.ai job pattern with a shared evaluator"
+
+  - id: B3
+    type: implicit
+    prompt: "I have a CrewAI bot and an OpenAI Agents SDK bot doing the same task and want to know which is better on a shared test set."
+    expect:
+      routing: compare-agents
+    notes:
+      - "routes on the description; sets up a head-to-head evaluatorq experiment with one shared evaluator"
+
+  - id: N1
+    type: negative
+    prompt: "I want to A/B test two system prompts on the same orq.ai model against my dataset."
+    expect:
+      not_routing: compare-agents
+    notes:
+      - "single-config A/B -> should route to run-experiment, not a cross-framework evaluatorq script"

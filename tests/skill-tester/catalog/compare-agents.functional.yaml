@@ -1,0 +1,16 @@
+skill: compare-agents
+# Functional cases — live MCP operations. Translated from compare-agents.md.
+cases:
+  - id: F1
+    title: Generated evaluatorq script uses correct SDK calls
+    skip: "generates (does not run) an external evaluatorq/orqkit script — static codegen, no live MCP operation to exercise"
+
+  - id: F2
+    title: Seeded agent is independently invokable
+    steps:
+      - call: invoke_agent
+        args:
+          model: agent/orq-skills-test-echo
+          input: "compare-agents ping"
+        verify:
+          - { path: "", op: exists }

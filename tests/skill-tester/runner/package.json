@@ -1,0 +1,17 @@
+{
+  "name": "skill-tester-runner",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Deterministic skill-tester harness for the orq.ai skills. Behavioural track spawns `claude -p` per case and grades the tool-call stream; functional track calls the orq MCP server directly (create→read-back→cleanup) and detects drift. Both grade against YAML gold-truth specs — no LLM judge.",
+  "bin": {
+    "skill-tester": "./run.mjs"
+  },
+  "scripts": {
+    "test": "node run.mjs --track behavioural --skills all"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "yaml": "^2.5.0"
+  }
+}

@@ -1,0 +1,38 @@
+# Behavioural specs for optimize-prompt. Companion to catalog/optimize-prompt.md.
+# This skill is almost entirely prose/methodology (0 reliable tool calls), so
+# grading is routing-centric with the analysis quality carried as notes.
+skill: optimize-prompt
+skill_path: skills/optimize-prompt/SKILL.md
+cases:
+  - id: B1
+    type: explicit
+    prompt: "Optimize this prompt: You are a helpful assistant. Answer questions."
+    expect:
+      routing: optimize-prompt
+    notes:
+      - "analyzes against a structured guidelines framework; offers a diff and asks before applying"
+      - "recommends run-experiment to validate afterward; preserves the original for rollback"
+
+  - id: B2
+    type: implicit
+    prompt: "My assistant's answers are rambling and inconsistent — can you make the system instructions better?"
+    expect:
+      routing: optimize-prompt
+    notes:
+      - "routes on the description; analyzes against the framework; shows a diff and asks before applying"
+
+  - id: N1
+    type: negative
+    prompt: "My app is slow and uses too much memory — can you profile it and speed it up?"
+    expect:
+      not_routing: optimize-prompt
+    notes:
+      - "ordinary performance work -> the prompt-optimization framework must not fire"
+
+  - id: N2
+    type: negative
+    prompt: "My deployment's outputs are wrong in production a lot — where do I start?"
+    expect:
+      not_routing: optimize-prompt
+    notes:
+      - "production failures -> analyze-trace-failures first, not a blind prompt rewrite"

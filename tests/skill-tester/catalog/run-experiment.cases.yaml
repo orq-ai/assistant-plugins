@@ -1,0 +1,31 @@
+# Behavioural specs for run-experiment. Companion to catalog/run-experiment.md.
+# create_experiment needs a real dataset id, so B1 gates on routing and carries the
+# tool as a note (it would false-fail when the seed dataset is absent).
+skill: run-experiment
+skill_path: skills/run-experiment/SKILL.md
+cases:
+  - id: B1
+    type: explicit
+    prompt: "Run an experiment using orq-skills-test-dataset with orq-skills-test-eval-length."
+    expect:
+      routing: run-experiment
+    notes:
+      - "calls create_experiment with the named dataset + evaluator references"
+      - "uses binary Pass/Fail criteria; treats 100% pass rate as too-easy (target ~70-85%)"
+
+  - id: B2
+    type: implicit
+    prompt: "I changed my prompt and want to know if it's actually better than before on my test set."
+    expect:
+      routing: run-experiment
+    notes:
+      - "routes on the description; sets up an experiment over a dataset with binary evaluators"
+      - "does not misroute to optimize-prompt (which edits, not measures)"
+
+  - id: N1
+    type: negative
+    prompt: "Compare my LangGraph agent against my orq.ai agent on the same questions."
+    expect:
+      not_routing: run-experiment
+    notes:
+      - "cross-framework comparison -> should route to compare-agents"

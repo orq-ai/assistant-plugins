@@ -1,0 +1,49 @@
+skill: build-evaluator
+# Functional cases — live MCP operations. Translated from build-evaluator.md.
+cases:
+  - id: F1
+    title: Create + read back a Python (code) evaluator
+    steps:
+      - call: create_python_eval
+        args:
+          key: orq-skills-test-py-eval
+          path: "{{testPath}}"
+          output_type: boolean
+          code: "import json\n\ndef evaluate(log):\n    try:\n        json.loads(log['output'])\n        return True\n    except Exception:\n        return False"
+      - call: get_python_eval
+        args: { key: orq-skills-test-py-eval }
+        save: { evalId: id }
+        verify:
+          - { path: code, op: contains, value: "json.loads" }
+    cleanup:
+      - { call: delete_entity, args: { type: evaluator, id: "{{evalId}}" } }
+    drift:
+      # SKILL.md documents `evaluator_get`, but the server exposes get_python_eval/get_llm_eval.
+      - { tool: evaluator_get, expect: absent }
+
+  - id: F2
+    title: Create + read back an LLM judge evaluator
+    steps:
+      - call: create_llm_eval
+        args:
+          key: orq-skills-test-llm-eval
+          path: "{{testPath}}"
+          output_type: boolean
+          model: openai/gpt-4.1-mini
+          prompt: "Return Pass if the output is helpful, else Fail.\n\nOutput: {{log.output}}"
+      - call: get_llm_eval
+        args: { key: orq-skills-test-llm-eval }
+        save: { evalId: id }
+        verify:
+          - { path: prompt, op: contains, value: "{{log.output}}" }
+          - { path: model, op: exists }
+    cleanup:
+      - { call: delete_entity, args: { type: evaluator, id: "{{evalId}}" } }
+
+  - id: F3
+    title: Judge model is selectable
+    steps:
+      - call: list_models
+        args: { modelType: chat }
+        verify:
+          - { path: "", op: contains, value: "gpt-4" }
