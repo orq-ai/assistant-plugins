@@ -151,10 +151,9 @@ With `--save detail` and `--output-dir <dir>`, staged artifacts are saved:
 
 ```
 <output-dir>/
-├── 01_agent_context.json       # Agent metadata
-├── 02_strategy_selection.json  # Attack strategies chosen per category
-├── 03_generated_prompts.json   # Adversarial prompts generated
-└── 04_attack_results.json      # Raw attack results
+├── 01_all_datapoints.json      # All attack datapoints (static + dynamic)
+├── 02_attack_results.json      # Raw per-datapoint attack results
+└── 03_summary_report.json      # Aggregated summary
 ```
 
 ### Viewing reports
@@ -174,7 +173,16 @@ eq redteam ui ./path/to/report.json
 
 ### Reading the report JSON
 
-The report JSON contains a `summary` block with these fields:
+Top-level fields in the report JSON:
+
+| Field | Meaning |
+|-------|---------|
+| `pipeline` | `dynamic`, `static`, or `hybrid` |
+| `framework` | OWASP framework used (e.g. `OWASP-ASI`, `OWASP-LLM`) |
+| `categories_tested` | List of OWASP categories covered in this run |
+| `total_results` | Total attack datapoints in the report |
+
+The `summary` sub-object contains aggregate stats:
 
 | Field | Meaning |
 |-------|---------|
@@ -182,10 +190,7 @@ The report JSON contains a `summary` block with these fields:
 | `vulnerabilities_found` | Count of attacks the agent failed (lower is better) |
 | `vulnerability_rate` | Attack Success Rate (ASR). `1.0 - resistance_rate` |
 | `total_attacks` | Total attack datapoints evaluated |
-| `categories_tested` | List of OWASP categories covered in this run |
 | `by_technique` | Per-technique breakdown with `vulnerabilities_found` and `resistance_rate` |
-| `pipeline` | `dynamic`, `static`, or `hybrid` |
-| `framework` | OWASP framework used (e.g. `OWASP-ASI`, `OWASP-LLM`) |
 
 **Interpreting resistance_rate:** `1.0 - resistance_rate` = ASR. A `resistance_rate` of `0.65` means 35% of attacks succeeded.
 
