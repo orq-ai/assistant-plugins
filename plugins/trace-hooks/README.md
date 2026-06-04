@@ -126,6 +126,7 @@ Base URL:
 | `UserPromptSubmit` | Open new turn, close and send previous turn span |
 | `Stop` | Process transcript, emit tool + LLM spans incrementally |
 | `StopFailure` | Emit error span for API failures (rate limits, etc.) |
+| `PostToolUse` | Record successful tool calls (name, input, response) in session state |
 | `PostToolUseFailure` | Track failed tool calls |
 | `PreCompact` | Emit context compaction event span |
 | `SubagentStart` | Track subagent lifecycle |
