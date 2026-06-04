@@ -162,9 +162,9 @@ Use when the user wants visibility into existing Skills.
 3. Present a scannable table:
    ```
    Skills (12)
-     - customer-support-tone (cs, [tone, voice], path: cs/style)
-     - extract-receipt-fields (finance, [extraction], path: Default/Skills)
-     - refund-policy (workspace-wide, [policy, cs, retired], path: Default/Skills)
+     - customer_support_tone (cs, [tone, voice], path: cs/style)
+     - extract_receipt_fields (finance, [extraction], path: Default/Skills)
+     - refund_policy (workspace-wide, [policy, cs, retired], path: Default/Skills)
      ...
    ```
 4. For each Skill, surface: `display_name`, project (or "workspace-wide"), `tags`, `path`. **Reference counts are expensive** — they require text-searching prompts/agent instructions for `{{skill.<display_name>}}` / `{{snippet.<display_name>}}`. Compute them lazily on user request, not for every row. (See Phase 5 for the reference-scan pattern.)

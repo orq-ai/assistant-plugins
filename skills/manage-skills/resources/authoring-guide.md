@@ -80,10 +80,10 @@ Every Skill is either **project-scoped** (`project_id` set to a project's id) or
 **When project-scoped is right:**
 - The Skill encodes project-specific business logic (e.g., a refund policy that only applies to the EU project)
 - The Skill is still being iterated on and shouldn't be discoverable across teams yet
-- Different projects need different versions of the same idea (e.g., `extract-receipt-fields` per region)
+- Different projects need different versions of the same idea (e.g., `extract_receipt_fields` per region)
 
 **When workspace-wide is right:**
-- The Skill is genuinely reusable across teams and projects (e.g., `redact-pii`, `format-currency`)
+- The Skill is genuinely reusable across teams and projects (e.g., `redact_pii`, `format_currency`)
 - The Skill has stabilized — no recent breaking changes, used by ≥2 consumers
 - Ownership is clear (named owner in the description or `owner:` tag)
 
