@@ -20,7 +20,7 @@ The `/v2/skills` REST surface and `*_skill` MCP tools are still rolling out — 
 
 One known migration behavior to surface when relevant:
 
-1. **Snippet→Skill migration is one-way and asynchronous.** Existing Prompt Snippets are migrated to Skills via a backend cronjob; Skills created via the new API are *not* back-propagated to the snippet representation.
+1. **Snippet→Skill migration is one-way.** Existing Prompt Snippets are migrated to Skills via a one-shot batch data migration (each migrated Skill carries a `source_snippet_id`); Skills created via the new API are *not* back-propagated to the snippet representation.
 
 ## Disambiguation: which "Skill" are we talking about?
 
@@ -115,7 +115,7 @@ tagged_skills  = [s for s in all_skills if "policy" in s.tags]
 
 | Field | Direction | Notes |
 |------|------|------|
-| `display_name` | create / update / read | Human-facing label and the **lookup key** used by `{{skill.<display_name>}}` (and `{{snippet.<display_name>}}`). Regex: `^[A-Za-z0-9]+(?:[_-][A-Za-z0-9]+)*$`, max 255 chars. Must be unique within the workspace; `create_skill` returns `AlreadyExists` on conflict. |
+| `display_name` | create / update / read | Human-facing label and the **lookup key** used by `{{skill.<display_name>}}` (and `{{snippet.<display_name>}}`). Regex: `^[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*$` — must start with a letter, underscores only as separators (no hyphens or dots — names are used as template variables), max 255 chars. Must be unique within the workspace; `create_skill` returns `AlreadyExists` on conflict. |
 | `description` | create / update / read | Short explanation of what the Skill does. Surfaces in the Studio's Skill picker. |
 | `tags` | create / update / read | Array of strings. Filtering is client-side (see above). |
 | `path` | create / update / read | Finder-style location, e.g. `Default/Skills` or `cs/policies`. Defaults to project's default skill folder. |
@@ -182,7 +182,7 @@ Use before any update or delete, and whenever the user asks "what does Skill X d
 Use when the user wants a new Skill.
 
 1. **Gather inputs** via `AskUserQuestion`:
-   - **`display_name`** — short, descriptive, regex `^[A-Za-z0-9]+(?:[_-][A-Za-z0-9]+)*$`, ≤255 chars on the platform. This repo's recommended convention is kebab-case ≤50 chars (recommend rather than enforce). See [authoring-guide](resources/authoring-guide.md).
+   - **`display_name`** — short, descriptive, regex `^[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*$` (must start with a letter; underscores only — no hyphens or dots), ≤255 chars on the platform. This repo's recommended convention is snake_case ≤50 chars (recommend rather than enforce). See [authoring-guide](resources/authoring-guide.md).
    - **`description`** — one sentence describing *when to apply the Skill*. Used by humans (Studio picker); not a runtime trigger.
    - **`tags`** — at least one functional tag; reuse existing tags where possible (paginate `list_skills` first).
    - **`project_id`** — the target project's id, OR omit for workspace-wide. Default to **project-scoped**; confirm before going workspace-wide. If the user gives a project key, resolve it to an id via `search_directories`.
@@ -212,8 +212,8 @@ Use when the user wants to edit an existing Skill.
 Use when the user wants to permanently retire a Skill. **`delete_skill` is irreversible** and does not scrub `{{skill.<display_name>}}` / `{{snippet.<display_name>}}` references elsewhere — those references silently fail to resolve after delete. Always offer tagging the Skill with `retired` first (Phase 4 step 4) and only proceed to delete when the user is sure.
 
 1. **Reference scan.** Find places that may reference the Skill by its `display_name`:
-   - Run `search_entities` to enumerate `prompt`, `deployment`, and `agent` candidates (`search_entities` does **not** expose a `skill` type — sibling Skills are enumerated separately).
-   - Paginate `list_skills` to enumerate every other Skill in the workspace whose `instructions` could contain the reference.
+   - Run `search_entities` with `type='prompt'`, `type='deployment'`, and `type='agent'` to enumerate non-skill candidates. You can also use `type='skill'` to enumerate sibling Skills — but note that `search_entities` only matches **metadata** (`display_name`, `key`, `description`) not body text, so it cannot find `{{skill.X}}` / `{{snippet.X}}` references inside instructions.
+   - Therefore, for any candidate returned by `search_entities`, and for all sibling Skills (paginate `list_skills`), fetch the full body and grep it yourself.
    - For each candidate, fetch its full body (`get_deployment` for deployments; `get_agent` for agents; `get_skill` for sibling Skills' `instructions`; prompt bodies come back from `search_entities`/the prompt-fetch tool) and grep the body for both `{{skill.<display_name>}}` and `{{snippet.<display_name>}}` (case-sensitive — match the Skill's exact `display_name`).
    - Note: this scan can be expensive in large workspaces. Cache results within the session.
    - If the user has a faster way to grep their workspace (e.g., a synced repo of prompts), prefer that.

@@ -9,28 +9,29 @@ How to author an orq.ai Skill so it's discoverable, scoped correctly, and render
 `display_name` is both the human-facing label AND the lookup key used by `{{skill.<display_name>}}` (and the backward-compatible `{{snippet.<display_name>}}`) placeholders. Pick it carefully — renaming it after consumers exist silently breaks every reference. See [known-caveats.md](known-caveats.md).
 
 **Platform constraints (enforced):**
-- Regex: `^[A-Za-z0-9]+(?:[_-][A-Za-z0-9]+)*$` (alphanumeric with optional single dash/underscore separators)
+- Regex: `^[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*$` — must start with a letter, underscores only as word separators (no hyphens, no dots — names are used as template variables and dashes are not allowed)
 - Max 255 characters
 - Must be unique within the workspace — `create_skill` returns `AlreadyExists` on conflict
 
 **This repo's recommended convention** (a stricter subset that keeps lists scannable and placeholders readable):
-- **kebab-case**, lowercase, ASCII only — e.g., `extract-receipt-fields`
+- **snake_case**, lowercase, ASCII only — e.g., `extract_receipt_fields`
 - **≤50 characters** — long names get truncated in Studio tables and bloat placeholders
-- **Verb-noun preferred** — `summarize-ticket`, `classify-intent`, `extract-pii`
-- **Avoid generic verbs alone** — `handle-thing`, `do-task`, `process` say nothing
-- **No version suffixes** — `summarize-ticket-v2` is an anti-pattern; treat the Skill itself as the unit of change and rely on the activity log for history
+- **Verb-noun preferred** — `summarize_ticket`, `classify_intent`, `extract_pii`
+- **Avoid generic verbs alone** — `handle_thing`, `do_task`, `process` say nothing
+- **No version suffixes** — `summarize_ticket_v2` is an anti-pattern; treat the Skill itself as the unit of change and rely on the activity log for history
 
 These are recommendations, not enforced by the API. Diverge if a stronger convention already exists in the workspace, but stay consistent.
 
 **Good (recommended convention):**
-- `extract-invoice-line-items` → referenced as `{{skill.extract-invoice-line-items}}`
-- `redact-pii-from-transcript`
-- `format-currency-eur`
+- `extract_invoice_line_items` → referenced as `{{skill.extract_invoice_line_items}}`
+- `redact_pii_from_transcript`
+- `format_currency_eur`
 
 **Bad:**
 - `helper` (too vague)
-- `the-skill-that-handles-customer-support-emails-with-tone-checking` (too long; ugly in placeholders)
-- `summarize-ticket-v2` (version belongs in the activity log)
+- `the_skill_that_handles_customer_support_emails_with_tone_checking` (too long; ugly in placeholders)
+- `summarize_ticket_v2` (version belongs in the activity log)
+- `extract-receipt-fields` (hyphens rejected by the API — use underscores)
 
 ---
 

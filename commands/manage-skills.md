@@ -1,8 +1,8 @@
 ---
 name: manage-skills
-description: Manage orq.ai Skills — list, get, create, update, disable, or delete Skills (the platform entity, formerly Snippets) and find the prompts/agents that reference them
-argument-hint: [list|get|create|update|disable|delete] [name-or-id]
-allowed-tools: AskUserQuestion, mcp__orq-workspace__list_skills, mcp__orq-workspace__get_skill, mcp__orq-workspace__create_skill, mcp__orq-workspace__update_skill, mcp__orq-workspace__delete_skill, mcp__orq-workspace__search_entities, mcp__orq-workspace__get_deployment, mcp__orq-workspace__get_agent
+description: Manage orq.ai Skills — list, get, create, update, retire (tag as retired), or delete Skills (the platform entity, formerly Snippets) and find the prompts/agents that reference them
+argument-hint: [list|get|create|update|retire|delete] [name-or-id]
+allowed-tools: AskUserQuestion, Read, Grep, Glob, mcp__orq-workspace__list_skills, mcp__orq-workspace__get_skill, mcp__orq-workspace__create_skill, mcp__orq-workspace__update_skill, mcp__orq-workspace__delete_skill, mcp__orq-workspace__search_entities, mcp__orq-workspace__get_deployment, mcp__orq-workspace__get_agent
 ---
 
 # Manage Skills
@@ -18,13 +18,13 @@ Quick entry point into the `manage-skills` skill. Routes to the right phase base
 - `list` — Phase 1 (list / audit)
 - `get <name-or-id>` — Phase 2 (inspect a Skill)
 - `create` — Phase 3 (create a new Skill)
-- `update <name-or-id>` — Phase 4 (edit, including `enabled` / `display_name` / `instructions`)
-- `disable <name-or-id>` — Phase 4 shortcut: flip `enabled: false` (soft-retire)
+- `update <name-or-id>` — Phase 4 (edit `display_name`, `description`, `tags`, `instructions`, `project_id`, `path`)
+- `retire <name-or-id>` — Phase 4 shortcut: tag with `retired` (soft-retire — reversible, no `enabled` field exists)
 - `delete <name-or-id>` — Phase 5 (reference scan + delete)
 
 If `$ARGUMENTS` is empty, ask the user which action they want via `AskUserQuestion` and offer the six choices above.
 
-If `$ARGUMENTS` contains an action that requires a name/id but none was provided (e.g., `get`, `update`, `disable`, `delete`), call `list_skills` first and ask the user to pick.
+If `$ARGUMENTS` contains an action that requires a name/id but none was provided (e.g., `get`, `update`, `retire`, `delete`), call `list_skills` first and ask the user to pick.
 
 ### 2. Delegate to `manage-skills`
 
@@ -33,9 +33,9 @@ Read `skills/manage-skills/SKILL.md` and execute the matching phase. Pass the pa
 ### 3. Safety rails
 
 - **Never** auto-execute `delete_skill` from this command — always route through Phase 5's reference-scan + warn-then-confirm flow.
-- **Always** offer `enabled: false` (soft disable) as the default first step when the reference scan finds consumers.
+- **Always** offer tagging with `retired` (soft-retire via `update_skill`) as the default first step when the reference scan finds consumers. There is no `enabled` field on a Skill.
 - **Always** confirm project scope before `create_skill`.
-- **Always** warn before sending a `display_name` rename — it silently breaks every `{{snippet.<old-name>}}` reference.
+- **Always** warn before sending a `display_name` rename — it silently breaks every `{{skill.<old-name>}}` and `{{snippet.<old-name>}}` reference.
 
 ### 4. Error handling
 
