@@ -19,11 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/manage-skills` slash command — routes to list / get / create / update / retire / delete phases.
 
 ### Fixed
+- `red-team`: rewrite skill to target the real `evaluatorq` package (`orqkit/packages/evaluatorq-py`) and `eq redteam` CLI instead of the legacy `research/projects/red-teaming` path.
+- `red-team`: replace non-existent `redteam run adaptive/dataset/hybrid` subcommands with the actual `eq redteam run --mode dynamic|static|hybrid` interface.
+- `red-team`: fix all CLI flags — `--category` repeatable (not `--categories` comma-separated), `--max-dynamic-datapoints`/`--max-static-datapoints` (not `--max-attacks`), `--generated-strategy-count` (not `--generated-count`), `--parallelism` default 10 (not 5), `--output-dir` (not `--out`).
+- `red-team`: remove non-existent `redteam report summarize` command; replace with `eq redteam runs` / `eq redteam ui <path>`.
+- `red-team`: fix default model to `gpt-5-mini`; add OpenAI `gpt-4o` as worked example model.
+- `red-team`: fix env var section — document auto-detection order (`OPENAI_API_KEY` → direct OpenAI; `ORQ_API_KEY` → orq gateway); remove incorrect Azure credential guidance.
+- `red-team`: fix output file naming — auto-named `redteam-report-<target>-<ts>.json` in `.evaluatorq/runs/`; use `--save-report <path>` for explicit path.
 - `red-team`: add authorization guardrail — require explicit user confirmation before attacking any deployment.
-- `red-team`: add CLI availability preflight (`uv run redteam --help`) before env var check.
-- `red-team`: fix inconsistent evaluator model string in troubleshooting (`azure/gpt-4o`, not bare `gpt-4o`).
-- `red-team`: remove unused `Task` and `AskUserQuestion` from `allowed-tools`.
-- `red-team`: fix `tests/skills.md` scenarios to use `report.json` (not `unified_report.json`).
+- `red-team`: fix `tests/skills.md` scenarios to use correct `eq redteam run --mode dynamic` invocations.
 - `agents/AGENTS.md`: remove trailing blank line after red-team `<available_skills>` entry.
 
 ## [0.0.2] - 2026-04-21

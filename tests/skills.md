@@ -193,25 +193,25 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 
 ## `red-team`
 
-### Scenario 1: Run adaptive red team
+### Scenario 1: Run dynamic red team
 
 - Ask: "Red team my `customer-support` deployment"
 - Verify: confirms the deployment key with the user before running
-- Verify: checks `ORQ_API_KEY` is set before invoking
-- Verify: invokes `uv run redteam run adaptive --target agent:<key>` from `research/projects/red-teaming/`
-- Verify: runs `uv run redteam report summarize <out>/report.json` after the run
+- Verify: checks `ORQ_API_KEY` is set and `eq` CLI is reachable before invoking
+- Verify: invokes `eq redteam run --target agent:<key> --mode dynamic`
+- Verify: prints summary to stdout on completion (no separate `report summarize` step needed)
 
 ### Scenario 2: Scoped run with category filter
 
 - Ask: "Run a red team on `my-agent` focused on prompt injection only"
-- Verify: maps "prompt injection" to `ASI01` and passes `--categories ASI01`
+- Verify: maps "prompt injection" to `ASI01` and passes `--category ASI01`
 - Verify: does NOT run all categories unless explicitly asked
 
 ### Scenario 3: Read an existing report
 
-- Ask: "Summarize the red team results from ./output/my-run"
-- Verify: runs `uv run redteam report summarize ./output/my-run/report.json`
-- Verify: explains `resistance_rate`, `vulnerabilities_found`, `total_results`, and `categories_tested`
+- Ask: "Summarize the red team results from ./output/my-run/report.json"
+- Verify: reads the JSON directly and explains `resistance_rate`, `vulnerabilities_found`, `total_results`, and `categories_tested`
+- Verify: optionally invokes `eq redteam ui ./output/my-run/report.json` for interactive viewing
 - Verify: notes which categories were NOT tested
 
 ### Scenario 4: Missing env var
