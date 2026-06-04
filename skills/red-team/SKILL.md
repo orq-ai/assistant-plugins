@@ -7,7 +7,7 @@ description: >
   how my agent handles adversarial inputs". Do NOT use when you only need to build
   evaluators (use build-evaluator) or analyze existing trace failures (use
   analyze-trace-failures).
-allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, orq*
+allowed-tools: Bash, Read, Write, Edit, Grep, Glob, orq*
 ---
 
 # Red Team
@@ -19,6 +19,7 @@ This skill is a **reference guide and invocation helper — not a wrapper**. You
 ## Constraints
 
 - **NEVER** reimplement red teaming logic — use the `redteam` CLI.
+- **NEVER** run against a deployment the user does not own or is not explicitly authorized to test. Confirm authorization before the first run.
 - **NEVER** run without confirming the target key with the user first.
 - **NEVER** skip the env var check — missing `ORQ_API_KEY` will silently fail.
 - **ALWAYS** use `uv run` to invoke the CLI (manages the Python environment).
@@ -51,6 +52,10 @@ uv run redteam <command> [options]
 
 Check before running:
 ```bash
+# Verify the CLI is installed and reachable
+uv run redteam --help || { echo "redteam CLI not found — check working directory and uv installation"; exit 1; }
+
+# Verify required env var
 echo "ORQ_API_KEY set: $([ -n "$ORQ_API_KEY" ] && echo yes || echo NO)"
 ```
 
@@ -229,7 +234,7 @@ Expected summary output (JSON):
 | `Python 3.12+ required` | System Python too old | `uv` handles this — ensure `uv` is installed (`brew install uv`) |
 | `ImportError: evaluatorq` | Dependency not installed | `uv sync` in the project directory |
 | Run hangs at attack generation | Attack model API key missing | Set `OPENAI_API_KEY` or switch `--attack-model` to a configured provider |
-| ASR = 0.0 on all categories | Evaluator model not judging correctly | Try `--evaluator-model gpt-4o` for higher-quality evaluation |
+| ASR = 0.0 on all categories | Evaluator model not judging correctly | Try `--evaluator-model azure/gpt-4o` for higher-quality evaluation |
 | Confirmation prompt blocks CI | Interactive terminal required | Pass `--yes` / `-y` to skip |
 
 ## Done when

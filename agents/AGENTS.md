@@ -43,7 +43,6 @@ setup-observability: `Set up orq.ai observability for LLM applications — AI Ro
 
 red-team: `Run adversarial red teaming against deployed orq agents or static datasets using the orq red teaming library — adaptive attacks, OWASP Agentic/LLM category coverage, ASR reporting. Use when asked to run a red team, test an agent for vulnerabilities, or check OWASP coverage. Do NOT use when you only need evaluators (use build-evaluator) or trace analysis (use analyze-trace-failures).`
 
-
 </available_skills>
 
 Paths referenced within SKILL folders are relative to that SKILL. For example the build-evaluator `resources/judge-prompt-template.md` would be referenced as `skills/build-evaluator/resources/judge-prompt-template.md`.

@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0] - 2026-06-04
+
+### Added
+- `red-team`: new skill for invoking the orq red teaming library — adaptive attacks, dataset runs, hybrid mode, OWASP Agentic/LLM coverage, and ASR reporting.
+
+### Fixed
+- `red-team`: add authorization guardrail — require explicit user confirmation before attacking any deployment.
+- `red-team`: add CLI availability preflight (`uv run redteam --help`) before env var check.
+- `red-team`: fix inconsistent evaluator model string in troubleshooting (`azure/gpt-4o`, not bare `gpt-4o`).
+- `red-team`: remove unused `Task` and `AskUserQuestion` from `allowed-tools`.
+- `red-team`: fix `tests/skills.md` scenarios to use `report.json` (not `unified_report.json`).
+- `agents/AGENTS.md`: remove trailing blank line after red-team `<available_skills>` entry.
+
 ## [0.0.2] - 2026-04-21
 
 ### Added
