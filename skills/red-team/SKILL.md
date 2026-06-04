@@ -47,7 +47,7 @@ uv run redteam <command> [options]
 | Variable | Required | Purpose |
 |----------|----------|---------|
 | `ORQ_API_KEY` | Yes | Authenticates against the orq.ai API to invoke the target agent |
-| `OPENAI_API_KEY` | Conditional | Required when `--attack-model` or `--evaluator-model` uses an OpenAI model (default: `azure/gpt-5-mini`) |
+| `OPENAI_API_KEY` | Conditional | Required when `--attack-model` or `--evaluator-model` uses an OpenAI model (default: `openai/gpt-4o-mini`) |
 | `ANTHROPIC_API_KEY` | Conditional | Required when using a Claude model for attacks or evaluation |
 
 Check before running:
@@ -72,8 +72,8 @@ uv run redteam run adaptive \
   [--max-attacks 50] \
   [--max-per-category 10] \
   [--generated-count 2] \
-  [--attack-model azure/gpt-5-mini] \
-  [--evaluator-model azure/gpt-5-mini] \
+  [--attack-model openai/gpt-4o-mini] \
+  [--evaluator-model openai/gpt-4o-mini] \
   [--parallelism 5] \
   [--out ./output/my-run] \
   [--yes]
@@ -88,8 +88,8 @@ uv run redteam run adaptive \
 | `--max-attacks` | none | Hard cap on total attack datapoints |
 | `--max-per-category` | none | Cap per OWASP category |
 | `--generated-count` | 2 | LLM-generated strategies per category |
-| `--attack-model` | `azure/gpt-5-mini` | Model generating adversarial prompts |
-| `--evaluator-model` | `azure/gpt-5-mini` | Model judging whether attacks succeeded |
+| `--attack-model` | `openai/gpt-4o-mini` | Model generating adversarial prompts |
+| `--evaluator-model` | `openai/gpt-4o-mini` | Model judging whether attacks succeeded |
 | `--parallelism` | 5 | Concurrent attack jobs |
 | `--out` | auto | Output directory for report + staged artifacts |
 | `--yes` / `-y` | false | Skip confirmation prompt |
@@ -104,7 +104,7 @@ uv run redteam run dataset \
   [--dataset ./path/to/dataset.json] \
   [--categories ASI01,LLM02] \
   [--num-samples 100] \
-  [--evaluator-model azure/gpt-5-mini] \
+  [--evaluator-model openai/gpt-4o-mini] \
   [--max-concurrent 10] \
   [--out ./output/my-run]
 ```
@@ -122,7 +122,7 @@ uv run redteam run hybrid \
   [--static-target agent:<key>] \
   [--categories ASI01,ASI02] \
   [--max-attacks 50] \
-  [--evaluator-model azure/gpt-5-mini] \
+  [--evaluator-model openai/gpt-4o-mini] \
   [--out ./output/my-run] \
   [--yes]
 ```
@@ -234,7 +234,7 @@ Expected summary output (JSON):
 | `Python 3.12+ required` | System Python too old | `uv` handles this — ensure `uv` is installed (`brew install uv`) |
 | `ImportError: evaluatorq` | Dependency not installed | `uv sync` in the project directory |
 | Run hangs at attack generation | Attack model API key missing | Set `OPENAI_API_KEY` or switch `--attack-model` to a configured provider |
-| ASR = 0.0 on all categories | Evaluator model not judging correctly | Try `--evaluator-model azure/gpt-4o` for higher-quality evaluation |
+| ASR = 0.0 on all categories | Evaluator model not judging correctly | Try `--evaluator-model openai/gpt-4o` for higher-quality evaluation |
 | Confirmation prompt blocks CI | Interactive terminal required | Pass `--yes` / `-y` to skip |
 
 ## Done when
