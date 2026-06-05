@@ -19,6 +19,7 @@ These skills are:
  - red-team -> "skills/red-team/SKILL.md"
  - run-experiment -> "skills/run-experiment/SKILL.md"
  - setup-observability -> "skills/setup-observability/SKILL.md"
+ - simulate-agent -> "skills/simulate-agent/SKILL.md"
 
 IMPORTANT: You MUST read the SKILL.md file whenever the description of the skills matches the user intent, or may help accomplish their task.
 
@@ -45,6 +46,8 @@ setup-observability: `Set up orq.ai observability for LLM applications — AI Ro
 red-team: `Run adversarial red teaming against deployed orq agents or static datasets using the orq red teaming library — adaptive attacks, OWASP Agentic/LLM category coverage, ASR reporting. Use when asked to run a red team, test an agent for vulnerabilities, or check OWASP coverage. Do NOT use when you only need evaluators (use build-evaluator) or trace analysis (use analyze-trace-failures).`
 
 manage-skills: `Manage orq.ai Skills (the platform entity, formerly Snippets — distinct from this repo's code-assistant skills) end-to-end: list, get, create, update, retire (tag as retired), and delete Skills via the /v2/skills API. Covers authoring guidance (display_name, description, tags, project_id, path), how Skills get consumed via {{skill.<display_name>}} (canonical) and {{snippet.<display_name>}} (backward-compat alias) placeholders in prompts and agent instructions, the reference-scan-before-delete workflow, the rename-breaks-references warning, and the +NEVER+ prose anti-pattern. Use when the user wants to create, audit, edit, or retire orq.ai Skills.`
+
+simulate-agent: `Run multi-turn agent simulations using evaluatorq's first-class simulation primitives (simulate(), generate_and_simulate(), wrap_simulation_agent()). Drive an agent under test with a UserSimulatorAgent and built-in JudgeAgent that terminates on goal achievement or rule violations. Use when generating realistic multi-turn data, stress-testing conversational agents, or producing seed transcripts. Do NOT use when real production conversations exist (use analyze-trace-failures) or for adversarial red-teaming sweeps (call evaluatorq.red_team() directly).`
 
 </available_skills>
 
