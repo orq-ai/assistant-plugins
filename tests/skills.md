@@ -140,6 +140,24 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 - Ask: "Run an experiment using orq-skills-test-dataset with orq-skills-test-eval-length"
 - Verify: calls `create_experiment` with correct references
 
+## `simulate-agent`
+
+### Scenario 1: Persona-driven multi-turn simulation
+
+- Ask: "Simulate a skeptical founder talking to my agent `support-agent` for 6 turns"
+- Verify Phase 1: confirms the agent under test and picks a target shape (`agent_key` / `target_callback` via `from_orq_deployment` or `from_chat_completions` / custom `AgentTarget`)
+- Verify Phase 2: builds a `Persona` with the real scalars (`patience`, `assertiveness`, `politeness`, `technical_level` as floats `[0-1]`), a `communication_style` enum, and `background` — not the old `role/tone/goals/constraints` shape
+- Verify Phase 3: builds a `Scenario` with `goal` plus at least one `Criterion` (`must_happen` or `must_not_happen`); does NOT hand-roll a `should_stop()` function
+- Verify Phase 4: uses `wrap_simulation_agent(model=...)` as an evaluatorq job or `simulate(sim_model=...)` directly with default-on auto-upload — not a custom loop around `agents.responses.create()`
+- Verify wrapper cleanup: puts scorers on `evaluatorq(..., evaluators=[...])`, does not pass `evaluators=` to `wrap_simulation_agent()`, and calls `await job.aclose()` in `finally`
+- Verify Phase 5: dry-runs one persona × one scenario at `max_turns=3`, prints `terminated_by` / `goal_completion_score` / `rules_broken`, asks the user to review before scaling
+- Verify Phase 6: surfaces direct-call spans under `orq.simulation.pipeline`, wrapped spans under `orq.job`, the `SimulationResult` fields, and the Experiment URL printed for uploaded runs
+
+### Scenario 2: Red-teaming intent
+
+- Ask: "Simulate jailbreak attempts against my agent"
+- Verify: redirects to `evaluatorq.red_team()` with attack categories (LLM01–LLM10) rather than rolling a persona loop
+
 ## `manage-skills`
 
 ### Scenario 1: List skills
@@ -209,6 +227,10 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 - `skills/optimize-prompt/SKILL.md`
 - `skills/analyze-trace-failures/SKILL.md`
 - `skills/run-experiment/SKILL.md`
+- `skills/simulate-agent/SKILL.md`
+- `skills/simulate-agent/resources/persona-scenario-template.md`
+- `skills/simulate-agent/resources/simulation-loop.md`
+- `skills/simulate-agent/resources/redteam-mode.md`
 - `skills/manage-skills/SKILL.md`
 - `skills/manage-skills/resources/authoring-guide.md`
 - `skills/manage-skills/resources/governance-guide.md`
