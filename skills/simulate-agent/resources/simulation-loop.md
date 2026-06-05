@@ -8,8 +8,9 @@ The framework provides three entry points. Pick by what you have on hand.
 | `simulate()` | Lists of personas and scenarios (or pre-built datapoints) | Runs through `evaluatorq()`, auto-uploads by default, returns `list[SimulationResult]` |
 | `generate_and_simulate()` | Only an `agent_description` | Synthesizes personas and scenarios first, then runs through `evaluatorq()` |
 
-All three accept the same target shapes for the agent under test:
-`agent_key`, `target_callback`, or a custom `AgentTarget`.
+`simulate()` and `generate_and_simulate()` accept `agent_key`,
+`target_callback`, or a custom `AgentTarget`. `wrap_simulation_agent()`
+accepts only `agent_key` or `target_callback`.
 
 ## Target shapes
 
@@ -59,8 +60,7 @@ job = wrap_simulation_agent(
     name="refund-flow-sim",
     agent_key="agent_xyz",            # or target_callback=callback
     max_turns=6,
-    sim_model="azure/gpt-4o-mini",    # simulator + judge + first-message-gen model
-    evaluators=["goal_achieved", "criteria_met"],   # NB: 'evaluators', not 'evaluator_names'
+    model="openai/gpt-5.4-mini",      # wrapper keeps model= for simulator + judge
 )
 
 # One DataPoint encodes exactly one (persona, scenario) pair.
@@ -76,12 +76,15 @@ data = [
 ]
 
 async def main():
-    await evaluatorq(
-        "agent-simulation",
-        data=data,
-        jobs=[job],
-        evaluators=[],   # add SimulationScorers or a conversation judge here
-    )
+    try:
+        await evaluatorq(
+            "agent-simulation",
+            data=data,
+            jobs=[job],
+            evaluators=[],   # add normal evaluatorq scorers here
+        )
+    finally:
+        await job.aclose()
 
 asyncio.run(main())
 ```
@@ -90,6 +93,10 @@ The `DataPoint.inputs` may also be `{"datapoint": full_datapoint_dict}` when
 you have a pre-built `Datapoint` (persona + scenario + first_message), or
 `{"personas": [one], "scenarios": [one]}` for the array form. The wrapper
 enforces 1:1. For many-to-one batches use `simulate()` directly.
+
+The wrapper does not accept `target=`, `sim_model=`, or `evaluators=`.
+Scoring belongs to the outer `evaluatorq()` call, and `job.aclose()` releases
+the wrapper's long-lived simulation runner and HTTP client.
 
 ## Pattern 2: `simulate()`, direct call
 
@@ -107,7 +114,7 @@ async def main():
         personas=[skeptical_founder, patient_grandparent],
         scenarios=[refund_digital, lost_password],
         max_turns=6,
-        sim_model="azure/gpt-4o-mini",
+        sim_model="openai/gpt-5.4-mini",
         evaluator_names=["goal_achieved", "criteria_met"],   # NB: 'evaluator_names', not 'evaluators'
         parallelism=5,
         upload_results=True,                    # default; set False for local-only runs
@@ -122,7 +129,7 @@ asyncio.run(main())
 The runner generates 4 datapoints (2 personas × 2 scenarios), calls
 `FirstMessageGenerator` for each pair, and runs the conversations in
 parallel. `evaluator_names` defaults to `["goal_achieved", "criteria_met"]`.
-The default simulation model is `azure/gpt-4o-mini` (`DEFAULT_MODEL`).
+The default simulation model is `openai/gpt-5.4-mini` (`DEFAULT_MODEL`).
 `simulate()` routes through `evaluatorq()` and auto-uploads when
 `upload_results=True` and `ORQ_API_KEY` is set.
 
@@ -143,7 +150,7 @@ async def main():
         num_personas=5,
         num_scenarios=5,
         max_turns=6,
-        sim_model="azure/gpt-4o-mini",
+        sim_model="openai/gpt-5.4-mini",
     )
 
 asyncio.run(main())
@@ -156,9 +163,10 @@ num_scenarios` simulations.
 ## CLI: `eq sim`
 
 The evaluatorq CLI exposes the same simulation workflow for shell-driven
-runs. Use `eq sim --help` to discover the available `run`, `generate`,
-`export`, `validate-dataset`, and `runs` commands. Its simulation-model flag
-is `--sim-model`, matching the Python `sim_model=` keyword.
+runs. Install `evaluatorq[simulation,redteam,otel]` (or `evaluatorq[all]`),
+then use `eq sim --help` to discover `simulate`, `run`, `generate`, `export`,
+`validate-dataset`, and `runs`. Its simulation-model flag is `--sim-model`,
+matching the Python `sim_model=` keyword.
 
 ## Reading `SimulationResult`
 
@@ -251,7 +259,7 @@ on it for anything beyond a basic loop.
 
 ## Where outputs land
 
-- **OTel spans** appear automatically in orq.ai under the `orq.simulation.pipeline` span (per-turn LLM calls, judge verdicts, token usage)
+- **OTel spans** appear automatically in orq.ai. Direct calls use an `orq.simulation.pipeline` root; wrapped jobs use `orq.job` with `orq.simulation.run` / `orq.simulation.turn` children
 - **`SimulationResult` objects** are returned in memory. Diff them between runs or export to JSONL
 - **orq.ai Experiment** when the job is passed into `evaluatorq()` via `wrap_simulation_agent()`: URL printed to stdout on completion
 - **JSONL export** via `export_results_to_jsonl()`, what engineers diff between runs

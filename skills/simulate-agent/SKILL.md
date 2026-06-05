@@ -31,7 +31,7 @@ violations. You almost never need to hand-roll the loop.
 - **NEVER** let the simulator run unbounded. `simulate()` defaults to `max_turns=10`. Lower it for cheap exploration, raise it for memory tests.
 - **NEVER** hand-roll the loop around `orq.agents.responses.create()` when `simulate()` or `wrap_simulation_agent()` covers the case. The framework already handles parallelism, judge-based termination, OTel tracing, and result conversion.
 - **NEVER** invent persona scalars from a one-line brief. `patience`, `assertiveness`, `politeness`, `technical_level` are floats `[0-1]`. Pick them deliberately and write them down.
-- **NEVER** discard the conversation log. `SimulationResult.messages` is the primary artifact, OTel spans land in orq.ai automatically, and `wrap_simulation_agent()` returns a job that auto-uploads to orq.ai when you pass it to `evaluatorq(...)` with `ORQ_API_KEY` set.
+- **NEVER** discard the conversation log. `SimulationResult.messages` is the primary artifact, OTel spans land in orq.ai automatically, and `wrap_simulation_agent()` returns a job that auto-uploads to orq.ai when you pass it to `evaluatorq(...)` with `ORQ_API_KEY` set. Close wrapped jobs with `await job.aclose()` after the run.
 - **ALWAYS** review at least one full transcript with the user before scaling to N personas. Simulated users go off the rails in ways only humans notice.
 - **ALWAYS** sanitize untrusted persona/scenario text with `evaluatorq.common.sanitize.delimit()` when the content comes from external input. Wrap the `background` and `context` fields, which feed system-prompt context. The `goal` is shown to the simulator as a goal statement, so prefer sanitizing the inputs that build the system prompt rather than the goal itself.
 
@@ -129,15 +129,30 @@ The built-in JudgeAgent reads `criteria` and decides per turn whether each is sa
 
 Three entry points:
 
+Before generating code, inspect the installed signatures:
+
+```python
+import inspect
+from evaluatorq.simulation import simulate, wrap_simulation_agent
+
+print(inspect.signature(simulate))
+print(inspect.signature(wrap_simulation_agent))
+```
+
+The merged API documented here uses `sim_model=` and `upload_results=` on
+the direct functions. Some published wheels still expose the pre-merge
+`model=` API despite reporting the same package version, so do not infer
+capabilities from `evaluatorq.__version__` alone.
+
 | Entry point | Use when | Auto-upload to orq.ai |
 |---|---|---|
-| `wrap_simulation_agent()` | You want the simulation to flow through `evaluatorq()` with evaluators, datapoints, and experiments | Yes, when you pass the returned job into `evaluatorq(...)` with `ORQ_API_KEY` set |
+| `wrap_simulation_agent()` | You want a simulation job inside an `evaluatorq()` run; accepts `agent_key` or `target_callback` | Yes, when you pass the returned job into `evaluatorq(...)` with `ORQ_API_KEY` set |
 | `simulate()` | You have personas + scenarios already and just want results back | Yes by default when `ORQ_API_KEY` is set; pass `upload_results=False` for a local-only run |
 | `generate_and_simulate()` | You only have an `agent_description` and want personas + scenarios synthesized | Same as `simulate()` |
 
 Use `simulate()` for the direct API and `wrap_simulation_agent()` when composing the simulation as a job inside a larger `evaluatorq()` run. Both paths support auto-upload, OTel, and the results table.
 
-Note the kwarg naming differs across entry points: `simulate()` and `generate_and_simulate()` take `evaluator_names=[...]` and default to `["goal_achieved", "criteria_met"]` when omitted; `wrap_simulation_agent()` takes `evaluators=[...]` and passes whatever you give it straight through (omitting it means no scorers run inside the job).
+The APIs intentionally differ: `simulate()` and `generate_and_simulate()` take `sim_model=` plus `evaluator_names=[...]`, defaulting to `["goal_achieved", "criteria_met"]`. `wrap_simulation_agent()` retains `model=`, accepts only `agent_key` or `target_callback`, and rejects `evaluators=`. Put evaluatorq scorers on the outer `evaluatorq(..., evaluators=[...])` call, then close the returned job with `await job.aclose()`.
 
 Full code in [resources/simulation-loop.md](resources/simulation-loop.md).
 
@@ -162,7 +177,7 @@ Only after the user confirms, scale to the full persona × scenario grid. This r
 
 | Location | What's there | How to access |
 |---|---|---|
-| **OTel spans in orq.ai** | Per-turn LLM calls, judge decisions, token usage, pipeline span | Traces tab in orq.ai, auto-emitted via `init_tracing_if_needed()` |
+| **OTel spans in orq.ai** | Per-turn LLM calls, judge decisions, and token usage. Direct calls use `orq.simulation.pipeline`; wrapped jobs use `orq.job` with `orq.simulation.run` / `orq.simulation.turn` children | Traces tab in orq.ai, auto-emitted via `init_tracing_if_needed()` |
 | **`SimulationResult` in memory** | Full transcript, judge verdicts, turn metrics, criteria results, evaluator scores under `metadata["evaluator_scores"]` | Returned by `simulate()` or accessible via the job output |
 | **orq.ai Experiment** | Direct `simulate()` calls upload by default; wrapped jobs upload when passed into `evaluatorq()` | URL printed to stdout when the run finishes |
 | **JSONL export** | `export_results_to_jsonl(results, path)` for offline review or dataset seeding. `export_datapoints_to_jsonl()` and `load_datapoints_from_jsonl()` round-trip datapoints for reproducibility | Local file |
@@ -173,7 +188,7 @@ Tell the user all four. The OTel span and Experiment URL are what designers and 
 
 - At least one persona × scenario simulated end-to-end with the agreed `max_turns`
 - `SimulationResult.terminated_by` is `judge` (not `max_turns`) for the majority of runs, OR the user has acknowledged that hitting `max_turns` is acceptable for this experiment
-- Spans visible in orq.ai under the simulation pipeline
+- Spans visible in orq.ai under `orq.simulation.pipeline` for direct calls, or under the wrapped job's `orq.job` trace
 - User has reviewed at least one transcript and signed off on quality
 - If routed through `evaluatorq()`: Experiment URL printed and surfaced to the user
 
