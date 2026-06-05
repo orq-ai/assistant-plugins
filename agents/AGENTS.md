@@ -14,6 +14,7 @@ These skills are:
  - compare-agents -> "skills/compare-agents/SKILL.md"
  - generate-synthetic-dataset -> "skills/generate-synthetic-dataset/SKILL.md"
  - invoke-deployment -> "skills/invoke-deployment/SKILL.md"
+ - manage-skills -> "skills/manage-skills/SKILL.md"
  - optimize-prompt -> "skills/optimize-prompt/SKILL.md"
  - run-experiment -> "skills/run-experiment/SKILL.md"
  - setup-observability -> "skills/setup-observability/SKILL.md"
@@ -40,6 +41,8 @@ optimize-prompt: `Analyze and optimize system prompts using a structured prompti
 compare-agents: `Run cross-framework agent comparisons using evaluatorq — compares any combination of agents (orq.ai, LangGraph, CrewAI, OpenAI Agents SDK, Vercel AI SDK) head-to-head on the same dataset with LLM-as-a-judge scoring. Do NOT use when comparing only orq.ai configurations with no external agents (use run-experiment instead).`
 
 setup-observability: `Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment. Use when setting up tracing, adding the AI Router proxy, integrating OpenTelemetry, auditing existing instrumentation, or enriching traces with metadata. Do NOT use when traces already exist and you need to debug failures (use analyze-trace-failures).`
+
+manage-skills: `Manage orq.ai Skills (the platform entity, formerly Snippets — distinct from this repo's code-assistant skills) end-to-end: list, get, create, update, retire (tag as retired), and delete Skills via the /v2/skills API. Covers authoring guidance (display_name, description, tags, project_id, path), how Skills get consumed via {{skill.<display_name>}} (canonical) and {{snippet.<display_name>}} (backward-compat alias) placeholders in prompts and agent instructions, the reference-scan-before-delete workflow, the rename-breaks-references warning, and the +NEVER+ prose anti-pattern. Use when the user wants to create, audit, edit, or retire orq.ai Skills.`
 
 simulate-agent: `Run multi-turn agent simulations using evaluatorq's first-class simulation primitives (simulate(), generate_and_simulate(), wrap_simulation_agent()). Drive an agent under test with a UserSimulatorAgent and built-in JudgeAgent that terminates on goal achievement or rule violations. Use when generating realistic multi-turn data, stress-testing conversational agents, or producing seed transcripts. Do NOT use when real production conversations exist (use analyze-trace-failures) or for adversarial red-teaming sweeps (call evaluatorq.red_team() directly).`
 

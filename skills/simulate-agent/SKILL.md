@@ -27,7 +27,7 @@ violations. You almost never need to hand-roll the loop.
 
 ## Constraints
 
-- **NEVER** use the same model for the user simulator and the agent under test if a downstream LLM-as-judge is reading both. Collusion inflates scores. `simulate()` accepts one `model=` kwarg that drives the simulator, judge, and first-message generator. The agent's own model lives inside `agent_key` or the `target_callback`. To run the simulator on a different model than the default, build a `UserSimulatorAgent(model=...)` and pass it as `user_simulator=`.
+- **NEVER** use the same model for the user simulator and the agent under test if a downstream LLM-as-judge is reading both. Collusion inflates scores. `simulate()` accepts one `sim_model=` kwarg that drives the simulator, judge, and first-message generator. The agent's own model lives inside `agent_key` or the `target_callback`. To customize the user simulator separately, build a `UserSimulatorAgent(model=...)` and pass it as `user_simulator=`.
 - **NEVER** let the simulator run unbounded. `simulate()` defaults to `max_turns=10`. Lower it for cheap exploration, raise it for memory tests.
 - **NEVER** hand-roll the loop around `orq.agents.responses.create()` when `simulate()` or `wrap_simulation_agent()` covers the case. The framework already handles parallelism, judge-based termination, OTel tracing, and result conversion.
 - **NEVER** invent persona scalars from a one-line brief. `patience`, `assertiveness`, `politeness`, `technical_level` are floats `[0-1]`. Pick them deliberately and write them down.
@@ -127,15 +127,15 @@ The built-in JudgeAgent reads `criteria` and decides per turn whether each is sa
 
 ## Phase 4: Pick the entry point
 
-Three entry points, in order of preference:
+Three entry points:
 
 | Entry point | Use when | Auto-upload to orq.ai |
 |---|---|---|
 | `wrap_simulation_agent()` | You want the simulation to flow through `evaluatorq()` with evaluators, datapoints, and experiments | Yes, when you pass the returned job into `evaluatorq(...)` with `ORQ_API_KEY` set |
-| `simulate()` | You have personas + scenarios already and just want results back | Auto-upload tracked in RES-594 (in review). OTel tracing via `init_tracing_if_needed()` already works. Verify auto-upload status before depending on it. |
+| `simulate()` | You have personas + scenarios already and just want results back | Yes by default when `ORQ_API_KEY` is set; pass `upload_results=False` for a local-only run |
 | `generate_and_simulate()` | You only have an `agent_description` and want personas + scenarios synthesized | Same as `simulate()` |
 
-**Default to `wrap_simulation_agent()`** if the goal is to land results in an orq.ai experiment. It returns a job for `evaluatorq()` which inherits auto-upload, OTel, and the results table.
+Use `simulate()` for the direct API and `wrap_simulation_agent()` when composing the simulation as a job inside a larger `evaluatorq()` run. Both paths support auto-upload, OTel, and the results table.
 
 Note the kwarg naming differs across entry points: `simulate()` and `generate_and_simulate()` take `evaluator_names=[...]` and default to `["goal_achieved", "criteria_met"]` when omitted; `wrap_simulation_agent()` takes `evaluators=[...]` and passes whatever you give it straight through (omitting it means no scorers run inside the job).
 
@@ -164,7 +164,7 @@ Only after the user confirms, scale to the full persona × scenario grid. This r
 |---|---|---|
 | **OTel spans in orq.ai** | Per-turn LLM calls, judge decisions, token usage, pipeline span | Traces tab in orq.ai, auto-emitted via `init_tracing_if_needed()` |
 | **`SimulationResult` in memory** | Full transcript, judge verdicts, turn metrics, criteria results, evaluator scores under `metadata["evaluator_scores"]` | Returned by `simulate()` or accessible via the job output |
-| **orq.ai Experiment** | When the job is passed into `evaluatorq()`, results auto-upload as an Experiment run | URL printed to stdout when the run finishes |
+| **orq.ai Experiment** | Direct `simulate()` calls upload by default; wrapped jobs upload when passed into `evaluatorq()` | URL printed to stdout when the run finishes |
 | **JSONL export** | `export_results_to_jsonl(results, path)` for offline review or dataset seeding. `export_datapoints_to_jsonl()` and `load_datapoints_from_jsonl()` round-trip datapoints for reproducibility | Local file |
 
 Tell the user all four. The OTel span and Experiment URL are what designers and PMs will want. The JSONL export is what engineers diff between runs.

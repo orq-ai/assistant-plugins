@@ -5,8 +5,8 @@ The framework provides three entry points. Pick by what you have on hand.
 | Entry point | Input you have | What it does |
 |---|---|---|
 | `wrap_simulation_agent()` | Persona + scenario per DataPoint | Returns a job for `evaluatorq()`. When passed into `evaluatorq(...)`, that call auto-uploads to orq.ai with OTel and the results table |
-| `simulate()` | Lists of personas and scenarios (or pre-built datapoints) | Runs the simulation directly, returns `list[SimulationResult]` |
-| `generate_and_simulate()` | Only an `agent_description` | Synthesizes personas and scenarios first, then simulates |
+| `simulate()` | Lists of personas and scenarios (or pre-built datapoints) | Runs through `evaluatorq()`, auto-uploads by default, returns `list[SimulationResult]` |
+| `generate_and_simulate()` | Only an `agent_description` | Synthesizes personas and scenarios first, then runs through `evaluatorq()` |
 
 All three accept the same target shapes for the agent under test:
 `agent_key`, `target_callback`, or a custom `AgentTarget`.
@@ -59,7 +59,7 @@ job = wrap_simulation_agent(
     name="refund-flow-sim",
     agent_key="agent_xyz",            # or target_callback=callback
     max_turns=6,
-    model="azure/gpt-4o-mini",        # simulator + judge + first-message-gen model
+    sim_model="azure/gpt-4o-mini",    # simulator + judge + first-message-gen model
     evaluators=["goal_achieved", "criteria_met"],   # NB: 'evaluators', not 'evaluator_names'
 )
 
@@ -93,8 +93,8 @@ enforces 1:1. For many-to-one batches use `simulate()` directly.
 
 ## Pattern 2: `simulate()`, direct call
 
-Use when you don't need an evaluatorq Experiment and just want the
-`SimulationResult` list in memory.
+Use when you want the direct API and a `SimulationResult` list in memory.
+Results also upload as an Experiment by default when `ORQ_API_KEY` is set.
 
 ```python
 import asyncio
@@ -107,9 +107,10 @@ async def main():
         personas=[skeptical_founder, patient_grandparent],
         scenarios=[refund_digital, lost_password],
         max_turns=6,
-        model="azure/gpt-4o-mini",
+        sim_model="azure/gpt-4o-mini",
         evaluator_names=["goal_achieved", "criteria_met"],   # NB: 'evaluator_names', not 'evaluators'
         parallelism=5,
+        upload_results=True,                    # default; set False for local-only runs
     )
 
     for r in results:
@@ -121,13 +122,9 @@ asyncio.run(main())
 The runner generates 4 datapoints (2 personas × 2 scenarios), calls
 `FirstMessageGenerator` for each pair, and runs the conversations in
 parallel. `evaluator_names` defaults to `["goal_achieved", "criteria_met"]`.
-The default model is `azure/gpt-4o-mini` (`DEFAULT_MODEL`).
-
-> **Auto-upload status:** `simulate()` is being refactored to route through
-> `evaluatorq()` for auto-upload + OTel + Experiment landing (RES-594, in
-> review). Until it merges, `wrap_simulation_agent()` is the only path with
-> guaranteed auto-upload. Tracing via `init_tracing_if_needed()` already
-> works on the direct path.
+The default simulation model is `azure/gpt-4o-mini` (`DEFAULT_MODEL`).
+`simulate()` routes through `evaluatorq()` and auto-uploads when
+`upload_results=True` and `ORQ_API_KEY` is set.
 
 ## Pattern 3: `generate_and_simulate()`, when you only have an agent description
 
@@ -146,7 +143,7 @@ async def main():
         num_personas=5,
         num_scenarios=5,
         max_turns=6,
-        model="azure/gpt-4o-mini",
+        sim_model="azure/gpt-4o-mini",
     )
 
 asyncio.run(main())
@@ -155,6 +152,13 @@ asyncio.run(main())
 Runs `PersonaGenerator` + `ScenarioGenerator` in parallel from the agent
 description, then proceeds as `simulate()`. Produces `num_personas ×
 num_scenarios` simulations.
+
+## CLI: `eq sim`
+
+The evaluatorq CLI exposes the same simulation workflow for shell-driven
+runs. Use `eq sim --help` to discover the available `run`, `generate`,
+`export`, `validate-dataset`, and `runs` commands. Its simulation-model flag
+is `--sim-model`, matching the Python `sim_model=` keyword.
 
 ## Reading `SimulationResult`
 
