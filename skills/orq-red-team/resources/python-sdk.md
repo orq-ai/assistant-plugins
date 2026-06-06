@@ -9,7 +9,7 @@ The `evaluatorq.redteam` Python API behind the `eq redteam` CLI. Use it when the
 - `red_team()` entry point
 - Target types
 - External framework targets
-- Worked example — red-team a raw model
+- Worked example — red-team an OpenAI model, running on OpenAI
 - Reading the report programmatically
 - Drilling into failures (what to fix)
 - Actionable recommendations (`generate_recommendations=True`)

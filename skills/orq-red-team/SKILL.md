@@ -1,5 +1,5 @@
 ---
-name: red-team
+name: orq-red-team
 description: >
   Invoke the evaluatorq red teaming CLI to run adversarial attacks against deployed
   agents or static datasets. Use when asked to "run a red team", "red team this

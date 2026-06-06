@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-06-06
+
+### Changed
+- Rename the `red-team` skill to `orq-red-team` for clearer invocation and to namespace it under orq. Skill directory `skills/red-team/` → `skills/orq-red-team/`, frontmatter `name`, and all references in `README.md`, `agents/AGENTS.md`, and `tests/skills.md`. (Treated as MINOR rather than MAJOR: `0.2.0` was never released/tagged, so the old name has no external consumers.)
+
 ## [0.2.0] - 2026-06-05
 
 ### Added
