@@ -209,7 +209,7 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 
 ---
 
-## `red-team`
+## `orq-red-team`
 
 ### Scenario 1: Run dynamic red team
 
@@ -264,8 +264,8 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 - `skills/optimize-prompt/SKILL.md`
 - `skills/analyze-trace-failures/SKILL.md`
 - `skills/run-experiment/SKILL.md`
-- `skills/red-team/SKILL.md`
-- `skills/red-team/resources/python-sdk.md`
+- `skills/orq-red-team/SKILL.md`
+- `skills/orq-red-team/resources/python-sdk.md`
 - `skills/simulate-agent/SKILL.md`
 - `skills/simulate-agent/resources/persona-scenario-template.md`
 - `skills/simulate-agent/resources/simulation-loop.md`
