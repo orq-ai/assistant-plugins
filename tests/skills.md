@@ -209,6 +209,43 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 
 ---
 
+## `red-team`
+
+### Scenario 1: Run dynamic red team
+
+- Ask: "Red team my `customer-support` deployment"
+- Verify: confirms the deployment key with the user before running
+- Verify: checks `ORQ_API_KEY` is set and `eq` CLI is reachable before invoking
+- Verify: invokes `eq redteam run --target agent:<key> --mode dynamic`
+- Verify: prints summary to stdout on completion (no separate `report summarize` step needed)
+
+### Scenario 2: Scoped run with category filter
+
+- Ask: "Run a red team on `my-agent` focused on prompt injection only"
+- Verify: maps "prompt injection" to `LLM01` (NOT `ASI01` — ASI01 is Agent Goal Hijacking) and passes `--category LLM01`
+- Verify: does NOT run all categories unless explicitly asked
+
+### Scenario 3: Read an existing report
+
+- Ask: "Summarize the red team results from ./output/my-run/report.json"
+- Verify: reads the JSON directly and explains `resistance_rate`, `vulnerabilities_found`, `total_results`, and `categories_tested`
+- Verify: optionally invokes `eq redteam ui ./output/my-run/report.json` for interactive viewing
+- Verify: notes which categories were NOT tested
+
+### Scenario 4: Missing env var
+
+- Simulate `ORQ_API_KEY` unset
+- Verify: surfaces the missing env var before attempting the run
+- Verify: does NOT proceed with the CLI invocation
+
+### Scenario 5: Red-team a raw model (SDK path)
+
+- Ask: "Red team the `gpt-5-mini` model directly for prompt injection"
+- Verify: recognizes the CLI cannot target a raw model (`openai:`/`llm:` strings are rejected) and reads `resources/python-sdk.md`
+- Verify: uses `red_team(OpenAIModelTarget("gpt-5-mini", system_prompt=...), categories=["LLM01"])` rather than a CLI `--target`
+
+---
+
 ## Critical Files
 
 - `skills/setup-observability/SKILL.md`
@@ -227,6 +264,8 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 - `skills/optimize-prompt/SKILL.md`
 - `skills/analyze-trace-failures/SKILL.md`
 - `skills/run-experiment/SKILL.md`
+- `skills/red-team/SKILL.md`
+- `skills/red-team/resources/python-sdk.md`
 - `skills/simulate-agent/SKILL.md`
 - `skills/simulate-agent/resources/persona-scenario-template.md`
 - `skills/simulate-agent/resources/simulation-loop.md`
