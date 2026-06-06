@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `red-team`: fix install instructions to `pip install 'evaluatorq[redteam]'` (and note the `[ui]` extra for the dashboard).
 
 ### Changed
+- `red-team`: harden the invocation preflight — `ORQ_API_KEY` presence is now a hard-fail check (`exit 1` if missing) before any `eq redteam run`, not just an echo, since every `agent:`/`deployment:` target requires it. Constraint and worked example updated to match.
 - `red-team`: trim the flag table to first-run essentials and defer the full set to `eq redteam run --help`; document the `deployment:<key>` target form, the `eq redteam validate-dataset` pre-flight, and the `--system-prompt` flag.
 - `red-team`: add a Constraints note (and `--no-cleanup-memory` flag row) that dynamic runs against a **memory-backed** agent write entities into its memory store (cleaned up unless `--no-cleanup-memory`); no-op for memory-less agents, raw models, and static mode.
 

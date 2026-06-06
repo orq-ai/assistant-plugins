@@ -21,8 +21,7 @@ This skill is a **reference guide and invocation helper — not a wrapper**. You
 - **NEVER** reimplement red teaming logic — use the `eq redteam` CLI.
 - **NEVER** run against a deployment the user does not own or is not explicitly authorized to test. Confirm authorization before the first run.
 - **NEVER** run without confirming the target key with the user first.
-- **NEVER** skip the env var check — a missing or misconfigured LLM credential will fail mid-run.
-- **ALWAYS** check that `eq` is installed before running (run `eq --help`).
+- **ALWAYS** run the preflight when the skill is invoked, before any `eq redteam run`: confirm `eq` is installed AND `ORQ_API_KEY` is present (required for every `agent:`/`deployment:` target). Halt if either is missing — do not attempt the run.
 - **NEVER** interpret a passing run (low ASR) as "the agent is safe" — coverage depends on categories tested.
 - **BE AWARE** dynamic runs against an agent **that has a memory store** write entities into it (e.g. ASI06 memory-poisoning). These are cleaned up after the run unless `--no-cleanup-memory` is passed. No-op for memory-less agents, raw models, and static mode — but on a memory-backed production agent this mutates state, so confirm before running.
 
@@ -61,15 +60,20 @@ If neither key is set the run fails with `CredentialError`. Separately, **`ORQ_A
 
 > Model-string form follows the route: bare `gpt-5-mini` for direct OpenAI, `openai/gpt-5-mini` for the orq gateway. Since hitting an orq agent already requires `ORQ_API_KEY`, the gateway form (`openai/gpt-5-mini`) is the common case.
 
-Check before running:
+Check before running — **always run this preflight when the skill is invoked**, before any `eq redteam run`:
 ```bash
-# Verify the CLI is installed and reachable
-eq --help || { echo "eq CLI not found — install 'evaluatorq[redteam]' or check PATH"; exit 1; }
+# 1. CLI installed and reachable
+eq --help >/dev/null 2>&1 || { echo "eq CLI not found — install 'evaluatorq[redteam]' or check PATH"; exit 1; }
 
-# Verify required env vars
-echo "ORQ_API_KEY set: $([ -n "$ORQ_API_KEY" ] && echo yes || echo NO — required for target agent)"
-echo "OPENAI_API_KEY set: $([ -n "$OPENAI_API_KEY" ] && echo yes || echo not set — orq gateway will route attack LLM if ORQ_API_KEY is set)"
+# 2. ORQ_API_KEY is REQUIRED for any agent:/deployment: target — hard-fail if missing
+[ -n "$ORQ_API_KEY" ] || { echo "ORQ_API_KEY not set — required to invoke an orq agent/deployment target. Export it before running."; exit 1; }
+
+# 3. Attack/evaluator LLM credential — at least one must be set
+[ -n "$OPENAI_API_KEY" ] || [ -n "$ORQ_API_KEY" ] || { echo "No LLM credential — set OPENAI_API_KEY or ORQ_API_KEY for the attack/evaluator model."; exit 1; }
+echo "OPENAI_API_KEY set: $([ -n "$OPENAI_API_KEY" ] && echo yes || echo no — attack LLM will route via orq gateway)"
 ```
+
+(SDK-only raw-model runs that target no orq agent can skip step 2 — `ORQ_API_KEY` is then only needed if the attack LLM routes through the gateway.)
 
 ## Core command: `eq redteam run`
 
@@ -264,9 +268,9 @@ Two frameworks. `framework` is `OWASP-ASI` or `OWASP-LLM` in the report. Note `A
 **Goal:** Red team the `customer-support-v2` deployment against goal hijacking (ASI01) and tool misuse (ASI02), routing the attack/evaluator LLM through the orq gateway.
 
 ```bash
-# 1. Verify the CLI and env vars
-eq --help || { echo "eq not found"; exit 1; }
-echo "ORQ_API_KEY set: $([ -n "$ORQ_API_KEY" ] && echo yes || echo NO)"
+# 1. Preflight — CLI present and ORQ_API_KEY set (hard-fail if missing)
+eq --help >/dev/null 2>&1 || { echo "eq not found"; exit 1; }
+[ -n "$ORQ_API_KEY" ] || { echo "ORQ_API_KEY not set — required for the agent target"; exit 1; }
 
 # 2. Run dynamic red team (2 categories, 20 attack datapoints max, explicit model)
 eq redteam run \
