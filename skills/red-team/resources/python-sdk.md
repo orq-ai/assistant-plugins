@@ -8,6 +8,7 @@ The `evaluatorq.redteam` Python API behind the `eq redteam` CLI. Use it when the
 - The raw-model boundary
 - `red_team()` entry point
 - Target types
+- External framework targets
 - Worked example — red-team a raw model
 - Reading the report programmatically
 - Category + framework helpers
@@ -18,9 +19,9 @@ The `evaluatorq.redteam` Python API behind the `eq redteam` CLI. Use it when the
 | Use the CLI | Use the SDK |
 |-------------|-------------|
 | Red-team an orq `agent:`/`deployment:` target | Red-team a **raw model** (e.g. `gpt-5-mini` directly, no deployment) |
-| One-off scans, CI invocations | A **custom `AgentTarget`** (your own transport, a non-orq agent) |
-| Interactive report viewing (`eq redteam ui`) | Embedding red teaming **inside a Python eval pipeline** |
-| Standard OWASP coverage | Programmatic report handling (gating CI on `resistance_rate`, custom export) |
+| One-off scans, CI invocations | Red-team an **external-framework agent** (LangGraph, OpenAI Agents SDK, LangChain, any callable) |
+| Interactive report viewing (`eq redteam ui`) | A **custom `AgentTarget`**, or embedding red teaming **inside a Python eval pipeline** |
+| Standard OWASP coverage | Programmatic report handling (gating CI on `resistance_rate`, `generate_recommendations`, custom export) |
 
 For everything the CLI already does, stay on the CLI — it is less code and less to maintain.
 
@@ -52,6 +53,7 @@ report = await red_team(
     save="final",                 # SaveMode: "none" | "final" | "detail"
     name=None,
     attacker_instructions=None,   # domain context to steer attack generation
+    generate_recommendations=False,  # LLM-generated remediation; fills report.focus_area_recommendations (SDK-only, off by default)
     verbosity=0,
 )
 ```
@@ -68,6 +70,30 @@ from evaluatorq.contracts import AgentTarget        # base class for custom targ
 - **orq agent / deployment** — pass the string `"agent:<key>"` or `"deployment:<key>"` straight to `red_team()`; no wrapper class needed, the backend is selected for you.
 - **`OpenAIModelTarget(model, system_prompt=None, *, client=None, max_tokens=None, timeout_ms=None)`** — wraps a bare model. Stateless. If `client` is omitted, one is created from env (same auto-detection as the CLI: `OPENAI_API_KEY` direct, else `ORQ_API_KEY` gateway).
 - **`AgentTarget`** — subclass it and implement `async def respond(self, messages) -> AgentResponse` to red-team any system you can call from Python.
+
+## External framework targets
+
+To red-team an agent built on an external framework, wrap it in the matching target from `evaluatorq.integrations` and pass it to `red_team()` like any other target. Each wrapper needs its own install extra.
+
+| Framework | Wrapper | Install | Import |
+|-----------|---------|---------|--------|
+| LangGraph (compiled `MessagesState` graph) | `LangGraphTarget(graph, config=...)` | `pip install 'evaluatorq[langgraph]'` | `from evaluatorq.integrations.langgraph_integration import LangGraphTarget` |
+| OpenAI Agents SDK (`Agent`) | `OpenAIAgentTarget(agent, run_kwargs=...)` | `pip install 'evaluatorq[openai-agents]'` | `from evaluatorq.integrations.openai_agents_integration import OpenAIAgentTarget` |
+| Any callable (escape hatch) | `CallableTarget(fn, reset_fn=...)` | bundled with `[redteam]` | `from evaluatorq.integrations.callable_integration import CallableTarget` |
+
+- **LangChain** — agents built with `create_react_agent`/`StateGraph` run on LangGraph → use `LangGraphTarget`. Legacy chains / `AgentExecutor` → wrap with `CallableTarget`. (`pip install 'evaluatorq[langchain]'`)
+- A **Vercel AI SDK** wrapper (`VercelAISdkTarget`) also exists under `evaluatorq.integrations.vercel_ai_sdk_integration`.
+- `CallableTarget` is the simplest path for anything without a dedicated wrapper — wrap any `async def(prompt: str) -> str` (sync functions are auto-run in a thread). Use `reset_fn` to clear shared state between attacks.
+
+```python
+from evaluatorq.integrations.callable_integration import CallableTarget
+from evaluatorq.redteam import red_team
+
+async def my_agent(prompt: str) -> str:
+    return (await some_framework.run(prompt)).text
+
+report = await red_team(CallableTarget(my_agent), categories=["LLM01"])
+```
 
 ## Worked example — red-team a raw model
 
@@ -117,6 +143,7 @@ asyncio.run(main())
 | `report.summary.vulnerability_rate` | Attack Success Rate (ASR); `1.0 - resistance_rate` |
 | `report.summary.vulnerabilities_found` | Count of attacks the agent failed |
 | `report.summary.by_technique` | Per-technique breakdown (`TechniqueSummary`) |
+| `report.focus_area_recommendations` | LLM-generated remediation per top risk area — **only populated when `generate_recommendations=True`** (else empty). The "what do I fix" companion to the raw scores. |
 
 Gate CI on robustness:
 

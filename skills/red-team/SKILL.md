@@ -24,6 +24,7 @@ This skill is a **reference guide and invocation helper — not a wrapper**. You
 - **NEVER** skip the env var check — a missing or misconfigured LLM credential will fail mid-run.
 - **ALWAYS** check that `eq` is installed before running (run `eq --help`).
 - **NEVER** interpret a passing run (low ASR) as "the agent is safe" — coverage depends on categories tested.
+- **BE AWARE** dynamic runs against an agent **that has a memory store** write entities into it (e.g. ASI06 memory-poisoning). These are cleaned up after the run unless `--no-cleanup-memory` is passed. No-op for memory-less agents, raw models, and static mode — but on a memory-backed production agent this mutates state, so confirm before running.
 
 ## Library location
 
@@ -113,6 +114,7 @@ These are the flags you need for a first run. For the complete set (`--max-stati
 | `--save-report` | none | Explicit path to write the report JSON |
 | `--output-dir` | none | Directory for saved JSON stage files (**required** with `--save detail`) |
 | `--dataset` | HuggingFace `orq/redteam-vulnerabilities` | Static/hybrid mode: local path, `hf:org/repo`, or `hf:org/repo/file.json` |
+| `--no-cleanup-memory` | false | Keep memory entities written during a dynamic run instead of cleaning them up (debugging). Only relevant for memory-backed agents — see Constraints |
 | `--yes` / `-y` | false | Skip confirmation prompt |
 
 ### Category examples
@@ -266,9 +268,12 @@ vulnerabilities_found: 7
 
 ## Python SDK (when the CLI can't)
 
-The CLI covers the common case (red-teaming an orq `agent:`/`deployment:` target). For things it cannot do — **red-teaming a raw model**, custom `AgentTarget` subclasses, or embedding red teaming in a Python eval pipeline — use the `evaluatorq.redteam` Python API.
+The CLI covers the common case (red-teaming an orq `agent:`/`deployment:` target). For things it cannot do, use the `evaluatorq.redteam` Python API:
 
-The CLI deliberately **rejects** `openai:`/`llm:` target strings and points you to the SDK. To test a bare model, you must use `OpenAIModelTarget`.
+- **Red-teaming a raw model** — `OpenAIModelTarget`. The CLI deliberately **rejects** `openai:`/`llm:` target strings and points you here.
+- **Red-teaming an agent built on an external framework** — LangGraph (`LangGraphTarget`), OpenAI Agents SDK (`OpenAIAgentTarget`), or **any callable** via `CallableTarget` (wrap an `async def(prompt) -> str` — far simpler than subclassing `AgentTarget`). Each needs its own install extra. See [Python SDK](resources/python-sdk.md#external-framework-targets).
+- **Actionable remediation** — `red_team(..., generate_recommendations=True)` adds LLM-generated focus-area fixes to the report (`report.focus_area_recommendations`). SDK-only; not exposed on the CLI.
+- Custom `AgentTarget` subclasses, or embedding red teaming in a Python eval pipeline.
 
 **See [resources/python-sdk.md](resources/python-sdk.md)** for the `red_team()` signature, target types, a raw-model worked example, and programmatic report handling.
 

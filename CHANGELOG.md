@@ -8,7 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - 2026-06-05
 
 ### Added
-- `red-team`: `resources/python-sdk.md` progressive-disclosure reference for the `evaluatorq.redteam` Python API — covers `red_team()`, `OpenAIModelTarget` / `ORQAgentTarget` / custom `AgentTarget`, a raw-model worked example (the case the CLI cannot do), and programmatic `RedTeamReport` handling.
+- `red-team`: `resources/python-sdk.md` progressive-disclosure reference for the `evaluatorq.redteam` Python API — covers `red_team()`, `OpenAIModelTarget` / the `agent:<key>` string target / custom `AgentTarget`, a raw-model worked example (the case the CLI cannot do), and programmatic `RedTeamReport` handling.
+- `red-team`: document external-framework targets in `resources/python-sdk.md` — `LangGraphTarget` (`[langgraph]`), `OpenAIAgentTarget` (`[openai-agents]`), and `CallableTarget` (bundled, the escape hatch for any `async def(prompt) -> str`), plus LangChain/Vercel AI SDK pointers. Covers red-teaming a non-orq agent, which the CLI cannot do.
+- `red-team`: document `generate_recommendations=True` and `report.focus_area_recommendations` (SDK-only LLM remediation) in both `SKILL.md` and `resources/python-sdk.md`.
 - `simulate-agent` skill: run multi-turn agent simulations using evaluatorq's first-class primitives (`simulate()`, `generate_and_simulate()`, `wrap_simulation_agent()`). Covers the real `Persona` schema (`patience` / `assertiveness` / `politeness` / `technical_level` scalars, `communication_style`, `background`, optional `emotional_arc` and `cultural_context`), `Scenario` schema (goal, criteria-driven judge termination, starting emotion, conversation strategy, edge-case flag), three target shapes (`agent_key`, `target_callback` via `from_orq_deployment` / `from_chat_completions`, custom `AgentTarget`), and where outputs land (OTel spans auto-emitted to orq.ai, `SimulationResult` in memory, auto-uploaded Experiments via `evaluatorq()` routing, JSONL export). Resources: `persona-scenario-template.md`, `simulation-loop.md`, `redteam-mode.md`. RES-732.
 
 ### Fixed
@@ -20,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `red-team`: trim the flag table to first-run essentials and defer the full set to `eq redteam run --help`; document the `deployment:<key>` target form, the `eq redteam validate-dataset` pre-flight, and the `--system-prompt` flag.
+- `red-team`: add a Constraints note (and `--no-cleanup-memory` flag row) that dynamic runs against a **memory-backed** agent write entities into its memory store (cleaned up unless `--no-cleanup-memory`); no-op for memory-less agents, raw models, and static mode.
 
 ## [0.1.0] - 2026-06-04
 
