@@ -21,7 +21,7 @@ This skill is a **reference guide and invocation helper — not a wrapper**. You
 - **NEVER** reimplement red teaming logic — use the `eq redteam` CLI.
 - **NEVER** run against a deployment the user does not own or is not explicitly authorized to test. Confirm authorization before the first run.
 - **NEVER** run without confirming the target key with the user first.
-- **ALWAYS** run the preflight when the skill is invoked, before any `eq redteam run`: confirm `eq` is installed AND `ORQ_API_KEY` is present (required for every `agent:`/`deployment:` target). Halt if either is missing — do not attempt the run.
+- **ALWAYS** run the preflight when the skill is invoked, before any `eq redteam run`: confirm `eq` is installed and at least one LLM credential is set, and check `ORQ_API_KEY`. `ORQ_API_KEY` is not always required, but **is** required to target an orq `agent:`/`deployment:`, to route the LLM via the gateway, or to upload results — if the target is an orq agent and it is missing, halt and ask the user to set it.
 - **NEVER** interpret a passing run (low ASR) as "the agent is safe" — coverage depends on categories tested.
 - **BE AWARE** dynamic runs against an agent **that has a memory store** write entities into it (e.g. ASI06 memory-poisoning). These are cleaned up after the run unless `--no-cleanup-memory` is passed. No-op for memory-less agents, raw models, and static mode — but on a memory-backed production agent this mutates state, so confirm before running.
 
@@ -56,24 +56,33 @@ The attack and evaluator LLMs need credentials. Routing is decided purely by **w
 1. **OpenAI directly** — if `OPENAI_API_KEY` is set (optionally `OPENAI_BASE_URL`), all attack/evaluator model strings go straight to OpenAI. Use **bare** model names here (e.g. `gpt-5-mini`). `OPENAI_API_KEY` **wins if both keys are set**.
 2. **orq gateway** — else if `ORQ_API_KEY` is set (optionally `ORQ_BASE_URL`), model strings route through the orq LLM gateway (`{ORQ_BASE_URL}/v3/router`, default `https://my.orq.ai`). Use the **provider-prefixed** form here (e.g. `openai/gpt-5-mini`).
 
-If neither key is set the run fails with `CredentialError`. Separately, **`ORQ_API_KEY` is always required to invoke an `agent:`/`deployment:` target**, regardless of which key routes the attack LLM. There is no Azure credential path — the CLI does not support Azure OpenAI directly.
+If neither key is set the run fails with `CredentialError`. There is no Azure credential path — the CLI does not support Azure OpenAI directly.
 
-> Model-string form follows the route: bare `gpt-5-mini` for direct OpenAI, `openai/gpt-5-mini` for the orq gateway. Since hitting an orq agent already requires `ORQ_API_KEY`, the gateway form (`openai/gpt-5-mini`) is the common case.
+**`ORQ_API_KEY` is not strictly required** — you can run with `OPENAI_API_KEY` alone (e.g. red-teaming a raw model). But without `ORQ_API_KEY`, these are **not available**:
+
+- **Testing an orq `agent:`/`deployment:` target** — invoking the target needs `ORQ_API_KEY`. Required for any orq-agent run.
+- **Routing the attack/evaluator LLM through the orq gateway** — without it, the attack LLM only works via `OPENAI_API_KEY` (direct OpenAI, bare model names).
+- **Uploading results to orq** — no Experiment is created and `report.experiment_url` stays empty; results are local-only.
+
+> Model-string form follows the route: bare `gpt-5-mini` for direct OpenAI, `openai/gpt-5-mini` for the orq gateway. When targeting an orq agent (which needs `ORQ_API_KEY` anyway), the gateway form is the common case.
 
 Check before running — **always run this preflight when the skill is invoked**, before any `eq redteam run`:
 ```bash
 # 1. CLI installed and reachable
 eq --help >/dev/null 2>&1 || { echo "eq CLI not found — install 'evaluatorq[redteam]' or check PATH"; exit 1; }
 
-# 2. ORQ_API_KEY is REQUIRED for any agent:/deployment: target — hard-fail if missing
-[ -n "$ORQ_API_KEY" ] || { echo "ORQ_API_KEY not set — required to invoke an orq agent/deployment target. Export it before running."; exit 1; }
-
-# 3. Attack/evaluator LLM credential — at least one must be set
+# 2. At least one LLM credential must be set (else CredentialError mid-run)
 [ -n "$OPENAI_API_KEY" ] || [ -n "$ORQ_API_KEY" ] || { echo "No LLM credential — set OPENAI_API_KEY or ORQ_API_KEY for the attack/evaluator model."; exit 1; }
-echo "OPENAI_API_KEY set: $([ -n "$OPENAI_API_KEY" ] && echo yes || echo no — attack LLM will route via orq gateway)"
+
+# 3. ORQ_API_KEY — required ONLY for orq agent/deployment targets and orq upload. Warn (don't block) if absent.
+if [ -z "$ORQ_API_KEY" ]; then
+  echo "WARNING: ORQ_API_KEY not set — orq agent/deployment targets, gateway routing, and result upload are unavailable. Raw-model runs with OPENAI_API_KEY still work."
+fi
+echo "ORQ_API_KEY set: $([ -n "$ORQ_API_KEY" ] && echo yes || echo no)"
+echo "OPENAI_API_KEY set: $([ -n "$OPENAI_API_KEY" ] && echo yes || echo no)"
 ```
 
-(SDK-only raw-model runs that target no orq agent can skip step 2 — `ORQ_API_KEY` is then only needed if the attack LLM routes through the gateway.)
+If the user's target is `agent:<key>` or `deployment:<key>` and `ORQ_API_KEY` is absent, **stop and ask them to set it** — that run cannot proceed.
 
 ## Core command: `eq redteam run`
 
