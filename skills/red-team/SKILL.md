@@ -42,28 +42,32 @@ eq redteam <command> [options]
 
 If `eq` is not on PATH, install it with:
 ```bash
-pip install evaluatorq
+pip install 'evaluatorq[redteam]'
 # or, inside the orqkit workspace:
 uv run --package evaluatorq eq redteam --help
 ```
 
+The `[redteam]` extra is required (pulls in `openai`, `typer`, `huggingface-hub`). The interactive dashboard (`eq redteam ui`) additionally needs the `[ui]` extra: `pip install 'evaluatorq[ui]'`.
+
 ## Required environment variables
 
-Credentials are auto-detected in this order:
+The attack and evaluator LLMs need credentials. Routing is decided purely by **which env var is set** — the model string itself is never inspected for routing:
 
-1. **OpenAI directly** — set `OPENAI_API_KEY` (optionally `OPENAI_BASE_URL`). The default model `gpt-5-mini` routes to OpenAI.
-2. **orq gateway** — set `ORQ_API_KEY` (optionally `ORQ_BASE_URL`). All model strings route through the orq LLM gateway. `ORQ_API_KEY` is always required to invoke the target orq agent.
+1. **OpenAI directly** — if `OPENAI_API_KEY` is set (optionally `OPENAI_BASE_URL`), all attack/evaluator model strings go straight to OpenAI. Use **bare** model names here (e.g. `gpt-5-mini`). `OPENAI_API_KEY` **wins if both keys are set**.
+2. **orq gateway** — else if `ORQ_API_KEY` is set (optionally `ORQ_BASE_URL`), model strings route through the orq LLM gateway (`{ORQ_BASE_URL}/v3/router`, default `https://my.orq.ai`). Use the **provider-prefixed** form here (e.g. `openai/gpt-5-mini`).
 
-There is no Azure credential path — the CLI does not support Azure OpenAI directly.
+If neither key is set the run fails with `CredentialError`. Separately, **`ORQ_API_KEY` is always required to invoke an `agent:`/`deployment:` target**, regardless of which key routes the attack LLM. There is no Azure credential path — the CLI does not support Azure OpenAI directly.
+
+> Model-string form follows the route: bare `gpt-5-mini` for direct OpenAI, `openai/gpt-5-mini` for the orq gateway. Since hitting an orq agent already requires `ORQ_API_KEY`, the gateway form (`openai/gpt-5-mini`) is the common case.
 
 Check before running:
 ```bash
 # Verify the CLI is installed and reachable
-eq --help || { echo "eq CLI not found — install evaluatorq or check PATH"; exit 1; }
+eq --help || { echo "eq CLI not found — install 'evaluatorq[redteam]' or check PATH"; exit 1; }
 
 # Verify required env vars
 echo "ORQ_API_KEY set: $([ -n "$ORQ_API_KEY" ] && echo yes || echo NO — required for target agent)"
-echo "OPENAI_API_KEY set: $([ -n "$OPENAI_API_KEY" ] && echo yes || echo not set — orq gateway will be used if ORQ_API_KEY is set)"
+echo "OPENAI_API_KEY set: $([ -n "$OPENAI_API_KEY" ] && echo yes || echo not set — orq gateway will route attack LLM if ORQ_API_KEY is set)"
 ```
 
 ## Core command: `eq redteam run`
@@ -77,13 +81,8 @@ eq redteam run \
   [--category ASI01] \
   [--category ASI02] \
   [--max-dynamic-datapoints 50] \
-  [--max-per-category 10] \
-  [--generated-strategy-count 2] \
-  [--attack-model gpt-4o] \
-  [--evaluator-model gpt-4o] \
-  [--parallelism 10] \
-  [--output-dir ./output/my-run] \
-  [--save detail] \
+  [--attack-model openai/gpt-5-mini] \
+  [--evaluator-model openai/gpt-5-mini] \
   [--save-report ./output/my-run/report.json] \
   [--yes]
 ```
@@ -98,37 +97,32 @@ eq redteam run \
 
 ### Key flags
 
+These are the flags you need for a first run. For the complete set (`--max-static-datapoints`, `--max-per-category`, `--generated-strategy-count`, `--no-generate-strategies`, `--parallelism`, `--export-md`/`--export-html`, `--attacker-instructions`, `--name`, `--max-turns`, `--verbose`/`--quiet`, …) run `eq redteam run --help`.
+
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--target` / `-t` | required | `agent:<deployment-key>`. Repeatable for multi-target runs |
+| `--target` / `-t` | required | `agent:<key>` or `deployment:<key>`. Repeatable for multi-target runs. (Raw models are SDK-only — see [Python SDK](#python-sdk-when-the-cli-cant)) |
 | `--mode` | `dynamic` | Execution mode: `dynamic`, `static`, or `hybrid` |
 | `--category` / `-c` | all | OWASP category to test (e.g. `ASI01`). **Repeatable** — pass once per category |
 | `--vulnerability` / `-V` | all | Vulnerability ID (e.g. `goal_hijacking`) or OWASP code. Repeatable. Takes precedence over `--category` |
-| `--max-dynamic-datapoints` | none | Cap dynamic (generated) attack datapoints |
-| `--max-static-datapoints` | none | Cap static (dataset) datapoints |
-| `--max-per-category` | none | Cap attack strategies per category |
-| `--generated-strategy-count` | 2 | LLM-generated strategies per category |
-| `--attack-model` | `gpt-5-mini` | Model generating adversarial prompts |
+| `--max-dynamic-datapoints` | none | Cap dynamic (generated) attack datapoints — the main cost lever for a `dynamic` run |
+| `--attack-model` | `gpt-5-mini` | Model generating adversarial prompts (prefix per route: `openai/gpt-5-mini` via gateway) |
 | `--evaluator-model` | `gpt-5-mini` | Model judging whether attacks succeeded |
-| `--attacker-instructions` | none | Domain context to steer attack generation (e.g. "this agent handles financial transactions") |
-| `--parallelism` | 10 | Concurrent attack jobs |
-| `--output-dir` | none | Directory for saved JSON stage files (required with `--save detail`) |
-| `--save` | `final` | `none` (no files), `final` (summary JSON), or `detail` (all stage artifacts) |
+| `--system-prompt` | none | System prompt for the target model/agent |
+| `--save` | `final` | `none` (no files, run not listed by `eq redteam runs`), `final` (summary JSON), or `detail` (all stage artifacts) |
 | `--save-report` | none | Explicit path to write the report JSON |
-| `--export-md` | none | Directory path to write a Markdown report (filename is auto-generated) |
-| `--export-html` | none | Directory path to write an HTML report |
+| `--output-dir` | none | Directory for saved JSON stage files (**required** with `--save detail`) |
 | `--dataset` | HuggingFace `orq/redteam-vulnerabilities` | Static/hybrid mode: local path, `hf:org/repo`, or `hf:org/repo/file.json` |
-| `--name` / `-n` | `red-team` | Experiment name |
-| `--max-turns` | 5 | Max conversation turns for multi-turn attacks |
 | `--yes` / `-y` | false | Skip confirmation prompt |
-| `--verbose` / `-v` | 0 | Increase verbosity (repeatable: `-v` info, `-vv` debug) |
-| `--quiet` / `-q` | false | Suppress progress bars |
 
 ### Category examples
 
 ```bash
-# Single category — prompt injection (OWASP ASI01)
+# Single category — Agent Goal Hijacking (OWASP ASI01)
 eq redteam run --target agent:my-agent --category ASI01
+
+# Prompt injection is LLM01 (not ASI01)
+eq redteam run --target agent:my-agent --category LLM01
 
 # Multiple categories — pass --category once per value
 eq redteam run --target agent:my-agent --category ASI01 --category ASI02
@@ -136,11 +130,17 @@ eq redteam run --target agent:my-agent --category ASI01 --category ASI02
 # By vulnerability ID
 eq redteam run --target agent:my-agent --vulnerability goal_hijacking
 
+# Validate a custom dataset BEFORE running static mode against it
+eq redteam validate-dataset ./my-dataset.json
+
 # Static mode with local dataset
 eq redteam run --target agent:my-agent --mode static --dataset ./my-dataset.json
 
 # Hybrid mode — both dynamic and static legs
 eq redteam run --target agent:my-agent --mode hybrid --category ASI01 --max-dynamic-datapoints 30 --max-static-datapoints 50
+
+# Target a deployment instead of an agent
+eq redteam run --target deployment:my-deployment --category ASI01
 ```
 
 ## Output and reports
@@ -196,14 +196,24 @@ The `summary` sub-object contains aggregate stats:
 
 ## OWASP category reference
 
-| Framework | Categories | Description |
-|-----------|------------|-------------|
-| OWASP Agentic 2026 | `ASI01`–`ASI10` | Agent-specific vulnerabilities (prompt injection, excessive agency, etc.) |
-| OWASP LLM 2025 | `LLM01`–`LLM09` | LLM vulnerabilities (hallucination, insecure output, etc.) |
+Two frameworks. `framework` is `OWASP-ASI` or `OWASP-LLM` in the report. Note `ASI01` is goal hijacking, **not** prompt injection — prompt injection is `LLM01`.
+
+| Code | Name (OWASP-ASI) | | Code | Name (OWASP-LLM) |
+|------|------------------|-|------|------------------|
+| `ASI01` | Agent Goal Hijacking | | `LLM01` | Prompt Injection |
+| `ASI02` | Tool Misuse & Exploitation | | `LLM02` | Sensitive Information Disclosure |
+| `ASI03` | Identity & Privilege Abuse | | `LLM03` | Supply Chain |
+| `ASI04` | Supply Chain Vulnerabilities | | `LLM04` | Data and Model Poisoning |
+| `ASI05` | Unexpected Code Execution | | `LLM05` | Improper Output Handling |
+| `ASI06` | Memory & Context Poisoning | | `LLM06` | Excessive Agency |
+| `ASI07` | Insecure Inter-Agent Communication | | `LLM07` | System Prompt Leakage |
+| `ASI08` | Cascading Failures | | `LLM08` | Vector and Embedding Weaknesses |
+| `ASI09` | Human-Agent Trust Exploitation | | `LLM09` | Misinformation |
+| `ASI10` | Rogue Agents | | | _(LLM10 Unbounded Consumption is excluded — not prompt-testable)_ |
 
 ## Worked example
 
-**Goal:** Red team the `customer-support-v2` deployment against prompt injection and tool misuse, using OpenAI `gpt-4o` for attacks and evaluation.
+**Goal:** Red team the `customer-support-v2` deployment against goal hijacking (ASI01) and tool misuse (ASI02), routing the attack/evaluator LLM through the orq gateway.
 
 ```bash
 # 1. Verify the CLI and env vars
@@ -217,8 +227,8 @@ eq redteam run \
   --category ASI01 \
   --category ASI02 \
   --max-dynamic-datapoints 20 \
-  --attack-model gpt-4o \
-  --evaluator-model gpt-4o \
+  --attack-model openai/gpt-5-mini \
+  --evaluator-model openai/gpt-5-mini \
   --save-report ./output/customer-support-report.json \
   --yes
 
@@ -245,19 +255,29 @@ vulnerabilities_found: 7
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| `eq: command not found` | Package not installed or not on PATH | `pip install evaluatorq` |
+| `eq: command not found` | Package not installed or not on PATH | `pip install 'evaluatorq[redteam]'` |
 | `ORQ_API_KEY not set` or 401 errors | Missing env var for target agent | Export `ORQ_API_KEY` in your shell or `.env` |
-| `ImportError: evaluatorq` | Incomplete install | `pip install evaluatorq[redteam]` |
-| Run hangs at attack generation | LLM credential missing | Set `OPENAI_API_KEY` or `ORQ_API_KEY` for the attack/evaluator model |
-| ASR = 0.0 on all categories | Evaluator model not judging correctly | Try `--evaluator-model gpt-4o` with `OPENAI_API_KEY` set |
+| `ImportError` for `openai`/`typer` | Incomplete install (missing extra) | `pip install 'evaluatorq[redteam]'` |
+| `CredentialError` / run hangs at attack generation | No LLM credential for attack/evaluator | Set `OPENAI_API_KEY` (bare model names) **or** `ORQ_API_KEY` (provider-prefixed, e.g. `openai/gpt-5-mini`) |
+| ASR = 0.0 on all categories | Evaluator routing/credential issue, or genuinely resistant | Confirm the evaluator model string matches the active route (gateway → `openai/gpt-5-mini`); check creds before assuming a stronger judge is needed |
+| `openai/...` model rejected | `OPENAI_API_KEY` set → direct OpenAI rejects the prefix | Use a bare name (`gpt-5-mini`) for direct OpenAI, or unset `OPENAI_API_KEY` to route via the gateway |
 | Confirmation prompt blocks CI | Interactive terminal required | Pass `--yes` / `-y` to skip |
 | No runs shown in `eq redteam runs` | `--save none` was used | Re-run with `--save final` (default) or pass `--save-report <path>` |
+
+## Python SDK (when the CLI can't)
+
+The CLI covers the common case (red-teaming an orq `agent:`/`deployment:` target). For things it cannot do — **red-teaming a raw model**, custom `AgentTarget` subclasses, or embedding red teaming in a Python eval pipeline — use the `evaluatorq.redteam` Python API.
+
+The CLI deliberately **rejects** `openai:`/`llm:` target strings and points you to the SDK. To test a bare model, you must use `OpenAIModelTarget`.
+
+**See [resources/python-sdk.md](resources/python-sdk.md)** for the `red_team()` signature, target types, a raw-model worked example, and programmatic report handling.
 
 ## Done when
 
 - Run completes without errors
 - Summary is printed to stdout (happens automatically after each run)
 - Report JSON exists (in `.evaluatorq/runs/` or at `--save-report` path)
+- Categories are described to the user by their correct names (e.g. ASI01 = Agent Goal Hijacking, not "prompt injection")
 - Categories tested and coverage gaps are noted (e.g. "only ASI01–ASI02 tested; LLM01–LLM09 not covered")
 
 ## Companion skills

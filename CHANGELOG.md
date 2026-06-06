@@ -8,7 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - 2026-06-05
 
 ### Added
+- `red-team`: `resources/python-sdk.md` progressive-disclosure reference for the `evaluatorq.redteam` Python API — covers `red_team()`, `OpenAIModelTarget` / `ORQAgentTarget` / custom `AgentTarget`, a raw-model worked example (the case the CLI cannot do), and programmatic `RedTeamReport` handling.
 - `simulate-agent` skill: run multi-turn agent simulations using evaluatorq's first-class primitives (`simulate()`, `generate_and_simulate()`, `wrap_simulation_agent()`). Covers the real `Persona` schema (`patience` / `assertiveness` / `politeness` / `technical_level` scalars, `communication_style`, `background`, optional `emotional_arc` and `cultural_context`), `Scenario` schema (goal, criteria-driven judge termination, starting emotion, conversation strategy, edge-case flag), three target shapes (`agent_key`, `target_callback` via `from_orq_deployment` / `from_chat_completions`, custom `AgentTarget`), and where outputs land (OTel spans auto-emitted to orq.ai, `SimulationResult` in memory, auto-uploaded Experiments via `evaluatorq()` routing, JSONL export). Resources: `persona-scenario-template.md`, `simulation-loop.md`, `redteam-mode.md`. RES-732.
+
+### Fixed
+- `red-team`: correct `ASI01` label — it is **Agent Goal Hijacking**, not prompt injection (prompt injection is `LLM01`). Reframed the worked example and category guidance, and added the full OWASP-ASI (ASI01–10) / OWASP-LLM (LLM01–09) name mapping.
+- `red-team`: correct the credential model — routing is decided by which env var is set (`OPENAI_API_KEY` → direct OpenAI with bare model names; else `ORQ_API_KEY` → orq gateway with provider-prefixed names like `openai/gpt-5-mini`), not by the model string. `OPENAI_API_KEY` wins if both set; `ORQ_API_KEY` always required for `agent:`/`deployment:` targets.
+- `red-team`: use `openai/gpt-5-mini` in examples and drop the backwards "switch to `gpt-4o`" troubleshooting advice (the default `gpt-5-mini` is newer).
+- `red-team`: remove invented framework labels ("OWASP Agentic 2026" / "OWASP LLM 2025"); use the real `OWASP-ASI` / `OWASP-LLM` identifiers.
+- `red-team`: fix install instructions to `pip install 'evaluatorq[redteam]'` (and note the `[ui]` extra for the dashboard).
+
+### Changed
+- `red-team`: trim the flag table to first-run essentials and defer the full set to `eq redteam run --help`; document the `deployment:<key>` target form, the `eq redteam validate-dataset` pre-flight, and the `--system-prompt` flag.
 
 ## [0.1.0] - 2026-06-04
 
