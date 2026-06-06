@@ -11,6 +11,8 @@ The `evaluatorq.redteam` Python API behind the `eq redteam` CLI. Use it when the
 - External framework targets
 - Worked example — red-team a raw model
 - Reading the report programmatically
+- Drilling into failures (what to fix)
+- Actionable recommendations (`generate_recommendations=True`)
 - Category + framework helpers
 - Credentials
 
@@ -153,6 +155,52 @@ if report.summary.vulnerability_rate > 0.10:
 ```
 
 Never read a low ASR as "safe" — coverage depends on the categories tested.
+
+## Drilling into failures (what to fix)
+
+`report.results` is a list of `RedTeamResult`. Each confirmed failure carries everything needed to act:
+
+```python
+fails = [r for r in report.results if r.vulnerable]
+
+# Prioritize by technique (highest vulnerability count first), not raw list order
+ranked = sorted(report.summary.by_technique.items(),
+                key=lambda kv: kv[1].vulnerabilities_found, reverse=True)
+
+for r in fails:
+    print(r.attack.category, r.attack.attack_technique, r.attack.strategy_name)
+    print("objective:", r.attack.objective)
+    print("why vulnerable:", r.evaluation.explanation if r.evaluation else "n/a")
+    print("agent said:", r.response)
+    # r.messages = full OpenAI-format transcript that broke the agent
+```
+
+| `RedTeamResult` field | Use it to |
+|-----------------------|-----------|
+| `r.vulnerable` | `True` = attack succeeded — filter to these |
+| `r.attack.category` / `r.attack.attack_technique` | Which OWASP category + technique broke through |
+| `r.attack.strategy_name` / `r.attack.objective` | The concrete adversarial goal that worked |
+| `r.messages` | Full transcript sent to the agent (the prompts that landed) |
+| `r.response` | What the agent did/said when it failed |
+| `r.evaluation.explanation` | The judge's reasoning for the verdict — the *why* |
+
+## Actionable recommendations (`generate_recommendations=True`)
+
+Opt in and the report carries LLM-written remediation, ranked by risk — the "what do I fix" layer on top of the raw failures:
+
+```python
+report = await red_team(target, categories=["ASI01", "LLM01"], generate_recommendations=True)
+
+for rec in sorted(report.focus_area_recommendations or [],
+                  key=lambda x: x.risk_score, reverse=True):
+    print(f"[{rec.risk_score:.2f}] {rec.category} {rec.category_name} "
+          f"({rec.traces_analyzed} traces)")
+    print("patterns:", rec.patterns_observed)
+    for bullet in rec.recommendations:   # actionable bullet points
+        print("  -", bullet)
+```
+
+Map each recommendation to a concrete change in the agent under test (harden system prompt, restrict tool scope, add output filtering, scope memory writes), apply it, then re-run the same `categories`/`vulnerabilities` scope and confirm `vulnerability_rate` dropped.
 
 ## Category + framework helpers
 

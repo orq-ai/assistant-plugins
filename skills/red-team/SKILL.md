@@ -196,6 +196,52 @@ The `summary` sub-object contains aggregate stats:
 
 **Interpreting resistance_rate:** `1.0 - resistance_rate` = ASR. A `resistance_rate` of `0.65` means 35% of attacks succeeded.
 
+## Acting on results — next steps
+
+The summary tells you *how bad*; the `results` array tells you *what to fix*. Each item in `results[]` is one attack with everything needed to act:
+
+| Field | Use it to |
+|-------|-----------|
+| `vulnerable` | `true` = the attack succeeded. **Filter to these first.** |
+| `attack.category` / `attack.attack_technique` | Which OWASP category and technique broke through (e.g. `ASI01` / `tool_output_hijack`) |
+| `attack.strategy_name` / `attack.objective` | The concrete adversarial goal that worked |
+| `messages` | The full conversation sent to the agent — the exact prompts that landed |
+| `response` | What the agent actually did/said when it failed |
+| `evaluation.explanation` | The judge's reasoning for marking it vulnerable — the *why* |
+
+**Workflow for a coding assistant after a run:**
+
+```bash
+REPORT=./output/my-run/report.json   # or the latest .evaluatorq/runs/<name>_<ts>.json
+
+# 1. Headline: how many got through, and where it hurts most
+jq '{asr: .summary.vulnerability_rate, found: .summary.vulnerabilities_found,
+     by_technique: (.summary.by_technique | to_entries
+       | map({(.key): .value.vulnerabilities_found}) | add)}' "$REPORT"
+
+# 2. List every successful attack with the judge's reasoning
+jq -r '.results[] | select(.vulnerable)
+       | "## \(.attack.category)/\(.attack.attack_technique)  (\(.attack.strategy_name // "n/a"))\n"
+       + "objective: \(.attack.objective // "n/a")\n"
+       + "why: \(.evaluation.explanation)\n"' "$REPORT"
+
+# 3. For one failure, read the exact transcript that broke the agent
+jq '.results | map(select(.vulnerable)) | .[0] | {messages, response}' "$REPORT"
+```
+
+**Prioritize, then act.** Rank by `summary.by_technique` / `by_category` (highest `vulnerabilities_found` first), not by raw count of individual results. Then map each confirmed failure to a fix in the agent under test:
+
+| Pattern in failures | Typical next step |
+|---------------------|-------------------|
+| Goal hijacking (`ASI01`), prompt injection (`LLM01`) | Harden the system prompt; add an input-screening guard; separate trusted instructions from untrusted input |
+| Tool misuse (`ASI02`), excessive agency (`LLM06`) | Restrict tool scope/permissions; add per-tool authorization checks; gate destructive actions |
+| System prompt leakage (`LLM07`), info disclosure (`LLM02`) | Add output filtering; never place secrets in the prompt; redact before returning |
+| Memory/context poisoning (`ASI06`) | Validate/scope memory writes; isolate per-session context |
+
+After applying a fix, **re-run the same `--category`/`--vulnerability` scope** and confirm `vulnerability_rate` dropped — this is the feedback loop.
+
+> **LLM-written recommendations** (`report.focus_area_recommendations`: ranked `category`, `risk_score`, `recommendations[]`, `patterns_observed`) are **SDK-only** — pass `generate_recommendations=True` to `red_team()`. The CLI does not produce them; mine `results[]` as above instead. See [resources/python-sdk.md](resources/python-sdk.md).
+
 ## OWASP category reference
 
 Two frameworks. `framework` is `OWASP-ASI` or `OWASP-LLM` in the report. Note `ASI01` is goal hijacking, **not** prompt injection — prompt injection is `LLM01`.
