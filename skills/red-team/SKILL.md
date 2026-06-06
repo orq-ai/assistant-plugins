@@ -64,7 +64,7 @@ If neither key is set the run fails with `CredentialError`. There is no Azure cr
 - **Routing the attack/evaluator LLM through the orq gateway** — without it, the attack LLM only works via `OPENAI_API_KEY` (direct OpenAI, bare model names).
 - **Uploading results to orq** — no Experiment is created and `report.experiment_url` stays empty; results are local-only.
 
-> Model-string form follows the route: bare `gpt-5-mini` for direct OpenAI, `openai/gpt-5-mini` for the orq gateway. When targeting an orq agent (which needs `ORQ_API_KEY` anyway), the gateway form is the common case.
+> Model-string form follows the route: bare `gpt-5-mini` for direct OpenAI, `openai/gpt-5-mini` for the orq gateway. When targeting an orq agent (which needs `ORQ_API_KEY` anyway), the gateway form is the common case. For a fully direct-OpenAI run — an OpenAI model under test with OpenAI-hosted attacker/evaluator, `OPENAI_API_KEY` only — see the worked example in [resources/python-sdk.md](resources/python-sdk.md).
 
 Check before running — **always run this preflight when the skill is invoked**, before any `eq redteam run`:
 ```bash
