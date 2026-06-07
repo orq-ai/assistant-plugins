@@ -106,20 +106,33 @@ If neither key is set the run fails with `CredentialError`. There is no Azure cr
 
 **Cause:** `uv run` auto-loads `.env` from the current directory and injects those vars into the subprocess **after** any shell-level `unset`/`env -u`. If the project `.env` contains `OPENAI_API_KEY`, every `uv run eq …` re-acquires it → routing flips to direct-OpenAI (see routing rules above, `OPENAI_API_KEY` wins) → gateway-prefixed model strings like `openai/gpt-5-mini` are sent to OpenAI, which rejects the `openai/` prefix and the orq key. The `unset OPENAI_API_KEY` workaround **does nothing under `uv run`** — uv re-reads `.env` post-unset. (This trap is specific to `uv run`; a plain `env -u OPENAI_API_KEY eq …` works fine.)
 
-**Diagnostic** — see what uv actually passes through:
+**Diagnostic — detect `.env` contamination** (compare uv *with* vs *without* `.env`; prints presence only, never the key value):
 ```bash
-uv run --no-env-file python3 -c "import os; print('OPENAI_API_KEY:', os.getenv('OPENAI_API_KEY','unset'))"
-# 'unset' = clean. A key here means .env is overriding your shell.
+WITH=$(uv run python3 -c "import os;print('set' if os.getenv('OPENAI_API_KEY') else 'unset')")
+WITHOUT=$(uv run --no-env-file python3 -c "import os;print('set' if os.getenv('OPENAI_API_KEY') else 'unset')")
+echo "OPENAI_API_KEY — with .env: $WITH | without .env: $WITHOUT"
+# with=set, without=unset → .env is injecting it (the trap)
+# both set                → comes from your shell, not .env
+# both unset              → clean
 ```
+`--no-env-file` only tells uv to skip `.env`; it is the *baseline*, not the detector. The `with` vs `without` difference is what proves `.env` is the source. **Never print the key itself** — booleans only, here and anywhere else in this skill.
 
-**Fix A — feed uv only the orq vars** (write a scratch env file with just the gateway creds):
+**Decide — don't auto-strip `.env`.** A key in `.env` usually means the user wants it; suppressing it silently is wrong. Check the state and guide:
+
+- `OPENAI_API_KEY` only, no `ORQ_API_KEY` → direct-OpenAI run, bare model names (`gpt-5-mini`). No conflict.
+- `ORQ_API_KEY` only → gateway run, `openai/`-prefixed names. No conflict.
+- **both set + gateway target (`openai/…` model)** → conflict: `OPENAI_API_KEY` wins → the gateway-prefixed string is sent to OpenAI → 401. Surface it and let the user choose, e.g.:
+  > "`OPENAI_API_KEY` is set (looks like it's coming from `.env`). With a gateway model string that routes to direct OpenAI and 401s. To use the orq gateway for this run, suppress it for the subprocess [Fix A]. To use direct OpenAI instead, drop the `openai/` prefix. If neither `ORQ_API_KEY` nor the gateway is what you want, set the key you intend here."
+
+**Fix A — feed uv only the orq creds for this run** (used when the user wants the gateway; does **not** modify `.env`):
 ```bash
-TMP_ENV="$(mktemp)"
-printf 'ORQ_API_KEY=%s\nORQ_BASE_URL=%s\n' "$ORQ_API_KEY" "${ORQ_BASE_URL:-https://my.orq.ai}" > "$TMP_ENV"
+TMP_ENV="$(mktemp)"                                  # mode 600, removed after the run
+printf 'ORQ_API_KEY=%s\n' "$ORQ_API_KEY" > "$TMP_ENV"
+[ -n "$ORQ_BASE_URL" ] && printf 'ORQ_BASE_URL=%s\n' "$ORQ_BASE_URL" >> "$TMP_ENV"
 uv run --no-env-file --env-file "$TMP_ENV" --package evaluatorq eq redteam run --target agent:<key> ...
 rm -f "$TMP_ENV"
 ```
-`--no-env-file` stops uv reading the project `.env`; `--env-file "$TMP_ENV"` injects only `ORQ_API_KEY`/`ORQ_BASE_URL`, so routing stays on the gateway.
+`--no-env-file` stops uv reading the project `.env`; `--env-file "$TMP_ENV"` injects only the orq creds, so routing stays on the gateway. Only pass `ORQ_BASE_URL` if the user already has one set — otherwise let evaluatorq use its own gateway default; do **not** synthesize a base URL.
 
 **Fix B — don't use `uv run`.** If `eq` is on PATH (e.g. via `uv tool install`), invoke it directly so the trap can't fire: `env -u OPENAI_API_KEY eq redteam run …`.
 
@@ -175,6 +188,48 @@ with Orq(api_key=os.getenv("ORQ_API_KEY", "")) as orq:
 On a **miss**: provision the agent (demo dirs usually ship a `provision.py` — look there) or fix the key, then re-check.
 
 > **Project-scoping caveat — a miss is not always conclusive.** The MCP server uses its *own* configured `ORQ_API_KEY`, which may be scoped to a different project than the CLI `--target` key (or your shell's `ORQ_API_KEY`). An agent visible to MCP can return `404` from the REST call if your shell key belongs to another project — *verified live: `agent_get` found `clarabelle-cow`, but `curl` with a different-project shell key returned `404` for the same agent.* So: a **hit confirms existence**; a **miss is only conclusive when the checking credential shares the agent's project**. When MCP and CLI disagree, the credential the **CLI** uses (`--target` / shell `ORQ_API_KEY`) is the one that decides whether the run works — verify with that key.
+
+## Plan the run — decide parameters with the user
+
+Before the first `eq redteam run`, walk the user through these decisions. **Ask one step at a time** (use `AskUserQuestion` if you have that tool; otherwise ask in plain text) — each choice has a real coverage-vs-cost tradeoff. Default toward a small, scoped run first, then widen once the wiring is proven.
+
+**Step 1 — Mode (where attacks come from).**
+
+| Mode | Upside | Downside | Use when |
+|------|--------|----------|----------|
+| `dynamic` (default) | LLM generates fresh, adaptive attacks **tailored to your agent** (its system prompt, tools, and responses) → best signal, finds novel failures | Slowest + most expensive (attacker LLM + target + evaluator call per datapoint); non-deterministic | Exploring an agent's real robustness |
+| `static` | Replays a fixed dataset → cheap, fast, reproducible, CI-friendly | Only as good as the dataset; finds nothing not already in it | Regression checks, baselines, gating |
+| `hybrid` | Both legs in one report → widest coverage | Highest cost (pays for both) | One-shot baseline + exploration |
+
+**Step 2 — Datapoint budget (the main cost lever).**
+
+- Dynamic cap: `--max-dynamic-datapoints N`. Static cap: `--max-static-datapoints N`.
+- **More datapoints →** higher coverage and a more *stable* ASR. One lucky resist out of 5 attempts is noise; out of 100 it's signal. But cost and wall-clock scale ~linearly, and the count is **per category** — 3 categories × 50 = 150 datapoints.
+- **Fewer datapoints →** fast smoke test, but ASR is noisy and coverage is thin. Do **not** read a clean small run as "the agent is safe."
+- Rough guide: **10–20** for a smoke test / wiring check, **50–100+** per scope for a real assessment.
+- **Unset = the tool's built-in default**, not unlimited. Don't assume omitting the flag runs everything — but don't assume it's tiny either; check `eq redteam run --help` for the default if cost matters.
+- **Static datapoints don't have to be hand-built.** The default `--dataset` is orq's large hosted set, `orq/redteam-vulnerabilities` on HuggingFace — point a `static`/`hybrid` run at it to test against a broad corpus out of the box. Only supply a local `--dataset` for custom scenarios.
+
+**Step 3 — Vulnerability scope (what to test).**
+
+- Two frameworks: **OWASP-ASI** (agentic failures — goal hijacking, tool misuse, memory poisoning; for orq agents with tools/memory) and **OWASP-LLM** (model-level — prompt injection, info disclosure, output handling). Full list in the [category table](#owasp-category-reference) below.
+- `--category ASI01` (repeatable) tests a whole category. `--vulnerability goal_hijacking` (repeatable) targets one specific vuln and **takes precedence over `--category`**.
+- **Wrong pick is low-stakes:** categories that don't apply to the agent (e.g. memory-poisoning on a memory-less agent, tool-misuse on an agent with no tools) are **automatically filtered out by the framework** — they won't waste datapoints or inflate the run. So lean toward selecting; over-picking is cheap, the framework prunes what can't apply.
+- **Omit both = test everything** → broadest, but slowest and costliest. For a first run, pick **1–3 categories that match the agent's risk surface**:
+
+| Agent has… | Test |
+|------------|------|
+| Tools / actions it can take | `ASI02` (tool misuse), `LLM06` (excessive agency) |
+| A memory store | `ASI06` (memory & context poisoning) — note the memory-write caveat in Constraints |
+| Untrusted user input | `ASI01` (goal hijacking), `LLM01` (prompt injection) |
+| Secrets / a system prompt worth protecting | `LLM02` (info disclosure), `LLM07` (system prompt leakage) |
+
+**Step 4 — One-off CLI or a reusable script?** Ask the user how they want it delivered:
+
+- **One-off CLI** — fastest for a single exploratory run. Nothing to maintain.
+- **Reusable script** (recommended for anything you'll repeat) — write the run into a small shell script (CLI) or a Python script (SDK). Upsides: easy to re-run after a fix (the fix → re-run loop in Constraints), reproducible, reviewable in version control, and the place to bake in the `.env`/`uv` credential handling so the trap can't resurface. Recommend this whenever the user is red-teaming a real agent they'll iterate on, or wiring it into CI. For the **Python SDK** route — the `red_team()` signature, target types (incl. external frameworks and `CallableTarget`), and programmatic report handling — load **[resources/python-sdk.md](resources/python-sdk.md)** rather than reconstructing the API from memory.
+
+**Step 5 — Confirm and assemble.** Echo the chosen **mode + datapoint caps + categories + delivery (CLI vs script)** back to the user, **state the coverage gap** (which categories are *not* tested — a passing run only speaks to what was tested), then build the `eq redteam run` command (or script) from those choices.
 
 ## Core command: `eq redteam run`
 
