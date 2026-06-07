@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-06-06
+
+### Added
+- `orq-red-team`: `eq` discovery ladder before installing — probe PATH → `uv tool run --from 'evaluatorq[redteam]'` → `uv run --package evaluatorq` (orqkit workspace) → project `.venv/bin/eq` → `python3 -m evaluatorq`, and use the first hit. Install only as a last resort, preferring `uv tool install` (avoids PEP 668 / `--break-system-packages` breakage from global `pip`).
+- `orq-red-team`: document the `uv run` + `.env` credential trap — `uv run` re-loads `OPENAI_API_KEY` from `.env` *after* a shell `unset`, flipping routing to direct OpenAI and breaking gateway model strings (`openai/gpt-5-mini` → `401 Incorrect API key`). Includes a `--no-env-file` diagnostic one-liner, Fix A (`--no-env-file --env-file <tmp>` with only `ORQ_API_KEY`/`ORQ_BASE_URL`), Fix B (run `eq` off PATH), and a note that plain `env -u` is unaffected.
+- `orq-red-team`: pre-run "Verify the target agent exists" step — check the `--target` key via orq MCP `agent_get`/`agent_list`, REST `GET /v2/agents/{agent_key}` (curl), or SDK `agents.retrieve`, so a wrong key fails fast instead of deep in the run with `Agent not found`. Documents the project-scoping caveat (MCP key may differ from the CLI key; a hit confirms existence, a miss is conclusive only when the checking credential shares the agent's project — verified live).
+- `orq-red-team`: troubleshooting rows for the `uv run`/`.env` 401, the mid-run `Agent not found`, and the discovery-first `eq: command not found` fix.
+
 ## [0.3.0] - 2026-06-06
 
 ### Changed
