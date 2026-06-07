@@ -72,6 +72,19 @@ from evaluatorq.contracts import AgentTarget        # base class for custom targ
 - **orq agent / deployment** — pass the string `"agent:<key>"` or `"deployment:<key>"` straight to `red_team()`; no wrapper class needed, the backend is selected for you.
 - **`OpenAIModelTarget(model, system_prompt=None, *, client=None, max_tokens=None, timeout_ms=None)`** — wraps a bare model. Stateless. If `client` is omitted, one is created from env (same auto-detection as the CLI: `OPENAI_API_KEY` direct, else `ORQ_API_KEY` gateway).
 - **`AgentTarget`** — subclass it and implement `async def respond(self, messages) -> AgentResponse` to red-team any system you can call from Python.
+- **`OrqResponsesTarget`** — the hosted-agent target that wraps orq's Responses v3 API. You rarely build it by hand: passing `"agent:<key>"` already routes through the `openresponses` backend, which constructs one for you. Build it directly only when you need a custom client, system `instructions`, `timeout_ms`, or retry policy. Stateless (`respond(messages)` sends the full transcript each turn). Import: `from evaluatorq.openresponses.target import OrqResponsesTarget`. Signature: `OrqResponsesTarget(config: LLMCallConfig, *, instructions=None, tools=None, memory_entity_id=None, client=None, retry_attempts=None, retry_statuses=None, require_orq=False)`.
+  ```python
+  from evaluatorq.contracts import LLMCallConfig
+  from evaluatorq.openresponses.target import OrqResponsesTarget
+  from evaluatorq.redteam import red_team
+
+  target = OrqResponsesTarget(
+      LLMCallConfig(model="agent/<key>", api="responses", timeout_ms=240_000),
+      require_orq=True,   # model id only resolves on the orq router; never let a stray OPENAI_API_KEY capture it
+  )
+  report = await red_team(target, categories=["ASI01"])
+  ```
+  `require_orq=True` is what the backend uses by default — keep it so a self-built env client routes through the gateway, not direct OpenAI.
 
 ## External framework targets
 
