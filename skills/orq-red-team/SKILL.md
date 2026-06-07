@@ -40,14 +40,40 @@ The package is installed as `evaluatorq` and exposes two equivalent entry points
 eq redteam <command> [options]
 ```
 
-If `eq` is not on PATH, install it with:
+### Discovering `eq` — don't install until you've checked
+
+`eq` is frequently already reachable through a project venv (e.g. `docs/demos/*/`), a uv tool install, or the orqkit workspace. **Probe in this order and use the first hit — install only as a last resort** (a global `pip install` can be blocked by PEP 668 / `--break-system-packages`):
+
 ```bash
-pip install 'evaluatorq[redteam]'
-# or, inside the orqkit workspace:
-uv run --package evaluatorq eq redteam --help
+# Resolve how to invoke eq. Cheap/local probes first; install only if none hit.
+EQ=""
+eq --help >/dev/null 2>&1 && EQ="eq"                                              # on PATH
+[ -z "$EQ" ] && [ -x .venv/bin/eq ] && EQ=".venv/bin/eq"                          # project venv
+[ -z "$EQ" ] && uv run --package evaluatorq eq --help >/dev/null 2>&1 \
+  && EQ="uv run --package evaluatorq eq"                                          # orqkit workspace
+[ -z "$EQ" ] && python3 -m evaluatorq --help >/dev/null 2>&1 && EQ="python3 -m evaluatorq"  # importable module run
+echo "Resolved eq: ${EQ:-NONE — install below}"
 ```
 
-The `[redteam]` extra is required (pulls in `openai`, `typer`, `huggingface-hub`). The interactive dashboard (`eq redteam ui`) additionally needs the `[ui]` extra: `pip install 'evaluatorq[ui]'`.
+Each resolved `$EQ` is quote-clean and safe to reuse as a command prefix (`$EQ redteam run …`).
+
+If nothing resolves, install — prefer a **local venv** (keeps the dependency scoped to the project, no global state):
+
+```bash
+# Preferred: install into a project venv (create one if needed)
+[ -d .venv ] || uv venv          # or: python3 -m venv .venv
+uv pip install 'evaluatorq[redteam]'    # installs into the active/.venv; then EQ=".venv/bin/eq"
+
+# No uv available:
+.venv/bin/pip install 'evaluatorq[redteam]'
+
+# Last resort — global, isolated tool install (puts eq on PATH):
+uv tool install 'evaluatorq[redteam]'
+```
+
+The `[redteam]` extra is required (pulls in `openai`, `typer`, `huggingface-hub`). The interactive dashboard (`eq redteam ui`) additionally needs the `[ui]` extra: add `evaluatorq[redteam,ui]`.
+
+> Throughout this skill, `eq redteam …` is written assuming `eq` is on PATH. If you resolved it via `$EQ` above (e.g. `uv run --package evaluatorq eq`), substitute that prefix — **but read the uv `.env` trap below first; running `eq` via `uv run` has a credential gotcha when an env-file (`UV_ENV_FILE`) is in play.**
 
 ## Required environment variables
 
@@ -66,10 +92,46 @@ If neither key is set the run fails with `CredentialError`. There is no Azure cr
 
 > Model-string form follows the route: bare `gpt-5-mini` for direct OpenAI, `openai/gpt-5-mini` for the orq gateway. When targeting an orq agent (which needs `ORQ_API_KEY` anyway), the gateway form is the common case. For a fully direct-OpenAI run — an OpenAI model under test with OpenAI-hosted attacker/evaluator, `OPENAI_API_KEY` only — see the worked example in [resources/python-sdk.md](resources/python-sdk.md).
 
+### The `uv run` + `.env` credential trap (read before running `eq` via uv)
+
+**Symptom:** every gateway model string (`openai/gpt-5-mini`) fails with `401 Incorrect API key` even though `ORQ_API_KEY` is set, and a shell-level `unset OPENAI_API_KEY` doesn't stick once you run via `uv run`.
+
+**Cause:** `uv` injects an env-file into the subprocess **only when you opt in** — `UV_ENV_FILE` is set in the environment, or you pass `--env-file`. It does **not** auto-read `./.env` from a bare `uv run` (verified on uv 0.11.19). But when an env-file *is* in play and contains `OPENAI_API_KEY`, uv loads it **after** your shell-level `unset`/`env -u`, so the key comes back → routing flips to direct-OpenAI (see routing rules above, `OPENAI_API_KEY` wins) → gateway-prefixed strings like `openai/gpt-5-mini` are sent to OpenAI, which rejects the `openai/` prefix and the orq key → `401`. A plain `env -u OPENAI_API_KEY eq …` (no `uv run`) is unaffected — the re-injection is uv re-reading the env-file. Common ways `UV_ENV_FILE` gets set without you noticing: direnv / a project `.envrc`, or a Makefile/CI wrapper.
+
+**Diagnostic — detect env-file injection** (compare uv with its default env-file loading vs `--no-env-file`; prints presence only, never the key value):
+```bash
+# Is uv pointed at an env-file at all? (a path here, not a secret)
+echo "UV_ENV_FILE: ${UV_ENV_FILE:-unset}"
+WITH=$(uv run python3 -c "import os;print('set' if os.getenv('OPENAI_API_KEY') else 'unset')")
+WITHOUT=$(uv run --no-env-file python3 -c "import os;print('set' if os.getenv('OPENAI_API_KEY') else 'unset')")
+echo "OPENAI_API_KEY — uv default: $WITH | uv --no-env-file: $WITHOUT"
+# default=set, --no-env-file=unset → uv's env-file is injecting it (the trap; check UV_ENV_FILE above)
+# both set                         → comes from your shell env, not an env-file
+# both unset                       → clean
+```
+uv loads an env-file only via `UV_ENV_FILE` or `--env-file`; `--no-env-file` is the *baseline* that suppresses all of them. The default-vs-`--no-env-file` difference is what proves an env-file is the source. **Never print the key itself** — booleans only, here and anywhere else in this skill.
+
+**Decide — don't auto-strip `.env`.** A key in `.env` usually means the user wants it; suppressing it silently is wrong. Check the state and guide:
+
+- `OPENAI_API_KEY` only, no `ORQ_API_KEY` → direct-OpenAI run, bare model names (`gpt-5-mini`). No conflict.
+- `ORQ_API_KEY` only → gateway run, `openai/`-prefixed names. No conflict.
+- **both set + gateway target (`openai/…` model)** → conflict: `OPENAI_API_KEY` wins → the gateway-prefixed string is sent to OpenAI → 401. Surface it and let the user choose, e.g.:
+  > "`OPENAI_API_KEY` is set (likely exported in your shell or pulled in via an env-file such as `UV_ENV_FILE`). With a gateway model string that routes to direct OpenAI and 401s. To use the orq gateway for this run, suppress it for the subprocess [Fix A]. To use direct OpenAI instead, drop the `openai/` prefix. If neither `ORQ_API_KEY` nor the gateway is what you want, set the key you intend here."
+
+**Fix A — strip the key for this run and block uv from re-adding it** (used when the user wants the gateway; does **not** modify `.env` or `UV_ENV_FILE`, writes nothing to disk):
+```bash
+env -u OPENAI_API_KEY uv run --no-env-file --package evaluatorq eq redteam run --target agent:<key> ...
+```
+`env -u OPENAI_API_KEY` drops the direct-OpenAI key from the environment for this one command; `--no-env-file` stops uv re-loading it from any env-file (`UV_ENV_FILE` / `--env-file`). `ORQ_API_KEY` (and `ORQ_BASE_URL` if set) pass through from your shell, so routing stays on the gateway.
+
+> Caveat: `--no-env-file` suppresses **all** env-file loading, so if `ORQ_API_KEY`/`ORQ_BASE_URL` live *only* in an env-file (not exported in your shell), they'll be dropped too. Export them first (`export ORQ_API_KEY=…`) or pass them inline: `env -u OPENAI_API_KEY ORQ_API_KEY="$ORQ_API_KEY" uv run --no-env-file …`. Do **not** combine `--no-env-file` with `--env-file` — `--no-env-file` overrides `--env-file` (either order) and nothing gets injected. Only set `ORQ_BASE_URL` if the user already has one; do **not** synthesize a base URL.
+
+**Fix B — don't use `uv run`.** If `eq` is on PATH (e.g. via `uv tool install`), invoke it directly so the trap can't fire: `env -u OPENAI_API_KEY eq redteam run …`.
+
 Check before running — **always run this preflight when the skill is invoked**, before any `eq redteam run`:
 ```bash
-# 1. CLI installed and reachable
-eq --help >/dev/null 2>&1 || { echo "eq CLI not found — install 'evaluatorq[redteam]' or check PATH"; exit 1; }
+# 1. CLI installed and reachable (honors the $EQ resolved by the discovery ladder)
+${EQ:-eq} --help >/dev/null 2>&1 || { echo "eq CLI not found — run the discovery ladder or install 'evaluatorq[redteam]'"; exit 1; }
 
 # 2. At least one LLM credential must be set (else CredentialError mid-run)
 [ -n "$OPENAI_API_KEY" ] || [ -n "$ORQ_API_KEY" ] || { echo "No LLM credential — set OPENAI_API_KEY or ORQ_API_KEY for the attack/evaluator model."; exit 1; }
@@ -83,6 +145,83 @@ echo "OPENAI_API_KEY set: $([ -n "$OPENAI_API_KEY" ] && echo yes || echo no)"
 ```
 
 If the user's target is `agent:<key>` or `deployment:<key>` and `ORQ_API_KEY` is absent, **stop and ask them to set it** — that run cannot proceed.
+
+### Verify the target agent exists before running
+
+A wrong or unprovisioned `--target agent:<key>` does **not** fail fast — it fails deep in the run, after context retrieval, with a cryptic `RetrieveAgentRequestAgentsResponseBody: Agent not found`. Confirm the key resolves up front. Three ways, in order of convenience:
+
+**1. orq MCP (no shell creds needed)** — preferred when available:
+```
+mcp__orq-mcp-global__agent_get  agent_id=<key>     # one agent
+mcp__orq-mcp-global__agent_list                    # browse keys/status
+```
+A hit returns the manifest: `key`, `status` (want `live`), `project_id`, `model`, and — relevant to the memory-poisoning constraint — `memory_stores` / `knowledge_bases`. A miss raises *agent not found*.
+
+**2. REST API (fallback when MCP isn't wired)** — `GET /v2/agents/{agent_key}`, bearer auth:
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' \
+  "https://api.orq.ai/v2/agents/<key>" \
+  -H "Authorization: Bearer $ORQ_API_KEY"
+# 200 = exists & in scope · 404 = not found OR not in this key's project · 401 = bad key
+```
+Full body (404 returns `{"message": "..."}`):
+```bash
+curl -s "https://api.orq.ai/v2/agents/<key>" -H "Authorization: Bearer $ORQ_API_KEY" | jq .
+```
+
+**3. Python SDK** — same call programmatically:
+```python
+import os
+from orq_ai_sdk import Orq
+with Orq(api_key=os.getenv("ORQ_API_KEY", "")) as orq:
+    print(orq.agents.retrieve(agent_key="<key>").status)  # raises if not found
+```
+
+On a **miss**: provision the agent (demo dirs usually ship a `provision.py` — look there) or fix the key, then re-check.
+
+> **Project-scoping caveat — a miss is not always conclusive.** The MCP server uses its *own* configured `ORQ_API_KEY`, which may be scoped to a different project than the CLI `--target` key (or your shell's `ORQ_API_KEY`). An agent visible to MCP can return `404` from the REST call if your shell key belongs to another project — *verified live: `agent_get` found `clarabelle-cow`, but `curl` with a different-project shell key returned `404` for the same agent.* So: a **hit confirms existence**; a **miss is only conclusive when the checking credential shares the agent's project**. When MCP and CLI disagree, the credential the **CLI** uses (`--target` / shell `ORQ_API_KEY`) is the one that decides whether the run works — verify with that key.
+
+## Plan the run — decide parameters with the user
+
+Before the first `eq redteam run`, walk the user through these decisions. **Ask one step at a time** (use `AskUserQuestion` if you have that tool; otherwise ask in plain text) — each choice has a real coverage-vs-cost tradeoff. Default toward a small, scoped run first, then widen once the wiring is proven.
+
+**Step 1 — Mode (where attacks come from).**
+
+| Mode | Upside | Downside | Use when |
+|------|--------|----------|----------|
+| `dynamic` (default) | LLM generates fresh, adaptive attacks **tailored to your agent** (its system prompt, tools, and responses) → best signal, finds novel failures | Slowest + most expensive (attacker LLM + target + evaluator call per datapoint); non-deterministic | Exploring an agent's real robustness |
+| `static` | Replays a fixed dataset → cheap, fast, reproducible, CI-friendly | Only as good as the dataset; finds nothing not already in it | Regression checks, baselines, gating |
+| `hybrid` | Both legs in one report → widest coverage | Highest cost (pays for both) | One-shot baseline + exploration |
+
+**Step 2 — Datapoint budget (the main cost lever).**
+
+- Dynamic cap: `--max-dynamic-datapoints N`. Static cap: `--max-static-datapoints N`.
+- **More datapoints →** higher coverage and a more *stable* ASR. One lucky resist out of 5 attempts is noise; out of 100 it's signal. But cost and wall-clock scale ~linearly, and the count is **per category** — 3 categories × 50 = 150 datapoints.
+- **Fewer datapoints →** fast smoke test, but ASR is noisy and coverage is thin. Do **not** read a clean small run as "the agent is safe."
+- Rough guide: **10–20** for a smoke test / wiring check, **50–100+** per scope for a real assessment.
+- **Unset = the tool's built-in default**, not unlimited. Don't assume omitting the flag runs everything — but don't assume it's tiny either; check `eq redteam run --help` for the default if cost matters.
+- **Static datapoints don't have to be hand-built.** The default `--dataset` is orq's large hosted set, `orq/redteam-vulnerabilities` on HuggingFace — point a `static`/`hybrid` run at it to test against a broad corpus out of the box. Only supply a local `--dataset` for custom scenarios.
+
+**Step 3 — Vulnerability scope (what to test).**
+
+- Two frameworks: **OWASP-ASI** (agentic failures — goal hijacking, tool misuse, memory poisoning; for orq agents with tools/memory) and **OWASP-LLM** (model-level — prompt injection, info disclosure, output handling). Full list in the [category table](#owasp-category-reference) below.
+- `--category ASI01` (repeatable) tests a whole category. `--vulnerability goal_hijacking` (repeatable) targets one specific vuln and **takes precedence over `--category`**.
+- **Wrong pick is low-stakes:** categories that don't apply to the agent (e.g. memory-poisoning on a memory-less agent, tool-misuse on an agent with no tools) are **automatically filtered out by the framework** — they won't waste datapoints or inflate the run. So lean toward selecting; over-picking is cheap, the framework prunes what can't apply.
+- **Omit both = test everything** → broadest, but slowest and costliest. For a first run, pick **1–3 categories that match the agent's risk surface**:
+
+| Agent has… | Test |
+|------------|------|
+| Tools / actions it can take | `ASI02` (tool misuse), `LLM06` (excessive agency) |
+| A memory store | `ASI06` (memory & context poisoning) — note the memory-write caveat in Constraints |
+| Untrusted user input | `ASI01` (goal hijacking), `LLM01` (prompt injection) |
+| Secrets / a system prompt worth protecting | `LLM02` (info disclosure), `LLM07` (system prompt leakage) |
+
+**Step 4 — One-off CLI or a reusable script?** Ask the user how they want it delivered:
+
+- **One-off CLI** — fastest for a single exploratory run. Nothing to maintain.
+- **Reusable script** (recommended for anything you'll repeat) — write the run into a small shell script (CLI) or a Python script (SDK). Upsides: easy to re-run after a fix (the fix → re-run loop in Constraints), reproducible, reviewable in version control, and the place to bake in the `.env`/`uv` credential handling so the trap can't resurface. Recommend this whenever the user is red-teaming a real agent they'll iterate on, or wiring it into CI. For the **Python SDK** route — the `red_team()` signature, target types (incl. external frameworks and `CallableTarget`), and programmatic report handling — load **[resources/python-sdk.md](resources/python-sdk.md)** rather than reconstructing the API from memory.
+
+**Step 5 — Confirm and assemble.** Echo the chosen **mode + datapoint caps + categories + delivery (CLI vs script)** back to the user, **state the coverage gap** (which categories are *not* tested — a passing run only speaks to what was tested), then build the `eq redteam run` command (or script) from those choices.
 
 ## Core command: `eq redteam run`
 
@@ -316,7 +455,9 @@ vulnerabilities_found: 7
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| `eq: command not found` | Package not installed or not on PATH | `pip install 'evaluatorq[redteam]'` |
+| `eq: command not found` | Package not installed or not on PATH | Run the discovery ladder (PATH / `.venv` / uv workspace / `python -m`) before installing; install into a project venv with `uv pip install 'evaluatorq[redteam]'` (global `uv tool install` only as a last resort) |
+| `401 Incorrect API key` on `openai/...` despite `ORQ_API_KEY` set, when running via `uv run` | uv loaded `OPENAI_API_KEY` from an env-file (`UV_ENV_FILE` / explicit `--env-file`) after your `unset`, flipping routing to direct OpenAI (uv does **not** auto-read `./.env`) | `env -u OPENAI_API_KEY uv run --no-env-file …`, or run `eq` directly off PATH. See the uv `.env` trap section |
+| `RetrieveAgentRequestAgentsResponseBody: Agent not found` mid-run | Wrong / unprovisioned `--target` key | Verify up front via MCP `agent_get` / `GET /v2/agents/{key}` / SDK `agents.retrieve`; provision or fix the key. See "Verify the target agent exists" |
 | `ORQ_API_KEY not set` or 401 errors | Missing env var for target agent | Export `ORQ_API_KEY` in your shell or `.env` |
 | `ImportError` for `openai`/`typer` | Incomplete install (missing extra) | `pip install 'evaluatorq[redteam]'` |
 | `CredentialError` / run hangs at attack generation | No LLM credential for attack/evaluator | Set `OPENAI_API_KEY` (bare model names) **or** `ORQ_API_KEY` (provider-prefixed, e.g. `openai/gpt-5-mini`) |
