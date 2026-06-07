@@ -51,7 +51,7 @@ eq --help >/dev/null 2>&1 && EQ="eq"                                            
 [ -z "$EQ" ] && [ -x .venv/bin/eq ] && EQ=".venv/bin/eq"                          # project venv
 [ -z "$EQ" ] && uv run --package evaluatorq eq --help >/dev/null 2>&1 \
   && EQ="uv run --package evaluatorq eq"                                          # orqkit workspace
-[ -z "$EQ" ] && python3 -c "import evaluatorq" 2>/dev/null && EQ="python3 -m evaluatorq"  # importable
+[ -z "$EQ" ] && python3 -m evaluatorq --help >/dev/null 2>&1 && EQ="python3 -m evaluatorq"  # importable module run
 echo "Resolved eq: ${EQ:-NONE — install below}"
 ```
 
