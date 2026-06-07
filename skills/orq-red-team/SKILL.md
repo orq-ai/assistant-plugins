@@ -45,43 +45,35 @@ eq redteam <command> [options]
 `eq` is frequently already reachable through a project venv (e.g. `docs/demos/*/`), a uv tool install, or the orqkit workspace. **Probe in this order and use the first hit — install only as a last resort** (a global `pip install` can be blocked by PEP 668 / `--break-system-packages`):
 
 ```bash
-# 1. Already on PATH?
-eq --help >/dev/null 2>&1 && echo "PATH" && EQ="eq"
-
-# 2. Installed as a uv tool? (preferred install target — see below)
-[ -z "$EQ" ] && uv tool run --from 'evaluatorq[redteam]' eq --help >/dev/null 2>&1 \
-  && echo "uv tool" && EQ="uv tool run --from 'evaluatorq[redteam]' eq"
-
-# 3. Inside the orqkit workspace? (resolves from the workspace lockfile)
+# Resolve how to invoke eq. Cheap/local probes first; install only if none hit.
+EQ=""
+eq --help >/dev/null 2>&1 && EQ="eq"                                              # on PATH
+[ -z "$EQ" ] && [ -x .venv/bin/eq ] && EQ=".venv/bin/eq"                          # project venv
 [ -z "$EQ" ] && uv run --package evaluatorq eq --help >/dev/null 2>&1 \
-  && echo "uv workspace" && EQ="uv run --package evaluatorq eq"
-
-# 4. A project-local .venv with it installed?
-[ -z "$EQ" ] && [ -x .venv/bin/eq ] && echo ".venv" && EQ=".venv/bin/eq"
-
-# 5. Importable in the active python? (run via module entrypoint)
-[ -z "$EQ" ] && python3 -c "import evaluatorq" 2>/dev/null \
-  && echo "python -m" && EQ="python3 -m evaluatorq"
-
-echo "Resolved eq invocation: ${EQ:-NONE}"
+  && EQ="uv run --package evaluatorq eq"                                          # orqkit workspace
+[ -z "$EQ" ] && python3 -c "import evaluatorq" 2>/dev/null && EQ="python3 -m evaluatorq"  # importable
+echo "Resolved eq: ${EQ:-NONE — install below}"
 ```
 
-If nothing resolves, install — prefer `uv tool` (isolated, puts `eq` on PATH, no venv juggling):
+Each resolved `$EQ` is quote-clean and safe to reuse as a command prefix (`$EQ redteam run …`).
+
+If nothing resolves, install — prefer a **local venv** (keeps the dependency scoped to the project, no global state):
 
 ```bash
-# Preferred: install as a uv tool (global, isolated)
+# Preferred: install into a project venv (create one if needed)
+[ -d .venv ] || uv venv          # or: python3 -m venv .venv
+uv pip install 'evaluatorq[redteam]'    # installs into the active/.venv; then EQ=".venv/bin/eq"
+
+# No uv available:
+.venv/bin/pip install 'evaluatorq[redteam]'
+
+# Last resort — global, isolated tool install (puts eq on PATH):
 uv tool install 'evaluatorq[redteam]'
-
-# Inside a project that already has a venv: install into that venv
-uv pip install 'evaluatorq[redteam]'
-
-# Last resort, no uv available:
-pip install 'evaluatorq[redteam]'
 ```
 
 The `[redteam]` extra is required (pulls in `openai`, `typer`, `huggingface-hub`). The interactive dashboard (`eq redteam ui`) additionally needs the `[ui]` extra: add `evaluatorq[redteam,ui]`.
 
-> Throughout this skill, `eq redteam …` is written assuming `eq` is on PATH. If you resolved it via `$EQ` above (e.g. `uv run --package evaluatorq eq`), substitute that prefix — **but read the uv `.env` trap below first; running `eq` via `uv run` has a credential gotcha.**
+> Throughout this skill, `eq redteam …` is written assuming `eq` is on PATH. If you resolved it via `$EQ` above (e.g. `uv run --package evaluatorq eq`), substitute that prefix — **but read the uv `.env` trap below first; running `eq` via `uv run` has a credential gotcha when an env-file (`UV_ENV_FILE`) is in play.**
 
 ## Required environment variables
 
@@ -102,44 +94,44 @@ If neither key is set the run fails with `CredentialError`. There is no Azure cr
 
 ### The `uv run` + `.env` credential trap (read before running `eq` via uv)
 
-**Symptom:** every gateway model string (`openai/gpt-5-mini`) fails with `401 Incorrect API key` even though `ORQ_API_KEY` is set, and shell-level `unset OPENAI_API_KEY` changes nothing.
+**Symptom:** every gateway model string (`openai/gpt-5-mini`) fails with `401 Incorrect API key` even though `ORQ_API_KEY` is set, and a shell-level `unset OPENAI_API_KEY` doesn't stick once you run via `uv run`.
 
-**Cause:** `uv run` auto-loads `.env` from the current directory and injects those vars into the subprocess **after** any shell-level `unset`/`env -u`. If the project `.env` contains `OPENAI_API_KEY`, every `uv run eq …` re-acquires it → routing flips to direct-OpenAI (see routing rules above, `OPENAI_API_KEY` wins) → gateway-prefixed model strings like `openai/gpt-5-mini` are sent to OpenAI, which rejects the `openai/` prefix and the orq key. The `unset OPENAI_API_KEY` workaround **does nothing under `uv run`** — uv re-reads `.env` post-unset. (This trap is specific to `uv run`; a plain `env -u OPENAI_API_KEY eq …` works fine.)
+**Cause:** `uv` injects an env-file into the subprocess **only when you opt in** — `UV_ENV_FILE` is set in the environment, or you pass `--env-file`. It does **not** auto-read `./.env` from a bare `uv run` (verified on uv 0.11.19). But when an env-file *is* in play and contains `OPENAI_API_KEY`, uv loads it **after** your shell-level `unset`/`env -u`, so the key comes back → routing flips to direct-OpenAI (see routing rules above, `OPENAI_API_KEY` wins) → gateway-prefixed strings like `openai/gpt-5-mini` are sent to OpenAI, which rejects the `openai/` prefix and the orq key → `401`. A plain `env -u OPENAI_API_KEY eq …` (no `uv run`) is unaffected — the re-injection is uv re-reading the env-file. Common ways `UV_ENV_FILE` gets set without you noticing: direnv / a project `.envrc`, or a Makefile/CI wrapper.
 
-**Diagnostic — detect `.env` contamination** (compare uv *with* vs *without* `.env`; prints presence only, never the key value):
+**Diagnostic — detect env-file injection** (compare uv with its default env-file loading vs `--no-env-file`; prints presence only, never the key value):
 ```bash
+# Is uv pointed at an env-file at all? (a path here, not a secret)
+echo "UV_ENV_FILE: ${UV_ENV_FILE:-unset}"
 WITH=$(uv run python3 -c "import os;print('set' if os.getenv('OPENAI_API_KEY') else 'unset')")
 WITHOUT=$(uv run --no-env-file python3 -c "import os;print('set' if os.getenv('OPENAI_API_KEY') else 'unset')")
-echo "OPENAI_API_KEY — with .env: $WITH | without .env: $WITHOUT"
-# with=set, without=unset → .env is injecting it (the trap)
-# both set                → comes from your shell, not .env
-# both unset              → clean
+echo "OPENAI_API_KEY — uv default: $WITH | uv --no-env-file: $WITHOUT"
+# default=set, --no-env-file=unset → uv's env-file is injecting it (the trap; check UV_ENV_FILE above)
+# both set                         → comes from your shell env, not an env-file
+# both unset                       → clean
 ```
-`--no-env-file` only tells uv to skip `.env`; it is the *baseline*, not the detector. The `with` vs `without` difference is what proves `.env` is the source. **Never print the key itself** — booleans only, here and anywhere else in this skill.
+uv loads an env-file only via `UV_ENV_FILE` or `--env-file`; `--no-env-file` is the *baseline* that suppresses all of them. The default-vs-`--no-env-file` difference is what proves an env-file is the source. **Never print the key itself** — booleans only, here and anywhere else in this skill.
 
 **Decide — don't auto-strip `.env`.** A key in `.env` usually means the user wants it; suppressing it silently is wrong. Check the state and guide:
 
 - `OPENAI_API_KEY` only, no `ORQ_API_KEY` → direct-OpenAI run, bare model names (`gpt-5-mini`). No conflict.
 - `ORQ_API_KEY` only → gateway run, `openai/`-prefixed names. No conflict.
 - **both set + gateway target (`openai/…` model)** → conflict: `OPENAI_API_KEY` wins → the gateway-prefixed string is sent to OpenAI → 401. Surface it and let the user choose, e.g.:
-  > "`OPENAI_API_KEY` is set (looks like it's coming from `.env`). With a gateway model string that routes to direct OpenAI and 401s. To use the orq gateway for this run, suppress it for the subprocess [Fix A]. To use direct OpenAI instead, drop the `openai/` prefix. If neither `ORQ_API_KEY` nor the gateway is what you want, set the key you intend here."
+  > "`OPENAI_API_KEY` is set (likely exported in your shell or pulled in via an env-file such as `UV_ENV_FILE`). With a gateway model string that routes to direct OpenAI and 401s. To use the orq gateway for this run, suppress it for the subprocess [Fix A]. To use direct OpenAI instead, drop the `openai/` prefix. If neither `ORQ_API_KEY` nor the gateway is what you want, set the key you intend here."
 
-**Fix A — feed uv only the orq creds for this run** (used when the user wants the gateway; does **not** modify `.env`):
+**Fix A — strip the key for this run and block uv from re-adding it** (used when the user wants the gateway; does **not** modify `.env` or `UV_ENV_FILE`, writes nothing to disk):
 ```bash
-TMP_ENV="$(mktemp)"                                  # mode 600, removed after the run
-printf 'ORQ_API_KEY=%s\n' "$ORQ_API_KEY" > "$TMP_ENV"
-[ -n "$ORQ_BASE_URL" ] && printf 'ORQ_BASE_URL=%s\n' "$ORQ_BASE_URL" >> "$TMP_ENV"
-uv run --no-env-file --env-file "$TMP_ENV" --package evaluatorq eq redteam run --target agent:<key> ...
-rm -f "$TMP_ENV"
+env -u OPENAI_API_KEY uv run --no-env-file --package evaluatorq eq redteam run --target agent:<key> ...
 ```
-`--no-env-file` stops uv reading the project `.env`; `--env-file "$TMP_ENV"` injects only the orq creds, so routing stays on the gateway. Only pass `ORQ_BASE_URL` if the user already has one set — otherwise let evaluatorq use its own gateway default; do **not** synthesize a base URL.
+`env -u OPENAI_API_KEY` drops the direct-OpenAI key from the environment for this one command; `--no-env-file` stops uv re-loading it from any env-file (`UV_ENV_FILE` / `--env-file`). `ORQ_API_KEY` (and `ORQ_BASE_URL` if set) pass through from your shell, so routing stays on the gateway.
+
+> Caveat: `--no-env-file` suppresses **all** env-file loading, so if `ORQ_API_KEY`/`ORQ_BASE_URL` live *only* in an env-file (not exported in your shell), they'll be dropped too. Export them first (`export ORQ_API_KEY=…`) or pass them inline: `env -u OPENAI_API_KEY ORQ_API_KEY="$ORQ_API_KEY" uv run --no-env-file …`. Do **not** combine `--no-env-file` with `--env-file` — `--no-env-file` overrides `--env-file` (either order) and nothing gets injected. Only set `ORQ_BASE_URL` if the user already has one; do **not** synthesize a base URL.
 
 **Fix B — don't use `uv run`.** If `eq` is on PATH (e.g. via `uv tool install`), invoke it directly so the trap can't fire: `env -u OPENAI_API_KEY eq redteam run …`.
 
 Check before running — **always run this preflight when the skill is invoked**, before any `eq redteam run`:
 ```bash
-# 1. CLI installed and reachable
-eq --help >/dev/null 2>&1 || { echo "eq CLI not found — install 'evaluatorq[redteam]' or check PATH"; exit 1; }
+# 1. CLI installed and reachable (honors the $EQ resolved by the discovery ladder)
+${EQ:-eq} --help >/dev/null 2>&1 || { echo "eq CLI not found — run the discovery ladder or install 'evaluatorq[redteam]'"; exit 1; }
 
 # 2. At least one LLM credential must be set (else CredentialError mid-run)
 [ -n "$OPENAI_API_KEY" ] || [ -n "$ORQ_API_KEY" ] || { echo "No LLM credential — set OPENAI_API_KEY or ORQ_API_KEY for the attack/evaluator model."; exit 1; }
@@ -463,8 +455,8 @@ vulnerabilities_found: 7
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| `eq: command not found` | Package not installed or not on PATH | Run the discovery ladder (uv tool / uv run / .venv) before installing; install with `uv tool install 'evaluatorq[redteam]'` |
-| `401 Incorrect API key` on `openai/...` despite `ORQ_API_KEY` set, under `uv run` | `uv run` re-loaded `OPENAI_API_KEY` from `.env` after your `unset` → routing flipped to direct OpenAI | `uv run --no-env-file --env-file <tmp-with-only-ORQ_API_KEY> …`, or run `eq` directly off PATH. See the uv `.env` trap section |
+| `eq: command not found` | Package not installed or not on PATH | Run the discovery ladder (PATH / `.venv` / uv workspace / `python -m`) before installing; install into a project venv with `uv pip install 'evaluatorq[redteam]'` (global `uv tool install` only as a last resort) |
+| `401 Incorrect API key` on `openai/...` despite `ORQ_API_KEY` set, when running via `uv run` | uv loaded `OPENAI_API_KEY` from an env-file (`UV_ENV_FILE` / explicit `--env-file`) after your `unset`, flipping routing to direct OpenAI (uv does **not** auto-read `./.env`) | `env -u OPENAI_API_KEY uv run --no-env-file …`, or run `eq` directly off PATH. See the uv `.env` trap section |
 | `RetrieveAgentRequestAgentsResponseBody: Agent not found` mid-run | Wrong / unprovisioned `--target` key | Verify up front via MCP `agent_get` / `GET /v2/agents/{key}` / SDK `agents.retrieve`; provision or fix the key. See "Verify the target agent exists" |
 | `ORQ_API_KEY not set` or 401 errors | Missing env var for target agent | Export `ORQ_API_KEY` in your shell or `.env` |
 | `ImportError` for `openai`/`typer` | Incomplete install (missing extra) | `pip install 'evaluatorq[redteam]'` |
