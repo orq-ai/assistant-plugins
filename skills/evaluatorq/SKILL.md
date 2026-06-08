@@ -262,7 +262,7 @@ For full CLI flags and output format, see the `red-team` skill (`eq redteam`) an
 |----------|---------|
 | Python | `pip install 'evaluatorq[redteam]'` |
 | TypeScript | `npm install @orq-ai/evaluatorq` |
-| CLI only | `pip install 'evaluatorq[redteam]'` then use `eq` |
+| CLI (`eq redteam`) | `pip install 'evaluatorq[redteam]'` then use `eq` |
 
 Environment variables:
 
