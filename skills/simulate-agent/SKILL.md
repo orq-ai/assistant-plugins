@@ -37,13 +37,6 @@ violations. You almost never need to hand-roll the loop.
 
 **Why these constraints:** Unbounded loops burn tokens and produce repetitive late-turn dialog. Same-model simulator and agent score themselves favorably. Hand-rolled loops miss tracing and auto-upload. Persona scalars drive simulator behavior more than freeform text does.
 
-## Companion Skills
-
-- `generate-synthetic-dataset`, turn reviewed simulation transcripts into a curated dataset
-- `run-experiment`, once transcripts exist, evaluate them with conversation-level scorers
-- `build-evaluator`, design a `SimulationScorer` that reads `SimulationResult`
-- `analyze-trace-failures`, prefer this if real production conversations already exist
-
 ## When to use
 
 - "simulate a user talking to my agent for N turns"
@@ -184,15 +177,108 @@ Only after the user confirms, scale to the full persona × scenario grid. This r
 
 Tell the user all four. The OTel span and Experiment URL are what designers and PMs will want. The JSONL export is what engineers diff between runs.
 
-## Done When
+## Required environment variables
+
+Credentials are resolved in this order:
+
+1. **`ORQ_API_KEY`** (required) — authenticates the target agent call and uploads results to orq.ai. Every simulation path that touches an orq deployment or uploads an Experiment requires this.
+2. **`ORQ_BASE_URL`** (optional) — override the default `https://api.orq.ai` gateway. Only needed for on-premise or staging environments.
+3. **`OTEL_EXPORTER_OTLP_ENDPOINT`** (optional) — custom OTel collector endpoint. OTel spans are auto-emitted to orq.ai when `ORQ_API_KEY` is set; set this only when routing to a different collector.
+4. **`ORQ_DISABLE_TRACING`** (optional, `"true"`) — suppress all OTel span emission. Useful in CI environments where span noise is unwanted.
+5. **`ORQ_DEBUG`** (optional, `"true"`) — verbose SDK logging for troubleshooting auth or connectivity issues.
+
+Check before running:
+
+```bash
+echo "ORQ_API_KEY set: $([ -n "$ORQ_API_KEY" ] && echo yes || echo 'NO — required')"
+echo "ORQ_BASE_URL: ${ORQ_BASE_URL:-default (https://api.orq.ai)}"
+```
+
+## Worked example
+
+**Goal:** Simulate a "Wrong Item Refund" scenario against the `customer-support-v2` deployment with a frustrated persona, then review the transcript.
+
+```python
+from evaluatorq.simulation import simulate
+from evaluatorq.simulation.types import (
+    CommunicationStyle, Criterion, EmotionalArc,
+    Persona, Scenario, StartingEmotion,
+)
+
+persona = Persona(
+    name="Impatient Customer",
+    patience=0.2, assertiveness=0.8, politeness=0.4, technical_level=0.3,
+    communication_style=CommunicationStyle.terse,
+    background="Received the wrong item and wants a refund urgently",
+    emotional_arc=EmotionalArc.escalating,
+)
+
+scenario = Scenario(
+    name="Wrong Item Refund",
+    goal="Get a full refund for the wrong item received",
+    context="Customer ordered headphones but received a phone case instead",
+    starting_emotion=StartingEmotion.frustrated,
+    criteria=[
+        Criterion(description="Agent asks for order details", type="must_happen"),
+        Criterion(description="Agent acknowledges the mistake", type="must_happen"),
+        Criterion(description="Agent blames the customer", type="must_not_happen"),
+    ],
+)
+
+results = await simulate(
+    evaluation_name="support-dry-run",
+    agent_key="customer-support-v2",
+    personas=[persona],
+    scenarios=[scenario],
+    max_turns=3,
+    evaluator_names=["goal_achieved", "criteria_met"],
+)
+```
+
+Expected stdout after the run:
+
+```
+INFO  | Running 1 simulation(s)...
+INFO  | [PASS] score=0.85 turns=3
+INFO  |        terminated_by=judge rules_broken=[]
+INFO  | Experiment URL: https://app.orq.ai/experiments/sim-<id>
+```
+
+Key things to check in the result:
+
+- `terminated_by=judge` — the JudgeAgent decided the goal was met or broken, not the turn cap
+- `rules_broken=[]` — no `must_not_happen` criteria were triggered
+- `goal_completion_score` — float `[0-1]`; below 0.5 means the agent did not make meaningful progress
+
+## Troubleshooting common failures
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| `ORQ_API_KEY not set` / 401 on first LLM call | Env var missing or not exported | Export `ORQ_API_KEY` in your shell or load a `.env` file with `dotenv` before imports |
+| `terminated_by=max_turns` on every run | Judge not terminating; criteria too strict; or agent not making progress | Lower `max_turns` first to confirm the loop runs; loosen or clarify `Criterion.description` so the judge can recognise satisfaction |
+| `goal_completion_score` always `0.0` | Judge model not configured or not reachable | Confirm `ORQ_API_KEY` is set; check OTel spans for judge call errors |
+| `terminated_by=error` | `target_callback` or agent invocation raised an exception | Read `result.messages[-1]` for the error text; check the deployment key is correct and the deployment is live |
+| `TypeError: simulate() got unexpected keyword argument 'sim_model'` | Installed wheel pre-dates the `sim_model=` rename | Use `model=` instead; run `inspect.signature(simulate)` to confirm the installed API surface |
+| `TypeError: simulate() got unexpected keyword argument 'upload_results'` | Same as above — `upload_results=` not in older wheels | Remove `upload_results=False`; to skip upload, simply don't set `ORQ_API_KEY` |
+| No Experiment row in orq.ai | `ORQ_API_KEY` not set, or using bare `simulate()` without `evaluatorq()` wrapper | Set `ORQ_API_KEY`; or route through `wrap_simulation_agent()` + `evaluatorq()` for guaranteed upload |
+| `ValidationError` on `Persona` or `Scenario` fields | Enum string literal doesn't match | Run `inspect.signature` to check the installed `CommunicationStyle` / `StartingEmotion` values; pass enum members (`CommunicationStyle.terse`) not raw strings when unsure |
+
+## Done when
 
 - At least one persona × scenario simulated end-to-end with the agreed `max_turns`
 - `SimulationResult.terminated_by` is `judge` (not `max_turns`) for the majority of runs, OR the user has acknowledged that hitting `max_turns` is acceptable for this experiment
 - Spans visible in orq.ai under `orq.simulation.pipeline` for direct calls, or under the wrapped job's `orq.job` trace
-- User has reviewed at least one transcript and signed off on quality
-- If routed through `evaluatorq()`: Experiment URL printed and surfaced to the user
+- User has reviewed at least one full transcript (`result.messages`) and signed off on persona realism and agent behavior
+- If routed through `evaluatorq()`: Experiment URL printed to stdout and surfaced to the user
 
 ---
+
+## Companion skills
+
+- `generate-synthetic-dataset` — turn reviewed simulation transcripts into a curated dataset
+- `run-experiment` — once transcripts exist, evaluate them with conversation-level scorers
+- `build-evaluator` — design a `SimulationScorer` that reads `SimulationResult`
+- `analyze-trace-failures` — prefer this if real production conversations already exist
 
 ## Companion resources
 
