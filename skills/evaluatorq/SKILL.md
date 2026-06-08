@@ -260,9 +260,8 @@ For full CLI flags and output format, see the `red-team` skill (`eq redteam`) an
 
 | Language | Command |
 |----------|---------|
-| Python | `pip install 'evaluatorq[redteam]'` |
+| Python + CLI (`eq`) | `pip install 'evaluatorq[redteam]'` — installs both the library and the `eq` CLI |
 | TypeScript | `npm install @orq-ai/evaluatorq` |
-| CLI (`eq redteam`) | `pip install 'evaluatorq[redteam]'` then use `eq` |
 
 Environment variables:
 
@@ -275,7 +274,7 @@ Environment variables:
 
 ## Resources
 
-- **Full CLI reference** (redteam + sim flags, output format): [resources/cli-reference.md](resources/cli-reference.md)
+- **CLI quick reference** (common patterns, eq redteam + eq sim): [resources/cli-reference.md](resources/cli-reference.md)
 - **evaluatorq API reference** (jobs, scorers, full signatures): See `compare-agents` → [compare-agents/resources/evaluatorq-api.md](../compare-agents/resources/evaluatorq-api.md)
 
 ## orq.ai Documentation
