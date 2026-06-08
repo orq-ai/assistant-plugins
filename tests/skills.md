@@ -85,6 +85,37 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 
 ---
 
+## `evaluatorq`
+
+### Scenario 1: Write a Python evaluation script
+
+- Ask: "Help me evaluate my agent `my-support-agent` using evaluatorq"
+- Verify Phase 1: asks for agent key or confirms via `search_entities`
+- Verify Phase 3: generates a Python script with `@job`, `DataPoint`, `evaluatorq()`, and `await` call
+- Verify: uses `orq.evals.invoke_async()` (inside async scorers) or `orq.evals.invoke()` (sync), never `orq.evaluators.invoke()`
+- Verify: suggests `dataset_id` if dataset exists, inline only for quick tests
+
+### Scenario 2: Run red team from CLI
+
+- Ask: "Run a red team test on my agent using the evaluatorq CLI"
+- Verify: shows `eq redteam run --target agent:<KEY> --mode dynamic` (not `run adaptive` or `--framework`)
+- Verify: explains that the 5 detail files (`01_agent_context.json` … `05_summary_report.json`) come from `--save detail`
+- Verify: shows `eq redteam ui report.json` to view results (not `eq redteam report summarize`)
+
+### Scenario 3: Run simulation from CLI
+
+- Ask: "Use eq sim to simulate users talking to my agent"
+- Verify: shows `eq sim generate` with `--agent-description` and target flag
+- Verify: explains `--num-personas`, `--num-scenarios`, `--max-turns`
+- Verify: mentions exactly one of `--agent-key`, `--openai-model`, `--vercel-url` is required
+
+### Scenario 4: Routing — not evaluatorq's job
+
+- Ask: "Compare my two agents against each other"
+- Verify: routes to `compare-agents`, not generates a script here
+
+---
+
 ## `compare-agents`
 
 ### Scenario 1: orq.ai vs orq.ai comparison
@@ -254,6 +285,8 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 - `skills/setup-observability/resources/baseline-checklist.md`
 - `skills/invoke-deployment/SKILL.md`
 - `skills/invoke-deployment/resources/api-reference.md`
+- `skills/evaluatorq/SKILL.md`
+- `skills/evaluatorq/resources/cli-reference.md`
 - `skills/compare-agents/SKILL.md`
 - `skills/compare-agents/resources/job-patterns.md`
 - `skills/compare-agents/resources/evaluatorq-api.md`
