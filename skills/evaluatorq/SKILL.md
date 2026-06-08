@@ -3,11 +3,10 @@ name: evaluatorq
 description: >
   Write and run evaluatorq evaluation scripts (Python or TypeScript) for a
   single agent or deployment — custom scorers, built-in evaluators, and
-  dataset-driven evaluation. Also covers the evaluatorq CLI: `eq redteam`
-  for adversarial red teaming and `eq sim` for multi-turn user simulation.
-  Use when the user wants to evaluate a single agent, write a custom
-  evaluation script, or run the evaluatorq CLI. Do NOT use when comparing
-  multiple agents head-to-head (use compare-agents) or when running
+  dataset-driven evaluation. For CLI workflows, use the companion skills:
+  `red-team` for `eq redteam` adversarial testing and `simulate-agent` for
+  `eq sim` multi-turn user simulation. Do NOT use when comparing multiple
+  agents head-to-head (use compare-agents) or when running
   orq.ai-native experiments only (use run-experiment).
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, orq*
 ---
@@ -36,15 +35,15 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 - `compare-agents` — run the same evaluatorq evaluation across multiple agents
 - `run-experiment` — run orq.ai-native experiments without writing code
 - `analyze-trace-failures` — diagnose agent failures from production traces
+- `red-team` — full `eq redteam` walkthrough: modes, categories, output, dashboard
+- `simulate-agent` — full `eq sim` walkthrough: personas, scenarios, goal scoring
 
 ## When to use
 
 - User wants to write a Python or TypeScript evaluation script for a single agent
 - User wants to use a custom scorer or built-in evaluator
 - User asks about `evaluatorq`, `eq`, `evaluatorq()`, `@job`, `DataPoint`, `EvaluationResult`
-- User wants to run `eq redteam` (adversarial red teaming)
-- User wants to run `eq sim` (multi-turn user simulation)
-- User wants to evaluate an agent from the CLI without writing Python
+- User asks about the evaluatorq CLI (`eq redteam`, `eq sim`) and needs orientation — then delegate to `red-team` or `simulate-agent`
 
 ## When NOT to use
 
@@ -78,8 +77,8 @@ Evaluatorq Progress:
 |------|-------------|-------------|
 | **Library: Python script** | Custom scorers, complex jobs, programmatic control | `evaluatorq()` async function |
 | **Library: TypeScript script** | Same as Python, TypeScript stack | `evaluatorq()` async function |
-| **CLI: `eq redteam`** | Adversarial safety testing against OWASP categories | `eq redteam run` |
-| **CLI: `eq sim`** | Multi-turn conversation simulation, goal-achievement scoring | `eq sim run` / `eq sim generate` |
+| **CLI: `eq redteam`** | Adversarial safety testing against OWASP categories | → `red-team` skill |
+| **CLI: `eq sim`** | Multi-turn conversation simulation, goal-achievement scoring | → `simulate-agent` skill |
 
 ---
 
@@ -91,9 +90,7 @@ Evaluatorq Progress:
 
 For orq.ai agents, use `search_entities` MCP tool with `type: "agent"` to find available agent keys.
 
-**For CLI**, ask:
-- Which subcommand — `redteam` (adversarial testing) or `sim` (simulation)?
-- What is the agent key (`--agent-key`), OpenAI model (`--openai-model`), or Vercel AI SDK URL (`--vercel-url`)?
+**For CLI** (`eq redteam` or `eq sim`): orient the user, then hand off to the appropriate companion skill — `red-team` for adversarial testing, `simulate-agent` for user simulation.
 
 ---
 
@@ -173,48 +170,24 @@ await evaluatorq("<experiment-name>", {
 
 ### CLI — Red Teaming
 
+> **Delegate to the `red-team` skill** for the full `eq redteam` walkthrough (modes, OWASP categories, output format, dashboard).
+
+Quick reference:
+
 ```bash
-# Dynamic mode — LLM-generated adversarial prompts (default)
-eq redteam run \
-  --target agent:<AGENT_KEY> \
-  --mode dynamic
-
-# Static mode — uses OWASP dataset
-eq redteam run \
-  --target agent:<AGENT_KEY> \
-  --mode static
-
-# Hybrid mode — both dynamic and static
-eq redteam run \
-  --target agent:<AGENT_KEY> \
-  --mode hybrid
-
-# Open the interactive Streamlit dashboard for a saved report
-eq redteam ui report.json
+eq redteam run --target agent:<AGENT_KEY> --mode dynamic
+eq redteam ui report.json   # open Streamlit dashboard
 ```
-
-See [resources/cli-reference.md](resources/cli-reference.md) for full CLI flags and output format.
 
 ### CLI — Simulation
 
+> **Delegate to the `simulate-agent` skill** for the full `eq sim` walkthrough (persona generation, scenario setup, goal-achievement scoring).
+
+Quick reference:
+
 ```bash
-# Run from a pre-built datapoints file
-eq sim run \
-  --datapoints dp.jsonl \
-  --agent-key <AGENT_KEY>
-
-# Generate personas + scenarios, then simulate
-eq sim generate \
-  --agent-description "A customer support agent for a SaaS product" \
-  --agent-key <AGENT_KEY> \
-  --num-personas 5 \
-  --num-scenarios 5
-
-# Validate a datapoints file before running
-eq sim validate-dataset dp.jsonl
-
-# List recent runs
-eq sim runs
+eq sim generate --agent-description "..." --agent-key <AGENT_KEY>
+eq sim run --datapoints dp.jsonl --agent-key <AGENT_KEY>
 ```
 
 ---
@@ -279,17 +252,7 @@ Results print to terminal. If `ORQ_API_KEY` is set, results also appear in orq.a
 
 ### CLI — selected flags
 
-| Flag | CLI | Purpose |
-|------|-----|---------|
-| `--mode dynamic\|static\|hybrid` | redteam | Execution mode (default: `dynamic`) |
-| `--category` / `-c` | redteam | OWASP category to test, repeatable |
-| `--save final\|detail\|none` | redteam | What to persist (default: `final`) |
-| `--output-dir` | redteam | Directory for saved files (required with `--save detail`) |
-| `--output <file>` | sim | Write results JSONL to a file |
-| `--sim-model <model>` | sim | User-simulator / judge model |
-| `--parallelism <n>` | sim | Concurrent simulations (default 5) |
-| `--no-save` | sim | Skip writing to `.evaluatorq/sim-runs/` |
-| `--verbose` / `--quiet` | both | Logging verbosity |
+For full CLI flags and output format, see the `red-team` skill (`eq redteam`) and `simulate-agent` skill (`eq sim`).
 
 ---
 
