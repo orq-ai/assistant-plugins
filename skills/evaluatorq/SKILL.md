@@ -276,7 +276,7 @@ Environment variables:
 ## Resources
 
 - **Full CLI reference** (redteam + sim flags, output format): [resources/cli-reference.md](resources/cli-reference.md)
-- **evaluatorq API reference** (jobs, scorers, full signatures): See `compare-agents` → [compare-agents/resources/evaluatorq-api.md](skills/compare-agents/resources/evaluatorq-api.md)
+- **evaluatorq API reference** (jobs, scorers, full signatures): See `compare-agents` → [compare-agents/resources/evaluatorq-api.md](../compare-agents/resources/evaluatorq-api.md)
 
 ## orq.ai Documentation
 
