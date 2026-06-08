@@ -47,7 +47,7 @@ eq sim export \
 
 Adversarial red teaming against OWASP vulnerability categories.
 
-> For the full walkthrough — modes, categories, output format, dashboard — use the **`red-team` skill**.
+> For the full walkthrough — modes, categories, output format, dashboard — use the **`orq-red-team` skill**.
 
 Quick reference:
 
