@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-06-10
+
+### Changed
+- `orq-red-team`: the "Verify the target exists" preflight now checks via REST/SDK with the key the run actually uses (`ORQ_API_KEY` from the env, else the project `.env`) instead of the MCP, whose separately-configured key is often in a different project — an MCP miss isn't proof the target is absent. Covers both `agent:` (`GET /v2/agents/{key}`) and `deployment:` (`POST /v2/deployments/get_config`) targets, and falls back to asking the user when no key resolves.
+
 ## [0.5.0] - 2026-06-08
 
 ### Added

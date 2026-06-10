@@ -146,40 +146,56 @@ echo "OPENAI_API_KEY set: $([ -n "$OPENAI_API_KEY" ] && echo yes || echo no)"
 
 If the user's target is `agent:<key>` or `deployment:<key>` and `ORQ_API_KEY` is absent, **stop and ask them to set it** — that run cannot proceed.
 
-### Verify the target agent exists before running
+### Verify the target agent or deployment exists before running
 
-A wrong or unprovisioned `--target agent:<key>` does **not** fail fast — it fails deep in the run, after context retrieval, with a cryptic `RetrieveAgentRequestAgentsResponseBody: Agent not found`. Confirm the key resolves up front. Three ways, in order of convenience:
+A wrong or unprovisioned `--target agent:<key>` (or `deployment:<key>`) does **not** fail fast — it fails deep in the run, after context retrieval, with a cryptic `Agent not found` / `deployment_not_found`. Confirm the key resolves up front.
 
-**1. orq MCP (no shell creds needed)** — preferred when available:
-```
-mcp__orq-mcp-global__agent_get  agent_id=<key>     # one agent
-mcp__orq-mcp-global__agent_list                    # browse keys/status
-```
-A hit returns the manifest: `key`, `status` (want `live`), `project_id`, `model`, and — relevant to the memory-poisoning constraint — `memory_stores` / `knowledge_bases`. A miss raises *agent not found*.
+**Check with the key the run uses, via the API — not the MCP.** The CLI invokes the target with the **`ORQ_API_KEY`** the run sees (exported, or from the project `.env`). Keys are **project-scoped** (since release 4.10, one key → one project, no cross-project reads), so the *only* credential whose verdict predicts the run is that one. The MCP authenticates with a **different, separately-configured key** (see caveat below), so use REST or SDK with the run key.
 
-**2. REST API (fallback when MCP isn't wired)** — `GET /v2/agents/{agent_key}`, bearer auth:
+Resolve the key and check in **one shell block** (each Bash call is a fresh shell — splitting `$KEY` resolution from the `curl` loses it). Prints status only, never the key:
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' \
-  "https://api.orq.ai/v2/agents/<key>" \
-  -H "Authorization: Bearer $ORQ_API_KEY"
-# 200 = exists & in scope · 404 = not found OR not in this key's project · 401 = bad key
+# Run key: exported env wins; else read ORQ_API_KEY from ./.env (handles `export ` prefix, `=` in value, quotes)
+KEY="$ORQ_API_KEY"
+if [ -z "$KEY" ] && [ -f .env ]; then
+  KEY=$(grep -E '^[[:space:]]*(export[[:space:]]+)?ORQ_API_KEY=' .env | tail -1 | sed -E 's/^[^=]*=//; s/^["'"'"']//; s/["'"'"']$//')
+fi
+if [ -z "$KEY" ]; then
+  echo "No ORQ_API_KEY in env or ./.env — STOP and ask the user for the key or its path"
+else
+  curl -s -o /dev/null -w 'HTTP %{http_code}\n' "https://api.orq.ai/v2/agents/<key>" -H "Authorization: Bearer $KEY"
+fi
+# 200 = exists for the run key → go · 404 = not found OR not in this key's project · 401 = bad key
 ```
-Full body (404 returns `{"message": "..."}`):
+For the full manifest (`project_id`, `status`, `memory_stores`/`knowledge_bases`; 404 → `{"message": "..."}`), swap the `-o /dev/null -w …` for `| jq .` in the same block (still `Bearer $KEY`).
+
+**Deployment target** (`--target deployment:<key>`) — deployments have no single-retrieve endpoint; resolve the key with `get_config` instead (same run key, same project scoping):
 ```bash
-curl -s "https://api.orq.ai/v2/agents/<key>" -H "Authorization: Bearer $ORQ_API_KEY" | jq .
+curl -s -o /dev/null -w 'HTTP %{http_code}\n' -X POST "https://api.orq.ai/v2/deployments/get_config" \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d '{"key":"<key>"}'
+# 200 = exists for the run key → go · 404 = deployment_not_found OR not in this key's project · 401 = bad key
 ```
 
-**3. Python SDK** — same call programmatically:
+**If no key resolves** (not exported, no `.env`, or `.env` lacks it): **stop and ask the user** where the key lives or to paste it — "Which `.env`/path holds `ORQ_API_KEY`, or paste the key to use?" Don't guess a path, fabricate a key, or fall back to the MCP's key. Whatever key you verify with, make sure the **run sees the same one** (exported, or via the uv env-file — see the `.env` trap above); a key read only from `.env` won't reach a bare `eq` run.
+
+**Python SDK** — same call; reads `ORQ_API_KEY` from the env, so export the key you verified with:
 ```python
 import os
 from orq_ai_sdk import Orq
-with Orq(api_key=os.getenv("ORQ_API_KEY", "")) as orq:
+with Orq(api_key=os.environ["ORQ_API_KEY"]) as orq:   # KeyError if unset — don't pass "" silently
     print(orq.agents.retrieve(agent_key="<key>").status)  # raises if not found
+    # deployment target: orq.deployments.get_config(key="<key>")  # raises if not found
 ```
 
-On a **miss**: provision the agent (demo dirs usually ship a `provision.py` — look there) or fix the key, then re-check.
+A **`200` is conclusive** — the run can see the agent, you're done.
 
-> **Project-scoping caveat — a miss is not always conclusive.** The MCP server uses its *own* configured `ORQ_API_KEY`, which may be scoped to a different project than the CLI `--target` key (or your shell's `ORQ_API_KEY`). An agent visible to MCP can return `404` from the REST call if your shell key belongs to another project — *verified live: `agent_get` found `clarabelle-cow`, but `curl` with a different-project shell key returned `404` for the same agent.* So: a **hit confirms existence**; a **miss is only conclusive when the checking credential shares the agent's project**. When MCP and CLI disagree, the credential the **CLI** uses (`--target` / shell `ORQ_API_KEY`) is the one that decides whether the run works — verify with that key.
+#### MCP caveat — a miss is not proof of nonexistence
+
+The orq MCP (`mcp__orq-mcp-global__agent_get` / `agent_list`) is convenient for *browsing* and **can be correct**, but it uses its own key, often in a **different project** than the run. So neither verdict is authoritative for the run:
+
+- **MCP miss ≠ agent absent** — its key may be in the wrong project; the agent may exist for your run key. Confirm with the REST/SDK check above, never conclude "no such agent" from an MCP miss.
+- **MCP hit ≠ run will work** — it may see the agent in a project your run key can't reach; the run still dies with *Agent not found*.
+
+The run key decides. If REST and MCP disagree, see the `Agent not found` row in [Troubleshooting](#troubleshooting-common-failures) for how to resolve it. *Verified live: `agent_get` found `clarabelle-cow` while `curl` with a different-project key returned `404` for the same agent.*
 
 ## Plan the run — decide parameters with the user
 
@@ -457,7 +473,7 @@ vulnerabilities_found: 7
 |---------|-------------|-----|
 | `eq: command not found` | Package not installed or not on PATH | Run the discovery ladder (PATH / `.venv` / uv workspace / `python -m`) before installing; install into a project venv with `uv pip install 'evaluatorq[redteam]'` (global `uv tool install` only as a last resort) |
 | `401 Incorrect API key` on `openai/...` despite `ORQ_API_KEY` set, when running via `uv run` | uv loaded `OPENAI_API_KEY` from an env-file (`UV_ENV_FILE` / explicit `--env-file`) after your `unset`, flipping routing to direct OpenAI (uv does **not** auto-read `./.env`) | `env -u OPENAI_API_KEY uv run --no-env-file …`, or run `eq` directly off PATH. See the uv `.env` trap section |
-| `RetrieveAgentRequestAgentsResponseBody: Agent not found` mid-run | Wrong / unprovisioned `--target` key | Verify up front via MCP `agent_get` / `GET /v2/agents/{key}` / SDK `agents.retrieve`; provision or fix the key. See "Verify the target agent exists" |
+| `Agent not found` / `deployment_not_found` mid-run | Wrong / unprovisioned `--target` key, **or** the shell `ORQ_API_KEY` is scoped to a different project than the target (MCP said it exists, but the run key can't see it) | Verify up front with the **shell `ORQ_API_KEY`** — agents via `GET /v2/agents/{key}` (or SDK `agents.retrieve`), deployments via `POST /v2/deployments/get_config` (or SDK `deployments.get_config`). An MCP hit alone is not proof — its key may be another project. On a project mismatch, switch the shell key to the target's project; otherwise provision/fix the key. See "Verify the target agent or deployment exists" |
 | `ORQ_API_KEY not set` or 401 errors | Missing env var for target agent | Export `ORQ_API_KEY` in your shell or `.env` |
 | `ImportError` for `openai`/`typer` | Incomplete install (missing extra) | `pip install 'evaluatorq[redteam]'` |
 | `CredentialError` / run hangs at attack generation | No LLM credential for attack/evaluator | Set `OPENAI_API_KEY` (bare model names) **or** `ORQ_API_KEY` (provider-prefixed, e.g. `openai/gpt-5-mini`) |
