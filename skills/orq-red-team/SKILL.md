@@ -5,8 +5,8 @@ description: >
   agents or static datasets. Use when asked to "run a red team", "red team this
   deployment", "test my agent for vulnerabilities", "OWASP red team", or "check
   how my agent handles adversarial inputs". Do NOT use when you only need to build
-  evaluators (use build-evaluator) or analyze existing trace failures (use
-  analyze-trace-failures).
+  evaluators (use orq-build-evaluator) or analyze existing trace failures (use
+  orq-analyze-trace-failures).
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, orq*
 ---
 
@@ -506,6 +506,6 @@ The CLI covers the common case (red-teaming an orq `agent:`/`deployment:` target
 
 ## Companion skills
 
-- `build-evaluator` — build custom LLM judges for failure modes surfaced by red teaming
-- `analyze-trace-failures` — deeper failure taxonomy from production traces
-- `run-experiment` — run controlled experiments using orq deployments
+- `orq-build-evaluator` — build custom LLM judges for failure modes surfaced by red teaming
+- `orq-analyze-trace-failures` — deeper failure taxonomy from production traces
+- `orq-run-experiment` — run controlled experiments using orq deployments

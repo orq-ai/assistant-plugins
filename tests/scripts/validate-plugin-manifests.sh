@@ -129,8 +129,8 @@ assert_jq plugins/orq/.mcp.json '.mcpServers["orq-workspace"].url == "https://my
 
 assert_path -d "plugins/orq/skills" \
   "plugins/orq/skills directory must exist (symlink to ../../skills)"
-assert_path -f "plugins/orq/skills/build-agent/SKILL.md" \
-  "plugins/orq/skills/build-agent/SKILL.md must exist (verifies symlink resolves)"
+assert_path -f "plugins/orq/skills/orq-build-agent/SKILL.md" \
+  "plugins/orq/skills/orq-build-agent/SKILL.md must exist (verifies symlink resolves)"
 assert_path -f "plugins/orq/.mcp.json" \
   "plugins/orq/.mcp.json must resolve to a readable file"
 assert_path -f "plugins/orq/mcp.json" \
@@ -151,7 +151,7 @@ assert_path -f ".claude-plugin/.mcp.json" \
   ".claude-plugin/.mcp.json must resolve to a readable file"
 assert_path -d ".claude-plugin/skills" \
   ".claude-plugin/skills must resolve to a readable directory"
-assert_path -f ".claude-plugin/skills/build-agent/SKILL.md" \
-  ".claude-plugin/skills/build-agent/SKILL.md must exist (verifies symlink resolves)"
+assert_path -f ".claude-plugin/skills/orq-build-agent/SKILL.md" \
+  ".claude-plugin/skills/orq-build-agent/SKILL.md must exist (verifies symlink resolves)"
 
 echo "Plugin manifest validation passed."

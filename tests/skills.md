@@ -2,11 +2,11 @@
 
 Conversational tests for each skill. Trigger each with a simple scenario and verify the first phase responds correctly. **No pre-existing resources are modified.**
 
-Requires `setup.md` to have run first (seed data for `run-experiment` test).
+Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ---
 
-## `setup-observability`
+## `orq-setup-observability`
 
 ### Scenario 1: Python OpenAI app — AI Router path
 
@@ -53,7 +53,7 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 
 ---
 
-## `invoke-deployment`
+## `orq-invoke-deployment`
 
 ### Scenario 1: Deployment invocation (happy path)
 
@@ -112,11 +112,11 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 ### Scenario 4: Routing — not evaluatorq's job
 
 - Ask: "Compare my two agents against each other"
-- Verify: routes to `compare-agents`, not generates a script here
+- Verify: routes to `orq-compare-agents`, not generates a script here
 
 ---
 
-## `compare-agents`
+## `orq-compare-agents`
 
 ### Scenario 1: orq.ai vs orq.ai comparison
 
@@ -130,48 +130,48 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 
 - Ask: "Compare my LangGraph agent against my orq.ai agent"
 - Verify: generates one LangGraph job pattern and one orq.ai job pattern
-- Verify: delegates dataset creation to `generate-synthetic-dataset` (does not create inline)
-- Verify: delegates evaluator creation to `build-evaluator` (does not design from scratch)
+- Verify: delegates dataset creation to `orq-generate-synthetic-dataset` (does not create inline)
+- Verify: delegates evaluator creation to `orq-build-evaluator` (does not design from scratch)
 
 ---
 
-## `build-agent`
+## `orq-build-agent`
 
 - Ask: "Build a simple FAQ agent for a pizza restaurant"
 - Verify: asks clarifying questions about purpose, users, success criteria
 - Verify: calls `list_models` when selecting model
 
-## `build-evaluator`
+## `orq-build-evaluator`
 
 - Ask: "Build an evaluator that checks if output is valid JSON"
 - Verify: recommends code-based evaluator (`create_python_eval`), not LLM judge
 - Ask: "Build an evaluator for tone and helpfulness"
 - Verify: suggests splitting into separate evaluators (one per criterion)
 
-## `generate-synthetic-dataset`
+## `orq-generate-synthetic-dataset`
 
 - Ask: "Generate 5 test cases for a customer support chatbot"
 - Verify: proposes dimensions of variation OR generates diverse cases
 - Verify: calls `create_dataset` + `create_datapoints` with `orq-skills-test-` prefix
 
-## `optimize-prompt`
+## `orq-optimize-prompt`
 
 - Provide a simple prompt inline: "You are a helpful assistant. Answer questions."
 - Verify: analyzes against the 11-dimension framework
 - Verify: produces concrete suggestions
 
-## `analyze-trace-failures`
+## `orq-analyze-trace-failures`
 
 - Ask: "Analyze recent trace failures"
 - Verify: calls `list_traces`, attempts to read spans
 - Verify: describes sampling strategy
 
-## `run-experiment`
+## `orq-run-experiment`
 
 - Ask: "Run an experiment using orq-skills-test-dataset with orq-skills-test-eval-length"
 - Verify: calls `create_experiment` with correct references
 
-## `simulate-agent`
+## `orq-simulate-agent`
 
 ### Scenario 1: Persona-driven multi-turn simulation
 
@@ -189,7 +189,7 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 - Ask: "Simulate jailbreak attempts against my agent"
 - Verify: redirects to `evaluatorq.red_team()` with attack categories (LLM01–LLM10) rather than rolling a persona loop
 
-## `manage-skills`
+## `orq-manage-skills`
 
 ### Scenario 1: List skills
 
@@ -228,7 +228,7 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 - Verify: confirms the diff with the user before `update_skill`
 - Then ask: "Rename `refund_policy` to `refund_policy_eu`"
 - Verify: warns that renaming `display_name` silently breaks every `{{skill.refund_policy}}` / `{{snippet.refund_policy}}` reference and runs the reference scan before sending the rename
-- Verify: when rewriting `instructions`, applies clarity heuristics from `optimize-prompt` rather than blindly delegating
+- Verify: when rewriting `instructions`, applies clarity heuristics from `orq-optimize-prompt` rather than blindly delegating
 
 ### Scenario 5: Failure-mode handling
 
@@ -279,32 +279,32 @@ Requires `setup.md` to have run first (seed data for `run-experiment` test).
 
 ## Critical Files
 
-- `skills/setup-observability/SKILL.md`
-- `skills/setup-observability/resources/traced-decorator-guide.md`
-- `skills/setup-observability/resources/framework-integrations.md`
-- `skills/setup-observability/resources/baseline-checklist.md`
-- `skills/invoke-deployment/SKILL.md`
-- `skills/invoke-deployment/resources/api-reference.md`
+- `skills/orq-setup-observability/SKILL.md`
+- `skills/orq-setup-observability/resources/traced-decorator-guide.md`
+- `skills/orq-setup-observability/resources/framework-integrations.md`
+- `skills/orq-setup-observability/resources/baseline-checklist.md`
+- `skills/orq-invoke-deployment/SKILL.md`
+- `skills/orq-invoke-deployment/resources/api-reference.md`
 - `skills/evaluatorq/SKILL.md`
 - `skills/evaluatorq/resources/cli-reference.md`
-- `skills/compare-agents/SKILL.md`
-- `skills/compare-agents/resources/job-patterns.md`
-- `skills/compare-agents/resources/evaluatorq-api.md`
-- `skills/compare-agents/resources/gotchas.md`
-- `skills/build-agent/SKILL.md`
-- `skills/build-evaluator/SKILL.md`
-- `skills/generate-synthetic-dataset/SKILL.md`
-- `skills/optimize-prompt/SKILL.md`
-- `skills/analyze-trace-failures/SKILL.md`
-- `skills/run-experiment/SKILL.md`
+- `skills/orq-compare-agents/SKILL.md`
+- `skills/orq-compare-agents/resources/job-patterns.md`
+- `skills/orq-compare-agents/resources/evaluatorq-api.md`
+- `skills/orq-compare-agents/resources/gotchas.md`
+- `skills/orq-build-agent/SKILL.md`
+- `skills/orq-build-evaluator/SKILL.md`
+- `skills/orq-generate-synthetic-dataset/SKILL.md`
+- `skills/orq-optimize-prompt/SKILL.md`
+- `skills/orq-analyze-trace-failures/SKILL.md`
+- `skills/orq-run-experiment/SKILL.md`
 - `skills/orq-red-team/SKILL.md`
 - `skills/orq-red-team/resources/python-sdk.md`
-- `skills/simulate-agent/SKILL.md`
-- `skills/simulate-agent/resources/persona-scenario-template.md`
-- `skills/simulate-agent/resources/simulation-loop.md`
-- `skills/simulate-agent/resources/redteam-mode.md`
-- `skills/manage-skills/SKILL.md`
-- `skills/manage-skills/resources/authoring-guide.md`
-- `skills/manage-skills/resources/governance-guide.md`
-- `skills/manage-skills/resources/known-caveats.md`
-- `commands/manage-skills.md`
+- `skills/orq-simulate-agent/SKILL.md`
+- `skills/orq-simulate-agent/resources/persona-scenario-template.md`
+- `skills/orq-simulate-agent/resources/simulation-loop.md`
+- `skills/orq-simulate-agent/resources/redteam-mode.md`
+- `skills/orq-manage-skills/SKILL.md`
+- `skills/orq-manage-skills/resources/authoring-guide.md`
+- `skills/orq-manage-skills/resources/governance-guide.md`
+- `skills/orq-manage-skills/resources/known-caveats.md`
+- `commands/orq-manage-skills.md`

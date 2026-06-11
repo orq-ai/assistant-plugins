@@ -62,7 +62,7 @@ eq redteam ui report.json   # open Streamlit dashboard
 
 Multi-turn agent simulation with a user-simulator and LLM judge.
 
-> For the full walkthrough — persona generation, scenario setup, goal-achievement scoring — use the **`simulate-agent` skill**.
+> For the full walkthrough — persona generation, scenario setup, goal-achievement scoring — use the **`orq-simulate-agent` skill**.
 
 Quick reference:
 

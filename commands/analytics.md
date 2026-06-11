@@ -97,8 +97,8 @@ View detailed analytics at **[Analytics → my.orq.ai](https://my.orq.ai/)**.
 
 After displaying analytics:
 
-- If error rate is elevated (>1%), suggest: "Error rate is elevated. Use `/orq:traces --status error` to inspect failing traces, then `analyze-trace-failures` for deep analysis."
-- If cost is high for a model, suggest: "Consider using `/orq:models` to explore cheaper alternatives, or the `run-experiment` skill to compare model quality."
+- If error rate is elevated (>1%), suggest: "Error rate is elevated. Use `/orq:traces --status error` to inspect failing traces, then `orq-analyze-trace-failures` for deep analysis."
+- If cost is high for a model, suggest: "Consider using `/orq:models` to explore cheaper alternatives, or the `orq-run-experiment` skill to compare model quality."
 - Otherwise: "Use `--group-by deployment` or `--group-by agent` to drill into specific components."
 
 ### 5. Error handling
