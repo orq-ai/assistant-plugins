@@ -159,6 +159,11 @@ KEY="${ORQ_API_KEY:-$(set -a; . ./.env 2>/dev/null; printf %s "$ORQ_API_KEY")}"
 if [ -z "$KEY" ]; then
   echo "No ORQ_API_KEY in env or ./.env — STOP and ask the user for the key or its path"
 else
+  # Export so the run sees the SAME key this check used. `eq` reads ORQ_API_KEY from
+  # the environment and does NOT auto-read ./.env when run directly — without this a
+  # .env-only key passes the check below, then the run gets an empty key and fails
+  # deep with a cryptic 401/404.
+  export ORQ_API_KEY="$KEY"
   curl -s -w '\nHTTP %{http_code}\n' "https://api.orq.ai/v2/agents/<key>" -H "Authorization: Bearer $KEY"
 fi
 # 200 → exists for the run key (confirm "status":"live" in the body — a draft/pending version isn't the published target)
