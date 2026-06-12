@@ -162,19 +162,19 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 <!-- BEGIN_SKILLS_TABLE -->
 | Skill | What It Does | Documentation |
 |-------|-------------|---------------|
-| **setup-observability** | Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment | [SKILL.md](skills/setup-observability/SKILL.md) |
-| **invoke-deployment** | Invoke orq.ai deployments, agents, and models via the Python SDK or HTTP API — pass prompt variables, stream responses, and generate integration code | [SKILL.md](skills/invoke-deployment/SKILL.md) |
-| **build-agent** | Design, create, and configure an orq.ai Agent with tools, instructions, knowledge bases, and memory | [SKILL.md](skills/build-agent/SKILL.md) |
-| **build-evaluator** | Create validated LLM-as-a-Judge evaluators following evaluation best practices | [SKILL.md](skills/build-evaluator/SKILL.md) |
-| **analyze-trace-failures** | Read production traces, identify what's failing, build failure taxonomies, and categorize issues | [SKILL.md](skills/analyze-trace-failures/SKILL.md) |
-| **run-experiment** | Create and run orq.ai experiments — compare configurations with specialized agent, conversation, and RAG evaluation | [SKILL.md](skills/run-experiment/SKILL.md) |
+| **orq-setup-observability** | Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment | [SKILL.md](skills/orq-setup-observability/SKILL.md) |
+| **orq-invoke-deployment** | Invoke orq.ai deployments, agents, and models via the Python SDK or HTTP API — pass prompt variables, stream responses, and generate integration code | [SKILL.md](skills/orq-invoke-deployment/SKILL.md) |
+| **orq-build-agent** | Design, create, and configure an orq.ai Agent with tools, instructions, knowledge bases, and memory | [SKILL.md](skills/orq-build-agent/SKILL.md) |
+| **orq-build-evaluator** | Create validated LLM-as-a-Judge evaluators following evaluation best practices | [SKILL.md](skills/orq-build-evaluator/SKILL.md) |
+| **orq-analyze-trace-failures** | Read production traces, identify what's failing, build failure taxonomies, and categorize issues | [SKILL.md](skills/orq-analyze-trace-failures/SKILL.md) |
+| **orq-run-experiment** | Create and run orq.ai experiments — compare configurations with specialized agent, conversation, and RAG evaluation | [SKILL.md](skills/orq-run-experiment/SKILL.md) |
 | **evaluatorq** | Write and run evaluatorq evaluation scripts (Python or TypeScript), use the evaluatorq CLI for red teaming (`eq redteam`) and simulation (`eq sim`) | [SKILL.md](skills/evaluatorq/SKILL.md) |
-| **compare-agents** | Run cross-framework agent comparisons using evaluatorq — compare orq.ai, LangGraph, CrewAI, OpenAI Agents SDK, and others | [SKILL.md](skills/compare-agents/SKILL.md) |
-| **generate-synthetic-dataset** | Generate and curate evaluation datasets — structured generation, quick from description, expansion, and dataset maintenance | [SKILL.md](skills/generate-synthetic-dataset/SKILL.md) |
-| **optimize-prompt** | Analyze and optimize system prompts using a structured prompting guidelines framework | [SKILL.md](skills/optimize-prompt/SKILL.md) |
+| **orq-compare-agents** | Run cross-framework agent comparisons using evaluatorq — compare orq.ai, LangGraph, CrewAI, OpenAI Agents SDK, and others | [SKILL.md](skills/orq-compare-agents/SKILL.md) |
+| **orq-generate-synthetic-dataset** | Generate and curate evaluation datasets — structured generation, quick from description, expansion, and dataset maintenance | [SKILL.md](skills/orq-generate-synthetic-dataset/SKILL.md) |
+| **orq-optimize-prompt** | Analyze and optimize system prompts using a structured prompting guidelines framework | [SKILL.md](skills/orq-optimize-prompt/SKILL.md) |
 | **orq-red-team** | Run adversarial red teaming against deployed orq agents or static datasets using the orq red teaming library — adaptive attacks, OWASP coverage, ASR reporting | [SKILL.md](skills/orq-red-team/SKILL.md) |
-| **manage-skills** | Manage orq.ai Skills (the platform entity, formerly Snippets) — list/get/create/update/delete, authoring guidance, reference-scan before delete or rename, and the `{{snippet.<display_name>}}` consumption pattern | [SKILL.md](skills/manage-skills/SKILL.md) |
-| **simulate-agent** | Run multi-turn agent simulations using evaluatorq's first-class primitives (`simulate()`, `generate_and_simulate()`, `wrap_simulation_agent()`) — drive an agent under test with a UserSimulatorAgent and built-in JudgeAgent, scored against criteria | [SKILL.md](skills/simulate-agent/SKILL.md) |
+| **orq-manage-skills** | Manage orq.ai Skills (the platform entity, formerly Snippets) — list/get/create/update/delete, authoring guidance, reference-scan before delete or rename, and the `{{snippet.<display_name>}}` consumption pattern | [SKILL.md](skills/orq-manage-skills/SKILL.md) |
+| **orq-simulate-agent** | Run multi-turn agent simulations using evaluatorq's first-class primitives (`simulate()`, `generate_and_simulate()`, `wrap_simulation_agent()`) — drive an agent under test with a UserSimulatorAgent and built-in JudgeAgent, scored against criteria | [SKILL.md](skills/orq-simulate-agent/SKILL.md) |
 <!-- END_SKILLS_TABLE -->
 
 ---
@@ -184,40 +184,40 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 ### 1. Build a New Agent
 
 ```
-"I need a customer support agent"             → build-agent
-"Create test cases for it"                     → generate-synthetic-dataset
-"Build an evaluator for response accuracy"     → build-evaluator
-"Run an experiment to get a baseline"          → run-experiment
+"I need a customer support agent"             → orq-build-agent
+"Create test cases for it"                     → orq-generate-synthetic-dataset
+"Build an evaluator for response accuracy"     → orq-build-evaluator
+"Run an experiment to get a baseline"          → orq-run-experiment
 ```
 
 ### 2. Debug Production Issues
 
 ```
 /orq:traces --status error --last 24h          # Find errors
-"Analyze these failures"                       → analyze-trace-failures
-"Fix the prompt based on the failure analysis" → optimize-prompt
-"Re-run the experiment to verify the fix"      → run-experiment
+"Analyze these failures"                       → orq-analyze-trace-failures
+"Fix the prompt based on the failure analysis" → orq-optimize-prompt
+"Re-run the experiment to verify the fix"      → orq-run-experiment
 ```
 
 ### 3. Improve an Existing Agent
 
 ```
 /orq:analytics --group-by deployment           # Spot high error rates
-"Analyze traces for the checkout agent"        → analyze-trace-failures
-"Build evaluators for the failure modes"       → build-evaluator
-"Generate a dataset covering edge cases"       → generate-synthetic-dataset
-"Run an experiment and compare"                → run-experiment
-"Optimize the prompt based on results"         → optimize-prompt
+"Analyze traces for the checkout agent"        → orq-analyze-trace-failures
+"Build evaluators for the failure modes"       → orq-build-evaluator
+"Generate a dataset covering edge cases"       → orq-generate-synthetic-dataset
+"Run an experiment and compare"                → orq-run-experiment
+"Optimize the prompt based on results"         → orq-optimize-prompt
 ```
 
 ### 4. Improve an existing Prompt
 
 ```
-"My prompt isn't performing well, help me improve it" → optimize-prompt
-"Create test cases to compare before and after"       → generate-synthetic-dataset
-"Build an evaluator for [specific dimension]"         → build-evaluator
-"Run an experiment: current vs optimized prompt"     → run-experiment
-"Refine the prompt based on failure cases"            → optimize-prompt
+"My prompt isn't performing well, help me improve it" → orq-optimize-prompt
+"Create test cases to compare before and after"       → orq-generate-synthetic-dataset
+"Build an evaluator for [specific dimension]"         → orq-build-evaluator
+"Run an experiment: current vs optimized prompt"     → orq-run-experiment
+"Refine the prompt based on failure cases"            → orq-optimize-prompt
 ```
 
 ---

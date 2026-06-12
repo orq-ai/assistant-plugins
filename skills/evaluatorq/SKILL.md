@@ -4,10 +4,10 @@ description: >
   Write and run evaluatorq evaluation scripts (Python or TypeScript) for a
   single agent or deployment — custom scorers, built-in evaluators, and
   dataset-driven evaluation. For CLI workflows, use the companion skills:
-  `orq-red-team` for `eq redteam` adversarial testing and `simulate-agent` for
+  `orq-red-team` for `eq redteam` adversarial testing and `orq-simulate-agent` for
   `eq sim` multi-turn user simulation. Do NOT use when comparing multiple
-  agents head-to-head (use compare-agents) or when running
-  orq.ai-native experiments only (use run-experiment).
+  agents head-to-head (use orq-compare-agents) or when running
+  orq.ai-native experiments only (use orq-run-experiment).
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, orq*
 ---
 
@@ -19,7 +19,7 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 
 ## Constraints
 
-- **NEVER** write inline datasets of fewer than 5 datapoints without asking the user — small datasets produce misleading scores. Delegate to `generate-synthetic-dataset` when a dataset does not exist.
+- **NEVER** write inline datasets of fewer than 5 datapoints without asking the user — small datasets produce misleading scores. Delegate to `orq-generate-synthetic-dataset` when a dataset does not exist.
 - **NEVER** use `orq.evaluators.invoke()` — use `orq.evals.invoke_async()` inside async scorers or `orq.evals.invoke()` for synchronous calls.
 - **NEVER** invent evaluator IDs — fetch them from the user or via `search_entities` MCP tool (`type: "evaluator"`).
 - **ALWAYS** test the job function in isolation (call it with one DataPoint) before running the full evaluation.
@@ -30,27 +30,27 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 
 ## Companion Skills
 
-- `generate-synthetic-dataset` — create a dataset when none exists
-- `build-evaluator` — design an LLM-as-a-judge evaluator prompt
-- `compare-agents` — run the same evaluatorq evaluation across multiple agents
-- `run-experiment` — run orq.ai-native experiments without writing code
-- `analyze-trace-failures` — diagnose agent failures from production traces
+- `orq-generate-synthetic-dataset` — create a dataset when none exists
+- `orq-build-evaluator` — design an LLM-as-a-judge evaluator prompt
+- `orq-compare-agents` — run the same evaluatorq evaluation across multiple agents
+- `orq-run-experiment` — run orq.ai-native experiments without writing code
+- `orq-analyze-trace-failures` — diagnose agent failures from production traces
 - `orq-red-team` — full `eq redteam` walkthrough: modes, categories, output, dashboard
-- `simulate-agent` — full `eq sim` walkthrough: personas, scenarios, goal scoring
+- `orq-simulate-agent` — full `eq sim` walkthrough: personas, scenarios, goal scoring
 
 ## When to use
 
 - User wants to write a Python or TypeScript evaluation script for a single agent
 - User wants to use a custom scorer or built-in evaluator
 - User asks about `evaluatorq`, `eq`, `evaluatorq()`, `@job`, `DataPoint`, `EvaluationResult`
-- User asks about the evaluatorq CLI (`eq redteam`, `eq sim`) and needs orientation — then delegate to `orq-red-team` or `simulate-agent`
+- User asks about the evaluatorq CLI (`eq redteam`, `eq sim`) and needs orientation — then delegate to `orq-red-team` or `orq-simulate-agent`
 
 ## When NOT to use
 
-- **Comparing multiple agents?** → `compare-agents`
-- **orq.ai-native experiments only, no custom code?** → `run-experiment`
-- **No dataset yet?** → `generate-synthetic-dataset` first
-- **Need to diagnose what's failing in production?** → `analyze-trace-failures`
+- **Comparing multiple agents?** → `orq-compare-agents`
+- **orq.ai-native experiments only, no custom code?** → `orq-run-experiment`
+- **No dataset yet?** → `orq-generate-synthetic-dataset` first
+- **Need to diagnose what's failing in production?** → `orq-analyze-trace-failures`
 
 ## Workflow Checklist
 
@@ -78,7 +78,7 @@ Evaluatorq Progress:
 | **Library: Python script** | Custom scorers, complex jobs, programmatic control | `evaluatorq()` async function |
 | **Library: TypeScript script** | Same as Python, TypeScript stack | `evaluatorq()` async function |
 | **CLI: `eq redteam`** | Adversarial safety testing against OWASP categories | → `orq-red-team` skill |
-| **CLI: `eq sim`** | Multi-turn conversation simulation, goal-achievement scoring | → `simulate-agent` skill |
+| **CLI: `eq sim`** | Multi-turn conversation simulation, goal-achievement scoring | → `orq-simulate-agent` skill |
 
 ---
 
@@ -90,7 +90,7 @@ Evaluatorq Progress:
 
 For orq.ai agents, use `search_entities` MCP tool with `type: "agent"` to find available agent keys.
 
-**For CLI** (`eq redteam` or `eq sim`): orient the user, then hand off to the appropriate companion skill — `orq-red-team` for adversarial testing, `simulate-agent` for user simulation.
+**For CLI** (`eq redteam` or `eq sim`): orient the user, then hand off to the appropriate companion skill — `orq-red-team` for adversarial testing, `orq-simulate-agent` for user simulation.
 
 ---
 
@@ -103,7 +103,7 @@ Check if a suitable dataset exists on the platform:
 # or ask the user for a dataset ID
 ```
 
-If no dataset exists, delegate to `generate-synthetic-dataset`. Target 10–30 datapoints for meaningful scores; use 3–5 for a quick smoke test.
+If no dataset exists, delegate to `orq-generate-synthetic-dataset`. Target 10–30 datapoints for meaningful scores; use 3–5 for a quick smoke test.
 
 ---
 
@@ -181,7 +181,7 @@ eq redteam ui report.json   # open Streamlit dashboard
 
 ### CLI — Simulation
 
-> **Delegate to the `simulate-agent` skill** for the full `eq sim` walkthrough (persona generation, scenario setup, goal-achievement scoring).
+> **Delegate to the `orq-simulate-agent` skill** for the full `eq sim` walkthrough (persona generation, scenario setup, goal-achievement scoring).
 
 Quick reference:
 
@@ -252,7 +252,7 @@ Results print to terminal. If `ORQ_API_KEY` is set, results also appear in orq.a
 
 ### CLI — selected flags
 
-For full CLI flags and output format, see the `orq-red-team` skill (`eq redteam`) and `simulate-agent` skill (`eq sim`).
+For full CLI flags and output format, see the `orq-red-team` skill (`eq redteam`) and `orq-simulate-agent` skill (`eq sim`).
 
 ---
 
@@ -275,7 +275,7 @@ Environment variables:
 ## Resources
 
 - **CLI quick reference** (common patterns, eq redteam + eq sim): [resources/cli-reference.md](resources/cli-reference.md)
-- **evaluatorq API reference** (jobs, scorers, full signatures): See `compare-agents` → [compare-agents/resources/evaluatorq-api.md](../compare-agents/resources/evaluatorq-api.md)
+- **evaluatorq API reference** (jobs, scorers, full signatures): See `orq-compare-agents` → [orq-compare-agents/resources/evaluatorq-api.md](../orq-compare-agents/resources/evaluatorq-api.md)
 
 ## orq.ai Documentation
 

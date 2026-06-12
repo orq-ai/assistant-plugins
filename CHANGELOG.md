@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-06-11
+
+### Changed
+- **BREAKING — namespace every skill under the `orq-` prefix** to prevent collisions with similarly-named skills from other plugin marketplaces and make the suite discoverable as a set. Renamed 11 skill directories and their frontmatter `name`: `analyze-trace-failures`, `build-agent`, `build-evaluator`, `compare-agents`, `generate-synthetic-dataset`, `invoke-deployment`, `manage-skills`, `optimize-prompt`, `run-experiment`, `setup-observability`, `simulate-agent` → `orq-*`. `orq-red-team` already carried the prefix; `evaluatorq` is left as-is (its name already reads "orq"). Updated all cross-references in `agents/AGENTS.md` (path list + `<available_skills>`), `README.md`, `tests/`, `skills-lock.json`, and inter-skill companion references.
+- **BREAKING** — renamed the `/manage-skills` slash command to `/orq-manage-skills` (`commands/manage-skills.md` → `commands/orq-manage-skills.md`, frontmatter `name`) to match its 1:1 skill.
+
 ## [0.5.2] - 2026-06-11
 
 ### Fixed
