@@ -49,7 +49,7 @@ Symlink a single skill for development (edits reflect immediately):
 
 ```bash
 mkdir -p ~/.claude/skills
-ln -s "$(pwd)/skills/build-agent" ~/.claude/skills/build-agent
+ln -s "$(pwd)/skills/orq-build-agent" ~/.claude/skills/orq-build-agent
 ```
 
 ### GitHub Copilot

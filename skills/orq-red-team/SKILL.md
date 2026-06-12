@@ -5,8 +5,8 @@ description: >
   agents or static datasets. Use when asked to "run a red team", "red team this
   deployment", "test my agent for vulnerabilities", "OWASP red team", or "check
   how my agent handles adversarial inputs". Do NOT use when you only need to build
-  evaluators (use build-evaluator) or analyze existing trace failures (use
-  analyze-trace-failures).
+  evaluators (use orq-build-evaluator) or analyze existing trace failures (use
+  orq-analyze-trace-failures).
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, orq*
 ---
 
@@ -477,7 +477,7 @@ vulnerabilities_found: 7
 | `eq: command not found` | Package not installed or not on PATH | Run the discovery ladder (PATH / `.venv` / uv workspace / `python -m`) before installing; install into a project venv with `uv pip install 'evaluatorq[redteam]'` (global `uv tool install` only as a last resort) |
 | `401 Incorrect API key` on `openai/...` despite `ORQ_API_KEY` set, when running via `uv run` | uv loaded `OPENAI_API_KEY` from an env-file (`UV_ENV_FILE` / explicit `--env-file`) after your `unset`, flipping routing to direct OpenAI (uv does **not** auto-read `./.env`) | `env -u OPENAI_API_KEY uv run --no-env-file …`, or run `eq` directly off PATH. See the uv `.env` trap section |
 | `Agent not found` / `deployment_not_found` mid-run | Wrong `--target` key, **or** the shell `ORQ_API_KEY` is scoped to a different project than the target (MCP said it exists, but the run key can't see it) | Verify up front with the **shell `ORQ_API_KEY`** — agents via `GET /v2/agents/{key}` (or SDK `agents.retrieve`), deployments via `POST /v2/deployments/get_config` (or SDK `deployments.get_config`). An MCP hit alone is not proof — its key may be another project. On a mismatch, ask the user for the right key (the one scoped to the target's project). See "Verify the target agent or deployment exists" |
-| `ORQ_API_KEY not set` or 401 errors | Missing env var for target agent | Export `ORQ_API_KEY` in your shell or `.env` |
+| `ORQ_API_KEY not set` or 401 errors | Missing env var for target agent | **Export** `ORQ_API_KEY` in your shell (`export ORQ_API_KEY=…`); a key only in `.env` is **not** auto-read by a bare `eq` run — see the preflight verify block, which exports it for you |
 | `ImportError` for `openai`/`typer` | Incomplete install (missing extra) | `pip install 'evaluatorq[redteam]'` |
 | `CredentialError` / run hangs at attack generation | No LLM credential for attack/evaluator | Set `OPENAI_API_KEY` (bare model names) **or** `ORQ_API_KEY` (provider-prefixed, e.g. `openai/gpt-5-mini`) |
 | ASR = 0.0 on all categories | Evaluator routing/credential issue, or genuinely resistant | Confirm the evaluator model string matches the active route (gateway → `openai/gpt-5-mini`); check creds before assuming a stronger judge is needed |
@@ -506,6 +506,6 @@ The CLI covers the common case (red-teaming an orq `agent:`/`deployment:` target
 
 ## Companion skills
 
-- `build-evaluator` — build custom LLM judges for failure modes surfaced by red teaming
-- `analyze-trace-failures` — deeper failure taxonomy from production traces
-- `run-experiment` — run controlled experiments using orq deployments
+- `orq-build-evaluator` — build custom LLM judges for failure modes surfaced by red teaming
+- `orq-analyze-trace-failures` — deeper failure taxonomy from production traces
+- `orq-run-experiment` — run controlled experiments using orq deployments

@@ -8,53 +8,53 @@ description: orq.ai workspace assistant — routes to skills and commands for bu
 You have additional SKILLs documented in directories containing a "SKILL.md" file.
 
 These skills are:
- - analyze-trace-failures -> "skills/analyze-trace-failures/SKILL.md"
- - build-agent -> "skills/build-agent/SKILL.md"
- - build-evaluator -> "skills/build-evaluator/SKILL.md"
- - compare-agents -> "skills/compare-agents/SKILL.md"
+ - orq-analyze-trace-failures -> "skills/orq-analyze-trace-failures/SKILL.md"
+ - orq-build-agent -> "skills/orq-build-agent/SKILL.md"
+ - orq-build-evaluator -> "skills/orq-build-evaluator/SKILL.md"
+ - orq-compare-agents -> "skills/orq-compare-agents/SKILL.md"
  - evaluatorq -> "skills/evaluatorq/SKILL.md"
- - generate-synthetic-dataset -> "skills/generate-synthetic-dataset/SKILL.md"
- - invoke-deployment -> "skills/invoke-deployment/SKILL.md"
- - manage-skills -> "skills/manage-skills/SKILL.md"
- - optimize-prompt -> "skills/optimize-prompt/SKILL.md"
+ - orq-generate-synthetic-dataset -> "skills/orq-generate-synthetic-dataset/SKILL.md"
+ - orq-invoke-deployment -> "skills/orq-invoke-deployment/SKILL.md"
+ - orq-manage-skills -> "skills/orq-manage-skills/SKILL.md"
+ - orq-optimize-prompt -> "skills/orq-optimize-prompt/SKILL.md"
  - orq-red-team -> "skills/orq-red-team/SKILL.md"
- - run-experiment -> "skills/run-experiment/SKILL.md"
- - setup-observability -> "skills/setup-observability/SKILL.md"
- - simulate-agent -> "skills/simulate-agent/SKILL.md"
+ - orq-run-experiment -> "skills/orq-run-experiment/SKILL.md"
+ - orq-setup-observability -> "skills/orq-setup-observability/SKILL.md"
+ - orq-simulate-agent -> "skills/orq-simulate-agent/SKILL.md"
 
 IMPORTANT: You MUST read the SKILL.md file whenever the description of the skills matches the user intent, or may help accomplish their task.
 
 <available_skills>
 
-build-agent: `Design, create, and configure an orq.ai Agent with tools, instructions, knowledge bases, and memory — includes model selection, KB management, and memory store setup`
+orq-build-agent: `Design, create, and configure an orq.ai Agent with tools, instructions, knowledge bases, and memory — includes model selection, KB management, and memory store setup`
 
-build-evaluator: `Create validated LLM-as-a-Judge evaluators following best practices — binary Pass/Fail judges with TPR/TNR validation for measuring specific failure modes`
+orq-build-evaluator: `Create validated LLM-as-a-Judge evaluators following best practices — binary Pass/Fail judges with TPR/TNR validation for measuring specific failure modes`
 
-analyze-trace-failures: `Read production traces, identify what's failing, build failure taxonomies, and categorize issues using open coding and axial coding methodology`
+orq-analyze-trace-failures: `Read production traces, identify what's failing, build failure taxonomies, and categorize issues using open coding and axial coding methodology`
 
-invoke-deployment: `Invoke orq.ai deployments, agents, and models via the Python SDK or HTTP API — pass prompt variables, stream responses, handle multi-turn agent conversations, and generate integration code`
+orq-invoke-deployment: `Invoke orq.ai deployments, agents, and models via the Python SDK or HTTP API — pass prompt variables, stream responses, handle multi-turn agent conversations, and generate integration code`
 
-run-experiment: `Create and run orq.ai experiments — compare configurations against datasets using evaluators, analyze results, with specialized methodology for agent, conversation, and RAG evaluation`
+orq-run-experiment: `Create and run orq.ai experiments — compare configurations against datasets using evaluators, analyze results, with specialized methodology for agent, conversation, and RAG evaluation`
 
-generate-synthetic-dataset: `Generate and curate evaluation datasets — structured generation, quick from description, expansion from existing data, plus dataset maintenance and quality improvement`
+orq-generate-synthetic-dataset: `Generate and curate evaluation datasets — structured generation, quick from description, expansion from existing data, plus dataset maintenance and quality improvement`
 
-optimize-prompt: `Analyze and optimize system prompts using a structured prompting guidelines framework — AI-powered analysis and rewriting`
+orq-optimize-prompt: `Analyze and optimize system prompts using a structured prompting guidelines framework — AI-powered analysis and rewriting`
 
-evaluatorq: `Write and run evaluatorq evaluation scripts (Python or TypeScript) for a single agent, use custom or built-in scorers, or run the evaluatorq CLI — eq redteam for adversarial testing, eq sim for multi-turn simulation. Do NOT use when comparing multiple agents (use compare-agents).`
+evaluatorq: `Write and run evaluatorq evaluation scripts (Python or TypeScript) for a single agent, use custom or built-in scorers, or run the evaluatorq CLI — eq redteam for adversarial testing, eq sim for multi-turn simulation. Do NOT use when comparing multiple agents (use orq-compare-agents).`
 
-compare-agents: `Run cross-framework agent comparisons using evaluatorq — compares any combination of agents (orq.ai, LangGraph, CrewAI, OpenAI Agents SDK, Vercel AI SDK) head-to-head on the same dataset with LLM-as-a-judge scoring. Do NOT use when comparing only orq.ai configurations with no external agents (use run-experiment instead).`
+orq-compare-agents: `Run cross-framework agent comparisons using evaluatorq — compares any combination of agents (orq.ai, LangGraph, CrewAI, OpenAI Agents SDK, Vercel AI SDK) head-to-head on the same dataset with LLM-as-a-judge scoring. Do NOT use when comparing only orq.ai configurations with no external agents (use orq-run-experiment instead).`
 
-setup-observability: `Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment. Use when setting up tracing, adding the AI Router proxy, integrating OpenTelemetry, auditing existing instrumentation, or enriching traces with metadata. Do NOT use when traces already exist and you need to debug failures (use analyze-trace-failures).`
+orq-setup-observability: `Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment. Use when setting up tracing, adding the AI Router proxy, integrating OpenTelemetry, auditing existing instrumentation, or enriching traces with metadata. Do NOT use when traces already exist and you need to debug failures (use orq-analyze-trace-failures).`
 
-orq-red-team: `Run adversarial red teaming against deployed orq agents or static datasets using the orq red teaming library — adaptive attacks, OWASP Agentic/LLM category coverage, ASR reporting. Use when asked to run a red team, test an agent for vulnerabilities, or check OWASP coverage. Do NOT use when you only need evaluators (use build-evaluator) or trace analysis (use analyze-trace-failures).`
+orq-red-team: `Run adversarial red teaming against deployed orq agents or static datasets using the orq red teaming library — adaptive attacks, OWASP Agentic/LLM category coverage, ASR reporting. Use when asked to run a red team, test an agent for vulnerabilities, or check OWASP coverage. Do NOT use when you only need evaluators (use orq-build-evaluator) or trace analysis (use orq-analyze-trace-failures).`
 
-manage-skills: `Manage orq.ai Skills (the platform entity, formerly Snippets — distinct from this repo's code-assistant skills) end-to-end: list, get, create, update, retire (tag as retired), and delete Skills via the /v2/skills API. Covers authoring guidance (display_name, description, tags, project_id, path), how Skills get consumed via {{skill.<display_name>}} (canonical) and {{snippet.<display_name>}} (backward-compat alias) placeholders in prompts and agent instructions, the reference-scan-before-delete workflow, the rename-breaks-references warning, and the +NEVER+ prose anti-pattern. Use when the user wants to create, audit, edit, or retire orq.ai Skills.`
+orq-manage-skills: `Manage orq.ai Skills (the platform entity, formerly Snippets — distinct from this repo's code-assistant skills) end-to-end: list, get, create, update, retire (tag as retired), and delete Skills via the /v2/skills API. Covers authoring guidance (display_name, description, tags, project_id, path), how Skills get consumed via {{skill.<display_name>}} (canonical) and {{snippet.<display_name>}} (backward-compat alias) placeholders in prompts and agent instructions, the reference-scan-before-delete workflow, the rename-breaks-references warning, and the +NEVER+ prose anti-pattern. Use when the user wants to create, audit, edit, or retire orq.ai Skills.`
 
-simulate-agent: `Run multi-turn agent simulations using evaluatorq's first-class simulation primitives (simulate(), generate_and_simulate(), wrap_simulation_agent()). Drive an agent under test with a UserSimulatorAgent and built-in JudgeAgent that terminates on goal achievement or rule violations. Use when generating realistic multi-turn data, stress-testing conversational agents, or producing seed transcripts. Do NOT use when real production conversations exist (use analyze-trace-failures) or for adversarial red-teaming sweeps (call evaluatorq.red_team() directly).`
+orq-simulate-agent: `Run multi-turn agent simulations using evaluatorq's first-class simulation primitives (simulate(), generate_and_simulate(), wrap_simulation_agent()). Drive an agent under test with a UserSimulatorAgent and built-in JudgeAgent that terminates on goal achievement or rule violations. Use when generating realistic multi-turn data, stress-testing conversational agents, or producing seed transcripts. Do NOT use when real production conversations exist (use orq-analyze-trace-failures) or for adversarial red-teaming sweeps (call evaluatorq.red_team() directly).`
 
 </available_skills>
 
-Paths referenced within SKILL folders are relative to that SKILL. For example the build-evaluator `resources/judge-prompt-template.md` would be referenced as `skills/build-evaluator/resources/judge-prompt-template.md`.
+Paths referenced within SKILL folders are relative to that SKILL. For example the orq-build-evaluator `resources/judge-prompt-template.md` would be referenced as `skills/orq-build-evaluator/resources/judge-prompt-template.md`.
 
 </skills>
 

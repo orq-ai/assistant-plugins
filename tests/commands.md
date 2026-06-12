@@ -32,7 +32,7 @@ Tests the orq-skills slash commands. These verify our command `.md` files produc
 - Verify it detects MCP is available and skips MCP setup step
 - Verify it shows workspace snapshot on successful connection
 
-## `/orq:manage-skills`
+## `/orq:orq-manage-skills`
 
 - Run with no args → verify it asks which action (list/get/create/update/delete) via `AskUserQuestion`
 - Run with `list` → verify it calls `list_skills` (or `/v2/skills` fallback) and prints a scannable table
@@ -48,4 +48,4 @@ Tests the orq-skills slash commands. These verify our command `.md` files produc
 - `commands/traces.md`
 - `commands/analytics.md`
 - `commands/quickstart.md`
-- `commands/manage-skills.md`
+- `commands/orq-manage-skills.md`
