@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-06-11
+
+### Fixed
+- `orq-red-team`: the "Verify the target exists" preflight now `export`s the resolved `ORQ_API_KEY` on success, so the verify call and the subsequent `eq redteam run` use the same key. Previously a key present only in `./.env` would pass the verify curl (which sourced it explicitly) but the run — `eq` reads `ORQ_API_KEY` from the environment and does not auto-read `./.env` when run directly — would get an empty key and fail deep with a cryptic 401/404.
+
+## [0.5.1] - 2026-06-10
+
+### Changed
+- `orq-red-team`: the "Verify the target exists" preflight now checks via REST/SDK with the key the run actually uses (`ORQ_API_KEY` from the env, else the project `.env`) instead of the MCP, whose separately-configured key is often in a different project — an MCP miss isn't proof the target is absent. Covers both `agent:` (`GET /v2/agents/{key}`) and `deployment:` (`POST /v2/deployments/get_config`) targets, and falls back to asking the user when no key resolves.
+
 ## [0.5.0] - 2026-06-08
 
 ### Added
