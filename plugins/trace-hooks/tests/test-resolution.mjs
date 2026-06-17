@@ -5,26 +5,34 @@
 // promises.
 //
 // Usage: node test-resolution.mjs
-// Env: requires ~/.config/orq/config.json with at least two profiles. Defaults
-// assume profiles named `default` (acts as the "general/CLI" profile) and
-// `trace` (acts as the trace-specific profile). Override with
+// Env: requires the orq config (ORQ_CONFIG_PATH) to hold at least two profiles.
+// By default it picks the CLI's current profile as the "general/CLI" profile
+// and any other profile as the trace-specific one. Override with
 // TEST_SECONDARY_PROFILE / TEST_TRACE_PROFILE env vars.
 
 import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
-
-const SECONDARY_PROFILE = process.env.TEST_SECONDARY_PROFILE || "default";
-const TRACE_PROFILE = process.env.TEST_TRACE_PROFILE || "trace";
+import { ORQ_CONFIG_PATH } from "../src/config.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const configJs = path.join(repoRoot, "src/config.js");
-const orqConfig = JSON.parse(
-  fs.readFileSync(
-    path.join(process.env.HOME, ".config/orq/config.json"),
-    "utf8",
-  ),
-);
+const orqConfig = JSON.parse(fs.readFileSync(ORQ_CONFIG_PATH, "utf8"));
+
+const profileNames = Object.keys(orqConfig.profiles || {});
+const SECONDARY_PROFILE = process.env.TEST_SECONDARY_PROFILE || orqConfig.current;
+const TRACE_PROFILE =
+  process.env.TEST_TRACE_PROFILE ||
+  profileNames.find((n) => n !== SECONDARY_PROFILE) ||
+  SECONDARY_PROFILE;
+
+for (const [label, name] of [["secondary", SECONDARY_PROFILE], ["trace", TRACE_PROFILE]]) {
+  if (!orqConfig.profiles?.[name]?.api_key) {
+    console.error(`ERROR: ${label} profile "${name}" missing or has no api_key in ${ORQ_CONFIG_PATH}`);
+    console.error(`Available profiles: ${profileNames.join(", ") || "(none)"}`);
+    process.exit(2);
+  }
+}
 
 function workspaceFromKey(key) {
   const payload = key.split(".")[1];

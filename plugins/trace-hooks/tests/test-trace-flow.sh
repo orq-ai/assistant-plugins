@@ -11,21 +11,28 @@
 # (see test-workspace-visibility.sh for the slow/external check).
 #
 # Usage: ./test-trace-flow.sh [TRACE_PROFILE] [SECONDARY_PROFILE]
-#   TRACE_PROFILE     — orqi profile to point traces at (default: trace)
-#   SECONDARY_PROFILE — orqi profile whose api_key is used in T2/T3 to simulate
-#                       a different ORQ_API_KEY in the shell (default: default)
+#   TRACE_PROFILE     — orq profile to point traces at (default: any non-current profile)
+#   SECONDARY_PROFILE — orq profile whose api_key is used in T2/T3 to simulate
+#                       a different ORQ_API_KEY in the shell (default: CLI current profile)
 # Repo root is auto-detected via `git rev-parse --show-toplevel`.
 
 set -uo pipefail
 
-TRACE_PROFILE="${1:-${TEST_TRACE_PROFILE:-trace}}"
-SECONDARY_PROFILE="${2:-${TEST_SECONDARY_PROFILE:-default}}"
 REPO_ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+CONFIG_JS="$REPO_ROOT/plugins/trace-hooks/src/config.js"
+# Single source of truth: read the path constant from config.js, don't re-hardcode it.
+ORQ_CONFIG="$(node --input-type=module -e "import('file://$CONFIG_JS').then(m=>process.stdout.write(m.ORQ_CONFIG_PATH))")"
 LOG=/tmp/orq-trace-debug.log
 PASS=0
 FAIL=0
 
-ORQ_CONFIG="$HOME/.config/orq/config.json"
+# Default to the CLI current profile and any other one, so the test runs against
+# a real config without manual overrides.
+CURRENT="$(python3 -c "import json;print(json.load(open('$ORQ_CONFIG'))['current'])" 2>/dev/null || true)"
+OTHER="$(python3 -c "import json;d=json.load(open('$ORQ_CONFIG'));print(next((n for n in d['profiles'] if n!=d['current']), d['current']))" 2>/dev/null || true)"
+TRACE_PROFILE="${1:-${TEST_TRACE_PROFILE:-$OTHER}}"
+SECONDARY_PROFILE="${2:-${TEST_SECONDARY_PROFILE:-$CURRENT}}"
+
 SECONDARY_KEY="$(python3 -c "import json,sys;print(json.load(open('$ORQ_CONFIG'))['profiles']['$SECONDARY_PROFILE']['api_key'])" 2>/dev/null || true)"
 if [ -z "${SECONDARY_KEY:-}" ]; then
   echo "ERROR: profile '$SECONDARY_PROFILE' not found in $ORQ_CONFIG"
