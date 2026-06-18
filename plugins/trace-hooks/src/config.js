@@ -1,12 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const ORQ_CONFIG_PATH = path.join(
-  process.env.HOME || process.env.USERPROFILE || "",
-  ".config",
-  "orq",
-  "config.json",
-);
+// Single source of truth for the orqi CLI config location. The orqi CLI
+// (node orq-cli) stores its profiles at ~/.orq/config.json. Override with
+// ORQ_CONFIG_PATH (tests rely on this; users can redirect it if the CLI ever
+// moves the file). Note: the homebrew `orq` binary is a different tool and
+// does not manage these profiles.
+export const ORQ_CONFIG_PATH =
+  process.env.ORQ_CONFIG_PATH ||
+  path.join(process.env.HOME || process.env.USERPROFILE || "", ".orq", "config.json");
 
 let _cached = null;
 
@@ -38,8 +40,8 @@ function loadOrqConfig() {
  * │                                                                │
  * │  Profile (determines api_key + base_url):                      │
  * │    1. ORQ_TRACE_PROFILE env var        (trace-specific)         │
- * │    2. ORQ_PROFILE env var              (general orq profile)    │
- * │    3. "current" in ~/.config/orq/config.json  (CLI default)     │
+ * │    2. ORQ_PROFILE env var              (general orqi profile)   │
+ * │    3. "current" in ~/.orq/config.json  (CLI default)             │
  * │                                                                │
  * │  Base URL:                                                     │
  * │    1. ORQ_BASE_URL env var             (explicit override)      │
@@ -75,7 +77,7 @@ function resolveProfileName() {
     return { name: process.env.ORQ_PROFILE, source: "ORQ_PROFILE env var" };
   }
   if (config.current) {
-    return { name: config.current, source: `~/.config/orq/config.json (current)` };
+    return { name: config.current, source: `~/.orq/config.json (current)` };
   }
   return { name: null, source: "none — no profile found" };
 }
@@ -85,7 +87,7 @@ function resolveProfileName() {
  * 1. ORQ_TRACE_PROFILE profile's api_key (trace-specific override)
  * 2. ORQ_API_KEY env var (general key)
  * 3. ORQ_PROFILE profile's api_key
- * 4. Current profile in ~/.config/orq/config.json
+ * 4. Current profile in ~/.orq/config.json
  *
  * ORQ_TRACE_PROFILE wins over ORQ_API_KEY so users can decouple
  * where traces go from the key used for CLI/MCP operations.
@@ -114,7 +116,7 @@ export function getApiKey() {
  * 1. ORQ_TRACE_PROFILE profile's base_url (trace-specific override)
  * 2. ORQ_BASE_URL env var (general override)
  * 3. ORQ_PROFILE profile's base_url
- * 4. Current profile in ~/.config/orq/config.json
+ * 4. Current profile in ~/.orq/config.json
  * 5. Default: https://my.orq.ai
  */
 export function getBaseUrl() {

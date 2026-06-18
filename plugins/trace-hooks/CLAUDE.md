@@ -13,9 +13,9 @@ ln -s ~/Documents/orq-skills ~/.claude/plugins/marketplaces/assistant-plugins
 
 **Warning**: CC may overwrite the symlink on marketplace sync. If hooks stop working after a CC update, re-create the symlink.
 
-## Checking traces with the orq CLI
+## Checking traces with the orqi CLI
 
-Always prefer the `orq` CLI over MCP tools for inspecting traces and spans. Use `orq profile set prod-claude-code` to switch to the production Claude Code workspace, then `orq trace list`, `orq trace span list <trace-id>`, `orq trace span get <trace-id> <span-id>`. Use `--json` flag for full details.
+Always prefer the `orqi` CLI over MCP tools for inspecting traces and spans. Use `orqi profile set prod-claude-code` to switch to the production Claude Code workspace, then `orqi trace list`, `orqi trace span list <trace-id>`, `orqi trace span get <trace-id> <span-id>`. Use `--json` flag for full details.
 
 ## Trace plugin configuration
 
@@ -23,8 +23,8 @@ The trace hook resolves API key and base URL using this priority chain:
 
 1. **`ORQ_TRACE_PROFILE` env var** — trace-specific profile override (highest priority for API key, so traces can be pinned to a workspace independent of `ORQ_API_KEY`)
 2. **`ORQ_API_KEY` / `ORQ_BASE_URL` env vars** — explicit overrides
-3. **`ORQ_PROFILE` env var** — names a profile in `~/.config/orq/config.json`
-4. **orq CLI current profile** — whatever `orq profile set <name>` is set to
+3. **`ORQ_PROFILE` env var** — names a profile in `~/.orq/config.json`
+4. **orqi CLI current profile** — whatever `orqi profile set <name>` is set to
 
 Tracing is enabled whenever an API key can be resolved. Disable by disabling the plugin in CC settings.
 
@@ -63,9 +63,9 @@ env -u CLAUDECODE bash -c 'cd ~/Documents/orq-skills && claude -p "list files wi
 
 4. **Verify traces arrived**:
    ```bash
-   orq profile set prod-claude-code
-   orq trace list --limit 3
-   orq trace span list <trace-id>
+   orqi profile set prod-claude-code
+   orqi trace list --limit 3
+   orqi trace span list <trace-id>
    ```
 
 5. **Check span hierarchy**: root `orq.claude_code.session` -> `claude.turn.N` -> tool/LLM child spans. Verify token counts, cost, and duration are populated.

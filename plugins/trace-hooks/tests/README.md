@@ -15,7 +15,7 @@ cd plugins/trace-hooks
 
 | Script | What it checks | Speed | External deps |
 |--------|---------------|-------|--------------|
-| `test-resolution.mjs` | `getApiKey()` / `getBaseUrl()` priority across 5 env-var permutations (T1–T5). Decodes JWT, asserts workspace_id match. | <1s | `~/.config/orq/config.json` with at least two profiles (defaults: `default` + `trace`) |
+| `test-resolution.mjs` | `getApiKey()` / `getBaseUrl()` priority across 5 env-var permutations (T1–T5). Decodes JWT, asserts workspace_id match. | <1s | orq config (`ORQ_CONFIG_PATH`) with at least two profiles; defaults to the CLI current profile + any other (override via `TEST_SECONDARY_PROFILE` / `TEST_TRACE_PROFILE`) |
 | `test-trace-flow.sh` | Spawns `claude -p` subprocess, verifies hook fires + POSTs OTLP 200. | ~2 min | `claude` CLI, network |
 | `test-workspace-visibility.sh` | Same as flow test, then queries `orqi trace list` to confirm trace appears in workspace UI. | ~1 min + ingestion lag | `orqi`, valid API key, backend |
 

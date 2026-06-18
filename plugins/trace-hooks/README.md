@@ -36,7 +36,7 @@ An API key must be resolvable for tracing to activate. Set one of the following:
 
 | Variable | Description |
 |---|---|
-| `ORQ_TRACE_PROFILE` | Profile name in `~/.config/orq/config.json` — **highest priority** for trace destination |
+| `ORQ_TRACE_PROFILE` | Profile name in `~/.orq/config.json` — **highest priority** for trace destination |
 | `ORQ_API_KEY` | API key (used if no trace profile is set) |
 
 ### Trace Destination
@@ -76,7 +76,7 @@ API Key:
   1. ORQ_TRACE_PROFILE profile's api_key    (trace-specific)
   2. ORQ_API_KEY env var                     (general key)
   3. ORQ_PROFILE profile's api_key
-  4. ~/.config/orq/config.json current profile
+  4. ~/.orq/config.json current profile
 
 Base URL:
   1. ORQ_TRACE_PROFILE profile's base_url   (trace-specific)
