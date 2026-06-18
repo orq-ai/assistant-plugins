@@ -11,8 +11,8 @@
 # (see test-workspace-visibility.sh for the slow/external check).
 #
 # Usage: ./test-trace-flow.sh [TRACE_PROFILE] [SECONDARY_PROFILE]
-#   TRACE_PROFILE     — orq profile to point traces at (default: any non-current profile)
-#   SECONDARY_PROFILE — orq profile whose api_key is used in T2/T3 to simulate
+#   TRACE_PROFILE     — orqi profile to point traces at (default: any non-current profile)
+#   SECONDARY_PROFILE — orqi profile whose api_key is used in T2/T3 to simulate
 #                       a different ORQ_API_KEY in the shell (default: CLI current profile)
 # Repo root is auto-detected via `git rev-parse --show-toplevel`.
 

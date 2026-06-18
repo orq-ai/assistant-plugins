@@ -26,16 +26,16 @@ echo
 echo "==> Waiting for trace to land..."
 sleep 4
 
-TRACE_ID=$(orq trace list --limit 1 --json 2>/dev/null \
+TRACE_ID=$(orqi trace list --limit 1 --json 2>/dev/null \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['data'][0]['trace_id'])")
 
 echo "==> Trace: $TRACE_ID"
 echo
-orq trace span list "$TRACE_ID"
+orqi trace span list "$TRACE_ID"
 
 echo
 echo "==> Validating spans..."
-SPAN_LIST=$(orq trace span list "$TRACE_ID" --json 2>/dev/null)
+SPAN_LIST=$(orqi trace span list "$TRACE_ID" --json 2>/dev/null)
 
 HAS_SESSION=$(echo "$SPAN_LIST" | python3 -c "import sys,json; d=json.load(sys.stdin); print(any(s['name']=='orq.claude_code.session' for s in d['data']))")
 HAS_TURN=$(echo "$SPAN_LIST" | python3 -c "import sys,json; d=json.load(sys.stdin); print(any('turn' in s['name'] for s in d['data']))")

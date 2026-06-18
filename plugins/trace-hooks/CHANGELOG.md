@@ -5,7 +5,7 @@ All notable changes to the `orq-trace` plugin are documented here. Follows [Sema
 ## [0.3.1] - 2026-06-17
 
 ### Fixed
-- Config path: the hook read `~/.config/orq/config.json`, which does not exist — the orq CLI stores profiles at `~/.orq/config.json`. The wrong path made `loadOrqConfig()` hit ENOENT and return `{}`, silently disabling the profile-resolution fallback chain (`ORQ_TRACE_PROFILE` / `ORQ_PROFILE` / CLI current profile). Only a raw `ORQ_API_KEY` env var worked. Repointed to `~/.orq/config.json`.
+- Config path: the hook read `~/.config/orq/config.json`, which does not exist — the orqi CLI stores profiles at `~/.orq/config.json`. The wrong path made `loadOrqConfig()` hit ENOENT and return `{}`, silently disabling the profile-resolution fallback chain (`ORQ_TRACE_PROFILE` / `ORQ_PROFILE` / CLI current profile). Only a raw `ORQ_API_KEY` env var worked. Repointed to `~/.orq/config.json`.
 
   Note: profile resolution now works where it never did before, so after upgrading, traces may start flowing to the workspace named by your active profile / `ORQ_TRACE_PROFILE`. Verify the destination is intended.
 

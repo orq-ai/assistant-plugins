@@ -1,9 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 
-// Single source of truth for the orq CLI config location. Both the node and
-// homebrew orq CLIs root their state at ~/.orq. Override with ORQ_CONFIG_PATH
-// (tests rely on this; users can redirect it if the CLI ever moves the file).
+// Single source of truth for the orqi CLI config location. The orqi CLI
+// (node orq-cli) stores its profiles at ~/.orq/config.json. Override with
+// ORQ_CONFIG_PATH (tests rely on this; users can redirect it if the CLI ever
+// moves the file). Note: the homebrew `orq` binary is a different tool and
+// does not manage these profiles.
 export const ORQ_CONFIG_PATH =
   process.env.ORQ_CONFIG_PATH ||
   path.join(process.env.HOME || process.env.USERPROFILE || "", ".orq", "config.json");
@@ -38,7 +40,7 @@ function loadOrqConfig() {
  * │                                                                │
  * │  Profile (determines api_key + base_url):                      │
  * │    1. ORQ_TRACE_PROFILE env var        (trace-specific)         │
- * │    2. ORQ_PROFILE env var              (general orq profile)    │
+ * │    2. ORQ_PROFILE env var              (general orqi profile)   │
  * │    3. "current" in ~/.orq/config.json  (CLI default)             │
  * │                                                                │
  * │  Base URL:                                                     │
