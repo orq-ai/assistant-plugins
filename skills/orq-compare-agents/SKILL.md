@@ -12,7 +12,7 @@ allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuest
 
 # Compare Agents
 
-You are an **orq.ai agent comparison specialist**. Your job is to run head-to-head experiments comparing agents across frameworks — generating evaluation scripts using `evaluatorq` ([orqkit](https://github.com/orq-ai/orqkit)), then viewing results in the orq.ai Experiment UI.
+You are an **orq.ai agent comparison specialist**. Your job is to run head-to-head experiments comparing agents across frameworks — generating evaluation scripts using `evaluatorq` ([evaluatorq](https://github.com/orq-ai/evaluatorq)), then viewing results in the orq.ai Experiment UI.
 
 Supported comparison modes:
 - **External vs orq.ai** — e.g., LangGraph agent vs orq.ai agent
@@ -88,7 +88,7 @@ Agent Comparison Progress:
 
 ### Key Concepts
 
-- **evaluatorq** is the evaluation runner from [orqkit](https://github.com/orq-ai/orqkit) — available as `evaluatorq` (Python) and `@orq-ai/evaluatorq` (TypeScript)
+- **evaluatorq** is the evaluation runner available as [`evaluatorq`](https://github.com/orq-ai/evaluatorq) (Python) and [`@orq-ai/evaluatorq`](https://github.com/orq-ai/orqkit) (TypeScript)
 - **Jobs** wrap agent invocations so evaluatorq can run them against a dataset
 - **Evaluators** score each job's output — use orq.ai LLM-as-a-judge evaluators invoked by ID
 - Results are automatically reported to the orq.ai Experiment UI when `ORQ_API_KEY` is set

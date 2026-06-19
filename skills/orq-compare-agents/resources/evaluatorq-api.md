@@ -1,6 +1,6 @@
 # evaluatorq API Reference
 
-Quick reference for the evaluatorq library from [orqkit](https://github.com/orq-ai/orqkit). Available in both Python and TypeScript.
+Quick reference for the evaluatorq library. Python package: [evaluatorq](https://github.com/orq-ai/evaluatorq). TypeScript package: [@orq-ai/evaluatorq](https://github.com/orq-ai/orqkit). Available in both Python and TypeScript.
 
 ---
 
