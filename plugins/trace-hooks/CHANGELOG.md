@@ -2,6 +2,16 @@
 
 All notable changes to the `orq-trace` plugin are documented here. Follows [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] - 2026-06-22
+
+### Fixed
+- Merge assistant content blocks sharing a `message.id` so token usage is counted once instead of per block (was inflating usage).
+- Drop the `last_assistant_message` fallback that stamped the turn's final text onto tool/reasoning spans; tool spans now show their actual `tool_use` call.
+
+### Changed
+- Split assistant history into separate prose and per-tool-call messages instead of one mixed text+JSON string.
+- `Stop`/`SessionEnd` hooks are synchronous (`async: false`) so final spans flush before process exit (async hooks were killed mid-send).
+
 ## [0.3.1] - 2026-06-17
 
 ### Fixed

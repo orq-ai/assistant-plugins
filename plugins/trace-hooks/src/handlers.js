@@ -421,7 +421,7 @@ async function emitTranscriptSpans(state, payload, { emitPending = false } = {})
       });
     } else {
       const message = entry.data;
-      const outputValue = sanitizeContent(message.output || payload.last_assistant_message || "");
+      const outputValue = sanitizeContent(message.output || "");
       const parts = (message.parts || []).map(p => ({ ...p, content: sanitizeContent(p.content) }));
 
       // Include both content (for list views / backwards compat) and parts (for rich display with reasoning)
@@ -432,7 +432,6 @@ async function emitTranscriptSpans(state, payload, { emitPending = false } = {})
         contentStr = parts.map(p => {
           if (p.type === "tool_call") return JSON.stringify({ type: "tool_use", name: p.name, input: p.arguments });
           if (p.type === "text") return p.content;
-          if (p.type === "reasoning") return `<thinking>${p.content}</thinking>`;
           return "";
         }).filter(Boolean).join("\n");
       }
@@ -482,7 +481,18 @@ async function emitTranscriptSpans(state, payload, { emitPending = false } = {})
           ...usageAttrs(message.usage || {}),
         ]),
       }));
-      conversation.push({ role: "assistant", content: String(outputValue) });
+      // Push text and each tool call as separate history messages so they each
+      // render cleanly downstream (prose as prose, each tool as its own pure-JSON
+      // block) instead of one mixed text+JSON string.
+      const histText = parts.filter(p => p.type === "text").map(p => p.content).filter(Boolean).join("\n");
+      const histTools = parts.filter(p => p.type === "tool_call");
+      if (histText) conversation.push({ role: "assistant", content: histText });
+      for (const tc of histTools) {
+        conversation.push({ role: "assistant", content: JSON.stringify({ type: "tool_use", name: tc.name, input: tc.arguments }) });
+      }
+      if (!histText && histTools.length === 0 && outputValue) {
+        conversation.push({ role: "assistant", content: String(outputValue) });
+      }
       previousEndNs = msgEndNs || previousEndNs;
     }
   }

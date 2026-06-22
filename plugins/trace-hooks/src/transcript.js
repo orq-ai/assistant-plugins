@@ -102,7 +102,16 @@ export async function parseTranscript(transcriptPath, lastProcessedLine = 0, { e
       const prev = messages.length > 0 ? messages[messages.length - 1] : null;
       const sameWindow = prev?.timestamp && parsed.timestamp &&
         Math.abs(new Date(parsed.timestamp) - new Date(prev.timestamp)) < 2000;
-      if (prev && prev.output === output && output && sameWindow) {
+      // Same response: each content block (thinking/text/tool_use) is its own
+      // entry sharing one message.id + usage; merge so usage counts once.
+      const sameMessage = prev?.messageId && prev.messageId === message.id;
+      if (prev && sameMessage) {
+        const newParts = partsFromContent(messageContent);
+        prev.parts.push(...newParts);
+        const newText = newParts.filter((p) => p.type === "text").map((p) => p.content).join("\n");
+        if (newText) prev.output = prev.output ? `${prev.output}\n${newText}` : newText;
+        if ((usage.output_tokens || 0) >= (prev.usage.output_tokens || 0)) prev.usage = usage;
+      } else if (prev && prev.output === output && output && sameWindow) {
         const prevTokens = prev.usage.output_tokens || 0;
         const curTokens = usage.output_tokens || 0;
         if (curTokens >= prevTokens) {
@@ -126,6 +135,7 @@ export async function parseTranscript(transcriptPath, lastProcessedLine = 0, { e
         }
       } else {
         messages.push({
+          messageId: message.id,
           model: message.model || "unknown",
           usage,
           output,
