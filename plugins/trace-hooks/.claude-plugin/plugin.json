@@ -1,7 +1,7 @@
 {
   "name": "orq-trace",
   "description": "Automatically trace Claude Code sessions to Orq. Captures sessions, turns, tool calls, and LLM responses as hierarchical OTLP spans.",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "author": {
     "name": "Orq AI"
   },
@@ -68,7 +68,7 @@
           {
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/stop.js",
-            "async": true,
+            "async": false,
             "silent": true,
             "timeout": 30
           }
@@ -107,7 +107,7 @@
           {
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/session-end.js",
-            "async": true,
+            "async": false,
             "silent": true,
             "timeout": 30
           }
