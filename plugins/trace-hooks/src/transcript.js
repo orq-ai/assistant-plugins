@@ -111,6 +111,11 @@ export async function parseTranscript(transcriptPath, lastProcessedLine = 0, { e
         const newText = newParts.filter((p) => p.type === "text").map((p) => p.content).join("\n");
         if (newText) prev.output = prev.output ? `${prev.output}\n${newText}` : newText;
         if ((usage.output_tokens || 0) >= (prev.usage.output_tokens || 0)) prev.usage = usage;
+        // stop_reason/end-time live on the final block (earlier ones are mid-stream);
+        // take the latest so finish_reason and span duration aren't stale.
+        if (message.stop_reason) prev.stopReason = message.stop_reason;
+        if (message.model) prev.model = message.model;
+        prev.timestamp = parsed.timestamp;
       } else if (prev && prev.output === output && output && sameWindow) {
         const prevTokens = prev.usage.output_tokens || 0;
         const curTokens = usage.output_tokens || 0;
