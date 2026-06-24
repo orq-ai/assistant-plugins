@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-06-24
+
+### Changed
+- **BREAKING — renamed the Claude Code marketplace from `assistant-plugins` to `orq-claude-plugin`** (`.claude-plugin/marketplace.json` `name`). Install commands change from `claude plugin install <plugin>@assistant-plugins` to `@orq-claude-plugin`. The GitHub repo path (`orq-ai/assistant-plugins`) used by `claude plugin marketplace add` and `npx skills add` is **unchanged**, so Codex/Cursor/Warp/Gemini installs are unaffected — only Claude Code's `@<marketplace>` handle changed. Existing `@assistant-plugins` installs must re-add the marketplace. Updated install docs in `README.md`, `plugins/trace-hooks/README.md`, `plugins/trace-hooks/CLAUDE.md` (dev symlink path), and `plugins/trace-hooks/tests/README.md`; the orquesta-web docs (`claude-code.mdx`) were aligned to the already-published `@orq-claude-plugin` instructions in the changelog/tutorial/skills pages.
+
 ## [1.0.0] - 2026-06-11
 
 ### Changed

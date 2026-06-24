@@ -7,8 +7,8 @@ Claude Code loads plugin hooks from **`~/.claude/plugins/marketplaces/<marketpla
 For development, symlink the marketplace to your local clone so edits take effect immediately:
 
 ```bash
-rm -rf ~/.claude/plugins/marketplaces/assistant-plugins
-ln -s ~/Documents/orq-skills ~/.claude/plugins/marketplaces/assistant-plugins
+rm -rf ~/.claude/plugins/marketplaces/orq-claude-plugin
+ln -s ~/Documents/orq-skills ~/.claude/plugins/marketplaces/orq-claude-plugin
 ```
 
 **Warning**: CC may overwrite the symlink on marketplace sync. If hooks stop working after a CC update, re-create the symlink.

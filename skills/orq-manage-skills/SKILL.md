@@ -26,7 +26,7 @@ One known migration behavior to surface when relevant:
 
 This skill manages the **platform Skill entity on orq.ai** (`/v2/skills`, surfaced as Skills in the Studio, formerly Prompt Snippets). It is *not*:
 
-- **Orq Skills (this repo):** code-assistant skills like `orq-manage-skills` itself, distributed via the `assistant-plugins` marketplace and documented at <https://docs.orq.ai/docs/integrations/code-assistants/skills>. Those live in `skills/<name>/SKILL.md` files in this repo.
+- **Orq Skills (this repo):** code-assistant skills like `orq-manage-skills` itself, distributed via the `orq-claude-plugin` marketplace and documented at <https://docs.orq.ai/docs/integrations/code-assistants/skills>. Those live in `skills/<name>/SKILL.md` files in this repo.
 - **Anthropic / Agent Skills standard:** the cross-vendor SKILL.md format (same shape as the repo skills above; unrelated to the platform entity).
 - **The A2A `AgentCard.skills` array on agents:** that field is AI-generated capability metadata, not a list of platform-Skill references. Deleting a platform Skill does **not** orphan anything in `AgentCard.skills`.
 
