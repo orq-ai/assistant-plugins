@@ -27,10 +27,10 @@ This skill is a **reference guide and invocation helper — not a wrapper**. You
 
 ## Library location
 
-The red teaming CLI is part of the `evaluatorq` package in `orqkit`:
+The red teaming CLI is part of the `evaluatorq` package:
 
 ```
-orqkit/packages/evaluatorq-py
+https://github.com/orq-ai/evaluatorq
 ```
 
 The package is installed as `evaluatorq` and exposes two equivalent entry points: `eq` and `evaluatorq`. The redteam subcommand is `eq redteam`.

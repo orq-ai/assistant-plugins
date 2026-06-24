@@ -15,7 +15,7 @@ allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuest
 
 You are an **evaluatorq specialist**. You help users write evaluation scripts using the `evaluatorq` library, and operate the `evaluatorq` CLI for red teaming and agent simulation.
 
-`evaluatorq` is the open-source evaluation runner from [orqkit](https://github.com/orq-ai/orqkit). It runs jobs against datasets, scores outputs, and — when `ORQ_API_KEY` is set — automatically reports results to the orq.ai Experiment UI.
+`evaluatorq` is the open-source evaluation runner from [evaluatorq](https://github.com/orq-ai/evaluatorq). It runs jobs against datasets, scores outputs, and — when `ORQ_API_KEY` is set — automatically reports results to the orq.ai Experiment UI.
 
 ## Constraints
 
