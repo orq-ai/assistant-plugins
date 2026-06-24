@@ -1,6 +1,6 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "assistant-plugins",
+  "name": "orq-claude-plugin",
   "version": "0.1.0",
   "description": "Orq plugins for Claude Code — tracing, MCP tools, and agent skills",
   "owner": {

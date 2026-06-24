@@ -29,7 +29,7 @@ cd plugins/trace-hooks
   this file for hook output post-failure.
 - `claude -p` only loads plugins registered in
   `~/.claude/plugins/installed_plugins.json`. If flow tests fail with empty
-  log, register `assistant-plugins` marketplace + install `orq-trace`.
+  log, register `orq-claude-plugin` marketplace + install `orq-trace`.
 
 ## Adding a test
 
