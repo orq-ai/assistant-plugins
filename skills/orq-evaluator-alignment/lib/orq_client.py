@@ -1,0 +1,277 @@
+"""Async client for the orq.ai endpoints the alignment skill touches.
+
+Covers four routes:
+- GET  /v2/evaluators/{id}              — fetch the evaluator under audit (step 1)
+- POST /v2/traces/v3oql                 — query traces by evaluator (step 2, hop 1)
+- GET  /v2/traces/{trace_id}/v3spans    — per-trace spans (step 2, hop 2)
+- POST /v2/evaluators                   — create the rewritten evaluator (step 9b)
+
+Lifted and trimmed from the validated `evaluator_alignment.client.OrqEvalsClient`.
+TLS verification is disabled *only on Windows*, where the bundled OpenSSL aborts
+the process on some cert chains (project memory: OpenSSL Applink crash). On
+macOS/Linux verification stays on — the API key travels on these connections.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import sys
+from dataclasses import dataclass, field
+from typing import Any
+
+import httpx
+from loguru import logger
+
+DEFAULT_BASE_URL = 'https://api.orq.ai'
+
+# Matches `{{ var.path }}` template tokens in a judge prompt. The captured group
+# is the trimmed variable path (e.g. `log.input`, `query`, `output`).
+_VAR_TOKEN = re.compile(r'\{\{\s*([^}]+?)\s*\}\}')
+
+
+def extract_template_variables(prompt: str) -> list[str]:
+    """Return the ordered, de-duplicated set of `{{...}}` variables in a prompt."""
+    seen: dict[str, None] = {}
+    for m in _VAR_TOKEN.finditer(prompt or ''):
+        seen.setdefault(m.group(1), None)
+    return list(seen)
+
+
+@dataclass
+class EvaluatorConfig:
+    """The audited evaluator's config, normalised for downstream steps."""
+
+    id: str
+    key: str
+    prompt: str
+    judge_model: str
+    output_type: str
+    variables: list[str]
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class CreateResult:
+    id: str
+    key: str
+    raw: dict[str, Any]
+
+
+class OrqClient:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str = DEFAULT_BASE_URL,
+        timeout: float = 120.0,
+    ) -> None:
+        key = api_key or os.getenv('ORQ_API_KEY')
+        if not key:
+            raise RuntimeError('ORQ_API_KEY is not set (env or constructor arg).')
+        self._client = httpx.AsyncClient(
+            base_url=base_url,
+            timeout=timeout,
+            # Verification stays on everywhere except Windows (OpenSSL Applink
+            # crash — see module docstring). The API key rides these requests.
+            verify=sys.platform != 'win32',  # noqa: S501
+            headers={
+                'Authorization': f'Bearer {key}',
+                'Content-Type': 'application/json',
+            },
+        )
+
+    async def __aenter__(self) -> OrqClient:
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        await self._client.aclose()
+
+    # ── Step 1 ───────────────────────────────────────────────────────────────
+    async def get_evaluator(self, evaluator_id: str) -> EvaluatorConfig:
+        """Fetch and normalise the evaluator under audit.
+
+        A 404 is ambiguous: the id is wrong OR the evaluator lives in a project
+        this API key cannot see. We surface both possibilities rather than
+        asserting "not found" (design §8).
+        """
+        resp = await self._client.get(f'/v2/evaluators/{evaluator_id}')
+        if resp.status_code == 404:
+            raise EvaluatorNotFound(evaluator_id)
+        if resp.status_code >= 400:
+            logger.error(f'✗ get_evaluator failed [{resp.status_code}]: {resp.text}')
+            resp.raise_for_status()
+        data = resp.json()
+        prompt = _first_str(data, ('prompt', 'instructions')) or ''
+        judge_model = _extract_judge_model(data)
+        output_type = _first_str(data, ('output_type', 'outputType')) or ''
+        return EvaluatorConfig(
+            id=data.get('_id', evaluator_id),
+            key=data.get('key', ''),
+            prompt=prompt,
+            judge_model=judge_model,
+            output_type=output_type,
+            variables=extract_template_variables(prompt),
+            raw=data,
+        )
+
+    # ── Step 2 ───────────────────────────────────────────────────────────────
+    async def query_traces(
+        self,
+        *,
+        limit: int = 200,
+        page_size: int = 100,
+    ) -> list[dict[str, Any]]:
+        """POST /v2/traces/v3oql — paginate recent traces.
+
+        The v3oql body requires BOTH `filters` (an object) AND `fields` (an
+        array); omitting `fields` returns a 400. There is no server-side
+        "filter by evaluator" operator on this endpoint, so we page recent
+        traces with an empty filter and match the evaluator client-side on each
+        trace's spans (see ``fetch_traces._evaluation_matches``). This mirrors
+        the proven shape in ``orq_shared.orq_traces``.
+        """
+        out: list[dict[str, Any]] = []
+        page = 1
+        while len(out) < limit:
+            want = min(page_size, limit - len(out))
+            body: dict[str, Any] = {
+                'filters': {'operator': 'and', 'filters': []},
+                'fields': [],
+                'limit': want,
+                'page': page,
+            }
+            resp = await self._client.post('/v2/traces/v3oql', json=body)
+            if resp.status_code >= 500 and out:
+                # Deep pagination can 500 server-side; keep what we already have
+                # rather than discarding a good partial scan.
+                logger.warning(f'⚠ v3oql {resp.status_code} on page {page}; stopping with {len(out)} traces')
+                break
+            if resp.status_code >= 400:
+                logger.error(f'✗ v3oql failed [{resp.status_code}]: {resp.text}')
+                resp.raise_for_status()
+            payload = resp.json()
+            batch = payload.get('data') or payload.get('traces') or payload.get('items') or []
+            if not batch:
+                break
+            out.extend(batch)
+            if payload.get('has_more') is False or len(batch) < want:
+                break
+            page += 1
+        return out[:limit]
+
+    async def get_trace_spans(self, trace_id: str) -> list[dict[str, Any]]:
+        """GET /v2/traces/{trace_id}/v3spans — span list for one trace.
+
+        The list view is enough to detect which evaluator ran (it carries
+        ``attributes.orq.evaluator.id``); call ``get_span`` for the full content
+        (rendered judge prompt, explanation).
+        """
+        resp = await self._client.get(f'/v2/traces/{trace_id}/v3spans')
+        if resp.status_code >= 400:
+            logger.error(f'✗ v3spans failed [{resp.status_code}]: {resp.text}')
+            resp.raise_for_status()
+        payload = resp.json()
+        # The list view returns either a bare list of spans or {"data": [...]}.
+        if isinstance(payload, list):
+            return payload
+        return payload.get('data') or payload.get('spans') or payload.get('items') or []
+
+    async def get_span(self, trace_id: str, span_id: str) -> dict[str, Any] | None:
+        """GET /v2/traces/{trace_id}/v3spans/{span_id} — one span's full content.
+
+        Returns ``None`` on any error so the caller can fall back to the lighter
+        list-view span rather than dropping the datapoint. Unwraps a ``{"data":
+        ...}`` envelope if the endpoint uses one.
+        """
+        resp = await self._client.get(f'/v2/traces/{trace_id}/v3spans/{span_id}')
+        if resp.status_code >= 400:
+            # Not raised — caller falls back to the light span — but never silent:
+            # a run-wide 401/403/429 would otherwise hollow every datapoint
+            # (empty query/output, no judge_model) behind a green pipeline.
+            logger.warning(f'span detail [{resp.status_code}] {trace_id}/{span_id}; using list-view fallback')
+            return None
+        try:
+            payload = resp.json()
+        except ValueError:
+            logger.warning(f'span detail {trace_id}/{span_id} returned non-JSON body; using list-view fallback')
+            return None
+        if isinstance(payload, dict) and isinstance(payload.get('data'), dict):
+            return payload['data']
+        return payload if isinstance(payload, dict) else None
+
+    # ── Step 9b ──────────────────────────────────────────────────────────────
+    async def create_boolean_evaluator(
+        self,
+        *,
+        key: str,
+        path: str,
+        prompt: str,
+        model: str,
+        description: str | None = None,
+        guardrail_value: bool = True,
+    ) -> CreateResult:
+        """Create a single-judge boolean LLM-as-judge evaluator (the rewrite)."""
+        body: dict[str, Any] = {
+            'type': 'llm_eval',
+            'mode': 'single',
+            'model': model,
+            'prompt': prompt,
+            'output_type': 'boolean',
+            'path': path,
+            'key': key,
+            'guardrail_config': {
+                'type': 'boolean',
+                'value': guardrail_value,
+                'enabled': True,
+                'alert_on_failure': False,
+            },
+        }
+        if description is not None:
+            body['description'] = description
+        resp = await self._client.post('/v2/evaluators', json=body)
+        if resp.status_code >= 400:
+            logger.error(f'✗ create evaluator failed [{resp.status_code}]: {resp.text}')
+            resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data.get('data'), dict):  # tolerate a {"data": {...}} envelope
+            data = data['data']
+        new_id = data.get('_id') or data.get('id')
+        if not new_id:
+            # The evaluator may already exist server-side; surface the shape so a
+            # response drift doesn't crash with a bare KeyError mid-write.
+            raise RuntimeError(f'create evaluator returned no id; response shape: {data!r}')
+        return CreateResult(id=new_id, key=data.get('key', key), raw=data)
+
+
+class EvaluatorNotFound(RuntimeError):
+    """404 from GET /v2/evaluators/{id} — wrong id OR wrong project."""
+
+    def __init__(self, evaluator_id: str) -> None:
+        self.evaluator_id = evaluator_id
+        super().__init__(
+            f'Evaluator {evaluator_id!r} returned 404. Two possibilities:\n'
+            f'  1. The id is wrong.\n'
+            f'  2. The evaluator exists but lives in a project this ORQ_API_KEY '
+            f'cannot access.\n'
+            f'Check the id, and confirm the key is scoped to the right project.'
+        )
+
+
+def _first_str(data: dict[str, Any], keys: tuple[str, ...]) -> str | None:
+    for k in keys:
+        v = data.get(k)
+        if isinstance(v, str) and v:
+            return v
+    return None
+
+
+def _extract_judge_model(data: dict[str, Any]) -> str:
+    """Pull the judge model id from any of the shapes the API has used."""
+    model = data.get('model')
+    if isinstance(model, str):
+        return model
+    if isinstance(model, dict):
+        mid = model.get('id') or model.get('model')
+        if isinstance(mid, str):
+            return mid
+    return ''
