@@ -7,14 +7,16 @@ Covers four routes:
 - POST /v2/evaluators                   — create the rewritten evaluator (step 9b)
 
 Lifted and trimmed from the validated `evaluator_alignment.client.OrqEvalsClient`.
-TLS verification is disabled because the bundled OpenSSL on this Windows host
-aborts the process on some cert chains (project memory: OpenSSL Applink crash).
+TLS verification is disabled *only on Windows*, where the bundled OpenSSL aborts
+the process on some cert chains (project memory: OpenSSL Applink crash). On
+macOS/Linux verification stays on — the API key travels on these connections.
 """
 
 from __future__ import annotations
 
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -69,7 +71,9 @@ class OrqClient:
         self._client = httpx.AsyncClient(
             base_url=base_url,
             timeout=timeout,
-            verify=False,  # noqa: S501 — see module docstring (Windows OpenSSL)
+            # Verification stays on everywhere except Windows (OpenSSL Applink
+            # crash — see module docstring). The API key rides these requests.
+            verify=sys.platform != 'win32',  # noqa: S501
             headers={
                 'Authorization': f'Bearer {key}',
                 'Content-Type': 'application/json',
@@ -181,8 +185,16 @@ class OrqClient:
         """
         resp = await self._client.get(f'/v2/traces/{trace_id}/v3spans/{span_id}')
         if resp.status_code >= 400:
+            # Not raised — caller falls back to the light span — but never silent:
+            # a run-wide 401/403/429 would otherwise hollow every datapoint
+            # (empty query/output, no judge_model) behind a green pipeline.
+            logger.warning(f'span detail [{resp.status_code}] {trace_id}/{span_id}; using list-view fallback')
             return None
-        payload = resp.json()
+        try:
+            payload = resp.json()
+        except ValueError:
+            logger.warning(f'span detail {trace_id}/{span_id} returned non-JSON body; using list-view fallback')
+            return None
         if isinstance(payload, dict) and isinstance(payload.get('data'), dict):
             return payload['data']
         return payload if isinstance(payload, dict) else None
@@ -221,7 +233,14 @@ class OrqClient:
             logger.error(f'✗ create evaluator failed [{resp.status_code}]: {resp.text}')
             resp.raise_for_status()
         data = resp.json()
-        return CreateResult(id=data['_id'], key=data.get('key', key), raw=data)
+        if isinstance(data.get('data'), dict):  # tolerate a {"data": {...}} envelope
+            data = data['data']
+        new_id = data.get('_id') or data.get('id')
+        if not new_id:
+            # The evaluator may already exist server-side; surface the shape so a
+            # response drift doesn't crash with a bare KeyError mid-write.
+            raise RuntimeError(f'create evaluator returned no id; response shape: {data!r}')
+        return CreateResult(id=new_id, key=data.get('key', key), raw=data)
 
 
 class EvaluatorNotFound(RuntimeError):

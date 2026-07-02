@@ -44,6 +44,7 @@ async def _fake_run_jury_for_row(spec, judge_model, *, client, repetitions):
     n_true = sum(reps)
     value = n_true >= (len(reps) - n_true)
     return {
+        'success': True,
         'repetitions': reps,
         'repetitions_failed': 0,
         'value': value,
