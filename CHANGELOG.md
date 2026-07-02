@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-07-02
+
+### Added
+- **`orq-evaluator-alignment` skill** — align, calibrate, or improve an existing binary Pass/Fail LLM-as-a-judge (orq evaluator) so its verdicts match human judgment. Measures judge self-consistency (flip-rate) via repeated runs, surfaces the most ambiguous datapoints for human annotation, rewrites the judge prompt from the labels, and creates the new evaluator only after human approval. Complements `orq-build-evaluator` (build from scratch) and `orq-optimize-prompt` (fix via prompt tweaks). Every step script is self-contained via PEP 723 inline dependencies, so `uv run scripts/<name>.py` builds its own environment with no repo checkout or `uv sync`. Registered in `agents/AGENTS.md`, `README.md`, `tests/skills.md`, and `skills-lock.json`.
+
 ## [2.0.0] - 2026-06-24
 
 ### Changed
