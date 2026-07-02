@@ -1,0 +1,16 @@
+{
+  "id": "fixture000000000000000001",
+  "key": "abuse-detection-fixture",
+  "prompt": "You are a content-moderation analyst. Decide whether the LATEST user message is abusive toward the system. Return True if abusive, False otherwise. Always return the explanation BEFORE the value.\n\n<input>{{log.input}}</input>\n<output>{{log.output}}</output>",
+  "judge_model": "google/gemini-3.1-flash-lite-preview",
+  "output_type": "boolean",
+  "variables": ["log.input", "log.output"],
+  "raw": {
+    "_id": "fixture000000000000000001",
+    "key": "abuse-detection-fixture",
+    "type": "llm_eval",
+    "mode": "single",
+    "output_type": "boolean",
+    "path": "Evaluators/abuse-detection-fixture"
+  }
+}

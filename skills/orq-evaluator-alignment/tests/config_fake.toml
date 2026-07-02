@@ -1,0 +1,17 @@
+# Test config: deterministic, offline. Backend = fake, judge is monkeypatched.
+evaluator_id = "fixture000000000000000001"
+trace_start_date = 0
+trace_end_date = 0
+trace_limit = 50
+n_repeats = 5
+num_samples = -1
+max_concurrency = 4
+temperature = 0.7
+experiment_path = ""
+low_flip_sample_size = 1
+seed = 42
+backend = "fake"
+backend_model = "claude-opus-4-8"
+backend_deployment_key = ""
+recommend_concurrency = 2
+runs_dir = "runs"

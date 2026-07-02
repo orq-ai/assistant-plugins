@@ -1,0 +1,6 @@
+# Per-run working directories — reproducible, never committed.
+runs/
+# Python caches.
+__pycache__/
+*.pyc
+.pytest_cache/
