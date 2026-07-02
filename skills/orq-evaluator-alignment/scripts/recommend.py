@@ -83,10 +83,22 @@ def _parse_recommendation(text: str) -> dict[str, Any]:
     import json
     import re
 
-    # Tolerate a ```json fence or leading prose around the JSON object.
+    # Prefer the whole payload as JSON (the contract). Only if that fails fall
+    # back to carving out the outermost {...} — the greedy match can span across
+    # prose braces, so it's the last resort, not the first try.
     m = re.search(r'\{.*\}', text, re.DOTALL)
-    blob = m.group(0) if m else text
-    obj = json.loads(blob)
+    obj = None
+    for candidate in (text, m.group(0) if m else None):
+        if candidate is None:
+            continue
+        try:
+            obj = json.loads(candidate)
+            break
+        except json.JSONDecodeError:
+            continue
+    if obj is None:
+        # Distinguish a parse bug from an API outage in the recorded error.
+        raise ValueError(f'no JSON object in recommendation output: {text[:200]!r}')
     return {'reasoning': obj.get('reasoning', ''), 'recommendation': obj.get('recommendation', '')}
 
 

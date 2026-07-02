@@ -10,8 +10,8 @@ description: >-
   surfaces the most ambiguous datapoints for human annotation, rewrites the judge
   prompt from the labels, and creates the new evaluator only after the human
   approves. If the evaluator ID isn't given, ask for it after triggering. Do NOT
-  use to build an evaluator from scratch (use build-evaluator), to fix failures
-  with prompt tweaks (use optimize-prompt), or for non-boolean judges.
+  use to build an evaluator from scratch (use orq-build-evaluator), to fix
+  failures with prompt tweaks (use orq-optimize-prompt), or for non-boolean judges.
 ---
 
 # Evaluator Alignment
@@ -29,7 +29,7 @@ cached environment on first run — no `uv sync`, no project venv, no repo neede
 Always invoke as `uv run scripts/<name>.py` (not `uv run python scripts/...`, which
 bypasses the inline metadata).
 
-## Non-negotiables
+## Constraints
 
 - **Boolean Pass/Fail judges only** (V1). Step 1 fails fast on anything else.
 - **Self-consistency is a ceiling, not proof.** A low flip-rate means the judge

@@ -47,7 +47,11 @@ def project_stability_cost(
     typical explanation length.
     """
     sample = rows if num_samples in (None, -1) else rows[:num_samples]
-    n = len(sample) or 1
+    if not sample:
+        # A "~0 judge calls / $0" projection reads as "this run is free" rather
+        # than "there's nothing to judge" — refuse instead of misleading.
+        raise ValueError('no trace rows to estimate; run fetch_traces.py first (traces.jsonl is empty)')
+    n = len(sample)
     avg_in = sum(len(r.get('query', '') or '') + len(r.get('output', '') or '') for r in sample) / n
     in_per_call = _tokens(JUDGE_OVERHEAD_CHARS + avg_in)
     out_per_call = _tokens(EXPLANATION_CHARS)

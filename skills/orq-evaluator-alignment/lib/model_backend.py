@@ -67,6 +67,12 @@ class ClaudeSubagentBackend:
     """Shell out to `claude -p` as a pure, side-effect-free text transform."""
 
     def __init__(self, model: str = 'claude-opus-4-8') -> None:
+        # `_run` uses shell=True on Windows (claude.CMD can't be launched
+        # directly), so `model` reaches cmd.exe on the command line. It's
+        # operator config, not remote input, but reject shell metacharacters
+        # so a stray `&`/`|`/`^` can't break or inject the command line.
+        if not re.fullmatch(r'[\w.:/-]+', model):
+            raise ValueError(f'invalid model slug {model!r}: expected [\\w.:/-]+')
         self.model = model
         self.exe = shutil.which('claude')
         if self.exe is None:
@@ -256,8 +262,9 @@ def _echo_inner_prompt(prompt: str) -> str:
 
 def _extract_orq_text(resp: Any) -> str:
     # The orq SDK response shape has drifted across versions; probe the common
-    # nestings and fall back to str() so a shape change degrades loudly-ish
-    # rather than crashing.
+    # nestings. If none match, RAISE — returning str(resp) would feed the SDK
+    # object's repr downstream as a "recommendation"/"rewritten prompt", which
+    # silently poisons the output instead of surfacing the shape drift.
     for path in (
         lambda r: r.choices[0].message.content,
         lambda r: r['choices'][0]['message']['content'],
@@ -269,5 +276,4 @@ def _extract_orq_text(resp: Any) -> str:
                 return val
         except Exception:  # noqa: BLE001, S110
             pass
-    logger.warning('orq_deployment: could not locate text in response; using str().')
-    return str(resp)
+    raise ValueError(f'orq_deployment: could not locate text in response (shape drift): {resp!r}')

@@ -72,11 +72,12 @@ def parse_verdict(raw: str) -> EvaluatorResponsePayload:
     First tries the strict JSON contract (`response_format: json_schema`). If
     the model ignored it and returned free text — as the judge prompt literally
     asks for ("Always return the explanation BEFORE the value. So: explanation,
-    value.") — falls back to extracting the boolean. The verdict is taken as the
-    LAST true/false token in the text (the prompt puts the value after the
-    explanation, which may itself mention "true"/"false"). Raises ValueError if
-    no verdict can be recovered, so the caller records a failed repetition rather
-    than a silent wrong answer.
+    value.") — falls back to extracting the boolean. When a "Value:"/"Verdict:"
+    label is present we take the FIRST boolean after the last such label, so
+    prose that trails the verdict ("...which would be false otherwise") cannot
+    invert it. Only when no label anchors the verdict do we fall back to the last
+    true/false token. Raises ValueError if no verdict can be recovered, so the
+    caller records a failed repetition rather than a silent wrong answer.
     """
     text = (raw or '').strip()
     fenced = re.fullmatch(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL)
@@ -87,18 +88,22 @@ def parse_verdict(raw: str) -> EvaluatorResponsePayload:
     except Exception:  # noqa: BLE001 — fall through to free-text parsing
         pass
 
+    labels = list(_VALUE_LABEL.finditer(text))
+    if labels:
+        # Anchor to the labelled verdict: first boolean after the last label.
+        anchor = labels[-1]
+        verdict = _BOOL_TOKEN.search(text, anchor.end())
+        if verdict is None:
+            raise ValueError(f'labelled verdict with no boolean in judge output: {text[:200]!r}')
+        value = verdict.group(1).lower() == 'true'
+        return EvaluatorResponsePayload(value=value, explanation=text[: anchor.start()].strip() or text)
+
     matches = list(_BOOL_TOKEN.finditer(text))
     if not matches:
         raise ValueError(f'no boolean verdict found in judge output: {text[:200]!r}')
     last = matches[-1]
     value = last.group(1).lower() == 'true'
-    # Explanation = everything before the final verdict, minus a trailing
-    # "Value:"/"Verdict:" label if one precedes it.
-    explanation = text[: last.start()].strip()
-    label = list(_VALUE_LABEL.finditer(explanation))
-    if label and label[-1].end() >= len(explanation) - 2:
-        explanation = explanation[: label[-1].start()].strip()
-    return EvaluatorResponsePayload(value=value, explanation=explanation or text)
+    return EvaluatorResponsePayload(value=value, explanation=text[: last.start()].strip() or text)
 
 
 @dataclass
