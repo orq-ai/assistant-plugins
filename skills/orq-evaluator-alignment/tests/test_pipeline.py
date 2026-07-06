@@ -29,6 +29,18 @@ for p in (str(SKILL_ROOT), str(SCRIPTS)):
 FIXTURES = SKILL_ROOT / 'tests' / 'fixtures'
 FAKE_CONFIG = str(SKILL_ROOT / 'tests' / 'config_fake.toml')
 
+
+def test_guard_hollow_aborts_over_threshold():
+    from fetch_traces import _guard_hollow
+
+    # 3/4 hollow (75%) with a 20% threshold and no --force → abort.
+    with pytest.raises(SystemExit):
+        _guard_hollow(n_degraded=3, n_rows=4, abort_ratio=0.2, force=False)
+    # --force persists anyway; a small fraction under threshold is fine; empty is a no-op.
+    _guard_hollow(n_degraded=3, n_rows=4, abort_ratio=0.2, force=True)
+    _guard_hollow(n_degraded=1, n_rows=100, abort_ratio=0.2, force=False)
+    _guard_hollow(n_degraded=0, n_rows=0, abort_ratio=0.2, force=False)
+
 # Canned per-row verdicts keyed by a substring of the judged input.
 _CANNED = {
     'useless': [True, False, True, False, True],   # flips: 3T/2F, mode True

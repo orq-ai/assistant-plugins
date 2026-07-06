@@ -34,7 +34,6 @@ import shutil
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from loguru import logger
 
 _VAR_TOKEN = re.compile(r'\{\{\s*([^}]+?)\s*\}\}')
 
@@ -67,12 +66,15 @@ class ClaudeSubagentBackend:
     """Shell out to `claude -p` as a pure, side-effect-free text transform."""
 
     def __init__(self, model: str = 'claude-opus-4-8') -> None:
-        # `_run` uses shell=True on Windows (claude.CMD can't be launched
-        # directly), so `model` reaches cmd.exe on the command line. It's
-        # operator config, not remote input, but reject shell metacharacters
-        # so a stray `&`/`|`/`^` can't break or inject the command line.
+        # `_run` must go through the shell on Windows: `claude` resolves to
+        # `claude.CMD`, and CreateProcess cannot launch a .cmd/.bat directly
+        # (shell=False raises WinError 193), so a shell is unavoidable and
+        # `model` reaches cmd.exe on the command line. It's operator config, not
+        # remote input, but reject shell metacharacters so a stray `&`/`|`/`^`
+        # can't break or inject the command line. On POSIX shell=False already
+        # makes this moot; the guard is the control for the Windows path.
         if not re.fullmatch(r'[\w.:/-]+', model):
-            raise ValueError(f'invalid model slug {model!r}: expected [\\w.:/-]+')
+            raise ValueError(f'invalid model slug {model!r}: expected letters, digits, and . : / -')
         self.model = model
         self.exe = shutil.which('claude')
         if self.exe is None:

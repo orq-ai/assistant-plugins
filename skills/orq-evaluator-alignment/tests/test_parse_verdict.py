@@ -64,3 +64,41 @@ def test_markdown_fenced_json():
 def test_unparseable_raises():
     with pytest.raises(ValueError):
         parse_verdict('the model said something with no verdict at all')
+
+
+def test_labelled_explanation_has_no_scaffolding():
+    # Label at the very start must not leak "Value: true" into the explanation.
+    p = parse_verdict('Value: true\nsome trailing note')
+    assert p.value is True
+    assert 'Value:' not in p.explanation
+    assert 'true' not in p.explanation.lower()
+    assert 'trailing note' in p.explanation
+
+
+def test_label_without_following_boolean_falls_back():
+    # A bare/empty trailing label with the verdict stated in prose above must
+    # still recover the boolean, not raise.
+    p = parse_verdict('It is true.\nValue:')
+    assert p.value is True
+
+
+def test_multiple_label_words_do_not_break_parse():
+    # 'answer:' appears in prose after the real verdict; the verdict must still
+    # be recovered from the labelled boolean rather than raising.
+    p = parse_verdict('Verdict: true\nanswer: this is a longer note')
+    assert p.value is True
+
+
+def test_verdict_label_variant():
+    p = parse_verdict('Reasoning: clearly a violation.\nVerdict: True')
+    assert p.value is True
+    assert 'violation' in p.explanation
+
+
+def test_fence_inside_explanation_not_truncated():
+    # A ``` inside the explanation string must not truncate the JSON (this is the
+    # bug the naive regex fence-strip had; _strip_code_fences handles it).
+    raw = '{"explanation": "see ``` code ``` block", "value": true}'
+    p = parse_verdict(raw)
+    assert p.value is True
+    assert 'code' in p.explanation

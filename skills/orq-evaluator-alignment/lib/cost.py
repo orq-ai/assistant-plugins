@@ -55,11 +55,11 @@ def project_stability_cost(
     avg_in = sum(len(r.get('query', '') or '') + len(r.get('output', '') or '') for r in sample) / n
     in_per_call = _tokens(JUDGE_OVERHEAD_CHARS + avg_in)
     out_per_call = _tokens(EXPLANATION_CHARS)
-    total_calls = len(sample) * n_repeats
+    total_calls = n * n_repeats
 
     return {
         'judge_model': judge_model,
-        'num_datapoints': len(sample),
+        'num_datapoints': n,
         'n_repeats': n_repeats,
         'total_calls': total_calls,
         'input_tokens_per_call': in_per_call,

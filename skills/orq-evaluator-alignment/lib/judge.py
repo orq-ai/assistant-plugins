@@ -22,10 +22,12 @@ from typing import Any, Awaitable, Callable
 
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_exponential_jitter
 
-from evaluatorq.common.judge import EvaluatorResponsePayload, render_template
+from evaluatorq.common.judge import EvaluatorResponsePayload, _strip_code_fences, render_template
 from evaluatorq.common.jury import Prediction, VerdictKind, run_jury
 from evaluatorq.common.llm_call import execute_chat_completion
 from evaluatorq.common.llm_client import resolve_llm_client
+
+from lib.orq_client import tls_verify
 
 # Mirror of orq's boolean `explanation_and_value` contract. orq puts the whole
 # rubric in a single user message (no system turn) and pins the output shape with
@@ -66,44 +68,66 @@ _BOOL_TOKEN = re.compile(r'\b(true|false)\b', re.IGNORECASE)
 _VALUE_LABEL = re.compile(r'(?:^|\n)\s*(?:value|verdict|answer)\s*[:=]\s*', re.IGNORECASE)
 
 
+def _clean_explanation(text: str, *spans: tuple[int, int]) -> str:
+    """Drop the given char spans (label + verdict token) and normalise space.
+
+    Removes only the scaffolding so the explanation never carries the raw
+    "Value: true" the caller anchored on.
+    """
+    out = text
+    for start, end in sorted(spans, reverse=True):
+        out = out[:start] + ' ' + out[end:]
+    return ' '.join(out.split()).strip()
+
+
 def parse_verdict(raw: str) -> EvaluatorResponsePayload:
     """Parse a judge completion into a verdict, tolerant of non-JSON output.
 
-    First tries the strict JSON contract (`response_format: json_schema`). If
-    the model ignored it and returned free text — as the judge prompt literally
-    asks for ("Always return the explanation BEFORE the value. So: explanation,
-    value.") — falls back to extracting the boolean. When a "Value:"/"Verdict:"
-    label is present we take the FIRST boolean after the last such label, so
-    prose that trails the verdict ("...which would be false otherwise") cannot
-    invert it. Only when no label anchors the verdict do we fall back to the last
-    true/false token. Raises ValueError if no verdict can be recovered, so the
-    caller records a failed repetition rather than a silent wrong answer.
+    First tries the strict JSON contract (`response_format: json_schema`),
+    reusing evaluatorq's fence-stripper (which correctly ignores a ``` that
+    appears *inside* an explanation string). If the model ignored the contract
+    and returned free text — as the judge prompt literally asks for
+    ("explanation BEFORE the value") — we recover the boolean:
+
+    - If a "Value:"/"Verdict:"/"Answer:" label is present, take the boolean that
+      follows a label (last such pair, since the verdict is emitted last). This
+      keeps trailing prose ("...which would be false otherwise") from inverting
+      a labelled verdict.
+    - If no label is followed by a boolean, fall back to the last boolean token
+      anywhere — so a bare "It is true." (label absent or empty) still parses
+      rather than becoming a failed repetition.
+
+    The explanation has the label + verdict scaffolding stripped out. Raises
+    ValueError only when no boolean exists at all, so the caller records a
+    failed repetition rather than a silent wrong answer.
     """
-    text = (raw or '').strip()
-    fenced = re.fullmatch(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL)
-    if fenced:
-        text = fenced.group(1).strip()
+    text = _strip_code_fences((raw or '').strip()).strip()
     try:
         return EvaluatorResponsePayload.model_validate_json(text)
     except Exception:  # noqa: BLE001 — fall through to free-text parsing
         pass
 
-    labels = list(_VALUE_LABEL.finditer(text))
-    if labels:
-        # Anchor to the labelled verdict: first boolean after the last label.
-        anchor = labels[-1]
-        verdict = _BOOL_TOKEN.search(text, anchor.end())
-        if verdict is None:
-            raise ValueError(f'labelled verdict with no boolean in judge output: {text[:200]!r}')
-        value = verdict.group(1).lower() == 'true'
-        return EvaluatorResponsePayload(value=value, explanation=text[: anchor.start()].strip() or text)
+    # Prefer a boolean that follows a label; the verdict is emitted last, so the
+    # last label→boolean pair wins.
+    label: re.Match[str] | None = None
+    verdict: re.Match[str] | None = None
+    for lm in _VALUE_LABEL.finditer(text):
+        bm = _BOOL_TOKEN.search(text, lm.end())
+        if bm is not None:
+            label, verdict = lm, bm
 
-    matches = list(_BOOL_TOKEN.finditer(text))
-    if not matches:
-        raise ValueError(f'no boolean verdict found in judge output: {text[:200]!r}')
-    last = matches[-1]
-    value = last.group(1).lower() == 'true'
-    return EvaluatorResponsePayload(value=value, explanation=text[: last.start()].strip() or text)
+    if verdict is None:  # no labelled boolean — take the last boolean anywhere
+        matches = list(_BOOL_TOKEN.finditer(text))
+        if not matches:
+            raise ValueError(f'no boolean verdict found in judge output: {text[:200]!r}')
+        verdict = matches[-1]
+
+    value = verdict.group(1).lower() == 'true'
+    spans = [(verdict.start(), verdict.end())]
+    if label is not None:
+        spans.append((label.start(), label.end()))
+    explanation = _clean_explanation(text, *spans)
+    return EvaluatorResponsePayload(value=value, explanation=explanation)
 
 
 @dataclass
@@ -318,7 +342,7 @@ def make_judge_client() -> Any:
         if sys.platform == 'win32':
             import httpx
 
-            kwargs['http_client'] = httpx.AsyncClient(verify=False)
+            kwargs['http_client'] = httpx.AsyncClient(verify=tls_verify())  # noqa: S501
         return AsyncOpenAI(**kwargs)
 
     orq_api_key = os.environ.get('ORQ_API_KEY')
@@ -330,6 +354,6 @@ def make_judge_client() -> Any:
         return AsyncOpenAI(
             api_key=orq_api_key,
             base_url=f'{host}/v3/router',
-            http_client=httpx.AsyncClient(verify=False),
+            http_client=httpx.AsyncClient(verify=tls_verify()),  # noqa: S501
         )
     return resolve_llm_client().client

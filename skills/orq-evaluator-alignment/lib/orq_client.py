@@ -30,6 +30,40 @@ DEFAULT_BASE_URL = 'https://api.orq.ai'
 _VAR_TOKEN = re.compile(r'\{\{\s*([^}]+?)\s*\}\}')
 
 
+def tls_verify() -> bool:
+    """Whether httpx should verify TLS certificates.
+
+    Off only on Windows, whose bundled OpenSSL aborts the process on some cert
+    chains (``OPENSSL_Uplink ... no OPENSSL_Applink``). The orq API key rides
+    these connections, so verification stays ON everywhere else. Single source of
+    truth for the policy — imported by the judge client in ``judge.py`` too.
+    """
+    return sys.platform != 'win32'
+
+
+def _envelope_list(payload: Any, *keys: str) -> list[Any]:
+    """Peel a list out of an orq response: bare list, or {"data"|...: [...]}."""
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for k in keys:
+            if isinstance(payload.get(k), list):
+                return payload[k]
+    return []
+
+
+def _envelope_dict(payload: Any) -> dict[str, Any] | None:
+    """Peel a dict out of an orq response: unwrap a {"data": {...}} envelope.
+
+    Returns the inner dict if enveloped, the payload itself if it's a bare dict,
+    or None if the payload isn't a dict at all.
+    """
+    if not isinstance(payload, dict):
+        return None
+    inner = payload.get('data')
+    return inner if isinstance(inner, dict) else payload
+
+
 def extract_template_variables(prompt: str) -> list[str]:
     """Return the ordered, de-duplicated set of `{{...}}` variables in a prompt."""
     seen: dict[str, None] = {}
@@ -73,7 +107,7 @@ class OrqClient:
             timeout=timeout,
             # Verification stays on everywhere except Windows (OpenSSL Applink
             # crash — see module docstring). The API key rides these requests.
-            verify=sys.platform != 'win32',  # noqa: S501
+            verify=tls_verify(),  # noqa: S501
             headers={
                 'Authorization': f'Bearer {key}',
                 'Content-Type': 'application/json',
@@ -150,7 +184,7 @@ class OrqClient:
                 logger.error(f'✗ v3oql failed [{resp.status_code}]: {resp.text}')
                 resp.raise_for_status()
             payload = resp.json()
-            batch = payload.get('data') or payload.get('traces') or payload.get('items') or []
+            batch = _envelope_list(payload, 'data', 'traces', 'items')
             if not batch:
                 break
             out.extend(batch)
@@ -170,18 +204,16 @@ class OrqClient:
         if resp.status_code >= 400:
             logger.error(f'✗ v3spans failed [{resp.status_code}]: {resp.text}')
             resp.raise_for_status()
-        payload = resp.json()
         # The list view returns either a bare list of spans or {"data": [...]}.
-        if isinstance(payload, list):
-            return payload
-        return payload.get('data') or payload.get('spans') or payload.get('items') or []
+        return _envelope_list(resp.json(), 'data', 'spans', 'items')
 
     async def get_span(self, trace_id: str, span_id: str) -> dict[str, Any] | None:
         """GET /v2/traces/{trace_id}/v3spans/{span_id} — one span's full content.
 
-        Returns ``None`` on any error so the caller can fall back to the lighter
-        list-view span rather than dropping the datapoint. Unwraps a ``{"data":
-        ...}`` envelope if the endpoint uses one.
+        Returns ``None`` on a >=400 status, a non-JSON body, or a non-dict
+        payload — logging a warning in each case — so the caller can fall back to
+        the lighter list-view span rather than dropping the datapoint. Unwraps a
+        ``{"data": ...}`` envelope if the endpoint uses one.
         """
         resp = await self._client.get(f'/v2/traces/{trace_id}/v3spans/{span_id}')
         if resp.status_code >= 400:
@@ -195,9 +227,7 @@ class OrqClient:
         except ValueError:
             logger.warning(f'span detail {trace_id}/{span_id} returned non-JSON body; using list-view fallback')
             return None
-        if isinstance(payload, dict) and isinstance(payload.get('data'), dict):
-            return payload['data']
-        return payload if isinstance(payload, dict) else None
+        return _envelope_dict(payload)
 
     # ── Step 9b ──────────────────────────────────────────────────────────────
     async def create_boolean_evaluator(
@@ -232,9 +262,7 @@ class OrqClient:
         if resp.status_code >= 400:
             logger.error(f'✗ create evaluator failed [{resp.status_code}]: {resp.text}')
             resp.raise_for_status()
-        data = resp.json()
-        if isinstance(data.get('data'), dict):  # tolerate a {"data": {...}} envelope
-            data = data['data']
+        data = _envelope_dict(resp.json()) or {}  # tolerate a {"data": {...}} envelope
         new_id = data.get('_id') or data.get('id')
         if not new_id:
             # The evaluator may already exist server-side; surface the shape so a

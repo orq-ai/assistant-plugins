@@ -209,7 +209,7 @@ def _in_window(iso: str | None, start: int | None, end: int | None) -> bool:
 
 
 async def _fetch(
-    evaluator_id: str, evaluator_key: str, cfg: dict[str, Any], template: str
+    evaluator_id: str, evaluator_key: str, cfg: dict[str, Any], template: str, force: bool = False
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     limit = int(cfg.get('trace_limit', 200))
     start = int(cfg.get('trace_start_date', 0)) or None
@@ -224,10 +224,32 @@ async def _fetch(
     }
 
     rows: list[dict[str, Any]] = []
+    # Span ids whose per-span detail fetch failed (get_span -> None): the row
+    # falls back to the light list-view span, which lacks the judge prompt and
+    # model. Tracked so a run-wide auth/rate-limit failure can't hollow every
+    # datapoint behind a green pipeline (logging alone is too easy to miss).
+    downgraded_spans: set[str] = set()
     async with OrqClient() as client:
-        traces = await client.query_traces(limit=limit)
+        raw_traces = await client.query_traces(limit=limit)
+        traces = raw_traces
         if start or end:
-            traces = [t for t in traces if _in_window(t.get('start_time'), start, end)]
+            traces = [t for t in raw_traces if _in_window(t.get('start_time'), start, end)]
+            # The window is filtered client-side over the newest `limit` traces,
+            # NOT pushed to the server. If we hit the cap and the oldest trace we
+            # saw is still newer than the window start, older in-window traces
+            # exist beyond the scan depth and were never fetched — say so loudly
+            # rather than silently returning a partial window.
+            if start and len(raw_traces) >= limit:
+                oldest = min(
+                    (ms for t in raw_traces if (ms := _epoch_ms(t.get('start_time'))) is not None),
+                    default=None,
+                )
+                if oldest is not None and oldest > start:
+                    logger.warning(
+                        f'⚠ Scan hit the {limit}-trace cap without reaching the window start; '
+                        f'traces older than epoch-ms {oldest} were not fetched. The date window '
+                        f'may be truncated — raise --trace_limit to cover the full window.'
+                    )
         logger.info(f'v3oql returned {len(traces)} traces to scan')
         if not traces:
             return [], filter_echo
@@ -251,6 +273,8 @@ async def _fetch(
                 for s in spans:
                     sid = s.get('span_id') or s.get('_id')
                     detail = await client.get_span(trace_id, sid) if sid else None
+                    if sid and detail is None:
+                        downgraded_spans.add(sid)
                     full.append(detail or s)
 
             for span in full:
@@ -258,6 +282,7 @@ async def _fetch(
                 if not matches:
                     continue
                 ev = matches[0]
+                span_id = span.get('span_id') or span.get('_id')
                 rendered, messages = _judge_io(full, span)
                 # The judge span stores the prompt post-substitution. Recover the
                 # original variable values via the template stencil so the row
@@ -277,7 +302,7 @@ async def _fetch(
                 rows.append(
                     {
                         'trace_id': trace_id,
-                        'span_id': span.get('span_id') or span.get('_id'),
+                        'span_id': span_id,
                         'evaluator_id': ev['evaluator_id'],
                         'evaluator_key': ev['evaluator_key'],
                         'query': query,
@@ -286,17 +311,46 @@ async def _fetch(
                         'judge_value': ev['value'],
                         'judge_explanation': ev['explanation'],
                         'judge_model': _judge_model(full, span),
+                        # True when this row's judge span lost its detail fetch and
+                        # fell back to the light span (empty query/output/model).
+                        'degraded': span_id in downgraded_spans,
                     }
                 )
 
         await asyncio.gather(*(_scan(t) for t in traces))
+
+    n_degraded = sum(1 for r in rows if r.get('degraded'))
+    filter_echo['n_rows'] = len(rows)
+    filter_echo['n_degraded'] = n_degraded
+    _guard_hollow(n_degraded, len(rows), float(cfg.get('hollow_abort_ratio', 0.2)), force)
     return rows, filter_echo
+
+
+def _guard_hollow(n_degraded: int, n_rows: int, abort_ratio: float, force: bool) -> None:
+    """Abort when too many datapoints lost their judge-span detail.
+
+    A run-wide 401/403/429 on the span-detail endpoint degrades every row to an
+    empty query/output/judge_model. Logging alone is too easy to miss in a green
+    pipeline, so cross a ratio → hard stop (unless --force).
+    """
+    if not n_rows or not n_degraded:
+        return
+    ratio = n_degraded / n_rows
+    if ratio > abort_ratio and not force:
+        raise SystemExit(
+            f'✗ {n_degraded}/{n_rows} datapoints ({ratio:.0%}) lost their judge-span detail and are '
+            f'hollow (empty query/output/judge_model). This usually means a run-wide auth (401/403) '
+            f'or rate-limit (429) failure on the span-detail endpoint — check ORQ_API_KEY scope and '
+            f'retry. Pass --force to persist the partial set anyway.'
+        )
+    logger.warning(f'⚠ {n_degraded}/{n_rows} datapoints degraded (used light span, no judge detail)')
 
 
 def main(
     run_dir: str | None = None,
     config: str = 'config.toml',
     trace_limit: int | None = 200,
+    force: bool = False,
 ) -> str:
     """Fetch traces for the evaluator recorded in the run directory.
 
@@ -308,6 +362,9 @@ def main(
             scan window can be widened per-run without editing config. Pass a
             larger value when the evaluator is sparse or its traffic is aged
             (e.g. ``--trace_limit 2000``).
+        force: Persist the datapoints even when a large fraction lost their
+            judge-span detail (hollow rows). Off by default so a run-wide
+            auth/rate-limit failure aborts instead of writing garbage.
     """
     cfg = runner.load_config(config)
     if trace_limit is not None:
@@ -320,7 +377,9 @@ def main(
     evaluator_id = evaluator['id']
     evaluator_key = evaluator.get('key', '')
 
-    rows, filter_echo = asyncio.run(_fetch(evaluator_id, evaluator_key, cfg, evaluator.get('prompt', '')))
+    rows, filter_echo = asyncio.run(
+        _fetch(evaluator_id, evaluator_key, cfg, evaluator.get('prompt', ''), force=force)
+    )
 
     if not rows:
         raise SystemExit(
