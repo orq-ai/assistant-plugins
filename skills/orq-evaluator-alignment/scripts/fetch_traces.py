@@ -105,7 +105,11 @@ def _judge_io(spans: list[dict[str, Any]], eval_span: dict[str, Any]) -> tuple[s
     esid = eval_span.get('span_id') or eval_span.get('_id')
     chats = [s for s in spans if isinstance(s, dict) and s.get('type') == 'span.chat_completion']
     chosen = [s for s in chats if s.get('parent_span_id') == esid] or chats
-    for s in chosen:
+    # Newer orq schema records the judge's LLM call ON the evaluator span itself
+    # (no separate child chat span), so fall back to the eval span's own gen_ai
+    # input. Without this, evaluators that don't emit a child chat span yield
+    # empty query/output — hollow datapoints behind a green pipeline.
+    for s in [*chosen, eval_span]:
         msgs = (((s.get('attributes') or {}).get('gen_ai') or {}).get('input') or {}).get('messages')
         if msgs:
             rendered = '\n\n'.join(str(m.get('content', '')) for m in msgs)
@@ -180,9 +184,11 @@ def _judge_model(spans: list[dict[str, Any]], eval_span: dict[str, Any]) -> str:
     esid = eval_span.get('span_id') or eval_span.get('_id')
     chats = [s for s in spans if isinstance(s, dict) and s.get('type') == 'span.chat_completion']
     chosen = [s for s in chats if s.get('parent_span_id') == esid] or chats
-    for s in chosen:
-        req = (((s.get('attributes') or {}).get('gen_ai') or {}).get('request') or {})
-        model = req.get('model')
+    # As in _judge_io, the newer schema keeps the LLM call on the eval span
+    # itself; also accept gen_ai.response.model as a fallback to request.model.
+    for s in [*chosen, eval_span]:
+        gen_ai = ((s.get('attributes') or {}).get('gen_ai') or {})
+        model = (gen_ai.get('request') or {}).get('model') or (gen_ai.get('response') or {}).get('model')
         if model:
             return str(model)
     return ''
@@ -311,9 +317,12 @@ async def _fetch(
                         'judge_value': ev['value'],
                         'judge_explanation': ev['explanation'],
                         'judge_model': _judge_model(full, span),
-                        # True when this row's judge span lost its detail fetch and
-                        # fell back to the light span (empty query/output/model).
-                        'degraded': span_id in downgraded_spans,
+                        # Degraded = the row is hollow and can't be re-judged
+                        # faithfully: either the detail fetch fell back to the
+                        # light span, or enrichment recovered neither query nor
+                        # output (unknown span shape). Either way it must not pass
+                        # as a clean datapoint behind a green pipeline.
+                        'degraded': (span_id in downgraded_spans) or (not query and not output_val),
                     }
                 )
 
@@ -338,10 +347,10 @@ def _guard_hollow(n_degraded: int, n_rows: int, abort_ratio: float, force: bool)
     ratio = n_degraded / n_rows
     if ratio > abort_ratio and not force:
         raise SystemExit(
-            f'✗ {n_degraded}/{n_rows} datapoints ({ratio:.0%}) lost their judge-span detail and are '
-            f'hollow (empty query/output/judge_model). This usually means a run-wide auth (401/403) '
-            f'or rate-limit (429) failure on the span-detail endpoint — check ORQ_API_KEY scope and '
-            f'retry. Pass --force to persist the partial set anyway.'
+            f'✗ {n_degraded}/{n_rows} datapoints ({ratio:.0%}) are hollow (empty query/output). '
+            f'Likely causes: a run-wide auth (401/403) or rate-limit (429) failure on the span-detail '
+            f'endpoint, or an evaluator span shape this scanner does not recognise. Check ORQ_API_KEY '
+            f'scope and the evaluator span schema, then retry. Pass --force to persist anyway.'
         )
     logger.warning(f'⚠ {n_degraded}/{n_rows} datapoints degraded (used light span, no judge detail)')
 

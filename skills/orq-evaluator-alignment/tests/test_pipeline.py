@@ -30,6 +30,26 @@ FIXTURES = SKILL_ROOT / 'tests' / 'fixtures'
 FAKE_CONFIG = str(SKILL_ROOT / 'tests' / 'config_fake.toml')
 
 
+def test_judge_io_falls_back_to_eval_span_own_gen_ai():
+    # Newer orq schema: the judge's LLM call is on the evaluator span itself,
+    # with no separate child chat span. Extraction must still recover the IO.
+    from fetch_traces import _judge_io, _judge_model
+
+    eval_span = {
+        'span_id': 'e1',
+        'attributes': {
+            'gen_ai': {
+                'input': {'messages': [{'content': 'Screen this: hello world'}]},
+                'request': {'model': 'openai/gpt-4o-mini'},
+            }
+        },
+    }
+    rendered, msgs = _judge_io([eval_span], eval_span)
+    assert 'hello world' in rendered
+    assert msgs
+    assert _judge_model([eval_span], eval_span) == 'openai/gpt-4o-mini'
+
+
 def test_guard_hollow_aborts_over_threshold():
     from fetch_traces import _guard_hollow
 
