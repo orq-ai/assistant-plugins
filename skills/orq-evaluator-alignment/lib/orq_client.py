@@ -148,6 +148,25 @@ class OrqClient:
             raw=data,
         )
 
+    async def resolve_model_slug(self, model_id: str) -> str | None:
+        """Map an evaluator's opaque model config id to a routable slug.
+
+        Evaluator configs store the judge model as a workspace-registry UUID
+        (e.g. ``ce490df4-...``), not a routable slug. ``GET /v2/models`` returns
+        the registry (``id`` -> ``model_id``), so we look the UUID up there.
+        Returns the slug (e.g. ``mistral-large-latest``) or ``None`` if the id
+        isn't found or the call fails — the caller then falls back to trace
+        resolution or an explicit override.
+        """
+        resp = await self._client.get('/v2/models')
+        if resp.status_code >= 400:
+            logger.warning(f'GET /v2/models [{resp.status_code}]; cannot resolve judge model slug')
+            return None
+        for m in _envelope_list(resp.json(), 'data', 'models', 'items'):
+            if isinstance(m, dict) and m.get('id') == model_id:
+                return m.get('model_id') or None
+        return None
+
     # ── Step 2 ───────────────────────────────────────────────────────────────
     async def query_traces(
         self,

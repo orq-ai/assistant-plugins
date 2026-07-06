@@ -50,13 +50,25 @@ uv run scripts/fetch_evaluator.py --evaluator_id <id>
 This both fetches the evaluator **and** auto-chains a 200-trace scan, so a single
 step confirms everything the user needs to greenlight the run:
 - the **evaluator is right** — echo back the declared template variables and a
-  short paraphrase of the judge prompt (the config only stores an opaque
-  judge-model id, `judge_model_id`, not a model name);
+  short paraphrase of the judge prompt;
 - the **candidate datapoint count** (`traces.jsonl`);
-- the **real judge model**, resolved from the production judge spans and pinned
-  onto `evaluator.json` (`judge_model`, plus `judge_models_observed`) — flag it
-  if more than one model shows up (a mixed-model history can inflate the apparent
-  flip-rate).
+- the **real judge model** pinned onto `evaluator.json` (`judge_model`). It is
+  resolved in priority order: an explicit `--judge_model` override → the
+  evaluator's config model id looked up via `GET /v2/models` (registry UUID →
+  slug) → the model observed on the production judge spans (step 2, plus
+  `judge_models_observed`). Flag it if more than one model shows up (a
+  mixed-model history can inflate the apparent flip-rate).
+
+  **If the judge model comes out UNRESOLVED** (step 1 logs a warning and the run
+  dir is named `…_model-unknown_…`): the config id wasn't in `/v2/models` *and*
+  the spans don't record `gen_ai.request.model` — common, because evaluator
+  spans store the judge's input/output but not always the resolved model. Rerun
+  step 1 with an explicit slug (find it in the evaluator's model dropdown in
+  orq, or `GET /v2/models`):
+  ```
+  uv run scripts/fetch_evaluator.py --evaluator_id <id> --judge_model mistral-large-latest
+  ```
+  Without a routable slug, step 4 (stability) cannot re-invoke the judge.
 
 It prints the run directory — **use that `--run_dir` for every later step.** The
 folder is created as `<key>_<ts>` and, once the trace scan resolves the judge
@@ -197,7 +209,7 @@ resolve to the config value shown; overriding a flag beats `config.toml`.
 
 | Script | Overridable flags (default) |
 |---|---|
-| `fetch_evaluator.py` | `--evaluator_id` (req/config), `--with_traces` (True; `--no-with_traces` to skip), `--trace_limit` (200) |
+| `fetch_evaluator.py` | `--evaluator_id` (req/config), `--with_traces` (True; `--no-with_traces` to skip), `--trace_limit` (200), `--judge_model` (slug override when the config id can't be resolved) |
 | `fetch_traces.py` | `--trace_limit` (200) |
 | `estimate_cost.py` | `--n_repeats` (cfg 8), `--num_samples` (cfg -1 = all) |
 | `stability.py` | `--num_samples` (cfg -1), `--n_repeats` (cfg 8), `--max_concurrency` (cfg 8), `--temperature` (cfg 1), `--metrics` (True; `--no-metrics` to skip) |

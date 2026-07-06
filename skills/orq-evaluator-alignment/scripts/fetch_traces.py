@@ -427,11 +427,17 @@ def _resolve_judge_model(out_dir: Any, evaluator: dict[str, Any], rows: list[dic
     """
     observed = Counter(r['judge_model'] for r in rows if r.get('judge_model'))
     if not observed:
+        # Traces didn't record a model. That's fine IF step 1 already resolved a
+        # routable slug (from the config id or --judge_model) — keep it. Only the
+        # opaque config UUID (== judge_model_id) is unroutable.
+        pinned = evaluator.get('judge_model')
+        if pinned and pinned != evaluator.get('judge_model_id'):
+            logger.info(f'✓ No model on trace spans; using the slug resolved in step 1: {pinned}')
+            return pinned
         logger.warning(
-            f'⚠ No judge model found on any trace span; keeping config id '
-            f'{evaluator.get("judge_model_id") or evaluator.get("judge_model")!r} '
-            'as judge_model. The stability run cannot route an opaque id — set '
-            'evaluator.json["judge_model"] to a real model slug before step 4.'
+            f'⚠ No judge model on any trace span and none resolved in step 1 (config id '
+            f'{evaluator.get("judge_model_id") or evaluator.get("judge_model")!r}). The stability '
+            'run cannot route an opaque id — rerun fetch_evaluator.py with --judge_model <slug>.'
         )
         return None
 

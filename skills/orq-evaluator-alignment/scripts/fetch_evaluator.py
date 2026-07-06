@@ -20,11 +20,14 @@ preservation on the rewrite.
 Usage:
     cd skills/orq-evaluator-alignment
     uv run scripts/fetch_evaluator.py --evaluator_id <24-hex-id>
+    # if the judge model can't be auto-resolved (run dir shows model-unknown):
+    uv run scripts/fetch_evaluator.py --evaluator_id <id> --judge_model mistral-large-latest
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
 
 import fire
 from dotenv import load_dotenv
@@ -36,20 +39,32 @@ from lib.orq_client import EvaluatorNotFound, OrqClient
 
 load_dotenv()
 
+_UUID_RE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', re.IGNORECASE)
 
-async def _fetch(evaluator_id: str) -> dict:
+
+async def _fetch(evaluator_id: str, judge_model_override: str | None = None) -> dict:
     async with OrqClient() as client:
         cfg = await client.get_evaluator(evaluator_id)
+        # Resolve a routable judge-model slug up front. Priority:
+        #   1. explicit --judge_model override
+        #   2. the config model id resolved via GET /v2/models (registry UUID
+        #      -> slug), so stability can run even when production spans don't
+        #      record the model (step 2 refines this from traces if they do)
+        #   3. the raw config value (opaque UUID) as a last resort
+        judge_model = judge_model_override or cfg.judge_model
+        if not judge_model_override and cfg.judge_model and _UUID_RE.fullmatch(cfg.judge_model):
+            slug = await client.resolve_model_slug(cfg.judge_model)
+            if slug:
+                judge_model = slug
     return {
         'id': cfg.id,
         'key': cfg.key,
         'prompt': cfg.prompt,
-        # The config only stores an opaque model id (a workspace registry UUID
-        # when the judge model was picked in the UI), which neither names the
-        # model nor is routable. `judge_model_id` preserves it; `judge_model`
-        # starts as the same value and is overwritten with the real model slug
-        # in step 2 (fetch_traces), read off the production judge spans.
-        'judge_model': cfg.judge_model,
+        # `judge_model_id` preserves the opaque config id; `judge_model` is the
+        # routable slug (override > registry-resolved > opaque). Step 2
+        # (fetch_traces) overwrites it with the model seen on production spans
+        # when those record one; otherwise this resolved slug is kept.
+        'judge_model': judge_model,
         'judge_model_id': cfg.judge_model,
         'output_type': cfg.output_type,
         'variables': cfg.variables,
@@ -63,6 +78,7 @@ def main(
     run_dir: str | None = None,
     with_traces: bool = True,
     trace_limit: int = 200,
+    judge_model: str | None = None,
 ) -> str:
     """Fetch an evaluator and create its run directory.
 
@@ -85,6 +101,29 @@ def main(
             (default True). The evaluator is already saved if the trace fetch
             fails, so you can retry traces without re-fetching the evaluator.
         trace_limit: Scan depth for the chained trace fetch (default 200).
+        judge_model: Explicit judge-model slug override (e.g.
+            ``mistral-large-latest``). Use this when the evaluator's config
+            model can't be resolved to a routable slug AND production spans
+            don't record one — otherwise ``judge_model`` stays an opaque id and
+            step 4 (stability) can't route the judge. See "Judge-model
+            resolution" below. Normally unnecessary: the config UUID is resolved
+            automatically via GET /v2/models.
+
+    Judge-model resolution (why this can be empty/opaque):
+        The stability run must re-invoke the judge, which needs a routable model
+        slug. That slug is sourced in priority order:
+          1. ``--judge_model`` override (this arg).
+          2. The evaluator's config model id resolved via GET /v2/models
+             (workspace registry UUID -> slug). Done automatically here.
+          3. The model seen on the production judge spans
+             (``gen_ai.request.model``), read in step 2.
+        A judge model comes out EMPTY/opaque only when ALL three miss: the
+        config stores a registry UUID that isn't in /v2/models (deleted or
+        cross-workspace model), and the evaluator's spans don't stamp
+        ``gen_ai.request.model`` (common — evaluator spans record the judge's
+        input/output but not always the resolved model). In that case rerun with
+        ``--judge_model <slug>``, or set ``evaluator.json["judge_model"]`` to a
+        real slug before step 4.
 
     Returns:
         The run directory path (printed for the conductor / next step).
@@ -97,7 +136,7 @@ def main(
         )
 
     try:
-        evaluator = asyncio.run(_fetch(evaluator_id))
+        evaluator = asyncio.run(_fetch(evaluator_id, judge_model_override=judge_model))
     except EvaluatorNotFound as exc:
         raise SystemExit(str(exc)) from exc
 
@@ -121,11 +160,15 @@ def main(
     )
     runner.write_json(out_dir / 'evaluator.json', evaluator)
 
+    jm, jm_id = evaluator['judge_model'], evaluator['judge_model_id']
     logger.info(f'✓ Evaluator {evaluator["id"]} (key={key!r})')
-    logger.info(
-        f'  judge model id: {evaluator["judge_model_id"] or "<unknown>"} '
-        '(opaque config id — actual model resolved from traces in step 2)'
-    )
+    if jm and jm != jm_id:
+        logger.info(f'  judge model:    {jm} (resolved from config id {jm_id})')
+    else:
+        logger.warning(
+            f'  judge model:    UNRESOLVED (config id {jm_id or "<none>"}). Step 2 will try the '
+            'production spans; if that also misses, rerun with --judge_model <slug>.'
+        )
     logger.info(f'  variables:   {evaluator["variables"]}')
     logger.info(f'  run dir:     {out_dir}')
 
