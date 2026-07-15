@@ -11,6 +11,7 @@ These skills are:
  - orq-analyze-trace-failures -> "skills/orq-analyze-trace-failures/SKILL.md"
  - orq-build-agent -> "skills/orq-build-agent/SKILL.md"
  - orq-build-evaluator -> "skills/orq-build-evaluator/SKILL.md"
+ - orq-evaluator-alignment -> "skills/orq-evaluator-alignment/SKILL.md"
  - orq-compare-agents -> "skills/orq-compare-agents/SKILL.md"
  - evaluatorq -> "skills/evaluatorq/SKILL.md"
  - orq-generate-synthetic-dataset -> "skills/orq-generate-synthetic-dataset/SKILL.md"
@@ -29,6 +30,8 @@ IMPORTANT: You MUST read the SKILL.md file whenever the description of the skill
 orq-build-agent: `Design, create, and configure an orq.ai Agent with tools, instructions, knowledge bases, and memory — includes model selection, KB management, and memory store setup`
 
 orq-build-evaluator: `Create validated LLM-as-a-Judge evaluators following best practices — binary Pass/Fail judges with TPR/TNR validation for measuring specific failure modes`
+
+orq-evaluator-alignment: `Align, calibrate, or improve an existing binary Pass/Fail LLM-as-a-judge (orq evaluator) so its verdicts match human judgment — measures judge self-consistency (flip-rate) via repeated runs, surfaces the most ambiguous datapoints for human annotation, rewrites the judge prompt from the labels, and creates the new evaluator only after human approval. Use to "align my evaluator", "annotate an evaluator", or "find ambiguous cases". Do NOT use to build an evaluator from scratch (use orq-build-evaluator) or to fix failures with prompt tweaks (use orq-optimize-prompt).`
 
 orq-analyze-trace-failures: `Read production traces, identify what's failing, build failure taxonomies, and categorize issues using open coding and axial coding methodology`
 

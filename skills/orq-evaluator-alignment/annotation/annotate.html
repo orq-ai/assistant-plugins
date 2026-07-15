@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Evaluator Alignment — Annotation</title>
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --ink:#e7e9ee; --muted:#9aa3b2; --line:#2a2f3a;
+          --pass:#2f9e44; --fail:#e03131; --accent:#4dabf7; --warn:#f59f00; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--ink); }
+  header { position:sticky; top:0; background:var(--panel); border-bottom:1px solid var(--line); padding:10px 16px; z-index:5; }
+  header .row { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  .counts { color:var(--muted); font-size:13px; }
+  .counts b { color:var(--ink); }
+  .bar { height:6px; background:var(--line); border-radius:3px; overflow:hidden; flex:1; min-width:120px; }
+  .bar > i { display:block; height:100%; background:var(--accent); width:0; }
+  main { max-width:900px; margin:0 auto; padding:18px 16px 120px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .badges { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  .badge { font-size:12px; padding:2px 8px; border-radius:999px; background:var(--line); color:var(--muted); }
+  .badge.flip { background:#3a2f12; color:var(--warn); }
+  .badge.low { background:#12263a; color:var(--accent); }
+  .field { margin:12px 0; }
+  .field h4 { margin:0 0 4px; font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+  .field .box { background:#0c0e13; border:1px solid var(--line); border-radius:8px; padding:10px 12px; white-space:pre-wrap; word-break:break-word; }
+  .box.md { white-space:normal; }
+  .box.md p { margin:0 0 8px; } .box.md p:last-child { margin-bottom:0; }
+  .box.md ul, .box.md ol { margin:4px 0 8px; padding-left:22px; }
+  .box.md li { margin:2px 0; }
+  .box.md h1, .box.md h2, .box.md h3 { margin:10px 0 6px; font-size:14px; }
+  .box.md code { background:var(--line); border-radius:4px; padding:1px 4px; font-size:13px; }
+  details { margin:12px 0; border:1px solid var(--line); border-radius:8px; background:#0c0e13; }
+  details > summary { cursor:pointer; padding:8px 12px; color:var(--muted); user-select:none; }
+  details .inner { padding:0 12px 12px; }
+  .controls { position:fixed; bottom:0; left:0; right:0; background:var(--panel); border-top:1px solid var(--line); padding:12px 16px; }
+  .controls .wrap { max-width:900px; margin:0 auto; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  button { font:inherit; border:1px solid var(--line); background:#222631; color:var(--ink); border-radius:8px; padding:9px 14px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.t { border-color:var(--pass); } button.t.sel { background:var(--pass); }
+  button.f { border-color:var(--fail); } button.f.sel { background:var(--fail); }
+  button.ghost { color:var(--muted); }
+  textarea { flex:1; min-width:200px; min-height:38px; background:#0c0e13; color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; }
+  .nav { display:flex; gap:8px; align-items:center; }
+  .verdict { font-weight:600; } .verdict.t { color:var(--pass); } .verdict.f { color:var(--fail); }
+  kbd { background:var(--line); border-radius:4px; padding:1px 5px; font-size:11px; }
+  .done { text-align:center; color:var(--muted); padding:40px; }
+  .done-btn { margin-left:auto; border-color:var(--accent); color:var(--accent); font-weight:600; }
+  .done-btn:hover { background:var(--accent); color:#0c0e13; }
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <strong>Evaluator Alignment</strong>
+    <span class="counts" id="counts"></span>
+    <div class="bar"><i id="progress"></i></div>
+    <span class="nav">
+      <button class="ghost" id="prev">&larr;</button>
+      <span id="pos" class="counts"></span>
+      <button class="ghost" id="next">&rarr;</button>
+      <button class="ghost" id="nextUnlabeled">next unlabeled</button>
+    </span>
+    <button class="done-btn" id="btnDone" title="finish annotating &amp; continue">Done ✓</button>
+  </div>
+</header>
+<main id="main"></main>
+<div class="controls">
+  <div class="wrap">
+    <button class="f" id="btnFail" title="key 1">False <kbd>1</kbd></button>
+    <button class="t" id="btnPass" title="key 2">True <kbd>2</kbd></button>
+    <button class="ghost" id="btnDefer" title="key D">defer <kbd>D</kbd></button>
+    <button class="ghost" id="btnClear" title="key U">clear <kbd>U</kbd></button>
+    <textarea id="note" placeholder="optional note — why this label? (Ctrl+Enter saves + next)"></textarea>
+  </div>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+let items = [], meta = {}, ann = {}, i = 0;
+
+async function load() {
+  const q = await (await fetch('/queue.json')).json();
+  items = q.items || []; meta = q.meta || {};
+  ann = await (await fetch('/api/annotations')).json();
+  i = firstUnlabeled();
+  render();
+}
+function firstUnlabeled() {
+  for (let k = 0; k < items.length; k++) {
+    if (!ann[String(items[k].source_index)]) return k;
+  }
+  return 0;
+}
+function esc(s) { return (s ?? '').toString().replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+// Minimal markdown -> HTML for the eval prompt box (bold, headings, ordered/
+// unordered lists, inline code). HTML is escaped first, so literal tags in the
+// prompt (e.g. <output>) render as visible text rather than markup.
+function inlineMd(t) {
+  return t
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
+}
+function mdToHtml(src) {
+  const lines = esc(src).split('\n');
+  let html = '', list = null, para = [];
+  const flushPara = () => { if (para.length) { html += '<p>' + inlineMd(para.join(' ')) + '</p>'; para = []; } };
+  const closeList = () => { if (list) { html += '</' + list + '>'; list = null; } };
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, '');
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    const ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    const ul = line.match(/^\s*[*\-+]\s+(.*)$/);
+    if (h) { flushPara(); closeList(); const n = h[1].length; html += `<h${n}>${inlineMd(h[2])}</h${n}>`; }
+    else if (ol) { flushPara(); if (list !== 'ol') { closeList(); html += '<ol>'; list = 'ol'; } html += '<li>' + inlineMd(ol[1]) + '</li>'; }
+    else if (ul) { flushPara(); if (list !== 'ul') { closeList(); html += '<ul>'; list = 'ul'; } html += '<li>' + inlineMd(ul[1]) + '</li>'; }
+    else if (!line.trim()) { flushPara(); closeList(); }
+    else { closeList(); para.push(line.trim()); }
+  }
+  flushPara(); closeList();
+  return html;
+}
+
+function render() {
+  if (!items.length) { $('#main').innerHTML = '<div class="done">Queue is empty.</div>'; return; }
+  i = Math.max(0, Math.min(i, items.length - 1));
+  const it = items[i];
+  const a = ann[String(it.source_index)] || {};
+  const amb = it.ambiguity || {}, jv = it.judge_votes || {};
+  const flip = amb.flip_rate, mode = amb.mode_value;
+  const msgs = it.messages ? (typeof it.messages === 'string' ? it.messages : JSON.stringify(it.messages, null, 2)) : '';
+  // Prefer the variables recovered from the eval prompt (each judged input
+  // shown under its own template variable name). Fall back to the raw rendered
+  // output only when inversion failed (it.variables is null/empty).
+  let inputs;
+  if (it.variables && it.variables.length) {
+    inputs = it.variables.map(v =>
+      `<div class="field"><h4>${esc(v.name)}</h4><div class="box">${esc(v.value) || '<em>(empty)</em>'}</div></div>`
+    ).join('');
+  } else {
+    inputs =
+      `<div class="field"><h4>Input (query)</h4><div class="box">${esc(it.query) || '<em>(empty)</em>'}</div></div>` +
+      `<div class="field"><h4>Output being judged (raw — variables not mapped)</h4><div class="box">${esc(it.output) || '<em>(empty)</em>'}</div></div>`;
+  }
+  $('#main').innerHTML = `
+    <div class="card">
+      <div class="badges">
+        <span class="badge">#${it.source_index} · rank ${it.rank}</span>
+        ${it.low_flip_sample ? '<span class="badge low">low-flip sanity sample</span>'
+          : `<span class="badge flip">flip-rate ${flip==null?'n/a':flip.toFixed(2)}</span>`}
+        <span class="badge">judge mode: <span class="verdict ${mode?'t':'f'}">${mode==null?'?':mode}</span></span>
+        <span class="badge">${jv.n_true ?? '?'}T / ${jv.n_false ?? '?'}F · N=${amb.n_repeats ?? '?'}</span>
+      </div>
+      ${msgs ? `<details><summary>conversation / messages</summary><div class="inner"><div class="box">${esc(msgs)}</div></div></details>` : ''}
+      ${inputs}
+      ${meta.eval_prompt ? `<details><summary>evaluator prompt (template variables shown filled-in above)</summary><div class="inner"><div class="box md">${mdToHtml(meta.eval_prompt)}</div></div></details>` : ''}
+      <details>
+        <summary>show judge's reasoning (hidden so it doesn't anchor you)</summary>
+        <div class="inner"><div class="box">${esc(jv.representative_explanation) || '<em>(none)</em>'}</div></div>
+      </details>
+    </div>`;
+  $('#note').value = a.explanation || '';
+  $('#btnPass').classList.toggle('sel', a.status === 'labeled' && a.value === true);
+  $('#btnFail').classList.toggle('sel', a.status === 'labeled' && a.value === false);
+  updateHeader();
+}
+function updateHeader() {
+  let labeled = 0, deferred = 0;
+  for (const it of items) { const a = ann[String(it.source_index)]; if (!a) continue;
+    if (a.status === 'labeled') labeled++; else if (a.status === 'deferred') deferred++; }
+  const remaining = items.length - labeled - deferred;
+  $('#counts').innerHTML = `<b>${labeled}</b> labeled · ${deferred} deferred · ${remaining} remaining`;
+  $('#pos').textContent = `${i + 1} / ${items.length}`;
+  $('#progress').style.width = (100 * labeled / items.length) + '%';
+}
+async function save(status, value) {
+  const it = items[i];
+  const body = { source_index: it.source_index, status, value, explanation: $('#note').value };
+  const r = await fetch('/api/annotations', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  if (!r.ok) { alert('save failed: ' + (await r.text())); return false; }
+  ann[String(it.source_index)] = { ...(ann[String(it.source_index)]||{}), status, value: status==='labeled'?value:null, explanation: body.explanation };
+  return true;
+}
+async function label(value) { if (await save('labeled', value)) { i++; render(); } }
+async function defer() { if (await save('deferred', null)) { i++; render(); } }
+async function clearLabel() {
+  // "Clear" records a deferred status (the server is append-only, no delete
+  // route). save() updates the in-memory entry to match, so disk and UI agree:
+  // a deferred item shows no selected verdict and is counted as deferred.
+  $('#note').value = '';
+  if (await save('deferred', null)) render();
+}
+$('#btnPass').onclick = () => label(true);
+$('#btnFail').onclick = () => label(false);
+$('#btnDefer').onclick = defer;
+$('#btnClear').onclick = clearLabel;
+$('#prev').onclick = () => { i--; render(); };
+$('#next').onclick = () => { i++; render(); };
+$('#nextUnlabeled').onclick = () => { for (let k=0;k<items.length;k++){ if(!ann[String(items[k].source_index)]){ i=k; break; } } render(); };
+async function finish() {
+  let labeled = 0, deferred = 0;
+  for (const it of items) { const a = ann[String(it.source_index)]; if (!a) continue;
+    if (a.status === 'labeled') labeled++; else if (a.status === 'deferred') deferred++; }
+  const remaining = items.length - labeled - deferred;
+  if (remaining > 0 && !confirm(`${remaining} item(s) still unlabeled. Finish anyway and continue to the next step?`)) return;
+  $('#btnDone').disabled = true;
+  try { await fetch('/api/done', { method:'POST' }); } catch (e) { /* server is shutting down — expected */ }
+  document.body.innerHTML =
+    `<div class="done"><h2>Annotation complete ✓</h2>` +
+    `<p><b>${labeled}</b> labeled · ${deferred} deferred · ${remaining} skipped</p>` +
+    `<p>Labels are saved. The pipeline is continuing — you can close this tab.</p></div>`;
+  setTimeout(() => { try { window.close(); } catch (e) {} }, 400);
+}
+$('#btnDone').onclick = finish;
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'TEXTAREA') {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save('labeled', ann[String(items[i].source_index)]?.value ?? false).then(()=>{i++;render();}); }
+    return;
+  }
+  if (e.key === '1') label(false);
+  else if (e.key === '2') label(true);
+  else if (e.key.toLowerCase() === 'd') defer();
+  else if (e.key.toLowerCase() === 'u') clearLabel();
+  else if (e.key === 'ArrowLeft') { i--; render(); }
+  else if (e.key === 'ArrowRight') { i++; render(); }
+});
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+# Evaluator Alignment skill — run configuration (RES-930).
+# Every step reads this file; CLI flags override individual keys. Paths are
+# resolved relative to the skill/ directory unless absolute.
+
+# ── Step 1: evaluator under audit ────────────────────────────────────────────
+# orq evaluator id (24-hex). Set on the CLI with `--evaluator_id <id>` or here.
+evaluator_id = ""
+
+# ── Step 2: trace retrieval (v3oql + v3spans) ────────────────────────────────
+# Epoch-ms window for the v3oql query. 0 = unbounded on that side.
+trace_start_date = 0
+trace_end_date = 0
+# Max traces to pull (paginated by the client). Caps the candidate pool.
+trace_limit = 200
+
+# ── Step 4: stability run (evaluatorq, repetitions=N) ────────────────────────
+# Repeated judge invocations per datapoint. The whole flip analysis rests on
+# this; >= 5 is the floor for a stable per-row flip-rate, 8 is the default.
+n_repeats = 8
+# Cap on datapoints the stability run covers. -1 / null = all fetched traces.
+num_samples = -1
+# Parallel judge calls across all (row, repeat) pairs.
+max_concurrency = 8
+# Per-call judge temperature, applied client-side by evaluatorq. The hosted orq
+# path drops this (project memory, verified 2026-05-27); routing through
+# evaluatorq is the whole reason this knob works. 1 is the self-consistency
+# measurement default; 0 collapses variance and hides flips. Note: GPT-5-family
+# judges (e.g. gpt-5-mini) only accept temperature=1 and 400 on any other value.
+temperature = 1
+# Stable evaluatorq experiment path so the step-10 retest lands on the SAME
+# experiment as the baseline run. Empty -> derived from the evaluator key.
+experiment_path = ""
+
+# ── Step 9: retest repeats (variance-aware) ──────────────────────────────────
+# Default/floor repeats for the rewritten-judge retest. The conductor confirms
+# the final N with the user; the suggestion floors at max(retest_repeats,
+# stability n_repeats) and adds more for rows that flipped a lot, capped below.
+retest_repeats = 5
+retest_repeats_cap = 15
+
+# ── Step 6: annotation queue ─────────────────────────────────────────────────
+# Random sample of LOW-flip items to annotate alongside the high-flip queue, as
+# a sanity check against the consistently-wrong blind spot (design §1, §8).
+# 0 = pure flip-ranking, no sanity sample.
+low_flip_sample_size = 5
+# Deterministic seed for the low-flip sample draw.
+seed = 42
+
+# ── Step 8/9: recommendation + rewrite backend ───────────────────────────────
+# Model backend for the meta-prompt (step 8) and PO2 rewrite (step 9). One of:
+#   "claude_subagent" — shell out to `claude -p ... --output-format json`
+#   "orq_deployment"  — orq deployment / evaluatorq.invoke (workspace model)
+#   "anthropic_api"   — direct Anthropic Messages API
+#   "fake"            — deterministic canned completions (tests only)
+backend = "claude_subagent"
+# Model id for the chosen backend (claude_subagent / anthropic_api).
+backend_model = "claude-opus-4-8"
+# orq deployment key when backend = "orq_deployment".
+backend_deployment_key = ""
+# Bounded parallelism for per-annotation meta-prompt calls (step 8).
+recommend_concurrency = 4
+
+# ── Output ───────────────────────────────────────────────────────────────────
+# Parent directory for per-run working directories (runs/<key>_<ts>/).
+runs_dir = "runs"

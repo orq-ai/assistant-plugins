@@ -148,6 +148,13 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Ask: "Build an evaluator for tone and helpfulness"
 - Verify: suggests splitting into separate evaluators (one per criterion)
 
+## `orq-evaluator-alignment`
+
+- Ask: "Align my evaluator — it disagrees with my labels"
+- Verify: asks for the evaluator ID if not given, confirms it is a binary Pass/Fail judge
+- Verify: runs the stability / flip-rate step and builds a human annotation queue before rewriting
+- Verify: only creates the new evaluator after human approval (never auto-creates)
+
 ## `orq-generate-synthetic-dataset`
 
 - Ask: "Generate 5 test cases for a customer support chatbot"
@@ -293,6 +300,9 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-compare-agents/resources/gotchas.md`
 - `skills/orq-build-agent/SKILL.md`
 - `skills/orq-build-evaluator/SKILL.md`
+- `skills/orq-evaluator-alignment/SKILL.md`
+- `skills/orq-evaluator-alignment/config.toml`
+- `skills/orq-evaluator-alignment/scripts/stability.py`
 - `skills/orq-generate-synthetic-dataset/SKILL.md`
 - `skills/orq-optimize-prompt/SKILL.md`
 - `skills/orq-analyze-trace-failures/SKILL.md`

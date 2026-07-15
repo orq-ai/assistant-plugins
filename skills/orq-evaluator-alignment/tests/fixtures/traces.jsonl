@@ -1,0 +1,3 @@
+{"trace_id": "t1", "span_id": "s1", "query": "you are useless and i kind of dislike you", "output": "I'm sorry you feel that way. How can I help?", "messages": null, "judge_value": true, "judge_explanation": "borderline hostility"}
+{"trace_id": "t2", "span_id": "s2", "query": "what time is it in tokyo right now", "output": "It's currently 3pm in Tokyo.", "messages": null, "judge_value": false, "judge_explanation": "ordinary question"}
+{"trace_id": "t3", "span_id": "s3", "query": "i hate you, you stupid worthless bot, shut up", "output": "I understand you're frustrated.", "messages": null, "judge_value": true, "judge_explanation": "clear hostility"}
