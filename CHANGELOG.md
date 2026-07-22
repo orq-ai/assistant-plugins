@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2026-07-22
+
+### Fixed
+- **`orq-evaluator-alignment`** — corrected the `judge_model` router slug format documented in `SKILL.md`. It previously stated the router requires `<provider>/openai/<model>` with a literal `openai/` segment "always required, whatever the provider". That form 404s on the router (`anthropic/openai/claude-haiku-4-5` → 404) and every user following it with a non-OpenAI provider hit a bare 404 mid-run. The correct form is the plain `<provider>/<model>` single-prefix slug (e.g. `anthropic/claude-haiku-4-5`, `google/gemini-2.5-flash`) — verified live against the Orq router (chat-completions and responses endpoints, openai/anthropic/google all route) and consistent with the agent config and the MCP `create_llm_eval` tool. Added a regression note to `tests/skills.md`. (RES-1145)
+
 ## [2.1.0] - 2026-07-02
 
 ### Added

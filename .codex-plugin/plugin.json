@@ -1,6 +1,6 @@
 {
   "name": "orq",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Agent skills for building, deploying, evaluating, and monitoring LLM pipelines on the orq.ai platform.",
   "author": {
     "name": "orq.ai",

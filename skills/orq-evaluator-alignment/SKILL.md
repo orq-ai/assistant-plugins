@@ -100,10 +100,13 @@ router needs a provider-prefixed slug to route it. There is **no `--model`/
 `--provider` flag** — the judge model is read only from that field. So to use the
 provider the user names, **edit `<run_dir>/evaluator.json` and set `judge_model`
 to the fully-qualified router slug** before step 4, no code change needed. The
-router requires the form **`<provider>/openai/<model>`** — a literal `openai/`
-segment is **always** required, between the provider and the model, whatever the
-provider is: e.g. `groq/openai/gpt-oss-120b`. Show the user the resulting slug and
-confirm it's the provider they want to judge with.
+router requires the form **`<provider>/<model>`** — a single provider prefix, then
+the model: e.g. `anthropic/claude-haiku-4-5`, `google/gemini-2.5-flash`,
+`groq/gpt-oss-120b` (the same form the agent config and the MCP `create_llm_eval`
+tool accept). In slugs like `openai/gpt-oss-120b` the `openai/` is the *provider*,
+not a fixed segment — do **not** insert a literal `openai/` between the provider and
+the model; `anthropic/openai/claude-haiku-4-5` returns a 404. Show the user the
+resulting slug and confirm it's the provider they want to judge with.
 Show the projected workload and **wait for explicit go-ahead**:
 ```
 uv run scripts/estimate_cost.py --run_dir <run_dir>
