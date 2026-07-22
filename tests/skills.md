@@ -154,6 +154,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: asks for the evaluator ID if not given, confirms it is a binary Pass/Fail judge
 - Verify: runs the stability / flip-rate step and builds a human annotation queue before rewriting
 - Verify: only creates the new evaluator after human approval (never auto-creates)
+- Verify: any `judge_model` slug it writes uses the plain `<provider>/<model>` form (e.g. `anthropic/claude-haiku-4-5`), never a `<provider>/openai/<model>` double-prefix (that 404s on the router)
 
 ## `orq-generate-synthetic-dataset`
 
