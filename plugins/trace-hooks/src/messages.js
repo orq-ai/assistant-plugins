@@ -15,9 +15,9 @@ export function textPartsMessage(role, content) {
 }
 
 // Tool payloads are replayed whole. Capping them at 2 KB was tried and dropped:
-// across the 40 largest local sessions it left the share of turns surviving the
-// per-span budget unchanged at 49.3%, because that budget goes on prose, and it
-// saved 6% of the wire. `shrinkPart` still shortens them once a conversation has
+// on the 40 largest local sessions it changed nothing about how many turns
+// survive the per-span budget, because that budget goes on prose, and it saved
+// 6% of the wire. `shrinkPart` still shortens them once a conversation has
 // actually blown its budget, which is when something has to give.
 export function toolCallPartsMessage(toolCallParts) {
   return {

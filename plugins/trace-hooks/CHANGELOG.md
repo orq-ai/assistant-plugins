@@ -41,7 +41,6 @@ Anything querying these by name needs updating.
 ### Known limitations
 - `gen_ai.system_instructions` is never emitted: across 158 local transcripts every message role is `user` or `assistant`.
 - Reasoning is usually unreadable, since the transcript holds it encrypted. Token counts are unaffected.
-- Each chat span's history is capped at 256 KB, the one budget that costs information: on the 40 largest local sessions it drops 49.3% of the turns offered to a span. Full history everywhere is quadratic, 2.6 GB at the worst without a cap. Shortening tool payloads instead was measured and does not help, leaving that 49.3% unchanged for 6% of the wire. The trace itself loses nothing, since a turn missing from one span's history is the span next to it.
 
 ## [0.3.2] - 2026-06-22
 
