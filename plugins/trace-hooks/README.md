@@ -12,18 +12,14 @@ claude plugin install orq-trace@orq-claude-plugin
 ## Span Hierarchy
 
 ```
-orq.claude_code.session              (root)
-├── claude_code.turn.1               (agent turn)
-│   ├── chat claude-opus-4-6         (LLM response)
-│   ├── execute_tool Bash            (tool call)
-│   ├── chat claude-opus-4-6         (LLM response)
-│   ├── execute_tool Read            (tool call)
-│   ├── chat claude-opus-4-6         (LLM response)
-│   └── subagent.Explore             (subagent)
-│       ├── execute_tool Grep        (subagent tool)
-│       └── chat claude-opus-4-6     (subagent LLM)
-├── claude_code.turn.2
-│   └── ...
+orq.claude_code.session              (root, carries the whole conversation)
+├── chat claude-opus-4-6             (LLM response)
+├── execute_tool Bash                (tool call)
+├── chat claude-opus-4-6             (LLM response)
+├── execute_tool Read                (tool call)
+├── subagent.Explore                 (subagent)
+│   ├── execute_tool Grep            (subagent tool)
+│   └── chat claude-opus-4-6         (subagent LLM)
 ├── claude.context.compact           (compaction event)
 └── claude_code.error.rate_limit     (API error event)
 ```
@@ -123,7 +119,7 @@ Base URL:
 | Hook | Purpose |
 |---|---|
 | `SessionStart` | Initialize session state, capture git context and user |
-| `UserPromptSubmit` | Open new turn, close and send previous turn span |
+| `UserPromptSubmit` | Record the prompt and advance the turn count (emits no span) |
 | `Stop` | Process transcript, emit tool + LLM spans incrementally |
 | `StopFailure` | Emit error span for API failures (rate limits, etc.) |
 | `PostToolUse` | Record successful tool calls (name, input, response) in session state |

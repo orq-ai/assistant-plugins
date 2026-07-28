@@ -112,6 +112,30 @@ export function getApiKey() {
 }
 
 /**
+ * Resolve an explicit OTLP endpoint from the active profile, if it declares one.
+ *
+ * Production needs nothing here: `getEndpoint()` derives api.orq.ai from
+ * my.orq.ai by swapping the subdomain, and that is correct. Non-production
+ * hosts are where it breaks. my.staging.orq.ai rewritten to api.staging.orq.ai
+ * answers with a Cloudflare 526 (bad origin certificate), so a profile can
+ * name its ingest URL directly and skip the derivation.
+ *
+ * Priority:
+ * 1. ORQ_TRACE_PROFILE profile's otlp_endpoint (trace-specific override)
+ * 2. Resolved profile's otlp_endpoint
+ */
+export function getOtlpEndpoint() {
+  if (process.env.ORQ_TRACE_PROFILE) {
+    const config = loadOrqConfig();
+    const profile = config.profiles?.[process.env.ORQ_TRACE_PROFILE];
+    if (profile?.otlp_endpoint) {
+      return profile.otlp_endpoint;
+    }
+  }
+  return resolveProfile()?.otlp_endpoint || null;
+}
+
+/**
  * Resolve the base URL with the following priority:
  * 1. ORQ_TRACE_PROFILE profile's base_url (trace-specific override)
  * 2. ORQ_BASE_URL env var (general override)

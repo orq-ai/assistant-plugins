@@ -3,15 +3,27 @@ import { execFileSync } from "node:child_process";
 import { getApiKey } from "./config.js";
 import {
   attr,
+  boolEnv,
   compact,
-  isoToUnixNano,
+  debugLog,
   nowUnixNano,
   randomHex,
   readStdinJson,
+  stableSpanId,
   toStringValue,
+  truncateBytes,
 } from "./common.js";
+import {
+  CONVERSATION_MAX_BYTES,
+  SPAN_CONVERSATION_MAX_BYTES,
+  fitConversation,
+  lastAssistantText,
+  lastToolResult,
+  textPartsMessage,
+} from "./messages.js";
 import { sendSpan, sendSpans, createSpan } from "./otlp.js";
 import { sanitizeContent } from "./redact.js";
+import { replay } from "./replay.js";
 import {
   deleteSessionState,
   loadSessionState,
@@ -19,13 +31,13 @@ import {
   saveSessionState,
   withSessionLock,
 } from "./state.js";
-import { parseTranscript } from "./transcript.js";
+import { countCompleteLines, parseTranscript } from "./transcript.js";
 
 function getGitInfo(args, cwd) {
   try {
     return execFileSync("git", args, { cwd, encoding: "utf8", timeout: 5000 }).trim();
   } catch (err) {
-    // Exit code 128 = not a git repo, ENOENT = git not installed — both expected
+    // Exit code 128 = not a git repo, ENOENT = git not installed. Both expected.
     if (err?.status === 128 || err?.code === "ENOENT") return null;
     process.stderr.write(`[orq-trace] WARN: git ${args[0]} failed (cwd=${cwd}): ${err?.message}\n`);
     return null;
@@ -59,21 +71,16 @@ function getSessionId(payload) {
   );
 }
 
-function getPrompt(payload) {
-  return payload.prompt || payload.user_prompt || payload.input || "";
-}
-
 function enabledTracing() {
   return Boolean(getApiKey());
 }
 
 const DEFAULT_STATE_MAX_FIELD_CHARS = 10_240;
 
-// Sanitize a PostToolUse payload field for storage in the session state file.
-// State files are read+rewritten on every hook invocation, so storing raw
-// tool_input/tool_response (which can be megabytes for file reads) is a
-// real source of bloat. We redact secrets first, then cap the string length;
-// the original size is preserved so consumers can detect truncation.
+// Prepares a PostToolUse payload for the session state file. State files are
+// rewritten on every hook fire, so a megabyte of file content there is real
+// cost. Secrets go first, then the cap, and the original size is kept so the
+// replay can tell this copy was cut and go to the transcript instead.
 function compactForState(value) {
   if (value === null || value === undefined) {
     return { value: null, size_bytes: 0 };
@@ -94,23 +101,22 @@ function compactForState(value) {
   }
   const sizeBytes = Buffer.byteLength(str, "utf8");
   const cap = parseInt(process.env.ORQ_TRACE_STATE_MAX_FIELD_CHARS, 10) || DEFAULT_STATE_MAX_FIELD_CHARS;
-  if (sizeBytes > cap) {
-    // Slice by bytes: encode, slice, decode to avoid splitting surrogate pairs.
-    const truncated = Buffer.from(str, "utf8").slice(0, cap).toString("utf8");
-    return { value: `${truncated}... [truncated]`, size_bytes: sizeBytes };
+  if (sizeBytes <= cap) {
+    return { value: sanitized, size_bytes: sizeBytes };
   }
-  return { value: sanitized, size_bytes: sizeBytes };
+  // A cut value is never read: the replay compares size_bytes against what was
+  // kept and takes the transcript's whole copy instead. This only has to be
+  // small and to record that it was cut.
+  return { value: truncateBytes(str, cap), size_bytes: sizeBytes };
 }
 
-function asMessages(role, content) {
-  if (!content) {
-    return [];
-  }
-  return [{ role, content: String(content) }];
-}
+// A safety rail, not a budget. The tool span is where a payload is read in full,
+// and the largest of 13,646 results across 280 local transcripts is 647 KB. This
+// only exists so one runaway command cannot build a span too large to send.
+const TOOL_PAYLOAD_MAX_BYTES = 1024 * 1024;
 
-function toJson(value) {
-  return JSON.stringify(value);
+function capToolPayload(value) {
+  return truncateBytes(toStringValue(value), TOOL_PAYLOAD_MAX_BYTES);
 }
 
 function usageAttrs(usage) {
@@ -133,40 +139,118 @@ function usageAttrs(usage) {
   ]);
 }
 
-function buildTurnSpan(state, endReason = "turn.closed") {
-  if (!state.current_turn_span_id || !state.current_turn_started_at_ns) {
-    return null;
-  }
-
-  const inputValue = sanitizeContent(state.current_turn_input || "");
-  const inputMessages = asMessages("user", inputValue);
-
-  return createSpan({
+// What a span needs to know about the session it belongs to. Built from the
+// session state at the call sites, so a replay can supply the same four fields
+// without pretending to be a state object.
+function spanContextOf(state) {
+  return {
     traceId: state.trace_id,
-    spanId: state.current_turn_span_id,
-    parentSpanId: state.root_span_id,
-    name: `claude_code.turn.${state.turn_count}`,
+    rootSpanId: state.root_span_id,
+    sessionId: state.session_id,
+    model: state.model,
+  };
+}
+
+// Every span in a session shares a trace, a parent, and a thread id. Building
+// them through one factory makes that structural instead of something the next
+// caller has to remember: orq.thread_id is what the Threads tab groups on, and
+// test-trace.sh asserts every span carries it.
+function sessionSpan(context, {
+  spanId = randomHex(8),
+  // Pass null for the trace root. Not undefined: that would take the default
+  // below and make the root its own parent, which the traces list reads as a
+  // child and hides, so the whole session never appears.
+  parentSpanId = context.rootSpanId,
+  name,
+  kind,
+  startTimeUnixNano,
+  endTimeUnixNano,
+  attributes,
+}) {
+  return createSpan({
+    traceId: context.traceId,
+    spanId,
+    parentSpanId: parentSpanId ?? undefined,
+    name,
+    kind,
+    startTimeUnixNano,
+    endTimeUnixNano,
+    attributes: compact([...attributes, attr("orq.thread_id", context.sessionId)]),
+  });
+}
+
+function toolSpan(context, step) {
+  const { tool, recorded, input, output } = step;
+  const args = capToolPayload(input);
+  const result = capToolPayload(output);
+  // Agent tool calls are emitted as tool spans here too. If SubagentStart/Stop
+  // hooks fire they add richer sibling subagent.* spans; some overlap beats
+  // losing Agent calls entirely when those hooks don't fire (e.g. -p mode).
+  return sessionSpan(context, {
+    spanId: stableSpanId(context.traceId, `tool:${tool.id}:${step.lineIndex}`),
+    name: `execute_tool ${tool.name}`,
     kind: 1,
-    startTimeUnixNano: state.current_turn_started_at_ns,
-    endTimeUnixNano: nowUnixNano(),
-    attributes: compact([
-      attr("orq.span.kind", "agent"),
-      attr("gen_ai.operation.name", `claude_code.turn.${state.turn_count}`),
+    startTimeUnixNano: step.startTimeUnixNano,
+    endTimeUnixNano: step.endTimeUnixNano,
+    attributes: [
+      attr("orq.span.kind", "tool"),
+      attr("gen_ai.tool.name", tool.name),
+      attr("gen_ai.tool.call.arguments", args),
+      attr("gen_ai.tool.call.result", result),
+      // Set gen_ai.input/output so the backend uses these directly instead of
+      // constructing a messages-wrapped version. Nothing else: orq.input.value
+      // / orq.output.value duplicate the payload into attributes the masking
+      // pass does not cover.
+      attr("gen_ai.input", args),
+      attr("gen_ai.output", result),
+      tool.incomplete ? attr("claude_code.tool.incomplete", true) : null,
+      attr("claude_code.tool.enriched", recorded ? "recorded" : tool.name === "Skill" ? "skipped_skill" : "transcript_only"),
+      tool.name === "Skill" ? attr("claude_code.skill.name", tool.input?.skill ?? "unknown") : null,
+      tool.name === "Skill" ? attr("claude_code.skill.args", tool.input?.args || "") : null,
+    ],
+  });
+}
+
+function chatSpan(context, step, fallbackStopReason) {
+  const { message } = step;
+  const modelName = message.model || context.model || "claude";
+  // Bounded here rather than in the replay: serializing the conversation once
+  // per historical message would be quadratic per hook and cubic per session,
+  // and only emitted steps need the snapshot at all.
+  const { messages: inputMessages, truncated } = fitConversation(
+    step.conversation,
+    SPAN_CONVERSATION_MAX_BYTES,
+  );
+
+  return sessionSpan(context, {
+    spanId: stableSpanId(context.traceId, `msg:${message.messageId}:${step.lineIndex}`),
+    name: `chat ${modelName}`,
+    kind: 3,
+    startTimeUnixNano: step.startTimeUnixNano,
+    endTimeUnixNano: step.endTimeUnixNano,
+    attributes: [
+      attr("orq.span.kind", "llm"),
+      attr("gen_ai.operation.name", `chat ${modelName}`),
       attr("gen_ai.system", "anthropic"),
       attr("gen_ai.provider.name", "anthropic"),
-      attr("gen_ai.agent.name", "claude-code"),
-      attr("gen_ai.agent.id", state.session_id),
-      attr("gen_ai.agent.framework", "claude-code"),
-      attr("claude_code.turn.index", state.turn_count),
-      attr("claude_code.turn.end_reason", endReason),
-      // NOTE: Do NOT set both gen_ai.input and orq.input.value on agent spans.
-      // The backend's dot-notation $set for agent spans conflicts when both are
-      // present, causing a silent DuplicateKeyError that drops the span entirely.
-      // See ENG-1607.
-      attr("gen_ai.input", toJson({ messages: inputMessages })),
-      attr("input", toStringValue(inputValue)),
-    ]),
+      attr("gen_ai.request.model", modelName),
+      attr("gen_ai.response.model", modelName),
+      attr("gen_ai.response.finish_reasons", [message.stopReason || fallbackStopReason || "stop"]),
+      // One attribute per direction, semconv shape. The backend stores these
+      // verbatim and derives every other projection (span.input, span.output,
+      // the thread view) from them; the old gen_ai.input / orq.*.value / input
+      // / output copies flattened the parts away, so tool results arrived with
+      // no id to pair them to their call.
+      attr("gen_ai.input.messages", JSON.stringify(inputMessages)),
+      attr("gen_ai.output.messages", JSON.stringify(step.outputMessages)),
+      truncated ? attr("claude_code.conversation_truncated", true) : null,
+      ...usageAttrs(message.usage || {}),
+    ],
   });
+}
+
+function transcriptPathOf(payload) {
+  return payload.transcript_path || payload.transcriptPath;
 }
 
 export async function handleSessionStart() {
@@ -191,9 +275,6 @@ export async function handleSessionStart() {
       session_started_at_ns: nowUnixNano(),
       turn_count: 0,
       total_tool_calls: 0,
-      current_turn_span_id: null,
-      current_turn_started_at_ns: null,
-      current_turn_input: null,
       model: payload.model || payload.model_name || null,
       source: payload.source || null,
       cwd,
@@ -201,7 +282,12 @@ export async function handleSessionStart() {
       git_repo: getGitRepo(cwd),
       git_commit: getGitCommit(cwd),
       user: getUserIdentity(cwd),
-      last_processed_line: 0,
+      // Start after whatever the transcript already holds. A resumed session
+      // (or one whose state was deleted by SessionEnd and recreated here, which
+      // is what /model and /clear do) keeps its old transcript, so starting at
+      // 0 would re-emit every past entry as one enormous window on the next
+      // Stop hook, duplicating spans that were already sent.
+      last_processed_line: await countCompleteLines(transcriptPathOf(payload)),
       subagents: {},
     };
 
@@ -216,26 +302,19 @@ export async function handleUserPromptSubmit() {
     return;
   }
 
-  let prevTurnSpan;
+  // No span is emitted per turn. orq's own agent runtime has no per-turn span
+  // (a multi-step agent run nests under a single agent.response), and the turn
+  // span was also colliding with the root span's content attributes at
+  // SessionEnd, dropping itself and orphaning its children. Turn boundaries
+  // survive as turn_count on the root and as orq.thread_id grouping.
   await withSessionLock(sessionId, async () => {
     const state = await loadSessionState(sessionId);
     if (!state) return;
 
-    // Build previous turn span before overwriting turn state
-    prevTurnSpan = buildTurnSpan(state, "turn.replaced_by_new_prompt");
-
     state.turn_count += 1;
-    state.current_turn_span_id = randomHex(8);
-    state.current_turn_started_at_ns = nowUnixNano();
-    state.current_turn_input = getPrompt(payload);
 
     await saveSessionState(sessionId, state);
   });
-
-  // Send previous turn span outside the lock (network I/O)
-  if (prevTurnSpan) {
-    await sendSpan(prevTurnSpan);
-  }
 }
 
 export async function handlePostToolUseFailure() {
@@ -247,7 +326,7 @@ export async function handlePostToolUseFailure() {
 
   await withSessionLock(sessionId, async () => {
     const state = await loadSessionState(sessionId);
-    if (!state || !state.current_turn_span_id) return;
+    if (!state || !state.root_span_id) return;
 
     state.failed_tool_calls ||= [];
     state.failed_tool_calls.push({
@@ -269,7 +348,7 @@ export async function handlePostToolUse() {
 
   await withSessionLock(sessionId, async () => {
     const state = await loadSessionState(sessionId);
-    if (!state || !state.current_turn_span_id) return;
+    if (!state || !state.root_span_id) return;
 
     const inputRec = compactForState(payload.tool_input ?? payload.toolInput);
     const responseRec = compactForState(payload.tool_response ?? payload.toolResponse);
@@ -301,17 +380,14 @@ export async function handlePreCompact() {
     const state = await loadSessionState(sessionId);
     if (!state) return;
 
-    span = createSpan({
-      traceId: state.trace_id,
-      spanId: randomHex(8),
-      parentSpanId: state.current_turn_span_id || state.root_span_id,
+    span = sessionSpan(spanContextOf(state), {
       name: "claude.context.compact",
       kind: 1,
-      attributes: compact([
+      attributes: [
         attr("orq.span.kind", "event"),
         attr("claude_code.event", "context_compaction"),
         attr("claude_code.turn_count_at_compaction", state.turn_count),
-      ]),
+      ],
     });
   });
 
@@ -320,188 +396,99 @@ export async function handlePreCompact() {
   }
 }
 
-async function emitTranscriptSpans(state, payload, { emitPending = false } = {}) {
-  const transcriptPath = payload.transcript_path || payload.transcriptPath;
-  const parsed = await parseTranscript(transcriptPath, state.last_processed_line || 0, { emitPending });
+// Replays the whole transcript into the conversation the model saw, emitting
+// spans only for the entries past the cursor.
+//
+// Always replaying from line 0 costs one extra parse per hook (118 ms on the
+// largest transcript measured here, against a 30 s hook timeout) and buys two
+// things a windowed replay cannot:
+//
+//   - correct span timing. Walking the earlier entries carries previousEndNs
+//     through their real timestamps, so the first new span starts where the
+//     last one actually ended instead of at session start.
+//   - a complete conversation on every chat span, which is what the model
+//     genuinely saw, and what lets the thread view (which renders exactly one
+//     span, the last) show the whole session.
+//
+// The conversation is rebuilt rather than carried in the session state file,
+// because that file is rewritten on every hook fire, once per tool call
+// included, so persisting it would mean gigabytes of lock-held writes.
+// Pure: it reads the transcript and returns what it found. Callers own their
+// own state, which is what lets a subagent reuse it by passing four values
+// instead of fabricating a whole session-state object to be read back out.
+async function buildTranscriptSpans({
+  traceId,
+  rootSpanId,
+  sessionId,
+  startNs,
+  model,
+  fromLine = 0,
+  recorded = [],
+  transcriptPath,
+  stopReason,
+  final = false,
+}) {
+  const parsed = await parseTranscript(transcriptPath, { emitPending: final });
 
-  // Build a lookup of PostToolUse records by tool_use_id. When a transcript
-  // tool call matches by id, prefer the recorded payload — it's the exact
-  // tool_response captured at execution time, not the parsed approximation.
-  // Skip Skill: its transcript output gets the loaded skill body appended
-  // after the result, which PostToolUse fires too early to see.
+  // Prefer the PostToolUse record when a transcript tool call matches by id:
+  // it is the exact tool_response captured at execution time, not the parsed
+  // approximation. Skill is excluded because its transcript output gets the
+  // loaded skill body appended after the result, which PostToolUse fires too
+  // early to see.
   const recordedByToolUseId = new Map();
-  for (const rec of (state.successful_tool_calls || [])) {
+  for (const rec of recorded) {
     if (rec?.tool_use_id) recordedByToolUseId.set(rec.tool_use_id, rec);
   }
 
-  // Merge tool calls and LLM messages into a single timeline sorted by timestamp
-  const timeline = [];
+  const { steps, conversation } = replay(parsed, { startNs, recordedByToolUseId });
 
-  for (const tool of parsed.toolCalls) {
-    timeline.push({ type: "tool", timestamp: tool.startTimestamp, data: tool });
-  }
+  const context = { traceId, rootSpanId, sessionId, model };
 
-  for (const message of parsed.messages) {
-    timeline.push({ type: "llm", timestamp: message.timestamp, data: message });
-  }
-
-  // Sort by timestamp so spans are emitted in chronological order. When
-  // timestamps tie, LLM messages must come BEFORE tool calls — the assistant
-  // message that requests a tool is logged at the same instant as the tool's
-  // startTimestamp, but logically the LLM produced the request first.
-  timeline.sort((a, b) => {
-    if (!a.timestamp && !b.timestamp) return 0;
-    if (!a.timestamp) return -1;
-    if (!b.timestamp) return 1;
-    if (a.timestamp !== b.timestamp) return a.timestamp < b.timestamp ? -1 : 1;
-    if (a.type === b.type) return 0;
-    return a.type === "llm" ? -1 : 1;
-  });
-
+  // The whole session is replayed for context; only what lies past the cursor
+  // has not been sent yet.
   const spans = [];
-  // Track end time of previous entry so LLM spans (which only have one
-  // timestamp in the transcript) can use it as a start time instead of
-  // producing zero-duration spans.
-  let previousEndNs = state.current_turn_started_at_ns || null;
-  // Reconstruct the conversation thread so each LLM span carries the
-  // messages that led to its response (user prompt, tool results, prior
-  // assistant turns). Without this, LLM spans show empty input in the UI.
-  const conversation = [];
-  const initialUserInput = sanitizeContent(state.current_turn_input || "");
-  if (initialUserInput) {
-    conversation.push({ role: "user", content: String(initialUserInput) });
-  }
-
-  for (const entry of timeline) {
-    if (entry.type === "tool") {
-      const tool = entry.data;
-      const recorded = tool.id && tool.name !== "Skill" ? recordedByToolUseId.get(tool.id) : null;
-      const inputValue = sanitizeContent(recorded?.tool_input ?? tool.input);
-      const outputValue = sanitizeContent(recorded?.tool_response ?? tool.output);
-
-      // Agent tool calls are emitted as tool spans here too. If
-      // SubagentStart/Stop hooks fire they add richer sibling subagent.*
-      // spans; some overlap is better than losing Agent calls entirely
-      // when those hooks don't fire (e.g. in -p / non-interactive mode).
-
-      const toolStartNs = tool.startTimestamp ? isoToUnixNano(tool.startTimestamp) : undefined;
-      const toolEndNs = tool.endTimestamp ? isoToUnixNano(tool.endTimestamp) : undefined;
-      spans.push(createSpan({
-        traceId: state.trace_id,
-        spanId: randomHex(8),
-        parentSpanId: state.current_turn_span_id,
-        name: `execute_tool ${tool.name}`,
-        kind: 1,
-        startTimeUnixNano: toolStartNs,
-        endTimeUnixNano: toolEndNs,
-        attributes: compact([
-          attr("orq.span.kind", "tool"),
-          attr("gen_ai.tool.name", tool.name),
-          attr("gen_ai.tool.call.arguments", toStringValue(inputValue)),
-          attr("gen_ai.tool.call.result", toStringValue(outputValue)),
-          // Set gen_ai.input/output so the backend uses these directly
-          // instead of constructing a messages-wrapped version.
-          attr("gen_ai.input", toStringValue(inputValue)),
-          attr("gen_ai.output", toStringValue(outputValue)),
-          attr("orq.input.value", toStringValue(inputValue)),
-          attr("orq.output.value", toStringValue(outputValue)),
-          tool.incomplete ? attr("claude_code.tool.incomplete", true) : null,
-          attr("claude_code.tool.enriched", recorded ? "recorded" : tool.name === "Skill" ? "skipped_skill" : "transcript_only"),
-          tool.name === "Skill" ? attr("claude_code.skill.name", tool.input?.skill ?? "unknown") : null,
-          tool.name === "Skill" ? attr("claude_code.skill.args", tool.input?.args || "") : null,
-        ]),
-      }));
-      previousEndNs = toolEndNs || toolStartNs || previousEndNs;
-      // Append tool result as a user-role message in the conversation thread
-      // so the next LLM span's input shows what the model received.
-      conversation.push({
-        role: "tool",
-        name: tool.name,
-        content: toStringValue(outputValue),
-      });
+  let toolCallCount = 0;
+  for (const step of steps) {
+    if (!step.emittable) continue;
+    if (!step.alwaysNew && step.lineIndex < fromLine) continue;
+    if (step.kind === "tool") {
+      toolCallCount += 1;
+      spans.push(toolSpan(context, step));
     } else {
-      const message = entry.data;
-      const outputValue = sanitizeContent(message.output || "");
-      const parts = (message.parts || []).map(p => ({ ...p, content: sanitizeContent(p.content) }));
-
-      // Include both content (for list views / backwards compat) and parts (for rich display with reasoning)
-      // If content is empty but we have tool_call parts, reconstruct content
-      // from parts so the LLM output shows what the model actually produced.
-      let contentStr = String(outputValue);
-      if (!contentStr && parts.length > 0) {
-        contentStr = parts.map(p => {
-          if (p.type === "tool_call") return JSON.stringify({ type: "tool_use", name: p.name, input: p.arguments });
-          if (p.type === "text") return p.content;
-          return "";
-        }).filter(Boolean).join("\n");
-      }
-      const outputMsg = {
-        role: "assistant",
-        content: contentStr,
-        ...(parts.length > 0 ? { parts } : {}),
-        finish_reason: message.stopReason || "stop",
-      };
-      const outputMessages = [outputMsg];
-
-      const msgEndNs = message.timestamp ? isoToUnixNano(message.timestamp) : undefined;
-      // Use previous entry's end as start so LLM spans reflect real latency,
-      // but never let start exceed end (would produce a negative duration).
-      let msgStartNs = previousEndNs || msgEndNs;
-      if (msgStartNs && msgEndNs && BigInt(msgStartNs) > BigInt(msgEndNs)) {
-        msgStartNs = msgEndNs;
-      }
-
-      // Snapshot the conversation thread leading up to this response
-      // (everything received so far, before this assistant message).
-      const inputMessages = conversation.map((m) => ({ ...m }));
-
-      const modelName = message.model || state.model || "claude";
-      spans.push(createSpan({
-        traceId: state.trace_id,
-        spanId: randomHex(8),
-        parentSpanId: state.current_turn_span_id,
-        name: `chat ${modelName}`,
-        kind: 3,
-        startTimeUnixNano: msgStartNs,
-        endTimeUnixNano: msgEndNs,
-        attributes: compact([
-          attr("orq.span.kind", "llm"),
-          attr("gen_ai.operation.name", `chat ${modelName}`),
-          attr("gen_ai.system", "anthropic"),
-          attr("gen_ai.provider.name", "anthropic"),
-          attr("gen_ai.request.model", modelName),
-          attr("gen_ai.response.model", modelName),
-          attr("gen_ai.response.finish_reasons", [message.stopReason || payload.stop_reason || "stop"]),
-          attr("gen_ai.input", toJson({ messages: inputMessages })),
-          attr("gen_ai.output", toJson({ messages: outputMessages, choices: [{ index: 0, message: outputMsg }] })),
-          attr("orq.input.value", toJson({ messages: inputMessages })),
-          attr("orq.output.value", toJson({ choices: [{ index: 0, message: outputMsg, finish_reason: message.stopReason || "stop" }] })),
-          attr("input", toJson({ messages: inputMessages })),
-          attr("output", toJson({ choices: [{ index: 0, message: outputMsg, finish_reason: message.stopReason || "stop" }] })),
-          ...usageAttrs(message.usage || {}),
-        ]),
-      }));
-      // Push text and each tool call as separate history messages so they each
-      // render cleanly downstream (prose as prose, each tool as its own pure-JSON
-      // block) instead of one mixed text+JSON string.
-      const histText = parts.filter(p => p.type === "text").map(p => p.content).filter(Boolean).join("\n");
-      const histTools = parts.filter(p => p.type === "tool_call");
-      if (histText) conversation.push({ role: "assistant", content: histText });
-      for (const tc of histTools) {
-        conversation.push({ role: "assistant", content: JSON.stringify({ type: "tool_use", name: tc.name, input: tc.arguments }) });
-      }
-      if (!histText && histTools.length === 0 && outputValue) {
-        conversation.push({ role: "assistant", content: String(outputValue) });
-      }
-      previousEndNs = msgEndNs || previousEndNs;
+      spans.push(chatSpan(context, step, stopReason));
     }
   }
 
-  // Update state with transcript progress
-  state.total_tool_calls = (state.total_tool_calls || 0) + parsed.toolCalls.length;
-  state.last_processed_line = parsed.nextLine;
+  // Nothing re-sends a span to improve it, because that does not work. Storage
+  // is append-only and no read path collapses duplicates. JetStream drops a
+  // repeat of the same trace and span id within 120 s, so a re-send is either
+  // thrown away or stored twice, and a second row draws the span and its whole
+  // subtree twice in the waterfall.
 
-  return spans;
+  // Monotonic: a transcript that could not be read reports 0 entries, and
+  // accepting that would rewind the cursor and re-emit the whole session.
+  return { spans, conversation, nextLine: Math.max(fromLine, parsed.nextLine), toolCallCount };
+}
+
+// Runs the replay for a live session and folds the result back into its state.
+async function emitTranscriptSpans(state, payload, { final = false } = {}) {
+  const result = await buildTranscriptSpans({
+    traceId: state.trace_id,
+    rootSpanId: state.root_span_id,
+    sessionId: state.session_id,
+    startNs: state.session_started_at_ns || null,
+    model: state.model,
+    fromLine: state.last_processed_line || 0,
+    recorded: state.successful_tool_calls || [],
+    transcriptPath: transcriptPathOf(payload),
+    stopReason: payload.stop_reason,
+    final,
+  });
+
+  state.total_tool_calls = (state.total_tool_calls || 0) + result.toolCallCount;
+  state.last_processed_line = result.nextLine;
+
+  return { spans: result.spans, conversation: result.conversation };
 }
 
 export async function handleStop() {
@@ -511,20 +498,44 @@ export async function handleStop() {
     return;
   }
 
-  let spans = [];
+  // Build under the lock, send outside it, and only then mark the window
+  // consumed. Advancing the cursor first meant a hook killed mid-send (Claude
+  // Code allows 30 s) left the window recorded as delivered while nothing had
+  // been sent or queued. Re-emitting the window instead is the lesser evil: the
+  // spans carry the same ids, and the repeat lands inside JetStream's 120 s
+  // window, which drops it. A lost window cannot be recovered at all.
+  let result = null;
   await withSessionLock(sessionId, async () => {
     const state = await loadSessionState(sessionId);
-    if (!state || !state.current_turn_span_id) return;
+    if (!state || !state.root_span_id) return;
 
-    spans = await emitTranscriptSpans(state, payload);
-    // Don't close the turn here — SessionEnd handles it in a single batch.
-    await saveSessionState(sessionId, state);
+    result = await buildTranscriptSpans({
+      traceId: state.trace_id,
+      rootSpanId: state.root_span_id,
+      sessionId: state.session_id,
+      startNs: state.session_started_at_ns || null,
+      model: state.model,
+      fromLine: state.last_processed_line || 0,
+      recorded: state.successful_tool_calls || [],
+      transcriptPath: transcriptPathOf(payload),
+      stopReason: payload.stop_reason,
+    });
   });
 
-  // Send spans outside the lock (network I/O)
-  if (spans.length > 0) {
-    await sendSpans(spans);
+  if (!result) return;
+
+  if (result.spans.length > 0) {
+    await sendSpans(result.spans);
   }
+
+  await withSessionLock(sessionId, async () => {
+    const state = await loadSessionState(sessionId);
+    if (!state) return;
+
+    state.total_tool_calls = (state.total_tool_calls || 0) + result.toolCallCount;
+    state.last_processed_line = Math.max(state.last_processed_line || 0, result.nextLine);
+    await saveSessionState(sessionId, state);
+  });
 }
 
 export async function handleStopFailure() {
@@ -541,19 +552,16 @@ export async function handleStopFailure() {
     const state = await loadSessionState(sessionId);
     if (!state) return;
 
-    span = createSpan({
-      traceId: state.trace_id,
-      spanId: randomHex(8),
-      parentSpanId: state.current_turn_span_id || state.root_span_id,
+    span = sessionSpan(spanContextOf(state), {
       name: `claude_code.error.${reason}`,
       kind: 1,
-      attributes: compact([
+      attributes: [
         attr("orq.span.kind", "event"),
         attr("error.type", reason),
         attr("otel.status_code", "ERROR"),
         attr("claude_code.event", "stop_failure"),
         attr("claude_code.error.message", payload.error || payload.message || ""),
-      ]),
+      ],
     });
   });
 
@@ -570,62 +578,74 @@ export async function handleSessionEnd() {
   }
 
   let rootSpan = null;
-  let turnSpan = null;
   let transcriptSpans = [];
 
   await withSessionLock(sessionId, async () => {
     const state = await loadSessionState(sessionId);
     if (!state) return;
 
-    // If no turn was opened (e.g. -p mode where UserPromptSubmit may not fire),
-    // create a synthetic turn so transcript sub-spans have a parent.
-    if (!state.current_turn_span_id) {
-      if (state.turn_count === 0) state.turn_count = 1;
-      state.current_turn_span_id = randomHex(8);
-      state.current_turn_started_at_ns = state.session_started_at_ns;
-      state.current_turn_input = payload.prompt || state.current_turn_input || "";
-    }
+    // In -p / non-interactive mode UserPromptSubmit may never fire, so the
+    // turn count comes from here instead.
+    if (state.turn_count === 0) state.turn_count = 1;
 
-    rootSpan = createSpan({
-      traceId: state.trace_id,
+    // One pass does both jobs: it emits the remaining spans and returns the
+    // whole session's conversation, since the replay always starts at line 0.
+    const { spans, conversation } = await emitTranscriptSpans(state, payload, { final: true });
+    transcriptSpans = spans;
+
+    const { messages: rootInputMessages, truncated } = fitConversation(conversation, CONVERSATION_MAX_BYTES);
+    // Read off the conversation rather than tracked in state: the replay covers
+    // the whole session, so it already holds the closing message. The tool
+    // result covers a session that ended mid-tool-call.
+    const rootOutputText = lastAssistantText(conversation) || lastToolResult(conversation);
+    const rootOutputMessage = textPartsMessage("assistant", rootOutputText);
+    const rootOutputMessages = rootOutputMessage
+      ? [{ ...rootOutputMessage, finish_reason: payload.reason || "stop" }]
+      : [];
+
+    rootSpan = sessionSpan(spanContextOf(state), {
       spanId: state.root_span_id,
+      // The root of the trace: no parent, rather than parenting to itself.
+      parentSpanId: null,
       name: "orq.claude_code.session",
       kind: 1,
       startTimeUnixNano: state.session_started_at_ns,
       endTimeUnixNano: nowUnixNano(),
-      attributes: compact([
+      attributes: [
         attr("orq.span.kind", "workflow"),
         attr("gen_ai.operation.name", "orq.claude_code.session"),
         attr("gen_ai.system", "anthropic"),
         attr("gen_ai.provider.name", "anthropic"),
         attr("orq.trace.framework.name", "claude-code"),
-        attr("claude_code.session_id", state.session_id),
-        attr("claude_code.permission_mode", payload.permission_mode || process.env.CLAUDE_PERMISSION_MODE || ""),
-        attr("claude_code.cwd", state.cwd || payload.cwd || ""),
-        attr("claude_code.model", state.model || payload.model || ""),
-        attr("claude_code.git.branch", state.git_branch || ""),
-        attr("claude_code.git.repo", state.git_repo || ""),
-        attr("claude_code.git.commit", state.git_commit || ""),
+        // Everything the session reports about itself goes under metadata.*,
+        // because ingest drops the claude_code.* namespace on a trace row.
+        // metadata.user and metadata.git.* survived only because they were
+        // already keyed this way; the counters were not, so they landed
+        // nowhere and the turn count became unreadable when the per-turn
+        // spans were removed. Child spans keep claude_code.* fine.
+        attr("metadata.session_id", state.session_id),
+        attr("metadata.permission_mode", payload.permission_mode || process.env.CLAUDE_PERMISSION_MODE || ""),
+        attr("metadata.cwd", state.cwd || payload.cwd || ""),
+        attr("metadata.model", state.model || payload.model || ""),
         attr("metadata.git.commit", state.git_commit || null),
         attr("metadata.git.branch", state.git_branch || null),
         attr("metadata.git.repo", state.git_repo || null),
         attr("metadata.user", state.user || null),
-        attr("claude_code.total_turns", state.turn_count || 0),
-        attr("claude_code.total_tool_calls", state.total_tool_calls || 0),
-        attr("claude_code.successful_tool_calls", (state.successful_tool_calls || []).length),
-        attr("claude_code.failed_tool_calls", (state.failed_tool_calls || []).length),
-        attr("claude_code.end_reason", payload.reason || ""),
-      ]),
+        attr("metadata.total_turns", state.turn_count || 0),
+        attr("metadata.total_tool_calls", state.total_tool_calls || 0),
+        attr("metadata.successful_tool_calls", (state.successful_tool_calls || []).length),
+        attr("metadata.failed_tool_calls", (state.failed_tool_calls || []).length),
+        attr("metadata.end_reason", payload.reason || ""),
+        truncated ? attr("metadata.conversation_truncated", true) : null,
+        rootInputMessages.length ? attr("gen_ai.input.messages", JSON.stringify(rootInputMessages)) : null,
+        rootOutputMessages.length ? attr("gen_ai.output.messages", JSON.stringify(rootOutputMessages)) : null,
+      ],
     });
 
-    transcriptSpans = await emitTranscriptSpans(state, payload, { emitPending: true });
-    turnSpan = buildTurnSpan(state, payload.reason || "session.end");
-
-    if (process.env.ORQ_DEBUG === "1" || process.env.ORQ_DEBUG === "true") {
-      const allSpans = [rootSpan, turnSpan, ...transcriptSpans].filter(Boolean);
-      const msg = `[orq-trace] SessionEnd: ${allSpans.length} spans (1 root + ${turnSpan ? 1 : 0} turn + ${transcriptSpans.length} transcript), turn_span_id=${state.current_turn_span_id}\n`;
+    if (boolEnv("ORQ_DEBUG")) {
+      const msg = `[orq-trace] SessionEnd: ${1 + transcriptSpans.length} spans (1 root + ${transcriptSpans.length} transcript), conversation=${rootInputMessages.length} msgs${truncated ? " (truncated)" : ""}\n`;
       process.stderr.write(msg);
-      try { const fs = await import("node:fs"); fs.default.appendFileSync("/tmp/orq-trace-debug.log", msg); } catch {}
+      await debugLog(msg);
     }
 
     // Delete state inside the lock so a racing hook can't write new state
@@ -635,12 +655,11 @@ export async function handleSessionEnd() {
 
   if (!rootSpan) return;
 
-  // Batch all spans in one HTTP request — parents first in the array so the
-  // backend processes them before child $inc upserts arrive. Single request
-  // also avoids triple drainQueue overhead and the queue-eviction problem
-  // where root/turn spans (sent first) would be the oldest queued entries.
-  const batch = [rootSpan, turnSpan, ...transcriptSpans].filter(Boolean);
-  await sendSpans(batch);
+  // Batch all spans in one HTTP request, root first so the backend processes
+  // it before child $inc upserts arrive. A single request also avoids repeated
+  // drainQueue overhead and the queue-eviction problem where the root span
+  // (sent first) would be the oldest queued entry.
+  await sendSpans([rootSpan, ...transcriptSpans].filter(Boolean));
 }
 
 export async function handleSubagentStart() {
@@ -654,16 +673,6 @@ export async function handleSubagentStart() {
     const state = await loadSessionState(sessionId);
     if (!state) return;
 
-    // In -p / non-interactive mode UserPromptSubmit may not fire, leaving
-    // current_turn_span_id null. Create a synthetic turn (same logic as
-    // handleSessionEnd) so subagent spans have a valid parent.
-    if (!state.current_turn_span_id) {
-      if (state.turn_count === 0) state.turn_count = 1;
-      state.current_turn_span_id = randomHex(8);
-      state.current_turn_started_at_ns = state.session_started_at_ns;
-      state.current_turn_input = "";
-    }
-
     const agentId = payload.agent_id || payload.agentId;
     if (!agentId) return;
 
@@ -671,7 +680,6 @@ export async function handleSubagentStart() {
     state.subagents[agentId] = {
       span_id: randomHex(8),
       started_at_ns: nowUnixNano(),
-      parent_span_id: state.current_turn_span_id,
       type: payload.agent_type || payload.agentType || "subagent",
     };
 
@@ -697,47 +705,42 @@ export async function handleSubagentStop() {
     const subagent = state.subagents[agentId];
     const outputValue = sanitizeContent(payload.last_assistant_message || "");
     const subagentSpanId = subagent.span_id;
+    const subagentOutputMessages = compact([textPartsMessage("assistant", outputValue)]);
 
     // Emit the subagent wrapper span
-    spans.push(createSpan({
-      traceId: state.trace_id,
+    spans.push(sessionSpan(spanContextOf(state), {
       spanId: subagentSpanId,
-      parentSpanId: subagent.parent_span_id,
       name: `subagent.${subagent.type}`,
       kind: 1,
       startTimeUnixNano: subagent.started_at_ns,
       endTimeUnixNano: nowUnixNano(),
-      attributes: compact([
+      attributes: [
         attr("orq.span.kind", "agent"),
         attr("claude_code.subagent.id", agentId),
         attr("claude_code.subagent.type", subagent.type),
-        attr("orq.output.value", toJson({ messages: asMessages("assistant", outputValue) })),
-        attr("output", toStringValue(outputValue)),
-      ]),
+        subagentOutputMessages.length
+          ? attr("gen_ai.output.messages", JSON.stringify(subagentOutputMessages))
+          : null,
+      ],
     }));
 
-    // Reuse emitTranscriptSpans with a synthetic state so the subagent's
-    // transcript gets the same timeline sorting, conversation threading,
-    // and timing logic as the main session's transcript.
+    // The subagent's transcript goes through the same replay, so it gets the
+    // same ordering, conversation threading and timing as the main session.
     const agentTranscriptPath = payload.agent_transcript_path || payload.agentTranscriptPath;
     if (agentTranscriptPath) {
-      const syntheticState = {
-        trace_id: state.trace_id,
-        current_turn_span_id: subagentSpanId,
-        current_turn_started_at_ns: subagent.started_at_ns,
-        current_turn_input: "",
+      const child = await buildTranscriptSpans({
+        traceId: state.trace_id,
+        // Its spans hang under the subagent wrapper, and carry the parent
+        // session's thread id so the whole session stays one thread.
+        rootSpanId: subagentSpanId,
+        sessionId: state.session_id,
+        startNs: subagent.started_at_ns,
         model: state.model,
-        last_processed_line: 0,
-        total_tool_calls: 0,
-      };
-      const childSpans = await emitTranscriptSpans(
-        syntheticState,
-        { transcript_path: agentTranscriptPath },
-        { emitPending: true },
-      );
-      spans.push(...childSpans);
-      // Propagate subagent tool call count to the parent session state
-      state.total_tool_calls = (state.total_tool_calls || 0) + syntheticState.total_tool_calls;
+        transcriptPath: agentTranscriptPath,
+        final: true,
+      });
+      spans.push(...child.spans);
+      state.total_tool_calls = (state.total_tool_calls || 0) + child.toolCallCount;
     }
 
     delete state.subagents[agentId];
@@ -761,7 +764,7 @@ export async function runSafely(handler) {
     // Hooks must not block Claude Code flows, but always surface errors
     // so users know tracing is broken. Full stack only in debug mode.
     process.stderr.write(`[orq-trace] hook error: ${err?.message || err}\n`);
-    if (process.env.ORQ_DEBUG === "1" || process.env.ORQ_DEBUG === "true") {
+    if (boolEnv("ORQ_DEBUG")) {
       process.stderr.write(`[orq-trace] ${err?.stack}\n`);
     }
   }
