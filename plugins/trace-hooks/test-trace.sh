@@ -38,16 +38,16 @@ echo "==> Validating spans..."
 SPAN_LIST=$(orqi trace span list "$TRACE_ID" --json 2>/dev/null)
 
 HAS_SESSION=$(echo "$SPAN_LIST" | python3 -c "import sys,json; d=json.load(sys.stdin); print(any(s['name']=='orq.claude_code.session' for s in d['data']))")
-HAS_TURN=$(echo "$SPAN_LIST" | python3 -c "import sys,json; d=json.load(sys.stdin); print(any('turn' in s['name'] for s in d['data']))")
+HAS_THREAD=$(echo "$SPAN_LIST" | python3 -c "import sys,json; d=json.load(sys.stdin); print(all(s.get('session_id') for s in d['data']))")
 HAS_LLM=$(echo "$SPAN_LIST" | python3 -c "import sys,json; d=json.load(sys.stdin); print(any(s['type']=='span.chat_completion' for s in d['data']))")
 
 echo "  Session span: $HAS_SESSION"
-echo "  Turn span:    $HAS_TURN"
+echo "  Thread ids:   $HAS_THREAD"
 echo "  LLM span:     $HAS_LLM"
 
 FAILURES=0
 [[ "$HAS_SESSION" == "True" ]] || { echo "  FAIL: missing session span"; FAILURES=$((FAILURES+1)); }
-[[ "$HAS_TURN" == "True" ]]    || { echo "  FAIL: missing turn span"; FAILURES=$((FAILURES+1)); }
+[[ "$HAS_THREAD" == "True" ]]  || { echo "  FAIL: span missing orq.thread_id"; FAILURES=$((FAILURES+1)); }
 [[ "$HAS_LLM" == "True" ]]     || { echo "  FAIL: missing LLM span"; FAILURES=$((FAILURES+1)); }
 
 if [[ $FAILURES -eq 0 ]]; then

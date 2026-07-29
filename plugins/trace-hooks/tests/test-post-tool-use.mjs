@@ -157,11 +157,13 @@ test("edge: nonexistent session exits cleanly without state", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// --- Test 5: session without open turn → noop ---
-test("edge: session without open turn does not mutate state", () => {
+// --- Test 5: a tool call before any prompt is still recorded ---
+// There is no longer an "open turn" to gate on: turn spans are gone and every
+// span parents to the root. In -p mode UserPromptSubmit may never fire, and
+// dropping those tool calls lost them from the trace entirely.
+test("edge: tool call with no prompt yet is recorded against the session", () => {
   const dir = makeTempStateDir();
-  const stateFile = seedSession(dir, "sess5", { current_turn_span_id: null });
-  const before = loadState(stateFile);
+  const stateFile = seedSession(dir, "sess5", { current_turn_input: null, turn_count: 0 });
   const res = runHook({
     session_id: "sess5",
     tool_name: "Bash",
@@ -169,9 +171,26 @@ test("edge: session without open turn does not mutate state", () => {
   }, dir);
   assert.equal(res.status, 0, res.stderr);
   const after = loadState(stateFile);
-  assert.equal(after.successful_tool_calls, undefined,
-    "should not have added successful_tool_calls when no turn is open");
-  assert.deepEqual(after, before, "state should be unchanged");
+  assert.equal(after.successful_tool_calls?.length, 1,
+    "tool call should be recorded even before the first prompt");
+  assert.equal(after.successful_tool_calls[0].tool_name, "Bash");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// --- Test 5b: no session state at all → noop ---
+test("edge: unknown session id does not create state", () => {
+  const dir = makeTempStateDir();
+  const res = runHook({
+    session_id: "no-such-session",
+    tool_name: "Bash",
+    tool_response: "x",
+  }, dir);
+  assert.equal(res.status, 0, res.stderr);
+  assert.equal(
+    fs.existsSync(path.join(dir, "orq_sessions", "no-such-session.json")),
+    false,
+    "should not have created a state file for an unknown session",
+  );
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -274,7 +293,7 @@ test("object tool_response: JSON-serializable object is stored correctly", () =>
   }, dir);
   assert.equal(res.status, 0, res.stderr);
   const entry = loadState(stateFile).successful_tool_calls[0];
-  // stored value may be the object itself or its JSON string — either is valid
+  // stored value may be the object itself or its JSON string, either is valid
   const stored = typeof entry.tool_response === "string"
     ? entry.tool_response
     : JSON.stringify(entry.tool_response);

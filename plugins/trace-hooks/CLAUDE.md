@@ -47,19 +47,19 @@ env -u CLAUDECODE bash -c 'cd ~/Documents/orq-skills && claude -p "list files wi
    ```bash
    env -u CLAUDECODE bash -c 'cd <repo> && claude -p "say hello" 2>&1'
    ```
-   Expected: session span + turn span + 1 LLM response span
+   Expected: session span + 1 LLM response span
 
 2. **Trace with tool calls**:
    ```bash
    env -u CLAUDECODE bash -c 'cd <repo> && claude -p "list files with ls" 2>&1'
    ```
-   Expected: session span + turn span + tool spans (Bash) + LLM response spans
+   Expected: session span + tool spans (Bash) + LLM response spans
 
 3. **Trace with subagents**:
    ```bash
    env -u CLAUDECODE bash -c 'cd <repo> && claude -p "Use the Agent tool to search for files matching *.py" 2>&1'
    ```
-   Expected: session span + turn span + Agent tool span + sub-tool spans + LLM responses
+   Expected: session span + Agent tool span + sub-tool spans + LLM responses
 
 4. **Verify traces arrived**:
    ```bash

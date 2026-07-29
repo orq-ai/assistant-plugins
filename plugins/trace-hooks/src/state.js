@@ -174,6 +174,12 @@ export async function readQueuedPayload(filePath) {
   return JSON.parse(content);
 }
 
+// Replaces a queued file in place, keeping its name so queue order survives.
+// Used to shrink a file to the spans a partial drain did not deliver.
+export async function writeQueuedPayload(filePath, payload) {
+  await fs.writeFile(filePath, `${JSON.stringify(payload)}\n`, "utf8");
+}
+
 export async function deleteQueuedFile(filePath) {
   try {
     await fs.unlink(filePath);
