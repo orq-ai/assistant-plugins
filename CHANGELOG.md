@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-07-31
+
+### Added
+- **`orq-cli` skill** — drive the `orq` command-line interface end to end: verify the install (`npm i -g @orq-ai/cli` or `install.sh`, which lands in the often-not-on-`PATH` `~/.orq/bin`), authenticate via OAuth session or `ORQ_API_KEY`, scope to the right workspace, discover commands with `--help`, and run them with `--json` plus `-q` JMESPath projections. Covers the profile model, the `auth whoami` / `workspace list` / `doctor` JSON shapes, the four request-body input paths (typed flags, stdin, `--from-file`, `--example`) and bartolo shorthand, the `orq request` escape hatch, and a symptom→cause troubleshooting table. Companion `resources/command-map.md` carries the full v4.12.15 command tree, global flags and their env-var twins, verified response field names for traces/spans/agents, and JMESPath recipes — including resolving the active workspace key (`orq auth whoami --json -q active_workspace_key --raw`) for app deep-links, with a warning not to shell out to the CLI from library request paths. Registered in `agents/AGENTS.md`, `README.md`, `tests/skills.md`, and `skills-lock.json`. (RES-1140)
+
 ## [2.1.1] - 2026-07-22
 
 ### Fixed

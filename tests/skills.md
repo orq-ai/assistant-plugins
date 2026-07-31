@@ -285,6 +285,57 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ---
 
+## `orq-cli`
+
+### Scenario 1: Not installed
+
+- Simulate `orq` missing from `PATH`
+- Ask: "List my orq agents from the terminal"
+- Verify: runs `orq --version` first and reports the binary is missing
+- Verify: offers `npm install -g @orq-ai/cli` or the `install.sh` one-liner
+- Verify: mentions `~/.orq/bin` is not on `PATH` after the `install.sh` route
+- Verify: does NOT invent a `brew install orq` formula
+
+### Scenario 2: Not authenticated
+
+- Simulate no `~/.orq/sessions/default.json` and no `ORQ_API_KEY`
+- Ask: "Which workspace am I in?"
+- Verify: runs `orq auth whoami --json` and reads the non-zero exit
+- Verify: in a non-interactive session, offers `ORQ_API_KEY` rather than running `orq auth login`
+- Verify: does NOT run `orq auth login` unattended
+
+### Scenario 3: Resolve the active workspace key
+
+- Ask: "What's my active orq workspace key?"
+- Verify: uses `orq auth whoami --json -q active_workspace_key --raw`
+- Verify: knows the session file field is `activeWorkspaceKey` (camelCase) and treats it as a fallback only
+- Verify: does NOT cat or print `~/.orq/sessions/default.json` contents
+- Verify: distinguishes the workspace **key** (slug) from the **id** (ULID)
+
+### Scenario 4: Unknown flag
+
+- Ask: "Search traces from the last day for errors"
+- Verify: runs `orq traces search --help` before composing the command
+- Verify: passes `--from` and `--to` (both required) and `--json`
+- Verify: passes filters as a JSON string (`--filters '[{"field":...}]'`), not as a typed flag
+- Verify: does NOT guess filter field names — consults `orq traces list-fields`
+
+### Scenario 5: Output parsing
+
+- Ask: "Give me a shell script that prints my agent names"
+- Verify: the script passes `--json` (never parses the default TOON output)
+- Verify: prefers `-q` JMESPath over piping to `jq`
+- Verify: projects `display_name` (the agent id field is `_id`, not `id`)
+
+### Scenario 6: Command fails for an unclear reason
+
+- Simulate a command returning empty results
+- Ask: "Why is `orq deployments list` returning nothing?"
+- Verify: runs `orq doctor` and checks the active workspace before blaming auth
+- Verify: mentions that `.env` / `.env.local` in the working directory can override the server
+
+---
+
 ## Critical Files
 
 - `skills/orq-setup-observability/SKILL.md`
@@ -312,6 +363,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-red-team/resources/python-sdk.md`
 - `skills/orq-simulate-agent/SKILL.md`
 - `skills/orq-simulate-agent/resources/persona-scenario-template.md`
+- `skills/orq-cli/SKILL.md`
+- `skills/orq-cli/resources/command-map.md`
 - `skills/orq-simulate-agent/resources/simulation-loop.md`
 - `skills/orq-simulate-agent/resources/redteam-mode.md`
 - `skills/orq-manage-skills/SKILL.md`
