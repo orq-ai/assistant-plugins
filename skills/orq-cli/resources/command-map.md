@@ -95,20 +95,52 @@ never print it.
 
 ### `doctor --json` shape
 
+`doctor` runs without credentials and exits 0 even when unauthenticated, so it is
+always safe to run first. Abridged real output from a logged-out v4.12.15:
+
 ```json
 {
-  "binary":  { },
-  "runtime": { },
-  "output":  { },
-  "config":  { },
-  "auth":    { },
-  "checks": [ { "id": "...", "status": "ok", "message": "...", "details": { } } ]
+  "binary":  { "name": "orq", "version": "4.12.15" },
+  "runtime": { "name": "go", "version": "go1.26.5", "platform": "darwin", "arch": "arm64" },
+  "output":  { "default_format": "toon", "supported_formats": ["json", "yaml", "toon"] },
+  "config": {
+    "profile": "default",
+    "session_file": "/Users/you/.orq/sessions/default.json",
+    "api_base_url":     { "value": "https://api.orq.ai",             "source": "default" },
+    "auth_base_url":    { "value": "https://api.orq.ai/v2/auth",     "source": "derived" },
+    "v1_base_url":      { "value": "https://api.orq.ai/v2/api",      "source": "derived" },
+    "profile_base_url": { "value": "https://api.orq.ai/v2/api/me",   "source": "derived" }
+  },
+  "auth": {
+    "status": "missing",
+    "source": "none",
+    "user_email": "",
+    "active_workspace_key": null,
+    "workspace_count": 0
+  },
+  "checks": [
+    { "id": "session_file",     "status": "warn", "message": "No local session file found" },
+    { "id": "api_base_url",     "status": "pass", "message": "Reachable (HTTP 404)" },
+    { "id": "profile_base_url", "status": "pass", "message": "Reachable (HTTP 401)" }
+  ]
 }
 ```
 
-Config entries carry both a `value` and a `source` (`flag`, `session`, `env`,
-`default`, `derived`) — the `source` is what tells you why a command is talking
-to the wrong host.
+Two things to read carefully:
+
+- Config entries carry a `value` **and** a `source` (`flag`, `session`, `env`,
+  `default`, `derived`). The `source` is what tells you why a command is talking
+  to the wrong host.
+- Reachability checks report `pass` on HTTP 404 and 401. They prove the host
+  answered, not that the request would succeed. `auth.status` is the field that
+  says whether you are logged in.
+
+Quick unauthenticated triage:
+
+```sh
+orq doctor --json -q 'auth.status' --raw            # missing | ok | invalid
+orq doctor --json -q "checks[?status!='pass']"      # only the problems
+```
 
 ---
 
@@ -258,6 +290,21 @@ orq traces list-spans <trace-id> --json \
 orq traces search --json --from ... --to ... -q 'next_page_token' --raw
 ```
 
+### Comparing against a string in a filter
+
+A bare backtick literal does **not** work. `-q 'checks[?status!=`pass`]'` fails
+with `invalid character 'p' looking for beginning of value`, because backticks
+delimit a *JSON* literal and `pass` is not valid JSON. Two forms that do work,
+both verified against v4.12.15:
+
+```sh
+orq doctor --json -q "checks[?status!='pass']"      # raw-string literal, outer double quotes
+orq doctor --json -q 'checks[?status!=`"pass"`]'    # JSON literal, note the inner quotes
+```
+
+Prefer the first. The second needs backticks to survive the shell, which they do
+inside single quotes in `sh`/`bash`/`zsh` but not everywhere.
+
 Response envelopes are consistent: list endpoints return
 `{ "object": "list", "data": [...], "has_more": bool }`, and the trace endpoints
 add `next_page_token`.
@@ -317,8 +364,14 @@ key="$(orq auth whoami --json -q active_workspace_key --raw)"
 echo "https://my.orq.ai/${key}/traces?query=$(printf 'trace_id:is:%s' "$trace_id" | jq -sRr @uri)"
 ```
 
-`https://my.orq.ai` is both the API host and the app host; override it with
-`ORQ_BASE_URL` / `ORQ_UI_BASE_URL` for staging or self-hosted.
+Two different hosts are in play, and confusing them produces links that 404:
+
+- `https://my.orq.ai` is the **app** (Studio) host, what a browser opens.
+- `https://api.orq.ai` is the CLI's default **API** base, confirmed by
+  `orq doctor --json -q 'config.api_base_url'`.
+
+Override the app host with `ORQ_UI_BASE_URL` / `ORQ_BASE_URL`; override the API
+host with `--server` or `ORQ_API_BASE_URL`.
 
 **Do not shell out to `orq` from library code to get the slug.** evaluatorq tried
 that and removed it — the subprocess blocks and can 404. Prefer, in order: a URL
