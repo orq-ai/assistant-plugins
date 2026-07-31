@@ -4,6 +4,24 @@ Command tree captured from `orq` **v4.12.15**. The CLI is generated from the
 orq.ai OpenAPI spec, so this drifts between releases — `orq <group> --help` wins
 over anything written here.
 
+To re-derive the tree after a CLI upgrade, instead of editing it by hand
+(`bash`, or `zsh` with the `${=…}` splits shown):
+
+```bash
+groups=$(orq --help 2>&1 | awk '/Available Commands:/,/^Flags:/' | grep '^  [a-z]' | awk '{print $1}')
+for g in $groups; do
+  subs=$(orq "$g" --help 2>&1 | awk '/Available Commands:/,/^Flags:/' | grep '^  [a-z]' | awk '{print $1}' | tr '\n' ' ')
+  [ -n "$subs" ] && echo "$g: $subs" || echo "$g: (leaf command)"
+done
+```
+
+Response field names are not in the help text; they come from the spec the CLI
+was generated from:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/orq-ai/orq-cli/main/openapi.yaml -o /tmp/orq-openapi.yaml
+```
+
 ---
 
 ## Global flags

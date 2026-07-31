@@ -72,8 +72,25 @@ Wrong-workspace reads are the worst failure mode here, because they succeed.
 - **A guided evaluation or experiment workflow?** → Use `orq-run-experiment`
 - **Analyzing trace content rather than fetching it?** → Use
   `orq-analyze-trace-failures`
-- **The MCP tools are available and sufficient?** → Prefer them; they are typed
-  and need no install or shell
+
+## MCP tools or the CLI?
+
+This suite ships an MCP server, so you will often have both. They are not
+interchangeable. Pick by job, not by habit:
+
+| Job | Use | Why |
+|---|---|---|
+| One-off lookup mid-conversation | **MCP** | typed arguments, no install, no shell |
+| Anything inside a script, Makefile, or CI job | **CLI** | MCP tools do not exist outside the agent session |
+| Piping results into other shell tools or a file | **CLI** | `--json` plus `-q` composes with the shell |
+| Bulk export or pagination loops | **CLI** | cursors are easier to drive in a loop |
+| Endpoint with no MCP tool | **CLI** | the command surface is generated from the whole spec |
+| Endpoint with neither | **CLI** | `orq request <method> <path>` |
+| Checking why auth or routing is broken | **CLI** | `orq doctor` has no MCP equivalent |
+| Acting as a specific profile or a self-hosted host | **CLI** | `--profile` and `--server` are CLI-only |
+
+The deciding question is usually **does this need to run again without an agent
+present?** If yes, it has to be the CLI.
 
 ## Workflow Checklist
 
