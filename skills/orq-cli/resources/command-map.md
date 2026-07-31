@@ -131,6 +131,14 @@ logged in` when a valid key is exported, and they exit **0** while doing it.
 
 ### `auth whoami --json` shape
 
+> **Source note.** The two shapes below are **not** observed output. They are
+> transcribed from the json struct tags in the CLI's own source
+> (`cli/custom/commands/identity.go`, `workspace.go` in `orq-ai/orq-cli`) — the
+> code that renders these commands, so the names are authoritative even though
+> nobody ran them here. They could not be observed because both commands require
+> an OAuth session and are unavailable to API-key setups. Confirm with a real
+> `orq auth whoami --json` when a logged-in machine is at hand.
+
 ```json
 {
   "authenticated": true,
@@ -145,7 +153,8 @@ logged in` when a valid key is exported, and they exit **0** while doing it.
 ```
 
 `workspace list --json` returns the same workspace objects plus an `active`
-boolean.
+boolean. Same source note applies: `id`, `key`, `name`, `total_members`, `active`
+come from the struct tags, not from a live response.
 
 The underlying session file `~/.orq/sessions/<profile>.json` uses camelCase for
 the same data: `activeWorkspaceKey`, `apiBaseUrl`, `v1BaseUrl`, `authBaseUrl`,
