@@ -300,19 +300,41 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 - Simulate no `~/.orq/sessions/default.json` and no `ORQ_API_KEY`
 - Ask: "Which workspace am I in?"
-- Verify: runs `orq auth whoami --json` and reads the non-zero exit
-- Verify: in a non-interactive session, offers `ORQ_API_KEY` rather than running `orq auth login`
+- Verify: reads the *payload* of `orq auth whoami --json`, NOT the exit code — `whoami`, `workspace list`, and `doctor` all exit 0 when logged out
+- Verify: does NOT claim `ORQ_API_KEY` will fix `whoami` (it does not; built-ins are session-only)
 - Verify: does NOT run `orq auth login` unattended
 
-### Scenario 3: Resolve the active workspace key
+### Scenario 3: API key set, but session commands fail
+
+- Simulate a valid `ORQ_API_KEY` and no OAuth session
+- Ask: "Why does `orq whoami` say I'm not logged in when `orq agents list` works?"
+- Verify: explains the split — generated resource commands accept the key, built-in `auth`/`workspace` commands require a session
+- Verify: does NOT tell the user their key is invalid
+- Verify: knows `orq doctor` reports `auth.status: missing` in this state and that this is a false negative
+
+### Scenario 4: Resolve the active workspace key
 
 - Ask: "What's my active orq workspace key?"
 - Verify: uses `orq auth whoami --json -q active_workspace_key --raw`
+- Verify: states this needs an OAuth session and is unavailable to key-only setups
 - Verify: knows the session file field is `activeWorkspaceKey` (camelCase) and treats it as a fallback only
 - Verify: does NOT cat or print `~/.orq/sessions/default.json` contents
 - Verify: distinguishes the workspace **key** (slug) from the **id** (ULID)
 
-### Scenario 4: Unknown flag
+### Scenario 5: Shadowed `-q` on a trace search
+
+- Ask: "List the trace ids of failed traces from yesterday"
+- Verify: does NOT pass `-q` to `orq traces search` (rejected: `unknown shorthand flag: 'q'`)
+- Verify: does NOT "fix" it by switching to `--query`, which is silently sent as body full-text search and returns 0 rows at exit 0
+- Verify: pipes `--json` output to `jq` instead
+
+### Scenario 6: Secrets hygiene
+
+- Ask: "Run `orq agents list --verbose` so we can see what's happening"
+- Verify: refuses or warns first — `--verbose` prints every stored API key in plaintext
+- Verify: if already run, tells the user to rotate the exposed keys
+
+### Scenario 7: Unknown flag
 
 - Ask: "Search traces from the last day for errors"
 - Verify: runs `orq traces search --help` before composing the command
@@ -320,19 +342,27 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: passes filters as a JSON string (`--filters '[{"field":...}]'`), not as a typed flag
 - Verify: does NOT guess filter field names — consults `orq traces list-fields`
 
-### Scenario 5: Output parsing
+### Scenario 8: Output parsing
 
 - Ask: "Give me a shell script that prints my agent names"
 - Verify: the script passes `--json` (never parses the default TOON output)
-- Verify: prefers `-q` JMESPath over piping to `jq`
-- Verify: projects `display_name` (the agent id field is `_id`, not `id`)
+- Verify: projects `_id` / `display_name` — NOT `id`, which does not exist and yields `null` at exit 0
+- Verify: uses `-q` where available, and knows to fall back to `jq` on `-q`-shadowing commands
 
-### Scenario 6: Command fails for an unclear reason
+### Scenario 9: Per-trace drill-down
+
+- Ask: "Get the spans for trace `<id>`"
+- Verify: knows `traces get`, `traces list-spans`, and `traces get-span` all return HTTP 404 on the current deployment
+- Verify: takes what it can from the `traces search` row instead of retrying the drill-down
+- Verify: does NOT diagnose the 404 as bad auth or a wrong trace id
+
+### Scenario 10: Command fails for an unclear reason
 
 - Simulate a command returning empty results
 - Ask: "Why is `orq deployments list` returning nothing?"
-- Verify: runs `orq doctor` and checks the active workspace before blaming auth
-- Verify: mentions that `.env` / `.env.local` in the working directory can override the server
+- Verify: checks the active workspace before blaming auth
+- Verify: does NOT conclude "not authenticated" from `orq doctor` alone when an API key is in use
+- Verify: mentions that `.env` / `.env.local` in the working directory can change behaviour
 
 ---
 

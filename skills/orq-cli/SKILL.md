@@ -9,7 +9,7 @@ description: >
   resolved. Do NOT use for writing application code that calls orq.ai (use
   orq-invoke-deployment) or for guided evaluation workflows (use
   orq-run-experiment).
-allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, AskUserQuestion
+allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, AskUserQuestion, orq*
 ---
 
 # orq CLI
@@ -25,28 +25,36 @@ between releases — treat `--help` as the source of truth, never your memory.
 
 ## Constraints
 
+- **NEVER** run any `orq` command with `--verbose` in output anyone else will
+  see. It prints the whole profile config to stdout, including **every stored
+  API key in plaintext**. If you already ran it, tell the user to rotate those
+  keys.
+- **NEVER** trust the exit code for auth. `orq auth whoami`, `orq workspace
+  list`, and `orq doctor` all exit **0** when unauthenticated. Read the payload:
+  `authenticated` from `whoami`, `auth.status` from `doctor`.
 - **NEVER** guess a flag or subcommand. Run `orq <group> --help` first; the help
   text lists every flag with its exact name and type.
 - **NEVER** parse default output. The default format is TOON, which is meant for
   humans. Pass `--json` (or `-o json`) on anything a script or you will parse.
 - **NEVER** run `orq auth login` unattended. It is an interactive OAuth device
-  flow that needs a browser. In CI or a non-interactive session, use
-  `ORQ_API_KEY` instead, or stop and ask the user to log in.
+  flow that needs a browser. If nobody can complete it, stop and say so —
+  `ORQ_API_KEY` is **not** a substitute for the commands that need a session
+  (see the auth matrix below).
 - **NEVER** assume which workspace is active. A command silently reads the wrong
-  workspace's data if the session points elsewhere — confirm with
-  `orq auth whoami` before anything that matters.
-- **NEVER** echo the contents of `~/.orq/sessions/*.json` or
-  `~/.orq/credentials.json` into output the user will share. They hold refresh
-  tokens and API keys.
-- **ALWAYS** run `orq doctor` first when a command fails for a reason that is not
-  obviously a bad argument. It resolves auth state, endpoint URLs, and their
-  sources in one shot.
-- **ALWAYS** prefer `-q` (JMESPath) over piping to `jq`. It runs inside the CLI,
-  so it works the same on machines without `jq` installed.
+  workspace's data if the session points elsewhere.
+- **NEVER** echo the contents of `~/.orq/sessions/*.json`,
+  `~/.orq/credentials.json`, or `~/.orq/config.json`. They hold refresh tokens
+  and API keys.
+- **ALWAYS** check `-q` actually works on the command you are using. On commands
+  whose request body has a `query` field, the generated `--query` flag shadows
+  the global `-q`, and the failure modes differ (see "When `-q` is unavailable").
+- **ALWAYS** prefer `-q` (JMESPath) over piping to `jq` where it is available. It
+  runs inside the CLI, so it works on machines without `jq` installed.
 
 **Why these constraints:** the generated command surface is large and drifts
 between versions, so guessed flags fail in ways that look like auth problems.
-Wrong-workspace reads are the worst failure mode here, because they succeed.
+Auth and output failures here are quiet: wrong-workspace reads succeed, logged-out
+commands exit 0, and one shadowed flag returns an empty list instead of an error.
 
 ## Companion Skills
 
@@ -105,8 +113,9 @@ orq CLI Progress:
 
 ## Done When
 
-- `orq auth whoami --json` returns the expected user and
-  `active_workspace_key`
+- Credentials confirmed by output, not exit code: `orq auth whoami --json` shows
+  the expected user and `active_workspace_key` (session), or a resource command
+  returns real data (API key)
 - The command ran and returned data, not a usage dump
 - Output is JSON (or a deliberately raw scalar), not TOON
 - Any script produced is safe to re-run: no interactive login, no hardcoded key
@@ -136,24 +145,50 @@ path rather than fighting `PATH`.
 
 ## Phase 2 — Authenticate
 
-Two methods, both scoped by `--profile` (default: `default`).
+There are two credential types and **they are not interchangeable**. This is the
+single most confusing thing about the CLI, so check it before anything else.
+
+| Command family | `ORQ_API_KEY` | OAuth session (`orq auth login`) |
+|---|---|---|
+| Generated resource commands (`agents`, `traces`, `projects`, `prompts`, `skills`, `datasets`, …) | works | works |
+| Built-ins: `auth whoami`, `workspace list`, `workspace use` | **fails** | works |
+| `doctor`'s `auth` block | **reports `missing`** | reports real state |
+
+Verified on v4.12.15: with a valid `ORQ_API_KEY` exported, `orq agents list`
+returns data while `orq auth whoami` prints `Error: you are not logged in` and
+`orq doctor --json -q 'auth.status' --raw` prints `missing`.
+
+**The practical consequences:**
+
+- A key-only setup is fine for reading and writing resources, and cannot tell you
+  who you are or which workspace is active.
+- `doctor` saying `auth.status: missing` does **not** mean the CLI is broken.
+  Confirm by running an actual resource command before chasing auth.
+- Anything needing the workspace key requires an interactive login. There is no
+  key-based path to it.
 
 ```sh
-orq auth whoami --json          # authoritative auth check
-orq auth login                  # interactive OAuth device flow
-export ORQ_API_KEY=...          # headless / CI
+orq auth login                              # interactive OAuth device flow
+export ORQ_API_KEY=...                      # headless / CI, resource commands only
 orq auth add-profile apikey ci <api-key>    # persist a key under a profile
 orq auth list-profiles
 orq --profile ci agents list
 ```
 
-`orq whoami` is an alias for `orq auth whoami`. When unauthenticated it exits
-non-zero with `Error: you are not logged in` — check the exit code, not the text.
+Checking state, given that all of these exit 0 either way:
+
+```sh
+orq auth whoami --json -q authenticated --raw    # true | (error text if no session)
+orq doctor --json -q 'auth.status' --raw         # ok | missing | invalid
+orq agents list --json -q 'length(data)' --raw   # the only real proof a key works
+```
+
+`orq whoami` is an alias for `orq auth whoami`.
 
 Sessions live in `~/.orq/sessions/<profile>.json` and API keys in
-`~/.orq/credentials.json`. After `auth login`, the host you authenticated against
-is stored in the session and reused, so self-hosted users do not need `--server`
-on every call.
+`~/.orq/credentials.json` / `~/.orq/config.json`. After `auth login`, the host you
+authenticated against is stored in the session and reused, so self-hosted users do
+not need `--server` on every call.
 
 ## Phase 3 — Scope to a workspace
 
@@ -166,26 +201,40 @@ Workspace entries carry `id`, `key`, `name`, `total_members`, `active`. The
 **key** is the human-readable slug (for example `orq-research`) that appears in
 app URLs; the **id** is a ULID. Deep-links want the key.
 
-Resolve the active key, in order of preference:
+**Both of these commands require an OAuth session.** With only `ORQ_API_KEY`
+set they fail with `Error: you are not logged in`, at exit 0. So workspace
+selection is not available to key-only setups at all, and neither is reading the
+active key.
+
+Resolve the active key, when a session exists:
 
 ```sh
 orq auth whoami --json -q active_workspace_key --raw
 ```
 
-Fall back to the session file only when the CLI is unavailable — it is the same
-value under a camelCase name:
+Fall back to the session file only when the CLI is unavailable. Same value, under
+a camelCase name:
 
 ```sh
 jq -r .activeWorkspaceKey ~/.orq/sessions/default.json
 ```
 
 A snippet for scripts that need the key (for example to build
-`https://my.orq.ai/<key>/traces?query=…` deep-links), preferring an explicit env
-override:
+`https://my.orq.ai/<key>/traces?query=…` deep-links). It has to tolerate the
+command succeeding while producing nothing, which is why the guard is not
+optional:
 
 ```sh
-workspace_key="${ORQ_WORKSPACE:-${ORQ_WORKSPACE_SLUG:-$(orq auth whoami --json -q active_workspace_key --raw 2>/dev/null)}}"
-[ -n "$workspace_key" ] || { echo "no active orq workspace; run 'orq auth login'" >&2; exit 1; }
+# ORQ_WORKSPACE / ORQ_WORKSPACE_SLUG are an evaluatorq convention, not CLI
+# variables. The CLI ignores them; this snippet honours them deliberately so a
+# caller can target a workspace they are not switched to.
+workspace_key="${ORQ_WORKSPACE:-${ORQ_WORKSPACE_SLUG:-}}"
+if [ -z "$workspace_key" ]; then
+  workspace_key="$(orq auth whoami --json -q active_workspace_key --raw 2>/dev/null)"
+fi
+case "$workspace_key" in
+  ''|null) echo "no active orq workspace; run 'orq auth login'" >&2; exit 1 ;;
+esac
 ```
 
 Keep that in scripts and terminal use. Library code on a request path should not
@@ -213,46 +262,106 @@ tree, JMESPath recipes, and body-input patterns.
 ```sh
 orq agents list --json
 orq agents list -o yaml
-orq agents list -q 'data[].{id: id, name: display_name}'
-orq agents list -q 'data[0].id' --raw        # bare scalar, no quotes
-orq default-format json                       # persist JSON as the default
+orq agents list --json -q 'data[].{id: _id, name: display_name}'
+orq agents list --json -q 'data[0]._id' --raw   # bare scalar, no quotes
 ```
+
+The agent identifier is **`_id`**, not `id`. There is no `id` field, and JMESPath
+returns `null` for a missing key at exit 0, so `data[0].id` yields `null` silently
+rather than failing. Check field names in
+[resources/command-map.md](resources/command-map.md) before projecting.
 
 `-q` takes JMESPath and runs after the response is parsed. `--raw` unwraps the
 result so a single string comes out unquoted — use it whenever the value feeds a
 shell variable.
 
-Commands that take a request body accept it four ways, which compose:
+### When `-q` is unavailable
+
+Generated per-field flags are built from the request body, and a body field named
+`query` shadows the global `-q/--query`. On v4.12.15 that affects at least
+`traces search`, `budgets list`, `webhooks query`, `knowledge-bases search`,
+`evals invoke`, and `rerank create`; `images generate` shadows `-o` the same way.
+
+Both failure modes matter, and the quiet one is worse:
+
+```sh
+orq traces search -q 'data[].trace_id' ...
+# Error: unknown shorthand flag: 'q' in -q          <- loud, harmless
+
+orq traces search --query 'data[].trace_id' ...
+# {"data": [], "has_more": false, ...}              <- SILENT: sent as a body
+#                                                      full-text search, 0 rows,
+#                                                      exit 0
+```
+
+Never "fix" a rejected `-q` by reaching for `--query`. Pipe instead:
+
+```sh
+orq traces search --json --from ... --to ... | jq '.data[].trace_id'
+```
+
+This is the one case where the prefer-`-q`-over-`jq` rule does not apply.
+
+### Request bodies
+
+Commands that take a body accept it several ways, which compose:
 
 ```sh
 orq traces search --from 2026-07-01T00:00:00Z --to 2026-07-31T00:00:00Z --limit 20 --json
 echo '{"from":"...","to":"...","limit":20}' | orq traces search --json
 orq traces search --from-file body.json --json
-orq traces search --example --json
 ```
+
+`--example` exists as a flag on body commands but is not populated for all of
+them. `orq traces search --example` fails with `no generated body example is
+available for this command`. Treat it as a convenience that may not be there, not
+a documented starting point.
 
 CLI shorthand applies on top of any base body, so you can override one field of a
 file without editing it. Run `orq help-input` for the full shorthand grammar.
 
+### Persisting a default format
+
+```sh
+orq default-format json
+```
+
+This writes to `~/.orq/config.json` and changes the default output format for
+**every** `orq` invocation by that user, including their interactive shell and
+other agents. Prefer passing `--json` per command; only persist it when the user
+asks.
+
 ## Troubleshooting
 
-Run `orq doctor` (or `orq doctor --json`) first. It reports the binary and
-runtime, the active profile and session path, every resolved base URL **with its
-source** (flag, session, env, default, derived), auth status, reachability probes,
-and bootstrap-token freshness.
+`orq doctor` (or `orq doctor --json`) is the starting point, with two blind spots
+worth knowing before you trust it:
+
+- Its `auth` block only understands OAuth sessions. With a working
+  `ORQ_API_KEY` it still reports `auth.status: "missing"`.
+- It does not report `ORQ_SERVER` or the resolved server for generated commands
+  at all. Use `orq server current` for that.
+
+It does reliably report the binary and runtime, the active profile and session
+path, the auth-side base URLs **with their source** (flag, session, env, default,
+derived), and reachability probes.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `you are not logged in` | no session for this profile | `orq auth login`, or set `ORQ_API_KEY` |
-| Empty lists where data should be | wrong active workspace | `orq auth whoami --json`, then `orq workspace use <key>` |
+| `you are not logged in` on `whoami` / `workspace`, but resource commands work | key-only setup; these need a session | `orq auth login`, or accept the limitation |
+| `doctor` says `auth.status: missing` but commands work | `doctor` ignores `ORQ_API_KEY` | confirm with `orq agents list --json -q 'length(data)' --raw` |
+| Empty lists where data should be | wrong workspace, or a shadowed `--query` swallowed your projection | `orq workspace list`; re-run without `--query` |
+| `unknown shorthand flag: 'q'` | body has a `query` field shadowing `-q` | pipe to `jq`; do **not** switch to `--query` |
 | `unknown command` | subcommand moved or renamed between releases | `orq <group> --help`; check `orq --version` |
 | Output is unparseable | TOON default | add `--json` |
-| Requests hit the wrong host | stale session or `ORQ_SERVER` set | `orq doctor` and read the `source` column |
-| Works locally, fails in CI | OAuth session is not portable | use `ORQ_API_KEY` in CI |
+| Requests hit the wrong host | `ORQ_SERVER`, or a persisted server default | `orq server current` (not `doctor`) |
+| `HTTP 404` on a documented command | endpoint in the spec but not served by this deployment | confirm with `orq request GET <path>`; if that also 404s it is server-side |
+| Works locally, fails in CI | OAuth session is not portable | use `ORQ_API_KEY`, and avoid `whoami` / `workspace` in CI |
 
 `.env` and `.env.local` in the working directory are loaded automatically, so a
-stray `ORQ_SERVER` or `ORQ_API_KEY` in a project file can silently redirect
-commands. `orq doctor` shows which one won.
+stray `ORQ_SERVER`, `ORQ_API_KEY`, or `ORQ_OUTPUT_FORMAT` in a project file can
+silently change behaviour. Note the env var the CLI reads for a key is
+`ORQ_API_KEY` specifically; a project using a different name (`ORQ_KEY`, say)
+will not authenticate the CLI even though the file loaded.
 
 ---
 
@@ -263,7 +372,6 @@ commands. `orq doctor` shows which one won.
 [`@orq-ai/cli` on npm](https://www.npmjs.com/package/@orq-ai/cli)
 
 **API:** [API reference](https://docs.orq.ai/reference) ·
-[Traces](https://docs.orq.ai/reference/traces) ·
 [Agents](https://docs.orq.ai/reference/agents)
 
 **Shorthand syntax:** [bartolo shorthand](https://github.com/orq-ai/bartolo/tree/main/shorthand#readme)

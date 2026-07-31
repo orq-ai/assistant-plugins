@@ -4,16 +4,21 @@ Command tree captured from `orq` **v4.12.15**. The CLI is generated from the
 orq.ai OpenAPI spec, so this drifts between releases — `orq <group> --help` wins
 over anything written here.
 
-To re-derive the tree after a CLI upgrade, instead of editing it by hand
-(`bash`, or `zsh` with the `${=…}` splits shown):
+To re-derive the tree after a CLI upgrade, instead of editing it by hand. Run it
+with `bash` explicitly — under `zsh` (the macOS default) unquoted parameters are
+**not** word-split, so `for g in $groups` iterates once with the whole list as a
+single value and the script silently produces nothing useful:
 
 ```bash
+#!/usr/bin/env bash
 groups=$(orq --help 2>&1 | awk '/Available Commands:/,/^Flags:/' | grep '^  [a-z]' | awk '{print $1}')
 for g in $groups; do
   subs=$(orq "$g" --help 2>&1 | awk '/Available Commands:/,/^Flags:/' | grep '^  [a-z]' | awk '{print $1}' | tr '\n' ' ')
   [ -n "$subs" ] && echo "$g: $subs" || echo "$g: (leaf command)"
 done
 ```
+
+If you must run it under `zsh`, split explicitly: `for g in ${=groups}`.
 
 Response field names are not in the help text; they come from the spec the CLI
 was generated from:
@@ -26,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/orq-ai/orq-cli/main/openapi.yaml -o
 
 ## Global flags
 
-Every command accepts these:
+Accepted by most commands, but **not all** — see the shadowing note below:
 
 | Flag | Effect |
 |---|---|
@@ -36,10 +41,35 @@ Every command accepts these:
 | `--raw` | Emit the query result unquoted instead of as JSON |
 | `--profile` | Credential profile (default `default`) |
 | `--server` | Override the server URL for this call |
-| `--verbose` | Verbose log output |
+| `--verbose` | Verbose log output. **Prints every stored API key in plaintext — never use in shared output.** |
 
 Each flag has an env-var twin: uppercase, `ORQ_` prefix, underscores for dashes.
-`ORQ_VERBOSE=1` equals `--verbose`, `ORQ_PROFILE=ci` equals `--profile ci`.
+`ORQ_VERBOSE=1` equals `--verbose`, `ORQ_PROFILE=ci` equals `--profile ci`,
+`ORQ_OUTPUT_FORMAT=json` equals `-o json`.
+
+### Generated flags shadow global flags
+
+Per-field flags are generated from each command's request body. When a body field
+collides with a global flag name, the body field wins and the global flag stops
+working for that command. Confirmed on v4.12.15:
+
+| Command | Shadowed | Effect |
+|---|---|---|
+| `traces search` | `-q` / `--query` | `-q` errors; `--query` is silently treated as body full-text search |
+| `budgets list` | `-q` | `unknown shorthand flag: 'q'` |
+| `webhooks query` | `-q` | same |
+| `knowledge-bases search` | `-q` | same |
+| `evals invoke` | `-q` | same |
+| `rerank create` | `-q` | same |
+| `images generate` | `-o` | `unknown shorthand flag: 'o'` |
+| `auth setup`, `models create-autorouter`, `models update-autorouter` | `--profile` | body field wins |
+
+The dangerous one is `--query` on `traces search`: it is accepted, sent as the
+body's full-text `query` field, and returns zero rows at exit 0. It looks like
+"no data" rather than "wrong flag".
+
+Workaround: use `--json` and pipe to `jq`. To find collisions ahead of time,
+compare `orq <group> <cmd> --help` flags against the global list.
 
 Config files are read from `~/.orq/config.json` (and `/etc/orq/config.json` on
 Unix), using the same key names:
@@ -54,20 +84,32 @@ Unix), using the same key names:
 
 | Variable | Purpose |
 |---|---|
-| `ORQ_API_KEY` | API key for headless / CI auth |
+| `ORQ_API_KEY` | API key for headless / CI auth. **Resource commands only** — not `whoami` / `workspace` |
 | `ORQ_PROFILE` | Default profile |
-| `ORQ_SERVER` | Override generated-command base URL |
-| `ORQ_API_BASE_URL` | Override the auth endpoint (`auth login`, `whoami`, `workspace`) |
+| `ORQ_SERVER` | Base URL for **generated resource** commands. Verified: setting it redirects `projects list` |
+| `ORQ_API_BASE_URL` | Base URL for the **built-in auth** commands only. Verified: has **no effect** on resource commands |
 | `ORQ_V1_BASE_URL` | Override the v1 base URL (local dev) |
 | `ORQ_PROFILE_BASE_URL` | Override the profile endpoint (local dev) |
 | `ORQ_CLI_VERSION` | Version pin for `install.sh` |
 | `ORQ_CLI_INSTALL_DIR` | Install directory for `install.sh` |
 
+`ORQ_SERVER` and `ORQ_API_BASE_URL` are **two different hosts**, not aliases.
+Confirmed by `strings` on the binary, the full set it reads is `ORQ_API_BASE_URL`,
+`ORQ_API_KEY`, `ORQ_AUTHORIZATION`, `ORQ_PROFILE_BASE_URL`, `ORQ_TOKEN`, and the
+`ORQ_V1_*` pair, plus the generic `ORQ_<FLAG>` twins.
+
+`ORQ_WORKSPACE`, `ORQ_WORKSPACE_SLUG`, `ORQ_UI_BASE_URL`, and `ORQ_BASE_URL` are
+**not** CLI variables. They are evaluatorq conventions. Setting them changes
+nothing about `orq` behaviour; only honour them in your own scripts.
+
 ---
 
 ## Built-in commands
 
-These are hand-written, not generated from the spec.
+These are hand-written, not generated from the spec. That distinction is not
+cosmetic: **the built-ins accept only an OAuth session, never `ORQ_API_KEY`.**
+`orq auth whoami` and `orq workspace list` both fail with `Error: you are not
+logged in` when a valid key is exported, and they exit **0** while doing it.
 
 | Command | Purpose |
 |---|---|
@@ -113,8 +155,17 @@ never print it.
 
 ### `doctor --json` shape
 
-`doctor` runs without credentials and exits 0 even when unauthenticated, so it is
-always safe to run first. Abridged real output from a logged-out v4.12.15:
+`doctor` runs without credentials and always exits 0, so it is safe to run first
+— and its exit code tells you nothing. Two limits to know before trusting it:
+
+- **It ignores `ORQ_API_KEY`.** With a valid key exported and `orq agents list`
+  returning real data, `doctor` still reports `auth.status: "missing"`. Its auth
+  block only understands OAuth sessions.
+- **It never reports `ORQ_SERVER` or the resource-command server.** Setting
+  `ORQ_SERVER` changes where requests go but produces no change anywhere in
+  `doctor` output. Use `orq server current` instead.
+
+Abridged real output from a logged-out v4.12.15:
 
 ```json
 {
@@ -244,9 +295,13 @@ orq traces search --stdin < body.json      # --stdin *requires* piped input
 # 3. a file on disk
 orq traces search --from-file body.json
 
-# 4. the spec's first generated example, as a starting point
-orq traces search --example
+# 4. the spec's first generated example, WHERE ONE EXISTS
+orq <group> <cmd> --example
 ```
+
+`--example` is advertised on every body command but is not populated for all of
+them. `orq traces search --example` fails with `no generated body example is
+available for this command`. Do not build a workflow around it.
 
 Nested objects, arrays of objects, and polymorphic unions are not exposed as
 typed flags — pass those as a JSON string:
@@ -282,31 +337,37 @@ Full grammar: `orq help-input`.
 capture.
 
 ```sh
-# active workspace key, bare
+# active workspace key, bare — needs an OAuth session, not an API key
 orq auth whoami --json -q active_workspace_key --raw
 
-# workspace keys and names
+# workspace keys and names — also session-only
 orq workspace list --json -q 'workspaces[].{key: key, name: name}'
 
-# agent id + display name
+# agent id + display name (the id field is _id)
 orq agents list --json -q 'data[].{id: _id, name: display_name}'
 
 # first agent's key, bare
 orq agents list --json -q 'data[0].key' --raw
 
-# failed traces in a window, newest field set only
+# models have no envelope — project the array directly
+orq models list --json -q '[].id'
+```
+
+`traces search` shadows `-q`, so trace projections must go through `jq`:
+
+```sh
+# failed traces in a window
 orq traces search --json \
   --from 2026-07-30T00:00:00Z --to 2026-07-31T00:00:00Z --limit 50 \
   --filters '[{"field":"status","op":"eq","values":["error"]}]' \
-  -q 'data[].{trace: trace_id, name: name, status: status, ms: duration_ms, cost: cost}'
-
-# spans of one trace, slowest first is not built in — project then sort locally
-orq traces list-spans <trace-id> --json \
-  -q 'data[].{span: span_id, name: name, type: type, ms: duration_ms, status: status}'
+  | jq '.data[] | {trace: .trace_id, name, status, ms: .duration_ms, cost}'
 
 # pagination cursor
-orq traces search --json --from ... --to ... -q 'next_page_token' --raw
+orq traces search --json --from ... --to ... | jq -r '.next_page_token'
 ```
+
+There is no working span-level recipe: `traces list-spans` 404s (see
+[Per-trace drill-down](#per-trace-drill-down-is-currently-404)).
 
 ### Comparing against a string in a filter
 
@@ -323,22 +384,34 @@ orq doctor --json -q 'checks[?status!=`"pass"`]'    # JSON literal, note the inn
 Prefer the first. The second needs backticks to survive the shell, which they do
 inside single quotes in `sh`/`bash`/`zsh` but not everywhere.
 
-Response envelopes are consistent: list endpoints return
-`{ "object": "list", "data": [...], "has_more": bool }`, and the trace endpoints
-add `next_page_token`.
+Most list endpoints return `{ "object": "list", "data": [...], "has_more": bool }`.
+Verified on `deployments`, `prompts`, `skills`, `projects`, `datasets`, and
+`knowledge-bases`. Two exceptions:
 
-Useful field names, confirmed against the spec:
+- **`models list` returns a bare JSON array**, with no envelope. A `data[]`
+  projection yields `null`; project with `[]` instead.
+- **`traces search`** adds `meta` and `next_page_token` alongside `data`.
 
-- **trace summaries** (`traces search`, `traces get`): `trace_id`, `root_span_id`,
-  `leading_span_id`, `name`, `operation`, `status`, `started_at`, `ended_at`,
-  `duration_ms`, `project_id`, `identity_id`, `session_id`, `thread_id`,
-  `product`, `providers`, `models`, `agent`, `usage`, `cost`
-- **span summaries** (`traces list-spans`): `trace_id`, `span_id`,
+Field names, confirmed against **live responses** unless marked:
+
+- **trace summaries** (`traces search`): `trace_id`, `id`, `span_id`,
+  `root_span_id`, `leading_span_id`, `parent_id`, `name`, `operation`, `status`,
+  `started_at`, `ended_at`, `start_time`, `end_time`, `duration`, `duration_ms`,
+  `project_id`, `identity_id`, `session_id`, `thread_id`, `product`, `providers`,
+  `models`, `agent`, `usage`, `cost`, `attributes`, `context`, `object`, `type`.
+  Note `id` here is the **root span** id, not the trace id; use `trace_id` for
+  the trace.
+- **agents** (`agents list`): `_id`, `key`, `display_name`, `description`,
+  `role`, `instructions`, `status`, `version`, `path`, `type`, `engine`, `model`,
+  `settings`, `variables`, `metrics`, `skills`, `knowledge_bases`,
+  `memory_stores`, `team_of_agents`, `project_id`, `workspace_id`,
+  `created`, `updated`, `created_by_id`, `updated_by_id`.
+  There is **no top-level `tools`** field — tools live at `settings.tools`. And
+  `model` is an **object** (`{"id": "google-ai/gemini-2.5-flash"}`), not a string.
+- **span summaries** (`traces list-spans`, *spec only*): `trace_id`, `span_id`,
   `parent_span_id`, `name`, `type`, `operation`, `status`, `started_at`,
-  `ended_at`, `duration_ms`, `provider`, `model`, `usage`, `cost`, `has_detail`
-- **agents** (`agents list`): `_id`, `key`, `display_name`, `status`, `version`,
-  `path`, `model`, `role`, `description`, `instructions`, `tools`, `skills`,
-  `knowledge_bases`, `memory_stores`, `created`, `updated`
+  `ended_at`, `duration_ms`, `provider`, `model`, `usage`, `cost`, `has_detail`.
+  Unverifiable in practice — the endpoint 404s, see below.
 
 ---
 
@@ -362,9 +435,40 @@ orq traces list-facet-values <field> --json \
   --from 2026-07-01T00:00:00Z --to 2026-07-31T00:00:00Z   # values + counts for one facet
 ```
 
-`traces aggregate` computes metrics over the same window, and `traces get-span`
-returns one span in full (`list-spans` returns summaries, with `has_detail`
-flagging which spans have more to fetch).
+### Per-trace drill-down is currently 404
+
+Against `my.orq.ai` on v4.12.15, **every per-trace read returns HTTP 404**, using
+ids taken from a `traces search` response seconds earlier:
+
+```
+orq traces get <trace_id>              -> HTTP 404
+orq traces list-spans <trace_id>       -> HTTP 404
+orq traces get-span <trace_id> <span>  -> HTTP 404
+orq request GET /v2/traces/<id>/spans  -> HTTP 404
+```
+
+Reproduced across 5 traces including agent traces, and via `orq request`, so it
+is server-side rather than a CLI routing bug. The endpoints are in the spec; this
+deployment does not serve them.
+
+**Practical consequence:** `traces search` is the only working trace read. Get
+what you need from the search response itself — it already carries `attributes`,
+`usage`, `cost`, `status`, and timing per row. Do not build a workflow that
+searches and then drills into spans; it will 404 at the second step.
+
+Re-check with a single `orq traces get <trace_id> --json` before assuming this is
+still true.
+
+### Aggregation
+
+`traces aggregate` still exists but its own help marks it **deprecated**:
+
+```
+Deprecated: use TelemetryService.Query (POST /v2/telemetry/query,
+source=TRACES, grain=none) instead.
+```
+
+Use `orq telemetry query` for new work.
 
 ---
 
@@ -382,14 +486,21 @@ key="$(orq auth whoami --json -q active_workspace_key --raw)"
 echo "https://my.orq.ai/${key}/traces?query=$(printf 'trace_id:is:%s' "$trace_id" | jq -sRr @uri)"
 ```
 
-Two different hosts are in play, and confusing them produces links that 404:
+Two different hosts are in play, and they are easy to get backwards:
 
-- `https://my.orq.ai` is the **app** (Studio) host, what a browser opens.
-- `https://api.orq.ai` is the CLI's default **API** base, confirmed by
-  `orq doctor --json -q 'config.api_base_url'`.
+| Host | Used by | Reported by |
+|---|---|---|
+| `https://my.orq.ai` | **generated resource commands** (agents, traces, projects, …) and the browser/Studio UI | `orq server current` |
+| `https://api.orq.ai` | **built-in auth commands** only (`auth login`, `whoami`, `workspace`) | `orq doctor -q 'config.api_base_url'` |
 
-Override the app host with `ORQ_UI_BASE_URL` / `ORQ_BASE_URL`; override the API
-host with `--server` or `ORQ_API_BASE_URL`.
+So `doctor`'s `api_base_url` is *not* where your `agents list` request went. On a
+stock install `orq server current` returns `https://my.orq.ai`, and that is the
+host every command in this document (except the auth built-ins) talks to.
+
+Override the resource host with `--server` or `ORQ_SERVER`. Override the auth host
+with `--api-base-url` or `ORQ_API_BASE_URL`. They are not interchangeable:
+setting `ORQ_API_BASE_URL` to a bogus value leaves `projects list` working, while
+`ORQ_SERVER` to a bogus value breaks it immediately.
 
 **Do not shell out to `orq` from library code to get the slug.** evaluatorq tried
 that and removed it — the subprocess blocks and can 404. Prefer, in order: a URL
@@ -407,9 +518,23 @@ When an endpoint has no generated command, or a newer API surfaced after the
 installed CLI was built:
 
 ```sh
-orq request GET /v2/traces/fields --json
+orq request GET /v2/traces/fields --json </dev/null
 orq request POST /v2/traces/search --json < body.json
 ```
 
-It reuses the configured profile, auth, and server, so it respects
-`--profile` and `--server` like everything else.
+It reuses the configured profile, auth, and server, so it respects `--profile`
+and `--server` like everything else.
+
+**It does not return the bare response body.** `orq request` wraps everything:
+
+```sh
+orq request GET /v2/traces/fields --json -q 'keys(@)' </dev/null
+# [ "body", "ok", "status", "headers" ]
+```
+
+So a projection carried over from a generated command has to be re-rooted:
+`data[]` becomes `body.data[]`. Forgetting this returns `null` at exit 0, which
+reads as "empty result" rather than "wrong path".
+
+Redirect stdin from `/dev/null` on GETs. `orq request` can block waiting on an
+open stdin when no body is piped.
