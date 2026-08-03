@@ -499,7 +499,14 @@ Deprecated: use TelemetryService.Query (POST /v2/telemetry/query,
 source=TRACES, grain=none) instead.
 ```
 
-Use `orq telemetry query` for new work.
+Use `orq telemetry query` for new work. It is a different shape, not a drop-in:
+its help describes a "unified query envelope" taking a **source**, a **compute
+list**, and a time range, with optional grain, group-by, and filters, returning
+either a time series or one aggregate row per group. Start from
+`orq telemetry query --help`.
+
+*Not exercised during authoring — the deprecation notice and the envelope
+description are from the CLI's own help text, not from a run.*
 
 ---
 
@@ -517,21 +524,37 @@ key="$(orq auth whoami --json -q active_workspace_key --raw)"
 echo "https://my.orq.ai/${key}/traces?query=$(printf 'trace_id:is:%s' "$trace_id" | jq -sRr @uri)"
 ```
 
-Two different hosts are in play, and they are easy to get backwards:
+### Which host am I actually talking to?
 
-| Host | Used by | Reported by |
+**Do not memorise a host. Ask.** There are two independent settings, and one of
+them moves when you log in:
+
+```sh
+orq server current --json                        # resource commands
+orq doctor --json -q 'config.api_base_url'       # built-in auth commands
+```
+
+`orq server current` returns `server`, `server_index`, and `server_override`.
+Read `server_override` first: **`orq auth login` persists an override to the host
+it authenticated against**, so the resource host is not fixed. Observed on the
+same machine, v4.12.15:
+
+| State | `server` | `server_override` |
 |---|---|---|
-| `https://my.orq.ai` | **generated resource commands** (agents, traces, projects, …) and the browser/Studio UI | `orq server current` |
-| `https://api.orq.ai` | **built-in auth commands** only (`auth login`, `whoami`, `workspace`) | `orq doctor -q 'config.api_base_url'` |
+| Before login (API key only) | `https://my.orq.ai` | `""` (generated default) |
+| After `orq auth login` | `https://api.orq.ai` | `https://api.orq.ai` |
 
-So `doctor`'s `api_base_url` is *not* where your `agents list` request went. On a
-stock install `orq server current` returns `https://my.orq.ai`, and that is the
-host every command in this document (except the auth built-ins) talks to.
+That is also how self-hosted works: authenticate against a customer host once and
+every later command on that profile follows, with no `--server` needed.
 
-Override the resource host with `--server` or `ORQ_SERVER`. Override the auth host
-with `--api-base-url` or `ORQ_API_BASE_URL`. They are not interchangeable:
-setting `ORQ_API_BASE_URL` to a bogus value leaves `projects list` working, while
-`ORQ_SERVER` to a bogus value breaks it immediately.
+`https://my.orq.ai` is additionally the **Studio/browser** host — the one that
+belongs in the app URLs above — regardless of what the CLI is pointed at.
+
+Override the resource host with `--server` or `ORQ_SERVER`; the auth host with
+`--api-base-url` or `ORQ_API_BASE_URL`. They are not interchangeable: a bogus
+`ORQ_API_BASE_URL` leaves `projects list` working, while a bogus `ORQ_SERVER`
+breaks it immediately. `orq server set` / `use` / `clear` persist or drop the
+override.
 
 **Do not shell out to `orq` from library code to get the slug.** evaluatorq tried
 that and removed it — the subprocess blocks and can 404. Prefer, in order: a URL

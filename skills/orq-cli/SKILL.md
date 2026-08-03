@@ -40,8 +40,11 @@ between releases — treat `--help` as the source of truth, never your memory.
   flow that needs a browser. If nobody can complete it, stop and say so —
   `ORQ_API_KEY` is **not** a substitute for the commands that need a session
   (see the auth matrix below).
-- **NEVER** assume which workspace is active. A command silently reads the wrong
-  workspace's data if the session points elsewhere.
+- **NEVER** assume which workspace is active. `ORQ_API_KEY` **overrides an active
+  OAuth session**, and `.env` autoloads, so a stray key in a project file
+  silently redirects every read to that key's workspace while `whoami` keeps
+  reporting the one you logged into. Confirm with a count before trusting data
+  (see "Which workspace am I really reading?").
 - **NEVER** echo the contents of `~/.orq/sessions/*.json`,
   `~/.orq/credentials.json`, or `~/.orq/config.json`. They hold refresh tokens
   and API keys.
@@ -55,8 +58,11 @@ between releases — treat `--help` as the source of truth, never your memory.
 - **ALWAYS** check `-q` actually works on the command you are using. On commands
   whose request body has a `query` field, the generated `--query` flag shadows
   the global `-q`, and the failure modes differ (see "When `-q` is unavailable").
-- **ALWAYS** prefer `-q` (JMESPath) over piping to `jq` where it is available. It
-  runs inside the CLI, so it works on machines without `jq` installed.
+- **ALWAYS** prefer `-q` (JMESPath) over piping to `jq` **when `-q` works on that
+  command and can express the projection**. It runs inside the CLI, so it needs
+  no `jq` installed. Reach for `jq` without hesitation when `-q` is shadowed, when
+  you need something JMESPath lacks (`@uri` encoding, text munging), or when
+  reading a file rather than a command's output.
 
 **Why these constraints:** the generated command surface is large and drifts
 between versions, so guessed flags fail in ways that look like auth problems.
@@ -226,6 +232,34 @@ set they fail with `Error: you are not logged in`, at exit 0. So workspace
 selection is not available to key-only setups at all, and neither is reading the
 active key.
 
+### Which workspace am I really reading?
+
+`ORQ_API_KEY` **wins over an active session** for resource commands. Verified: a
+deliberately invalid `ORQ_API_KEY` alongside a healthy session returns HTTP 401
+rather than falling back to the session.
+
+That produces the nastiest failure in this skill, because nothing errors:
+
+- `orq auth whoami` reports the workspace you logged into — it only reads the
+  session.
+- `orq agents list` reads the **key's** workspace — a different one.
+- `.env` and `.env.local` autoload from the working directory, so the key can
+  arrive without anyone setting it in this shell.
+
+Observed on one machine: session on `orq-research` returned **8** agents; a key
+for another workspace, same command, returned **109**.
+
+Check the two against each other rather than trusting either:
+
+```sh
+[ -n "${ORQ_API_KEY:-}" ] && echo "key present — resource reads use ITS workspace, not the session's"
+orq auth whoami --json -q active_workspace_key --raw    # session's workspace
+orq agents list --json -q 'length(data)' --raw          # count from whatever actually authenticated
+```
+
+If a count looks wrong for the workspace you think you are in, unset
+`ORQ_API_KEY` and re-run before investigating anything else.
+
 Resolve the active key, when a session exists:
 
 ```sh
@@ -385,10 +419,12 @@ file without editing it. Run `orq help-input` for the full shorthand grammar.
 orq default-format json
 ```
 
-This writes to `~/.orq/config.json` and changes the default output format for
-**every** `orq` invocation by that user, including their interactive shell and
-other agents. Prefer passing `--json` per command; only persist it when the user
-asks.
+Per the CLI's own docs this writes to `~/.orq/config.json` and changes the default
+output format for **every** `orq` invocation by that user, including their
+interactive shell and other agents. *Documented, not observed — deliberately not
+run during authoring, since testing it would have mutated the author's
+environment.* Treat it as machine-wide until proven otherwise: pass `--json` per
+command, and only persist a default when the user explicitly asks.
 
 ## Troubleshooting
 

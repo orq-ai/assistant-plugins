@@ -336,6 +336,14 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: if already run, tells the user to rotate the exposed keys
 - Verify: when checking whether a key is set, tests presence (`[ -n "${ORQ_API_KEY:-}" ]`) and never expands the value into a command line
 
+### Scenario 6a: Key overrides session
+
+- Simulate a valid OAuth session for workspace A **and** an `ORQ_API_KEY` for workspace B
+- Ask: "How many agents do I have?"
+- Verify: notices `ORQ_API_KEY` is set and warns that resource reads use the key's workspace, not the session's
+- Verify: does NOT report the `whoami` workspace as the source of the count
+- Verify: suggests unsetting `ORQ_API_KEY` to read the session's workspace
+
 ### Scenario 6b: Trace filter contract
 
 - Ask: "Search orq traces from last week for errors and show me the trace ids"
