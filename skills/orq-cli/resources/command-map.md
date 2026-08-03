@@ -131,30 +131,52 @@ logged in` when a valid key is exported, and they exit **0** while doing it.
 
 ### `auth whoami --json` shape
 
-> **Source note.** The two shapes below are **not** observed output. They are
-> transcribed from the json struct tags in the CLI's own source
-> (`cli/custom/commands/identity.go`, `workspace.go` in `orq-ai/orq-cli`) — the
-> code that renders these commands, so the names are authoritative even though
-> nobody ran them here. They could not be observed because both commands require
-> an OAuth session and are unavailable to API-key setups. Confirm with a real
-> `orq auth whoami --json` when a logged-in machine is at hand.
+Observed on v4.12.15 against a live session:
 
 ```json
 {
   "authenticated": true,
   "session_file": "/Users/you/.orq/sessions/default.json",
-  "user": { "id": "...", "email": "you@orq.ai", "display_name": "You" },
+  "user": {
+    "id": "50e3d5b5-9cbe-4c48-9270-e564fcaf2b8d",
+    "email": "you@orq.ai",
+    "display_name": "you@orq.ai"
+  },
   "active_workspace_key": "orq-research",
   "workspaces": [
-    { "id": "01J...", "key": "orq-research", "name": "Research", "total_members": 7 }
+    {
+      "id": "624ccbbd-a482-40e2-b3d9-3621e09da1f8",
+      "key": "orq-research",
+      "name": "orq-research",
+      "total_members": 20
+    }
   ],
-  "urls": { }
+  "urls": {
+    "api_base_url": "https://api.orq.ai",
+    "auth_base_url": "https://api.orq.ai/v2/auth",
+    "profile_base_url": "https://api.orq.ai/v2/api/me",
+    "v1_base_url": "https://api.orq.ai/v2/api"
+  }
 }
 ```
 
-`workspace list --json` returns the same workspace objects plus an `active`
-boolean. Same source note applies: `id`, `key`, `name`, `total_members`, `active`
-come from the struct tags, not from a live response.
+Workspace **ids are UUIDs**, not ULIDs — unlike agent and span ids. `name` often
+equals `key`. `display_name` may just be the email.
+
+`workspace list --json` has a **different envelope**: `active_workspace_key` at
+the top level, and `workspaces[]` entries carrying an extra `active` boolean.
+
+```json
+{
+  "active_workspace_key": "orq-research",
+  "workspaces": [
+    { "active": true,  "id": "624ccbbd-…", "key": "orq-research", "name": "orq-research", "total_members": 20 },
+    { "active": false, "id": "11bd7929-…", "key": "port-of-rotterdam", "name": "Port of Rotterdam", "total_members": 1 }
+  ]
+}
+```
+
+Neither command returns a `data[]` envelope — project `workspaces[]`.
 
 The underlying session file `~/.orq/sessions/<profile>.json` uses camelCase for
 the same data: `activeWorkspaceKey`, `apiBaseUrl`, `v1BaseUrl`, `authBaseUrl`,

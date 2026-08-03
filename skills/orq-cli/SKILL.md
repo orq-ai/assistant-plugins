@@ -45,6 +45,13 @@ between releases — treat `--help` as the source of truth, never your memory.
 - **NEVER** echo the contents of `~/.orq/sessions/*.json`,
   `~/.orq/credentials.json`, or `~/.orq/config.json`. They hold refresh tokens
   and API keys.
+- **NEVER** print `$ORQ_API_KEY` to check whether it is set. Test presence
+  without expanding the value, and beware that an unquoted expansion inside a
+  larger command still lands in the transcript:
+
+  ```sh
+  [ -n "${ORQ_API_KEY:-}" ] && echo "ORQ_API_KEY: set" || echo "ORQ_API_KEY: unset"
+  ```
 - **ALWAYS** check `-q` actually works on the command you are using. On commands
   whose request body has a `query` field, the generated `--query` flag shadows
   the global `-q`, and the failure modes differ (see "When `-q` is unavailable").
@@ -166,6 +173,16 @@ returns data while `orq auth whoami` prints `Error: you are not logged in` and
   Confirm by running an actual resource command before chasing auth.
 - Anything needing the workspace key requires an interactive login. There is no
   key-based path to it.
+- **Sessions are short-lived.** `orq doctor` carries a `bootstrap_token` check
+  whose `details.expires_at` is roughly an hour out from login. When it lapses on
+  a machine that also has `ORQ_API_KEY` set, `whoami` and `workspace *` start
+  reporting "not logged in" while resource commands keep working — the same
+  split as a key-only setup, arriving mid-session. Suspect this before suspecting
+  a wrong `--profile`:
+
+  ```sh
+  orq doctor --json -q "checks[?id=='bootstrap_token'].details.expires_at" --raw
+  ```
 
 ```sh
 orq auth login                              # interactive OAuth device flow
@@ -199,7 +216,10 @@ orq workspace use <key>          # persists in the session
 
 Workspace entries carry `id`, `key`, `name`, `total_members`, `active`. The
 **key** is the human-readable slug (for example `orq-research`) that appears in
-app URLs; the **id** is a ULID. Deep-links want the key.
+app URLs; the **id** is a UUID (`624ccbbd-a482-…`). Deep-links want the key — a
+UUID in a Studio route gives an inaccessible page even when the API can read the
+entity. Note resource ids elsewhere (agents, spans) are ULIDs; workspaces are the
+exception.
 
 **Both of these commands require an OAuth session.** With only `ORQ_API_KEY`
 set they fail with `Error: you are not logged in`, at exit 0. So workspace
@@ -302,6 +322,45 @@ orq traces search --json --from ... --to ... | jq '.data[].trace_id'
 
 This is the one case where the prefer-`-q`-over-`jq` rule does not apply.
 
+### The trace filter contract
+
+`--filters` is the other thing agents reliably get wrong on `traces search`. Do
+not guess the shape. It is `field` / `op` / `values`, where **`values` is always
+an array, even for `eq`**:
+
+```sh
+orq traces search --json \
+  --from 2026-07-27T00:00:00Z --to 2026-08-03T00:00:00Z --limit 100 \
+  --filters '[{"field":"status","op":"eq","values":["error"]}]' \
+  | jq -r '.data[].trace_id'
+```
+
+The two near-miss spellings both fail, and their errors do not point at the real
+problem:
+
+```
+"operator" instead of "op" ->
+  validation error: filters[0].op: does not match regex pattern
+  `^(eq|neq|in|not_in|gt|gte|lt|lte|between|contains|exists|not_exists)$`
+
+"value" instead of "values" ->
+  invalid filter: "status" expects exactly one value
+```
+
+That second message is actively misleading: it says "exactly one value" when the
+fix is to wrap the one value in an array under the plural key.
+
+Valid operators, from the API's own validation regex: `eq`, `neq`, `in`,
+`not_in`, `gt`, `gte`, `lt`, `lte`, `between`, `contains`, `exists`,
+`not_exists`.
+
+Discover field names rather than guessing them:
+
+```sh
+orq traces list-fields --json     # queryable fields
+orq traces list-facets --json     # facetable fields
+```
+
 ### Request bodies
 
 Commands that take a body accept it several ways, which compose:
@@ -380,8 +439,9 @@ will not authenticate the CLI even though the file loaded.
 
 - A **profile** is a named credential set with its own session file and API key.
   Everything is profile-scoped: auth, active workspace, and server host.
-- A **workspace key** is the slug in app URLs; a workspace **id** is a ULID. The
+- A **workspace key** is the slug in app URLs; a workspace **id** is a UUID. The
   CLI accepts the key for `workspace use` and reports both in `workspace list`.
+  Do not put the UUID in an app URL.
 - **TOON** is the CLI's default human-facing output format. It is not JSON and
   should never be parsed.
 - Generated commands mirror the OpenAPI spec one-to-one, so a command group maps
