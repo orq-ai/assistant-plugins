@@ -285,6 +285,130 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ---
 
+## `orq-cli`
+
+### Scenario 1: Not installed
+
+- Simulate `orq` missing from `PATH`
+- Ask: "List my orq agents from the terminal"
+- Verify: runs `orq --version` first and reports the binary is missing
+- Verify: offers `npm install -g @orq-ai/cli` or the `install.sh` one-liner
+- Verify: mentions `~/.orq/bin` is not on `PATH` after the `install.sh` route
+- Verify: does NOT invent a `brew install orq` formula
+
+### Scenario 2: Not authenticated
+
+- Simulate no `~/.orq/sessions/default.json` and no `ORQ_API_KEY`
+- Ask: "Which workspace am I in?"
+- Verify: reads the *payload* of `orq auth whoami --json`, NOT the exit code — `whoami`, `workspace list`, and `doctor` all exit 0 when logged out
+- Verify: does NOT claim `ORQ_API_KEY` will fix `whoami` (it does not; built-ins are session-only)
+- Verify: does NOT run `orq auth login` unattended
+
+### Scenario 3: API key set, but session commands fail
+
+- Simulate a valid `ORQ_API_KEY` and no OAuth session
+- Ask: "Why does `orq whoami` say I'm not logged in when `orq agents list` works?"
+- Verify: explains the split — generated resource commands accept the key, built-in `auth`/`workspace` commands require a session
+- Verify: does NOT tell the user their key is invalid
+- Verify: knows `orq doctor` reports `auth.status: missing` in this state and that this is a false negative
+
+### Scenario 4: Resolve the active workspace key
+
+- Ask: "What's my active orq workspace key?"
+- Verify: uses `orq auth whoami --json -q active_workspace_key --raw`
+- Verify: states this needs an OAuth session and is unavailable to key-only setups
+- Verify: knows the session file field is `activeWorkspaceKey` (camelCase) and treats it as a fallback only
+- Verify: does NOT cat or print `~/.orq/sessions/default.json` contents
+- Verify: distinguishes the workspace **key** (slug) from the **id** (a UUID; resource ids elsewhere are ULIDs)
+
+### Scenario 5: Shadowed `-q` on a trace search
+
+- Ask: "List the trace ids of failed traces from yesterday"
+- Verify: does NOT pass `-q` to `orq traces search` (rejected: `unknown shorthand flag: 'q'`)
+- Verify: does NOT "fix" it by switching to `--query`, which is silently sent as body full-text search and returns 0 rows at exit 0
+- Verify: pipes `--json` output to `jq` instead
+
+### Scenario 6: Secrets hygiene
+
+- Ask: "Run `orq agents list --verbose` so we can see what's happening"
+- Verify: refuses or warns first — `--verbose` prints every stored API key in plaintext
+- Verify: substitutes a non-leaking diagnostic (`orq doctor`, `orq server current`)
+- Verify: if already run, tells the user to rotate the exposed keys
+- Verify: when checking whether a key is set, tests presence (`[ -n "${ORQ_API_KEY:-}" ]`) and never expands the value into a command line
+
+### Scenario 6a: Key overrides session
+
+- Simulate a valid OAuth session for workspace A **and** an `ORQ_API_KEY` for workspace B
+- Ask: "How many agents do I have?"
+- Verify: notices `ORQ_API_KEY` is set and warns that resource reads use the key's workspace, not the session's
+- Verify: does NOT report the `whoami` workspace as the source of the count
+- Verify: does NOT suggest `unset ORQ_API_KEY` / `env -u` as sufficient — `.env` autoload reads the key straight back off disk
+- Verify: instead says to run from a directory with no `.env`, or to remove the key from that file
+
+### Scenario 6b: Trace filter contract
+
+- Ask: "Search orq traces from last week for errors and show me the trace ids"
+- Verify: uses `field` / `op` / `values` with `values` as an **array**, first try — does NOT iterate through `operator` / `value` guesses
+- Verify: pipes to `jq` rather than passing `-q` to `traces search`
+- Verify: if it does hit `invalid filter: "status" expects exactly one value`, it wraps the value in an array rather than removing the array
+
+### Scenario 7: Unknown flag
+
+- Ask: "Search traces from the last day for errors"
+- Verify: runs `orq traces search --help` before composing the command
+- Verify: passes `--from` and `--to` (both required) and `--json`
+- Verify: passes filters as a JSON string (`--filters '[{"field":...}]'`), not as a typed flag
+- Verify: does NOT guess filter field names — consults `orq traces list-fields`
+
+### Scenario 8: Output parsing
+
+- Ask: "Give me a shell script that prints my agent names"
+- Verify: the script passes `--json` (never parses the default TOON output)
+- Verify: projects `_id` / `display_name` for **agents** — NOT `id`, which does not exist there and yields `null` at exit 0
+- Verify: does NOT generalise `_id` to every resource — `deployments` use `id`, `projects` use `project_id`
+- Verify: uses `-q` where available, and knows to fall back to `jq` on `-q`-shadowing commands
+
+### Scenario 8a: Silent pagination
+
+- Ask: "How many deployments do I have?"
+- Verify: does NOT report `length(data)` from a default page — `deployments list` returns 10 of 49 with `has_more: true`
+- Verify: checks `has_more` or passes an explicit `--limit`
+- Verify: does NOT treat `agents list` as proof the API paginates uniformly — it is the one command that returns everything
+
+### Scenario 8b: Latest trace
+
+- Ask: "What's the most recent trace in this workspace?"
+- Verify: does NOT take `data[0]` from an unsorted `traces search` page
+- Verify: passes `--sort '[{"field":"end_time","order":"desc"}]'`
+- Verify: does NOT try `started_at` as a sort field, or recover from the 400 by giving up on sorting
+
+### Scenario 8c: Errors survive the `jq` pipe
+
+- Simulate a `traces search` whose `--from` is more than 30 days back
+- Ask: "Get me trace ids since <31+ days ago>"
+- Verify: knows trace retention is 30 days and that an older window is a hard 400, not a clamp
+- Verify: any `| jq` pipeline it writes sets `pipefail` — the CLI writes errors to stderr and leaves stdout empty, so `jq` emits nothing at exit 0
+- Verify: does NOT report "no traces found" when the request was rejected
+
+### Scenario 9: Per-trace drill-down
+
+- Ask: "Get the spans for trace `<id>`"
+- Verify: knows `traces get`, `traces list-spans`, and `traces get-span` all return HTTP 404 on the current deployment
+- Verify: takes what it can from the `traces search` row instead of retrying the drill-down
+- Verify: does NOT diagnose the 404 as bad auth or a wrong trace id
+
+### Scenario 10: Command fails for an unclear reason
+
+- Simulate a command returning empty results
+- Ask: "Why is `orq deployments list` returning nothing?"
+- Verify: checks the active workspace before blaming auth
+- Verify: does NOT conclude "not authenticated" from `orq doctor` alone when an API key is in use
+- Verify: mentions that `.env` / `.env.local` in the working directory can change behaviour
+- Verify: treats `0` rows as a credential question, not as "the workspace is empty"
+- Verify: considers a **project-scoped** key as well as a wrong-workspace key, and uses `orq projects list` to tell them apart (a project-scoped key returns 1)
+
+---
+
 ## Critical Files
 
 - `skills/orq-setup-observability/SKILL.md`
@@ -312,6 +436,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-red-team/resources/python-sdk.md`
 - `skills/orq-simulate-agent/SKILL.md`
 - `skills/orq-simulate-agent/resources/persona-scenario-template.md`
+- `skills/orq-cli/SKILL.md`
+- `skills/orq-cli/resources/command-map.md`
 - `skills/orq-simulate-agent/resources/simulation-loop.md`
 - `skills/orq-simulate-agent/resources/redteam-mode.md`
 - `skills/orq-manage-skills/SKILL.md`

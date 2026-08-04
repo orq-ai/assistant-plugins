@@ -11,6 +11,7 @@ These skills are:
  - orq-analyze-trace-failures -> "skills/orq-analyze-trace-failures/SKILL.md"
  - orq-build-agent -> "skills/orq-build-agent/SKILL.md"
  - orq-build-evaluator -> "skills/orq-build-evaluator/SKILL.md"
+ - orq-cli -> "skills/orq-cli/SKILL.md"
  - orq-evaluator-alignment -> "skills/orq-evaluator-alignment/SKILL.md"
  - orq-compare-agents -> "skills/orq-compare-agents/SKILL.md"
  - evaluatorq -> "skills/evaluatorq/SKILL.md"
@@ -52,6 +53,8 @@ orq-setup-observability: `Set up orq.ai observability for LLM applications — A
 orq-red-team: `Run adversarial red teaming against deployed orq agents or static datasets using the orq red teaming library — adaptive attacks, OWASP Agentic/LLM category coverage, ASR reporting. Use when asked to run a red team, test an agent for vulnerabilities, or check OWASP coverage. Do NOT use when you only need evaluators (use orq-build-evaluator) or trace analysis (use orq-analyze-trace-failures).`
 
 orq-manage-skills: `Manage orq.ai Skills (the platform entity, formerly Snippets — distinct from this repo's code-assistant skills) end-to-end: list, get, create, update, retire (tag as retired), and delete Skills via the /v2/skills API. Covers authoring guidance (display_name, description, tags, project_id, path), how Skills get consumed via {{skill.<display_name>}} (canonical) and {{snippet.<display_name>}} (backward-compat alias) placeholders in prompts and agent instructions, the reference-scan-before-delete workflow, the rename-breaks-references warning, and the +NEVER+ prose anti-pattern. Use when the user wants to create, audit, edit, or retire orq.ai Skills.`
+
+orq-cli: `Drive the orq command-line interface — verify the install, authenticate, select a workspace, resolve the active workspace key, and run read/write commands against any orq.ai resource with JSON output and JMESPath queries. Use when a task needs shell access to orq.ai, when a script or CI job must read workspace data, or when the CLI itself is misbehaving (orq doctor). Do NOT use for writing application code that calls orq.ai (use orq-invoke-deployment) or for guided evaluation workflows (use orq-run-experiment).`
 
 orq-simulate-agent: `Run multi-turn agent simulations using evaluatorq's first-class simulation primitives (simulate(), generate_and_simulate(), wrap_simulation_agent()). Drive an agent under test with a UserSimulatorAgent and built-in JudgeAgent that terminates on goal achievement or rule violations. Use when generating realistic multi-turn data, stress-testing conversational agents, or producing seed transcripts. Do NOT use when real production conversations exist (use orq-analyze-trace-failures) or for adversarial red-teaming sweeps (call evaluatorq.red_team() directly).`
 
