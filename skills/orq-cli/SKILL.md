@@ -258,8 +258,12 @@ That produces the nastiest failure in this skill, because nothing errors:
 
 A key can also be scoped to a single **project inside** a workspace, which is a
 third case beyond session-versus-key. Observed on one machine: the session on
-`orq-research` read **109** agents and **25** projects, while a project-scoped
+`orq-research` read **109** agents and **56** projects, while a project-scoped
 key from a repo `.env` read **0** and **1** for the same commands.
+
+(Both session figures need an explicit `--limit` to obtain — `projects list`
+alone returns 25 of the 56. See "Lists truncate silently" below; the trap
+applies to this diagnostic too.)
 
 **The dangerous direction is too few rows, not too many.** `0` reads as "this
 workspace is empty" and gets accepted and reported; an implausibly large count
@@ -270,9 +274,12 @@ Use `orq projects list` as the canary, not `agents list`:
 
 ```sh
 [ -n "${ORQ_API_KEY:-}" ] && echo "key present — resource reads use ITS workspace, not the session's"
-orq auth whoami --json -q active_workspace_key --raw     # session's workspace
-orq projects list --json -q 'length(data)' --raw         # scope of whatever actually authenticated
+orq auth whoami --json -q active_workspace_key --raw           # session's workspace
+orq projects list --json --limit 200 -q 'length(data)' --raw   # scope of whatever authenticated
 ```
+
+The `--limit` is not decoration: without it this command returns 25 regardless of
+how many projects exist, which is the trap two sections down.
 
 `agents list` is a poor canary here: it is the one list command that returns
 everything without pagination, so it cannot expose the truncation trap in Phase 5
@@ -378,7 +385,7 @@ complete:
 | `deployments` | 10 | 50 | truncates |
 | `prompts` | 10 | 200 | truncates |
 | `datasets` | 10 | 200 | truncates |
-| `projects` | 25 | — | truncates |
+| `projects` | 25 | 200 | truncates |
 | `knowledge-bases` | 25 | 300 | truncates |
 | `agents` | — | 200 | returns all, no `has_more` |
 
@@ -440,11 +447,19 @@ not guess the shape. It is `field` / `op` / `values`, where **`values` is always
 an array, even for `eq`**:
 
 ```sh
+set -o pipefail
+# -v-7d is BSD/macOS. On GNU/Linux: date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ
 orq traces search --json \
-  --from 2026-07-27T00:00:00Z --to 2026-08-03T00:00:00Z --limit 100 \
+  --from "$(date -u -v-7d +%Y-%m-%dT%H:%M:%SZ)" --to "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --limit 100 \
+  --sort '[{"field":"end_time","order":"desc"}]' \
   --filters '[{"field":"status","op":"eq","values":["error"]}]' \
   | jq -r '.data[].trace_id'
 ```
+
+The window is computed rather than hard-coded so it cannot age past the 30-day
+retention boundary, and the sort is explicit because results are otherwise
+unordered. Both are covered below.
 
 The two near-miss spellings both fail, and their errors do not point at the real
 problem:
