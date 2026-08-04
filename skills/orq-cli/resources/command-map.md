@@ -1,8 +1,9 @@
 # orq CLI Command Map
 
-Command tree captured from `orq` **v4.12.15**. The CLI is generated from the
-orq.ai OpenAPI spec, so this drifts between releases — `orq <group> --help` wins
-over anything written here.
+Command tree captured from `orq` **v4.12.15**; pagination defaults, identifier
+conventions, trace sort and trace retention re-confirmed on **v4.12.16**. The CLI
+is generated from the orq.ai OpenAPI spec, so this drifts between releases —
+`orq <group> --help` wins over anything written here.
 
 To re-derive the tree after a CLI upgrade, instead of editing it by hand. Run it
 with `bash` explicitly — under `zsh` (the macOS default) unquoted parameters are
@@ -374,7 +375,7 @@ orq auth whoami --json -q active_workspace_key --raw
 # workspace keys and names — also session-only
 orq workspace list --json -q 'workspaces[].{key: key, name: name}'
 
-# agent id + display name (the id field is _id)
+# agent id + display name (agents use _id; deployments use id, projects project_id)
 orq agents list --json -q 'data[].{id: _id, name: display_name}'
 
 # first agent's key, bare
@@ -439,10 +440,21 @@ Field names, confirmed against **live responses** unless marked:
   `created`, `updated`, `created_by_id`, `updated_by_id`.
   There is **no top-level `tools`** field — tools live at `settings.tools`. And
   `model` is an **object** (`{"id": "google-ai/gemini-2.5-flash"}`), not a string.
+- **deployments** (`deployments list`): `id`, `created`, `updated`, plus the
+  deployment body. Note the identifier is **`id`** — there is no `_id` here, and
+  projecting `_id` gives a column of `null` at exit 0.
+- **projects** (`projects list`): `project_id`, `workspace_id`, `created_at`,
+  `updated_at`, `created_by_id`, `updated_by_id`. Two departures from every other
+  resource: the identifier is **`project_id`** (neither `id` nor `_id`), and the
+  timestamps are **`created_at` / `updated_at`**, not `created` / `updated`.
 - **span summaries** (`traces list-spans`, *spec only*): `trace_id`, `span_id`,
   `parent_span_id`, `name`, `type`, `operation`, `status`, `started_at`,
   `ended_at`, `duration_ms`, `provider`, `model`, `usage`, `cost`, `has_detail`.
   Unverifiable in practice — the endpoint 404s, see below.
+
+There is no universal identifier convention: `_id` for agents, prompts, datasets
+and knowledge-bases; `id` for deployments; `project_id` for projects. Check the
+resource before projecting.
 
 ---
 

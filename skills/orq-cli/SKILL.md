@@ -45,6 +45,16 @@ between releases — treat `--help` as the source of truth, never your memory.
   silently redirects every read to that key's workspace while `whoami` keeps
   reporting the one you logged into. Confirm with a count before trusting data
   (see "Which workspace am I really reading?").
+- **NEVER** report a count or a "complete" list from a default page. Most list
+  commands cap at 10 or 25 and set `has_more: true` with nothing in the output
+  to signal it. Check `has_more` or pass `--limit` (see "Lists truncate
+  silently").
+- **NEVER** treat an empty or small result as an answer. `0` rows is the
+  characteristic symptom of a project-scoped key or a wrong workspace, and it
+  reads exactly like a legitimately empty workspace. Rule out credentials first.
+- **NEVER** take `data[0]` from `traces search` as the latest trace. Results are
+  unordered; only `[{"field":"end_time","order":"desc"}]` sorts, and nothing else
+  is accepted.
 - **NEVER** echo the contents of `~/.orq/sessions/*.json`,
   `~/.orq/credentials.json`, or `~/.orq/config.json`. They hold refresh tokens
   and API keys.
@@ -246,19 +256,40 @@ That produces the nastiest failure in this skill, because nothing errors:
 - `.env` and `.env.local` autoload from the working directory, so the key can
   arrive without anyone setting it in this shell.
 
-Observed on one machine: session on `orq-research` returned **8** agents; a key
-for another workspace, same command, returned **109**.
+A key can also be scoped to a single **project inside** a workspace, which is a
+third case beyond session-versus-key. Observed on one machine: the session on
+`orq-research` read **109** agents and **25** projects, while a project-scoped
+key from a repo `.env` read **0** and **1** for the same commands.
 
-Check the two against each other rather than trusting either:
+**The dangerous direction is too few rows, not too many.** `0` reads as "this
+workspace is empty" and gets accepted and reported; an implausibly large count
+at least invites a second look. Treat an empty or surprisingly small list as a
+credential question until proven otherwise.
+
+Use `orq projects list` as the canary, not `agents list`:
 
 ```sh
 [ -n "${ORQ_API_KEY:-}" ] && echo "key present — resource reads use ITS workspace, not the session's"
-orq auth whoami --json -q active_workspace_key --raw    # session's workspace
-orq agents list --json -q 'length(data)' --raw          # count from whatever actually authenticated
+orq auth whoami --json -q active_workspace_key --raw     # session's workspace
+orq projects list --json -q 'length(data)' --raw         # scope of whatever actually authenticated
 ```
 
-If a count looks wrong for the workspace you think you are in, unset
-`ORQ_API_KEY` and re-run before investigating anything else.
+`agents list` is a poor canary here: it is the one list command that returns
+everything without pagination, so it cannot expose the truncation trap in Phase 5
+either. `projects list` separates the cases sharply — a project-scoped key
+returns `1`.
+
+**`unset ORQ_API_KEY` does not clear the key.** `.env` and `.env.local` autoload
+from the working directory, so the CLI reads it straight back off disk. `unset`,
+`env -u ORQ_API_KEY`, and `ORQ_API_KEY=` are each insufficient on their own:
+
+```sh
+cd repo-with-env && env -u ORQ_API_KEY orq projects list --json -q 'length(data)' --raw   # 1
+cd /tmp          && env -u ORQ_API_KEY orq projects list --json -q 'length(data)' --raw   # 25
+```
+
+To actually read as the session, run from a directory with no `.env`, or remove
+the key from that file. Nothing warns you which one applied.
 
 Resolve the active key, when a session exists:
 
@@ -320,10 +351,47 @@ orq agents list --json -q 'data[].{id: _id, name: display_name}'
 orq agents list --json -q 'data[0]._id' --raw   # bare scalar, no quotes
 ```
 
-The agent identifier is **`_id`**, not `id`. There is no `id` field, and JMESPath
-returns `null` for a missing key at exit 0, so `data[0].id` yields `null` silently
-rather than failing. Check field names in
-[resources/command-map.md](resources/command-map.md) before projecting.
+**Identifier names are not consistent across resources.** There are three
+conventions, and JMESPath returns `null` for a missing key at exit 0 — so
+projecting the wrong one yields a silent column of `null` rather than an error:
+
+| Resource | Identifier | Timestamps |
+|---|---|---|
+| `agents`, `prompts`, `datasets`, `knowledge-bases` | `_id` | `created` / `updated` |
+| `deployments` | `id` (no `_id`) | `created` / `updated` |
+| `projects` | `project_id` (neither `id` nor `_id`) | `created_at` / `updated_at` |
+
+Confirm the field on the resource you are actually querying before projecting:
+
+```sh
+orq deployments list --json -q 'data[0]' | jq 'keys'
+```
+
+### Lists truncate silently
+
+Most list commands cap by default and set `has_more: true`, which nothing in the
+output makes obvious — `orq deployments list --json` returns 10 of 49 and looks
+complete:
+
+| Resource | Default | Max | Omitting `--limit` |
+|---|---|---|---|
+| `deployments` | 10 | 50 | truncates |
+| `prompts` | 10 | 200 | truncates |
+| `datasets` | 10 | 200 | truncates |
+| `projects` | 25 | — | truncates |
+| `knowledge-bases` | 25 | 300 | truncates |
+| `agents` | — | 200 | returns all, no `has_more` |
+
+**Always check `has_more` or pass an explicit `--limit`.** Never report a count
+from a default page:
+
+```sh
+orq deployments list --json -q 'has_more' --raw      # true → the count below is wrong
+orq deployments list --json --limit 50 -q 'length(data)' --raw
+```
+
+`agents` is the exception that returns everything, which is why it makes a
+misleading canary — see Phase 3.
 
 `-q` takes JMESPath and runs after the response is parsed. `--raw` unwraps the
 result so a single string comes out unquoted — use it whenever the value feeds a
@@ -348,11 +416,20 @@ orq traces search --query 'data[].trace_id' ...
 #                                                      exit 0
 ```
 
-Never "fix" a rejected `-q` by reaching for `--query`. Pipe instead:
+Never "fix" a rejected `-q` by reaching for `--query`. Pipe instead, and **always
+with `set -o pipefail`**:
 
 ```sh
-orq traces search --json --from ... --to ... | jq '.data[].trace_id'
+set -o pipefail
+orq traces search --json --from ... --to ... | jq -r '.data[].trace_id'
 ```
+
+`pipefail` is not optional here. On an API error the CLI writes the message to
+**stderr and leaves stdout empty**, then exits 1. `jq` reading empty input emits
+nothing and exits **0**, so without `pipefail` the pipeline reports success with
+zero rows — indistinguishable from "no traces matched". Verified: a rejected
+request produced 0 bytes on stdout, 164 on stderr, pipeline exit 0 without
+`pipefail` and 1 with it.
 
 This is the one case where the prefer-`-q`-over-`jq` rule does not apply.
 
@@ -387,6 +464,36 @@ fix is to wrap the one value in an array under the plural key.
 Valid operators, from the API's own validation regex: `eq`, `neq`, `in`,
 `not_in`, `gt`, `gte`, `lt`, `lte`, `between`, `contains`, `exists`,
 `not_exists`.
+
+### Results are unordered, and only one sort exists
+
+`traces search` does **not** return rows in time order. A page often looks
+descending for the first several rows and then breaks, so `data[0]` is not the
+latest trace — it just frequently resembles it. Verified: 40 rows over a 7-day
+window were not sorted descending, while the first 8 were.
+
+Exactly one sort is accepted. `started_at` is rejected:
+
+```sh
+--sort '[{"field":"end_time","order":"desc"}]'      # the only supported sort
+--sort '[{"field":"started_at","order":"desc"}]'
+# HTTP 400: invalid sort: only end_time desc is supported
+```
+
+To answer "what is the latest trace", pass the sort explicitly. Never take
+`data[0]` from an unsorted page.
+
+### Traces expire after 30 days
+
+A window starting more than 30 days back is a hard `400`, not a clamp:
+
+```
+HTTP 400: range outside retention: requested range starts before 30 day retention
+```
+
+So any script with a hard-coded `--from` works until it silently ages past the
+boundary and then fails. Compute the window relative to now, and keep `--from`
+inside 30 days.
 
 Discover field names rather than guessing them:
 

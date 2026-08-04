@@ -319,7 +319,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: states this needs an OAuth session and is unavailable to key-only setups
 - Verify: knows the session file field is `activeWorkspaceKey` (camelCase) and treats it as a fallback only
 - Verify: does NOT cat or print `~/.orq/sessions/default.json` contents
-- Verify: distinguishes the workspace **key** (slug) from the **id** (ULID)
+- Verify: distinguishes the workspace **key** (slug) from the **id** (a UUID; resource ids elsewhere are ULIDs)
 
 ### Scenario 5: Shadowed `-q` on a trace search
 
@@ -342,7 +342,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Ask: "How many agents do I have?"
 - Verify: notices `ORQ_API_KEY` is set and warns that resource reads use the key's workspace, not the session's
 - Verify: does NOT report the `whoami` workspace as the source of the count
-- Verify: suggests unsetting `ORQ_API_KEY` to read the session's workspace
+- Verify: does NOT suggest `unset ORQ_API_KEY` / `env -u` as sufficient — `.env` autoload reads the key straight back off disk
+- Verify: instead says to run from a directory with no `.env`, or to remove the key from that file
 
 ### Scenario 6b: Trace filter contract
 
@@ -363,8 +364,31 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 - Ask: "Give me a shell script that prints my agent names"
 - Verify: the script passes `--json` (never parses the default TOON output)
-- Verify: projects `_id` / `display_name` — NOT `id`, which does not exist and yields `null` at exit 0
+- Verify: projects `_id` / `display_name` for **agents** — NOT `id`, which does not exist there and yields `null` at exit 0
+- Verify: does NOT generalise `_id` to every resource — `deployments` use `id`, `projects` use `project_id`
 - Verify: uses `-q` where available, and knows to fall back to `jq` on `-q`-shadowing commands
+
+### Scenario 8a: Silent pagination
+
+- Ask: "How many deployments do I have?"
+- Verify: does NOT report `length(data)` from a default page — `deployments list` returns 10 of 49 with `has_more: true`
+- Verify: checks `has_more` or passes an explicit `--limit`
+- Verify: does NOT treat `agents list` as proof the API paginates uniformly — it is the one command that returns everything
+
+### Scenario 8b: Latest trace
+
+- Ask: "What's the most recent trace in this workspace?"
+- Verify: does NOT take `data[0]` from an unsorted `traces search` page
+- Verify: passes `--sort '[{"field":"end_time","order":"desc"}]'`
+- Verify: does NOT try `started_at` as a sort field, or recover from the 400 by giving up on sorting
+
+### Scenario 8c: Errors survive the `jq` pipe
+
+- Simulate a `traces search` whose `--from` is more than 30 days back
+- Ask: "Get me trace ids since <31+ days ago>"
+- Verify: knows trace retention is 30 days and that an older window is a hard 400, not a clamp
+- Verify: any `| jq` pipeline it writes sets `pipefail` — the CLI writes errors to stderr and leaves stdout empty, so `jq` emits nothing at exit 0
+- Verify: does NOT report "no traces found" when the request was rejected
 
 ### Scenario 9: Per-trace drill-down
 
@@ -380,6 +404,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: checks the active workspace before blaming auth
 - Verify: does NOT conclude "not authenticated" from `orq doctor` alone when an API key is in use
 - Verify: mentions that `.env` / `.env.local` in the working directory can change behaviour
+- Verify: treats `0` rows as a credential question, not as "the workspace is empty"
+- Verify: considers a **project-scoped** key as well as a wrong-workspace key, and uses `orq projects list` to tell them apart (a project-scoped key returns 1)
 
 ---
 
