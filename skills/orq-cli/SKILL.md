@@ -119,6 +119,16 @@ interchangeable. Pick by job, not by habit:
 | Endpoint with neither | **CLI** | `orq request <method> <path>` |
 | Checking why auth or routing is broken | **CLI** | `orq doctor` has no MCP equivalent |
 | Acting as a specific profile or a self-hosted host | **CLI** | `--profile` and `--server` are CLI-only |
+| Running experiments (create/run/export) | **MCP or evaluatorq SDK** | the CLI has no `experiments` group |
+| Finding an entity by name, browsing docs | **MCP** | `search_entities` / `search_docs` have no CLI equivalent |
+| Schedules, identities, projects, API keys, webhooks, KBs, memory stores, files | **CLI** | no MCP tools exist for these areas |
+
+Coverage rule of thumb (verified against CLI 4.13.0-rc / MCP 38 tools,
+2026-08): the MCP covers the interactive debug-and-eval loop; the CLI covers
+the whole platform. MCP-exclusive: experiments, `search_docs`,
+`search_entities`/`search_directories`. Everything ops- or governance-shaped
+is CLI-only — except budgets, notifiers, and management-keys, which are
+internal platform APIs and deliberately unsupported in these skills.
 
 The deciding question is usually **does this need to run again without an agent
 present?** If yes, it has to be the CLI.
