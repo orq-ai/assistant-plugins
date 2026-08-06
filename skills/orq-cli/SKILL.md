@@ -407,8 +407,8 @@ shell variable.
 ### When `-q` is unavailable
 
 Generated per-field flags are built from the request body, and a body field named
-`query` shadows the global `-q/--query`. On v4.12.15 that affects at least
-`traces search`, `budgets list`, `webhooks query`, `knowledge-bases search`,
+`query` shadows the global `-q/--query`. Verified on v4.12/4.13-rc that affects at
+least `traces search`, `webhooks query`, `knowledge-bases search`,
 `evals invoke`, and `rerank create`; `images generate` shadows `-o` the same way.
 
 Both failure modes matter, and the quiet one is worse:

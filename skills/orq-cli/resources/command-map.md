@@ -1,9 +1,16 @@
 # orq CLI Command Map
 
-Command tree captured from `orq` **v4.12.15**; pagination defaults, identifier
-conventions, trace sort and trace retention re-confirmed on **v4.12.16**. The CLI
-is generated from the orq.ai OpenAPI spec, so this drifts between releases —
-`orq <group> --help` wins over anything written here.
+Command tree re-verified on **v4.13.0-rc.53** (2026-08-06); pagination defaults,
+identifier conventions, and response shapes originally captured on **v4.12.15/16**
+and spot-checked on **v4.12.22**. The CLI is generated from the orq.ai OpenAPI
+spec, so this drifts between releases — `orq <group> --help` wins over anything
+written here. Re-confirm against the 4.13 GA build: the rc surface may still move.
+
+> **Version-skew warning (verified):** a 4.13-rc CLI against a 4.12 platform
+> breaks the whole `traces` group — every call, including `traces search`,
+> returns HTTP 404 because the rc is generated against v3 trace paths the older
+> platform does not serve. Match the CLI minor version to the platform release;
+> when traces suddenly 404 across the board, check `orq --version` first.
 
 To re-derive the tree after a CLI upgrade, instead of editing it by hand. Run it
 with `bash` explicitly — under `zsh` (the macOS default) unquoted parameters are
@@ -57,13 +64,23 @@ working for that command. Confirmed on v4.12.15:
 | Command | Shadowed | Effect |
 |---|---|---|
 | `traces search` | `-q` / `--query` | `-q` errors; `--query` is silently treated as body full-text search |
-| `budgets list` | `-q` | `unknown shorthand flag: 'q'` |
-| `webhooks query` | `-q` | same |
+| `webhooks query` | `-q` | `unknown shorthand flag: 'q'` |
 | `knowledge-bases search` | `-q` | same |
 | `evals invoke` | `-q` | same |
 | `rerank create` | `-q` | same |
 | `images generate` | `-o` | `unknown shorthand flag: 'o'` |
-| `auth setup`, `models create-autorouter`, `models update-autorouter` | `--profile` | body field wins |
+| `auth setup` | `--profile` | body field wins |
+
+Two related parsing facts, verified on v4.12.22 and v4.13.0-rc.53:
+
+- **Plain strings are accepted by generated string flags** (`--model`, `--input`,
+  …) — the old double-JSON-quoting requirement is fixed (ENG-2455). Only nested
+  objects, arrays of objects, and unions still need a JSON string.
+- **There is no client-side enum validation.** Any value — including an invalid
+  one — passes flag parsing and is sent to the server, which rejects it there
+  (the old only-first-value bug, ENG-2456, was resolved by removing local
+  validation). `-o bogus` likewise silently falls back to JSON output. Do not
+  rely on the CLI to catch a typo'd enum value; read the server error.
 
 The dangerous one is `--query` on `traces search`: it is accepted, sent as the
 body's full-text `query` field, and returns zero rows at exit 0. It looks like
@@ -251,11 +268,15 @@ One group per API tag. Groups marked with a leading `→` are the ones worth
 knowing by heart.
 
 ```
-→ agents             create delete get-response invoke list refresh-agent-card
-                     retrieve run stream stream-run update
+  activities         create list update
+→ agents             create delete get-response invoke list retrieve run
+                     stream stream-run update
   agents-responses   create
+  alerts             create delete get list list-trigger-events list-triggers
+                     update
+  annotation-queues  add-items clear create delete get get-item list
+                     query-items remove-items update
   api-keys           create delete get list list-capabilities update
-  budgets            create delete get get-consumption list reset-consumption update
   chat               create
   chunking           parse
   completions        create
@@ -264,7 +285,7 @@ knowing by heart.
                      update-datapoint
 → deployments        get-config invoke list stream
   embeddings         create
-→ evals              all create delete invoke list-versions update
+→ evals              all create delete get invoke list-versions update
   feedback           create delete evaluation evaluation-remove
   files              content delete get list update upload
   identities         create delete list retrieve update
@@ -274,19 +295,21 @@ knowing by heart.
                      list-chunks-paginated list-datasources retrieve
                      retrieve-chunk retrieve-datasource search update
                      update-chunk update-datasource
-  management-keys    create delete get list list-capabilities update
+  logs               aggregate get get-context get-patterns list-facet-values
+                     list-facets list-fields list-trace query search
   memory-stores      create create-document create-memory delete delete-document
                      delete-memory list list-documents list-memories retrieve
                      retrieve-document retrieve-memory update update-document
                      update-memory
   models             list create delete disable enable import-litellm
-                     list-litellm update validate create-autorouter
+                     list-litellm update validate
                      create-aws-bedrock create-openai-like create-vertex
-                     azure-foundry-deployments update-autorouter
+                     azure-foundry-deployments
                      update-aws-bedrock update-openai-like validate-aws-bedrock
   moderations        create
-  notifiers          create delete get list update
   ocr                ocr
+  people             person-create person-delete person-get person-list
+                     person-resend-invitation person-update
   pii                detect redact restore
 → projects           create delete get list update
 → prompts            create delete get-version list list-versions retrieve update
@@ -295,15 +318,28 @@ knowing by heart.
   responses          create get
   schedules          create delete list retrieve trigger update
 → skills             create delete get list update
+  smart-routers      create delete get list set-enabled update
   speech             create
-  telemetry          query
   tools              create delete get-version list list-versions retrieve update
 → traces             aggregate create delete get get-span list-facet-values
                      list-facets list-fields list-spans query-oql search
   transcriptions     create
   translations       create
   webhooks           count create delete generate-secret get list query update
+  workspace-settings get update
 ```
+
+Changes at 4.13.0-rc vs 4.12: new groups `activities`, `alerts`,
+`annotation-queues`, `logs`, `people`, `smart-routers`, `workspace-settings`;
+`agents` lost `refresh-agent-card` and gained `retrieve`; `evals` gained `get`;
+the `telemetry` group is **gone** (see Aggregation below); autorouter management
+moved from `models create-autorouter`/`update-autorouter` to the dedicated
+`smart-routers` group. There is still no `experiments` group — experiments
+remain MCP/evaluatorq-only.
+
+The rc also lists `budgets`, `notifiers`, and `management-keys` groups. **Do not
+use or document them** — they are internal platform APIs being removed from the
+public spec (ENG-2648) and are unsupported here by owner decision.
 
 Note `orq evals all` (not `list`) is the evaluator listing command, and
 `orq traces create` / `orq traces delete` add and remove **span annotations**,
@@ -480,8 +516,9 @@ orq traces list-facet-values <field> --json \
 
 ### Per-trace drill-down is currently 404
 
-Against `my.orq.ai` on v4.12.15, **every per-trace read returns HTTP 404**, using
-ids taken from a `traces search` response seconds earlier:
+**Re-verified 2026-08-06 on v4.12.22 against production: still broken.**
+`traces search` works, but every per-trace read returns HTTP 404, using ids
+taken from a `traces search` response seconds earlier:
 
 ```
 orq traces get <trace_id>              -> HTTP 404
@@ -490,35 +527,31 @@ orq traces get-span <trace_id> <span>  -> HTTP 404
 orq request GET /v2/traces/<id>/spans  -> HTTP 404
 ```
 
-Reproduced across 5 traces including agent traces, and via `orq request`, so it
-is server-side rather than a CLI routing bug. The endpoints are in the spec; this
-deployment does not serve them.
+It is server-side rather than a CLI routing bug: the endpoints are in the spec;
+this deployment does not serve them. The fix is tracked as ENG-2492 and ships
+with the 4.13 platform release — and note the version-skew warning at the top of
+this file: a 4.13-rc CLI against the 4.12 platform makes it *worse* (the whole
+`traces` group 404s, `search` included).
 
-**Practical consequence:** `traces search` is the only working trace read. Get
-what you need from the search response itself — it already carries `attributes`,
-`usage`, `cost`, `status`, and timing per row. Do not build a workflow that
-searches and then drills into spans; it will 404 at the second step.
-
-Re-check with a single `orq traces get <trace_id> --json` before assuming this is
-still true.
+**Practical consequence:** on a 4.12 platform, `traces search` is the only
+working trace read. Get what you need from the search response itself — it
+already carries `attributes`, `usage`, `cost`, `status`, and timing per row.
+Re-check with a single `orq traces get <trace_id> --json` once the platform is
+on 4.13; if it returns JSON, drill-down is live and this section is obsolete.
 
 ### Aggregation
 
-`traces aggregate` still exists but its own help marks it **deprecated**:
+`traces aggregate` still exists in the 4.13-rc tree, but the `telemetry` group
+that 4.12's deprecation notice pointed to (`orq telemetry query`) is **gone in
+4.13.0-rc** — do not send anyone there. The rc's replacements for cross-trace
+analysis are the new `logs` group (`aggregate`, `get-patterns`, `query`,
+`search`) and `reporting query`. Start from `orq logs --help` and
+`orq reporting query --help` on the build you actually have; on a 4.12 platform,
+`orq telemetry query` still exists on the 4.12 CLI.
 
-```
-Deprecated: use TelemetryService.Query (POST /v2/telemetry/query,
-source=TRACES, grain=none) instead.
-```
-
-Use `orq telemetry query` for new work. It is a different shape, not a drop-in:
-its help describes a "unified query envelope" taking a **source**, a **compute
-list**, and a time range, with optional grain, group-by, and filters, returning
-either a time series or one aggregate row per group. Start from
-`orq telemetry query --help`.
-
-*Not exercised during authoring — the deprecation notice and the envelope
-description are from the CLI's own help text, not from a run.*
+*The 4.13 `logs` group could not be exercised against production during
+authoring (version skew — see the warning at the top of this file); re-verify
+after the 4.13 platform deploy.*
 
 ---
 
