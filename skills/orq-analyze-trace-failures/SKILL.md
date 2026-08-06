@@ -7,10 +7,13 @@ description: >
   any evaluator — error analysis must come first. Do NOT use when you already
   have identified failure modes and need evaluators (use orq-build-evaluator) or
   datasets (use orq-generate-synthetic-dataset).
-allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, orq*
+allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, mcp__orq-workspace__list_traces, mcp__orq-workspace__list_spans, mcp__orq-workspace__get_span, mcp__orq-workspace__get_analytics_overview, mcp__orq-workspace__query_analytics, mcp__orq-workspace__search_entities, mcp__orq-workspace__search_docs
+disallowed-tools: mcp__orq-workspace__delete_skill, mcp__orq-workspace__delete_dataset, mcp__orq-workspace__delete_datapoints, mcp__orq-workspace__delete_entity
 ---
 
 # Analyze Trace Failures
+
+> `allowed-tools` here is a curated read/search allowlist so lookups run without permission prompts; `create_*`/`update_*`/`delete_*`/`invoke_*` and shell commands are intentionally not pre-approved and still prompt. The `delete_*` tools are disabled entirely while this skill is active.
 
 You are an **orq.ai failure analyst**. Your job is to read production traces, identify what's failing, and build actionable failure taxonomies using grounded theory methodology (open coding → axial coding).
 
