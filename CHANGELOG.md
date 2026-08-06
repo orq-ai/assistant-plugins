@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2026-08-06
+
+### Changed
+
+- `orq-cli`: command map re-verified against CLI **4.13.0-rc.53** — command tree updated (new `alerts`, `smart-routers`, `logs`, `annotation-queues`, `activities`, `people`, `workspace-settings` groups; autorouter management moved from `models` to `smart-routers`; `telemetry` group removed; still no `experiments` group), plus a verified version-skew warning: a 4.13-rc CLI against a 4.12 platform 404s the entire `traces` group. (RES-1210)
+- `orq-cli`: caveats re-tested live — ENG-2455 fixed (plain strings accepted by generated flags; double-JSON-quoting workaround deleted), ENG-2456 resolved by removal (no client-side enum validation at all — documented as such), ENG-2492 re-verified still broken on the 4.12 platform (per-trace drill-down 404s; section updated with date and re-check guidance).
+- `orq-cli`: "MCP tools or the CLI?" decision table extended with the coverage split — MCP-exclusive (experiments, docs/entity search) vs CLI-only (schedules, identities, projects, API keys, webhooks, knowledge bases, memory stores, files). `budgets`/`notifiers`/`management-keys` are deliberately undocumented: internal platform APIs leaving the public spec (ENG-2648).
+- All 12 MCP-primary skills now cross-reference `orq-cli` for anything that must run again without an agent present (CI, cron, scripts, bulk), pointing at the canonical decision table. (RES-1163)
+
+### Fixed
+
+- `orq-red-team`: stale MCP references `mcp__orq-mcp-global__agent_get`/`agent_list` corrected to `mcp__orq-workspace__get_agent`/`search_entities` — the old server and tool names no longer exist.
+
 ## [2.2.0] - 2026-07-31
 
 ### Added
