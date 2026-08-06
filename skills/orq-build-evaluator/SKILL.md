@@ -54,6 +54,7 @@ Evaluator Build Progress:
 - `orq-generate-synthetic-dataset` — generate test data for evaluator validation
 - `orq-optimize-prompt` — iterate on prompts based on evaluator results
 - `orq-build-agent` — create agents that evaluators assess
+- **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
 
 ## When to use

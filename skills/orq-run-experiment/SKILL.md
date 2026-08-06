@@ -33,6 +33,7 @@ You are an **orq.ai evaluation engineer**. Your job is to design, execute, and a
 - `orq-analyze-trace-failures` — build failure taxonomies from production traces
 - `orq-generate-synthetic-dataset` — generate diverse test scenarios
 - `orq-optimize-prompt` — analyze and rewrite prompts using a structured guidelines framework
+- **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
 ## When to use
 

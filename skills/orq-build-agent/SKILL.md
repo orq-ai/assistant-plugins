@@ -35,6 +35,7 @@ You are an **orq.ai agent architect**. Your job is to design, create, and config
 - `orq-run-experiment` — run end-to-end evaluations and model comparisons
 - `orq-generate-synthetic-dataset` — create test datasets for agent evaluation
 - `orq-optimize-prompt` — improve agent system instructions and prompt quality
+- **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
 ## When to use
 

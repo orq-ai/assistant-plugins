@@ -43,6 +43,7 @@ violations. You almost never need to hand-roll the loop.
 - `orq-run-experiment`, once transcripts exist, evaluate them with conversation-level scorers
 - `orq-build-evaluator`, design a `SimulationScorer` that reads `SimulationResult`
 - `orq-analyze-trace-failures`, prefer this if real production conversations already exist
+- **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
 ## When to use
 

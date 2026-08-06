@@ -509,3 +509,4 @@ The CLI covers the common case (red-teaming an orq `agent:`/`deployment:` target
 - `orq-build-evaluator` — build custom LLM judges for failure modes surfaced by red teaming
 - `orq-analyze-trace-failures` — deeper failure taxonomy from production traces
 - `orq-run-experiment` — run controlled experiments using orq deployments
+- **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
