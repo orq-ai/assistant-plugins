@@ -2,6 +2,9 @@ name: skills-ci
 on:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -19,7 +22,7 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           if echo "$PR_TITLE" | grep -qiE "owner decision|\b(ENG|INN|BOPS|TOPS)-[0-9]+\b"; then
-            echo "::error::PR title contains internal decision context or a non-RES internal ticket id"
+            echo "::error::PR title contains internal decision context or a non-project ticket id"
             exit 1
           fi
           echo "title ok"
@@ -30,20 +33,29 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Require manifest version bump when skills/ changes
+      - name: Require manifest version bump + changelog entry when skills/ changes
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          git fetch origin "${{ github.base_ref }}" --depth=50
-          base="origin/${{ github.base_ref }}"
-          if git diff --name-only "$base"...HEAD | grep -qE '^skills/'; then
-            if git diff "$base"...HEAD -- .claude-plugin/plugin.json | grep -q '"version"'; then
-              echo "skills changed and manifest version bumped — ok"
-            else
-              echo "::error::skills/ changed but the manifest version did not — bump all 4 manifests and add a CHANGELOG entry (see CLAUDE.md)"
-              exit 1
-            fi
-          else
+          git fetch origin "$BASE_REF"
+          mb=$(git merge-base "origin/$BASE_REF" HEAD)
+          if ! git diff --name-only "$mb"..HEAD | grep -qE '^skills/'; then
             echo "no skills/ changes — gate not applicable"
+            exit 0
           fi
+          # Compare parsed versions at the merge-base vs HEAD; a grep on the diff
+          # would also match unchanged context lines near the version field.
+          base_v=$(git show "$mb:.claude-plugin/plugin.json" | jq -r .version)
+          head_v=$(jq -r .version .claude-plugin/plugin.json)
+          if [ "$base_v" = "$head_v" ]; then
+            echo "::error::skills/ changed but the manifest version is still $head_v — bump all 4 manifests (see CLAUDE.md; the validate job enforces they match)"
+            exit 1
+          fi
+          if ! git diff --name-only "$mb"..HEAD | grep -qx 'CHANGELOG.md'; then
+            echo "::error::skills/ changed and version bumped ($base_v -> $head_v) but CHANGELOG.md has no entry (see CLAUDE.md)"
+            exit 1
+          fi
+          echo "skills changed, version $base_v -> $head_v, changelog updated — ok"
 
   install-sanity:
     runs-on: ubuntu-latest
@@ -54,11 +66,16 @@ jobs:
           node-version: 20
       - name: Install the suite from this checkout via npx skills
         run: |
+          expected=$(jq -r '.skills | length' "$GITHUB_WORKSPACE/skills-lock.json")
           tmp=$(mktemp -d) && cd "$tmp"
+          # || true: a failed install is caught by the count assertion below,
+          # which also surfaces install.log context.
           npx -y skills add "$GITHUB_WORKSPACE" -y 2>&1 | tee install.log || true
-          count=$(find . -name SKILL.md 2>/dev/null | wc -l)
-          echo "installed SKILL.md count: $count"
-          if [ "$count" -lt 15 ]; then
-            echo "::error::expected >=15 skills installed from this checkout, got $count (see install.log output above)"
+          # Count unique skill names, not SKILL.md files — installers may write
+          # the same skill to several agent locations.
+          count=$(find . -name SKILL.md -exec dirname {} \; | xargs -n1 basename | sort -u | wc -l | tr -d ' ')
+          echo "unique skills installed: $count (expected >= $expected)"
+          if [ "$count" -lt "$expected" ]; then
+            echo "::error::expected >=$expected unique skills installed from this checkout, got $count (see install.log output above)"
             exit 1
           fi
