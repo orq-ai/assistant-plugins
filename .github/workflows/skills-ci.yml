@@ -7,10 +7,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
       - name: Validate plugin manifests
         run: tests/scripts/validate-plugin-manifests.sh
-      - name: Validate skills, lock invariants, version sync, content patterns
-        run: tests/scripts/validate-skills.sh
+      - name: Validate skills (frontmatter, lock invariants + hash freshness, version sync, content patterns)
+        run: node tests/scripts/validate-skills.mjs
       - name: PR title pattern lint
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
@@ -20,27 +23,6 @@ jobs:
             exit 1
           fi
           echo "title ok"
-      - name: Lock-hash freshness
-        run: |
-          cp skills-lock.json /tmp/lock-before.json
-          node --input-type=module -e '
-          import { createHash } from "node:crypto";
-          import { readdir, readFile, writeFile } from "node:fs/promises";
-          import { join, relative } from "node:path";
-          const walk = async (d, b, a=[]) => { for (const e of await readdir(d,{withFileTypes:true})) {
-            if (e.name===".git"||e.name==="node_modules") continue; const f=join(d,e.name);
-            e.isDirectory() ? await walk(f,b,a) : a.push({p:relative(b,f).split("\\").join("/"),f}); } return a; };
-          const hash = async dir => { const fs=(await walk(dir,dir)).sort((x,y)=>x.p.localeCompare(y.p));
-            const h=createHash("sha256"); for (const x of fs){ h.update(x.p); h.update(await readFile(x.f)); } return h.digest("hex"); };
-          const dirs=(await readdir("skills",{withFileTypes:true})).filter(e=>e.isDirectory()).map(e=>e.name).sort((a,b)=>a.localeCompare(b));
-          const skills={}; for (const n of dirs) skills[n]={source:"orq-ai/assistant-plugins",sourceType:"github",computedHash:await hash(join("skills",n))};
-          await writeFile("skills-lock.json", JSON.stringify({version:1,skills},null,2)+"\n");'
-          if ! diff -q /tmp/lock-before.json skills-lock.json >/dev/null; then
-            diff /tmp/lock-before.json skills-lock.json || true
-            echo "::error::skills-lock.json is stale — regenerate with the script in CLAUDE.md"
-            exit 1
-          fi
-          echo "lock hashes current"
 
   version-bump-gate:
     runs-on: ubuntu-latest
