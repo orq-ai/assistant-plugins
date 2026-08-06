@@ -328,16 +328,11 @@ unified-annotation model — relevant to annotation review workflows; not yet
 exercised against production, re-verify at 4.13 GA). There is still no
 `experiments` group — experiments remain MCP/evaluatorq-only.
 
-**Out of scope by owner decision** — the rc also lists groups this skill
-deliberately does not cover; do not use or document them here:
-
-- `budgets`, `notifiers`, `management-keys` — internal platform APIs being
-  removed from the public spec (ENG-2648).
-- Six of the groups new in the 4.13 rc (`activities`, `alerts`, `logs`,
-  `people`, `smart-routers`, `workspace-settings`) — pre-GA surface, excluded
-  until a deliberate decision says otherwise. This is also where autorouter
-  management moved (`smart-routers`), so autorouter config is currently
-  undocumented here.
+The CLI also lists groups that are intentionally not covered by this skill
+(`budgets`, `notifiers`, `management-keys`, `activities`, `alerts`, `logs`,
+`people`, `smart-routers`, `workspace-settings`) — leave them out when
+re-deriving the tree. Autorouter management lives in one of these
+(`smart-routers`) and is likewise not covered.
 
 Note `orq evals all` (not `list`) is the evaluator listing command, and
 `orq traces create` / `orq traces delete` add and remove **span annotations**,
@@ -544,8 +539,7 @@ that 4.12's deprecation notice pointed to (`orq telemetry query`) is **gone in
 4.13.0-rc** — do not send anyone there. For cross-trace analysis use
 `orq reporting query` (start from `orq reporting query --help` on the build you
 actually have); on a 4.12 platform, `orq telemetry query` still exists on the
-4.12 CLI. The rc's other analysis surface lives in a new group that is out of
-scope for this skill (see the owner-decision note above).
+4.12 CLI.
 
 ---
 

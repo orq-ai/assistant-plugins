@@ -127,8 +127,7 @@ Coverage rule of thumb (verified against CLI 4.13.0-rc / MCP 38 tools,
 2026-08): the MCP covers the interactive debug-and-eval loop; the CLI covers
 the whole platform. MCP-exclusive: experiments, `search_docs`,
 `search_entities`/`search_directories`. Everything ops- or governance-shaped
-is CLI-only — except budgets, notifiers, and management-keys, which are
-internal platform APIs and deliberately unsupported in these skills.
+is CLI-only.
 
 The deciding question is usually **does this need to run again without an agent
 present?** If yes, it has to be the CLI.
