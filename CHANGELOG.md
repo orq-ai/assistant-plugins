@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `orq-cli`: command map re-verified against CLI **4.13.0-rc.53** — command tree updated (`agents` −`refresh-agent-card` +`retrieve`; `evals` +`get`; `telemetry` group removed; `models` lost autorouter commands; new `annotation-queues` group documented — the CLI surface for eval corrections / unified annotations; still no `experiments` group), plus a verified version-skew warning: a 4.13-rc CLI against a 4.12 platform 404s the entire `traces` group. The map is scoped to the supported surface; some CLI groups are intentionally not covered. (RES-1210)
-- `orq-cli`: caveats re-tested live — ENG-2455 fixed (plain strings accepted by generated flags; double-JSON-quoting workaround deleted), ENG-2456 resolved by removal (no client-side enum validation at all — documented as such), ENG-2492 re-verified still broken on the 4.12 platform (per-trace drill-down 404s; section updated with date and re-check guidance).
+- `orq-cli`: command map re-verified live against the **4.13** CLI and rewritten to describe the 4.13 surface only — no version deltas or cross-version caveats. Covers the `annotation-queues` group (eval corrections / unified annotations), per-trace drill-down (`traces get` / `list-spans` / `get-span`), and notes there is no `experiments` group. The map is scoped to the supported surface; some CLI groups are intentionally not covered. (RES-1210)
+- `orq-cli`: caveats re-tested live on 4.13 — plain strings accepted by generated flags (double-JSON-quoting workaround deleted); no client-side enum validation (documented as such: read the server error).
 - `orq-cli`: "MCP tools or the CLI?" decision table extended with the coverage split — MCP-exclusive (experiments, docs/entity search) vs CLI-only (schedules, identities, projects, API keys, webhooks, knowledge bases, memory stores, files).
 - All 12 MCP-primary skills now cross-reference `orq-cli` for anything that must run again without an agent present (CI, cron, scripts, bulk), pointing at the canonical decision table. (RES-1163)
 

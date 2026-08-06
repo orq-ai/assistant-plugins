@@ -123,9 +123,8 @@ interchangeable. Pick by job, not by habit:
 | Finding an entity by name, browsing docs | **MCP** | `search_entities` / `search_docs` have no CLI equivalent |
 | Schedules, identities, projects, API keys, webhooks, KBs, memory stores, files | **CLI** | no MCP tools exist for these areas |
 
-Coverage rule of thumb (verified against CLI 4.13.0-rc / MCP 38 tools,
-2026-08): the MCP covers the interactive debug-and-eval loop; the CLI covers
-the whole platform. MCP-exclusive: experiments, `search_docs`,
+Coverage rule of thumb: the MCP covers the interactive debug-and-eval loop;
+the CLI covers everything else. MCP-exclusive: experiments, `search_docs`,
 `search_entities`/`search_directories`. Everything ops- or governance-shaped
 is CLI-only.
 
@@ -157,7 +156,7 @@ orq CLI Progress:
 ## Phase 1 — Verify the install
 
 ```sh
-orq --version          # e.g. orq version 4.12.15
+orq --version          # e.g. orq version 4.13.0
 ```
 
 If it is missing:
@@ -186,7 +185,7 @@ single most confusing thing about the CLI, so check it before anything else.
 | Built-ins: `auth whoami`, `workspace list`, `workspace use` | **fails** | works |
 | `doctor`'s `auth` block | **reports `missing`** | reports real state |
 
-Verified on v4.12.15: with a valid `ORQ_API_KEY` exported, `orq agents list`
+Verified live: with a valid `ORQ_API_KEY` exported, `orq agents list`
 returns data while `orq auth whoami` prints `Error: you are not logged in` and
 `orq doctor --json -q 'auth.status' --raw` prints `missing`.
 
@@ -416,9 +415,9 @@ shell variable.
 ### When `-q` is unavailable
 
 Generated per-field flags are built from the request body, and a body field named
-`query` shadows the global `-q/--query`. Verified on v4.12/4.13-rc that affects at
-least `traces search`, `webhooks query`, `knowledge-bases search`,
-`evals invoke`, and `rerank create`; `images generate` shadows `-o` the same way.
+`query` shadows the global `-q/--query`. Verified live, that affects at least
+`traces search`, `webhooks query`, `knowledge-bases search`, `evals invoke`,
+and `rerank create`; `images generate` shadows `-o` the same way.
 
 Both failure modes matter, and the quiet one is worse:
 

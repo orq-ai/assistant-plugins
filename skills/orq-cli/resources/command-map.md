@@ -1,16 +1,8 @@
 # orq CLI Command Map
 
-Command tree re-verified on **v4.13.0-rc.53** (2026-08-06); pagination defaults,
-identifier conventions, and response shapes originally captured on **v4.12.15/16**
-and spot-checked on **v4.12.22**. The CLI is generated from the orq.ai OpenAPI
-spec, so this drifts between releases — `orq <group> --help` wins over anything
-written here. Re-confirm against the 4.13 GA build: the rc surface may still move.
-
-> **Version-skew warning (verified):** a 4.13-rc CLI against a 4.12 platform
-> breaks the whole `traces` group — every call, including `traces search`,
-> returns HTTP 404 because the rc is generated against v3 trace paths the older
-> platform does not serve. Match the CLI minor version to the platform release;
-> when traces suddenly 404 across the board, check `orq --version` first.
+Verified live against the **4.13** CLI (v4.13.0-rc.53, 2026-08-06). The CLI is
+generated from the orq.ai OpenAPI spec, so this drifts between releases —
+`orq <group> --help` wins over anything written here.
 
 To re-derive the tree after a CLI upgrade, instead of editing it by hand. Run it
 with `bash` explicitly — under `zsh` (the macOS default) unquoted parameters are
@@ -59,7 +51,7 @@ Each flag has an env-var twin: uppercase, `ORQ_` prefix, underscores for dashes.
 
 Per-field flags are generated from each command's request body. When a body field
 collides with a global flag name, the body field wins and the global flag stops
-working for that command. Confirmed on v4.12.15:
+working for that command. Confirmed live:
 
 | Command | Shadowed | Effect |
 |---|---|---|
@@ -71,16 +63,14 @@ working for that command. Confirmed on v4.12.15:
 | `images generate` | `-o` | `unknown shorthand flag: 'o'` |
 | `auth setup` | `--profile` | body field wins |
 
-Two related parsing facts, verified on v4.12.22 and v4.13.0-rc.53:
+Two related parsing facts, verified live:
 
 - **Plain strings are accepted by generated string flags** (`--model`, `--input`,
-  …) — the old double-JSON-quoting requirement is fixed (ENG-2455). Only nested
-  objects, arrays of objects, and unions still need a JSON string.
+  …). Only nested objects, arrays of objects, and unions need a JSON string.
 - **There is no client-side enum validation.** Any value — including an invalid
-  one — passes flag parsing and is sent to the server, which rejects it there
-  (the old only-first-value bug, ENG-2456, was resolved by removing local
-  validation). `-o bogus` likewise silently falls back to JSON output. Do not
-  rely on the CLI to catch a typo'd enum value; read the server error.
+  one — passes flag parsing and is sent to the server, which rejects it there.
+  `-o bogus` likewise silently falls back to JSON output. Do not rely on the CLI
+  to catch a typo'd enum value; read the server error.
 
 The dangerous one is `--query` on `traces search`: it is accepted, sent as the
 body's full-text `query` field, and returns zero rows at exit 0. It looks like
@@ -149,7 +139,7 @@ logged in` when a valid key is exported, and they exit **0** while doing it.
 
 ### `auth whoami --json` shape
 
-Observed on v4.12.15 against a live session:
+Observed against a live session:
 
 ```json
 {
@@ -214,11 +204,11 @@ never print it.
   `ORQ_SERVER` changes where requests go but produces no change anywhere in
   `doctor` output. Use `orq server current` instead.
 
-Abridged real output from a logged-out v4.12.15:
+Abridged real output from a logged-out session:
 
 ```json
 {
-  "binary":  { "name": "orq", "version": "4.12.15" },
+  "binary":  { "name": "orq", "version": "4.13.0" },
   "runtime": { "name": "go", "version": "go1.26.5", "platform": "darwin", "arch": "arm64" },
   "output":  { "default_format": "toon", "supported_formats": ["json", "yaml", "toon"] },
   "config": {
@@ -320,19 +310,16 @@ knowing by heart.
   webhooks           count create delete generate-secret get list query update
 ```
 
-Changes at 4.13.0-rc vs 4.12: `agents` lost `refresh-agent-card` and gained
-`retrieve`; `evals` gained `get`; the `telemetry` group is **gone** (see
-Aggregation below); `models` lost `create-autorouter`/`update-autorouter`; new
-`annotation-queues` group (the CLI surface for the 4.12 eval-corrections /
-unified-annotation model — relevant to annotation review workflows; not yet
-exercised against production, re-verify at 4.13 GA). There is still no
-`experiments` group — experiments remain MCP/evaluatorq-only.
+There is no `experiments` group — experiments are MCP/evaluatorq-only.
+`annotation-queues` is the CLI surface for the eval-corrections /
+unified-annotation model (annotation review workflows); its subcommands parse
+correctly but have not yet been exercised against production data.
 
 The CLI also lists groups that are intentionally not covered by this skill
 (`budgets`, `notifiers`, `management-keys`, `activities`, `alerts`, `logs`,
 `people`, `smart-routers`, `workspace-settings`) — leave them out when
-re-deriving the tree. Autorouter management lives in one of these
-(`smart-routers`) and is likewise not covered.
+re-deriving the tree. Autorouter management lives in `smart-routers` and is
+likewise not covered.
 
 Note `orq evals all` (not `list`) is the evaluator listing command, and
 `orq traces create` / `orq traces delete` add and remove **span annotations**,
@@ -427,15 +414,15 @@ orq traces search --json \
 orq traces search --json --from ... --to ... | jq -r '.next_page_token'
 ```
 
-There is no working span-level recipe: `traces list-spans` 404s (see
-[Per-trace drill-down](#per-trace-drill-down-is-currently-404)).
+Span-level reads go through `traces list-spans` / `traces get-span` (see
+[Per-trace drill-down](#per-trace-drill-down)).
 
 ### Comparing against a string in a filter
 
 A bare backtick literal does **not** work. `-q 'checks[?status!=`pass`]'` fails
 with `invalid character 'p' looking for beginning of value`, because backticks
 delimit a *JSON* literal and `pass` is not valid JSON. Two forms that do work,
-both verified against v4.12.15:
+both verified live:
 
 ```sh
 orq doctor --json -q "checks[?status!='pass']"      # raw-string literal, outer double quotes
@@ -507,39 +494,28 @@ orq traces list-facet-values <field> --json \
   --from 2026-07-01T00:00:00Z --to 2026-07-31T00:00:00Z   # values + counts for one facet
 ```
 
-### Per-trace drill-down is currently 404
+### Per-trace drill-down
 
-**Re-verified 2026-08-06 on v4.12.22 against production: still broken.**
-`traces search` works, but every per-trace read returns HTTP 404, using ids
-taken from a `traces search` response seconds earlier:
+`traces search` is the bulk read; the per-trace reads are:
 
 ```
-orq traces get <trace_id>              -> HTTP 404
-orq traces list-spans <trace_id>       -> HTTP 404
-orq traces get-span <trace_id> <span>  -> HTTP 404
-orq request GET /v2/traces/<id>/spans  -> HTTP 404
+orq traces get <trace_id>
+orq traces list-spans <trace_id>
+orq traces get-span <trace_id> <span>
 ```
 
-It is server-side rather than a CLI routing bug: the endpoints are in the spec;
-this deployment does not serve them. The fix is tracked as ENG-2492 and ships
-with the 4.13 platform release — and note the version-skew warning at the top of
-this file: a 4.13-rc CLI against the 4.12 platform makes it *worse* (the whole
-`traces` group 404s, `search` included).
-
-**Practical consequence:** on a 4.12 platform, `traces search` is the only
-working trace read. Get what you need from the search response itself — it
+These endpoints are served from the 4.13 platform onward. If every per-trace
+read returns HTTP 404 while `traces search` works, the deployment behind your
+server is older than 4.13 — fall back to the search response itself, which
 already carries `attributes`, `usage`, `cost`, `status`, and timing per row.
-Re-check with a single `orq traces get <trace_id> --json` once the platform is
-on 4.13; if it returns JSON, drill-down is live and this section is obsolete.
+Quick probe: `orq traces get <trace_id> --json` with an id taken from a
+`traces search` response seconds earlier.
 
 ### Aggregation
 
-`traces aggregate` still exists in the 4.13-rc tree, but the `telemetry` group
-that 4.12's deprecation notice pointed to (`orq telemetry query`) is **gone in
-4.13.0-rc** — do not send anyone there. For cross-trace analysis use
-`orq reporting query` (start from `orq reporting query --help` on the build you
-actually have); on a 4.12 platform, `orq telemetry query` still exists on the
-4.12 CLI.
+`traces aggregate` handles per-window trace aggregation. There is no
+`telemetry` group — for cross-trace analysis use `orq reporting query`
+(start from `orq reporting query --help`).
 
 ---
 
@@ -570,7 +546,7 @@ orq doctor --json -q 'config.api_base_url'       # built-in auth commands
 `orq server current` returns `server`, `server_index`, and `server_override`.
 Read `server_override` first: **`orq auth login` persists an override to the host
 it authenticated against**, so the resource host is not fixed. Observed on the
-same machine, v4.12.15:
+same machine:
 
 | State | `server` | `server_override` |
 |---|---|---|

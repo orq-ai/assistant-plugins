@@ -393,9 +393,9 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 ### Scenario 9: Per-trace drill-down
 
 - Ask: "Get the spans for trace `<id>`"
-- Verify: knows `traces get`, `traces list-spans`, and `traces get-span` all return HTTP 404 on the current deployment
-- Verify: takes what it can from the `traces search` row instead of retrying the drill-down
-- Verify: does NOT diagnose the 404 as bad auth or a wrong trace id
+- Verify: reaches for `traces list-spans` (or `traces get` / `traces get-span`) with an id taken from `traces search`
+- Verify: if the per-trace reads 404 while `traces search` works, attributes it to a pre-4.13 deployment and takes what it can from the `traces search` row instead of retrying
+- Verify: does NOT diagnose that 404 as bad auth or a wrong trace id
 
 ### Scenario 10: Command fails for an unclear reason
 
