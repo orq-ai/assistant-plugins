@@ -189,7 +189,7 @@ eq redteam ui report.json   # open Streamlit dashboard
 Quick reference:
 
 ```bash
-eq sim generate --agent-description "..." --target agent:<AGENT_KEY>
+eq sim generate --agent-description "..." --output dp.jsonl   # --output is required
 eq sim simulate --datapoints dp.jsonl --target agent:<AGENT_KEY>
 ```
 

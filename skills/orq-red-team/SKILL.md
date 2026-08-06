@@ -79,7 +79,7 @@ The `[redteam]` extra is required (pulls in `huggingface-hub` plus Streamlit/Plo
 
 The attack and evaluator LLMs need credentials. Routing is decided purely by **which env var is set** — the model string itself is never inspected for routing:
 
-1. **orq gateway** — if `ORQ_API_KEY` is set (optionally `ORQ_BASE_URL`), model strings route through the orq LLM gateway (`{ORQ_BASE_URL}/v3/router`, default `https://my.orq.ai`). Use the **provider-prefixed** form here (e.g. `openai/gpt-5-mini`). `ORQ_API_KEY` **wins if both keys are set** (verified against evaluatorq v1.10.1, `common/llm_client.py`).
+1. **orq gateway** — if `ORQ_API_KEY` is set (optionally `ORQ_BASE_URL`), model strings route through the orq LLM gateway (`{ORQ_BASE_URL}/v3/router`, default `https://my.orq.ai`). Use the **provider-prefixed** form here (e.g. `openai/gpt-5-mini`). `ORQ_API_KEY` **wins if both keys are set** (verified against evaluatorq v1.10.1).
 2. **OpenAI directly** — else if `OPENAI_API_KEY` is set (optionally `OPENAI_BASE_URL`), all attack/evaluator model strings go straight to OpenAI. Use **bare** model names here (e.g. `gpt-5-mini`).
 
 If neither key is set the run fails with `CredentialError`. There is no Azure credential path — the CLI does not support Azure OpenAI directly.
@@ -118,15 +118,15 @@ uv loads an env-file only via `UV_ENV_FILE` or `--env-file`; `--no-env-file` is 
 - **both set** → the gateway wins. With provider-prefixed model strings that's usually exactly what you want — no action. It's a conflict only when the user *intends* a direct-OpenAI run (bare names): surface it and let them choose, e.g.:
   > "`ORQ_API_KEY` is set (exported in your shell or pulled in via an env-file such as `UV_ENV_FILE`), so this run routes through the orq gateway and bare model names won't resolve. To run direct-OpenAI, suppress it for the subprocess [Fix A]. To stay on the gateway instead, use provider-prefixed names (`openai/gpt-5-mini`)."
 
-**Fix A — strip the key for this run and block uv from re-adding it** (used when the user wants direct OpenAI; does **not** modify `.env` or `UV_ENV_FILE`, writes nothing to disk):
+**Fix A — strip the key for this run and block uv from re-adding it** (used when the user wants direct OpenAI; does **not** modify `.env` or `UV_ENV_FILE`, writes nothing to disk). A direct-OpenAI red-team run means a **raw-model target, which is SDK-only** — the CLI's `--target` takes only `agent:`/`deployment:`, and those require `ORQ_API_KEY` regardless — so the command wraps your SDK script (see [python-sdk.md](resources/python-sdk.md)):
 ```bash
-env -u ORQ_API_KEY uv run --no-env-file --package evaluatorq eq redteam run --target ...
+env -u ORQ_API_KEY uv run --no-env-file python redteam_raw_model.py
 ```
-`env -u ORQ_API_KEY` drops the gateway key from the environment for this one command; `--no-env-file` stops uv re-loading it from any env-file (`UV_ENV_FILE` / `--env-file`). `OPENAI_API_KEY` (and `OPENAI_BASE_URL` if set) pass through from your shell, so routing goes direct. Note an orq `agent:`/`deployment:` target still *requires* `ORQ_API_KEY` — this fix only applies to raw-model runs.
+`env -u ORQ_API_KEY` drops the gateway key from the environment for this one command; `--no-env-file` stops uv re-loading it from any env-file (`UV_ENV_FILE` / `--env-file`). `OPENAI_API_KEY` (and `OPENAI_BASE_URL` if set) pass through from your shell, so routing goes direct.
 
 > Caveat: `--no-env-file` suppresses **all** env-file loading, so if `OPENAI_API_KEY` lives *only* in an env-file (not exported in your shell), it will be dropped too. Export it first (`export OPENAI_API_KEY=…`) or pass it inline: `env -u ORQ_API_KEY OPENAI_API_KEY="$OPENAI_API_KEY" uv run --no-env-file …`. Do **not** combine `--no-env-file` with `--env-file` — `--no-env-file` overrides `--env-file` (either order) and nothing gets injected.
 
-**Fix B — don't use `uv run`.** If `eq` is on PATH (e.g. via `uv tool install`), invoke it directly so the trap can't fire: `env -u ORQ_API_KEY eq redteam run …`.
+**Fix B — don't use `uv run`.** Run the script with the venv's interpreter directly so the trap can't fire: `env -u ORQ_API_KEY .venv/bin/python redteam_raw_model.py`.
 
 Check before running — **always run this preflight when the skill is invoked**, before any `eq redteam run`:
 ```bash
@@ -346,7 +346,7 @@ eq redteam ui
 # Launch dashboard for a specific report
 eq redteam ui ./path/to/report.json
 
-# Lightweight run browser across redteam AND sim runs (FastHTML)
+# Lightweight run browser across redteam AND sim runs (needs the [dashboard] extra)
 eq dashboard
 ```
 

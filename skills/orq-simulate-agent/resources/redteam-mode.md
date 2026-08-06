@@ -1,7 +1,7 @@
 # Red-team Mode
 
 When the user wants adversarial probing rather than persona-driven
-simulation, call `evaluatorq.red_team()` directly. It already covers
+simulation, call `red_team()` from `evaluatorq.redteam` directly. It already covers
 attack categories, dynamic dataset generation, and multi-turn jailbreak
 flows, so there is no need to hand-roll a simulator.
 
@@ -15,7 +15,7 @@ flows, so there is no need to hand-roll a simulator.
 
 ```python
 import asyncio
-from evaluatorq.redteam import red_team
+from evaluatorq.redteam import red_team, OpenAIModelTarget
 from evaluatorq.redteam.contracts import TargetConfig
 
 async def main():
