@@ -268,12 +268,9 @@ One group per API tag. Groups marked with a leading `→` are the ones worth
 knowing by heart.
 
 ```
-  activities         create list update
 → agents             create delete get-response invoke list retrieve run
                      stream stream-run update
   agents-responses   create
-  alerts             create delete get list list-trigger-events list-triggers
-                     update
   annotation-queues  add-items clear create delete get get-item list
                      query-items remove-items update
   api-keys           create delete get list list-capabilities update
@@ -295,8 +292,6 @@ knowing by heart.
                      list-chunks-paginated list-datasources retrieve
                      retrieve-chunk retrieve-datasource search update
                      update-chunk update-datasource
-  logs               aggregate get get-context get-patterns list-facet-values
-                     list-facets list-fields list-trace query search
   memory-stores      create create-document create-memory delete delete-document
                      delete-memory list list-documents list-memories retrieve
                      retrieve-document retrieve-memory update update-document
@@ -308,8 +303,6 @@ knowing by heart.
                      update-aws-bedrock update-openai-like validate-aws-bedrock
   moderations        create
   ocr                ocr
-  people             person-create person-delete person-get person-list
-                     person-resend-invitation person-update
   pii                detect redact restore
 → projects           create delete get list update
 → prompts            create delete get-version list list-versions retrieve update
@@ -318,7 +311,6 @@ knowing by heart.
   responses          create get
   schedules          create delete list retrieve trigger update
 → skills             create delete get list update
-  smart-routers      create delete get list set-enabled update
   speech             create
   tools              create delete get-version list list-versions retrieve update
 → traces             aggregate create delete get get-span list-facet-values
@@ -326,20 +318,26 @@ knowing by heart.
   transcriptions     create
   translations       create
   webhooks           count create delete generate-secret get list query update
-  workspace-settings get update
 ```
 
-Changes at 4.13.0-rc vs 4.12: new groups `activities`, `alerts`,
-`annotation-queues`, `logs`, `people`, `smart-routers`, `workspace-settings`;
-`agents` lost `refresh-agent-card` and gained `retrieve`; `evals` gained `get`;
-the `telemetry` group is **gone** (see Aggregation below); autorouter management
-moved from `models create-autorouter`/`update-autorouter` to the dedicated
-`smart-routers` group. There is still no `experiments` group — experiments
-remain MCP/evaluatorq-only.
+Changes at 4.13.0-rc vs 4.12: `agents` lost `refresh-agent-card` and gained
+`retrieve`; `evals` gained `get`; the `telemetry` group is **gone** (see
+Aggregation below); `models` lost `create-autorouter`/`update-autorouter`; new
+`annotation-queues` group (the CLI surface for the 4.12 eval-corrections /
+unified-annotation model — relevant to annotation review workflows; not yet
+exercised against production, re-verify at 4.13 GA). There is still no
+`experiments` group — experiments remain MCP/evaluatorq-only.
 
-The rc also lists `budgets`, `notifiers`, and `management-keys` groups. **Do not
-use or document them** — they are internal platform APIs being removed from the
-public spec (ENG-2648) and are unsupported here by owner decision.
+**Out of scope by owner decision** — the rc also lists groups this skill
+deliberately does not cover; do not use or document them here:
+
+- `budgets`, `notifiers`, `management-keys` — internal platform APIs being
+  removed from the public spec (ENG-2648).
+- Six of the groups new in the 4.13 rc (`activities`, `alerts`, `logs`,
+  `people`, `smart-routers`, `workspace-settings`) — pre-GA surface, excluded
+  until a deliberate decision says otherwise. This is also where autorouter
+  management moved (`smart-routers`), so autorouter config is currently
+  undocumented here.
 
 Note `orq evals all` (not `list`) is the evaluator listing command, and
 `orq traces create` / `orq traces delete` add and remove **span annotations**,
@@ -543,15 +541,11 @@ on 4.13; if it returns JSON, drill-down is live and this section is obsolete.
 
 `traces aggregate` still exists in the 4.13-rc tree, but the `telemetry` group
 that 4.12's deprecation notice pointed to (`orq telemetry query`) is **gone in
-4.13.0-rc** — do not send anyone there. The rc's replacements for cross-trace
-analysis are the new `logs` group (`aggregate`, `get-patterns`, `query`,
-`search`) and `reporting query`. Start from `orq logs --help` and
-`orq reporting query --help` on the build you actually have; on a 4.12 platform,
-`orq telemetry query` still exists on the 4.12 CLI.
-
-*The 4.13 `logs` group could not be exercised against production during
-authoring (version skew — see the warning at the top of this file); re-verify
-after the 4.13 platform deploy.*
+4.13.0-rc** — do not send anyone there. For cross-trace analysis use
+`orq reporting query` (start from `orq reporting query --help` on the build you
+actually have); on a 4.12 platform, `orq telemetry query` still exists on the
+4.12 CLI. The rc's other analysis surface lives in a new group that is out of
+scope for this skill (see the owner-decision note above).
 
 ---
 
