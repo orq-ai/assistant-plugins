@@ -1,0 +1,82 @@
+name: skills-ci
+on:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate plugin manifests
+        run: tests/scripts/validate-plugin-manifests.sh
+      - name: Validate skills, lock invariants, version sync, content patterns
+        run: tests/scripts/validate-skills.sh
+      - name: PR title pattern lint
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if echo "$PR_TITLE" | grep -qiE "owner decision|\b(ENG|INN|BOPS|TOPS)-[0-9]+\b"; then
+            echo "::error::PR title contains internal decision context or a non-RES internal ticket id"
+            exit 1
+          fi
+          echo "title ok"
+      - name: Lock-hash freshness
+        run: |
+          cp skills-lock.json /tmp/lock-before.json
+          node --input-type=module -e '
+          import { createHash } from "node:crypto";
+          import { readdir, readFile, writeFile } from "node:fs/promises";
+          import { join, relative } from "node:path";
+          const walk = async (d, b, a=[]) => { for (const e of await readdir(d,{withFileTypes:true})) {
+            if (e.name===".git"||e.name==="node_modules") continue; const f=join(d,e.name);
+            e.isDirectory() ? await walk(f,b,a) : a.push({p:relative(b,f).split("\\").join("/"),f}); } return a; };
+          const hash = async dir => { const fs=(await walk(dir,dir)).sort((x,y)=>x.p.localeCompare(y.p));
+            const h=createHash("sha256"); for (const x of fs){ h.update(x.p); h.update(await readFile(x.f)); } return h.digest("hex"); };
+          const dirs=(await readdir("skills",{withFileTypes:true})).filter(e=>e.isDirectory()).map(e=>e.name).sort((a,b)=>a.localeCompare(b));
+          const skills={}; for (const n of dirs) skills[n]={source:"orq-ai/assistant-plugins",sourceType:"github",computedHash:await hash(join("skills",n))};
+          await writeFile("skills-lock.json", JSON.stringify({version:1,skills},null,2)+"\n");'
+          if ! diff -q /tmp/lock-before.json skills-lock.json >/dev/null; then
+            diff /tmp/lock-before.json skills-lock.json || true
+            echo "::error::skills-lock.json is stale — regenerate with the script in CLAUDE.md"
+            exit 1
+          fi
+          echo "lock hashes current"
+
+  version-bump-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require manifest version bump when skills/ changes
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=50
+          base="origin/${{ github.base_ref }}"
+          if git diff --name-only "$base"...HEAD | grep -qE '^skills/'; then
+            if git diff "$base"...HEAD -- .claude-plugin/plugin.json | grep -q '"version"'; then
+              echo "skills changed and manifest version bumped — ok"
+            else
+              echo "::error::skills/ changed but the manifest version did not — bump all 4 manifests and add a CHANGELOG entry (see CLAUDE.md)"
+              exit 1
+            fi
+          else
+            echo "no skills/ changes — gate not applicable"
+          fi
+
+  install-sanity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the suite from this checkout via npx skills
+        run: |
+          tmp=$(mktemp -d) && cd "$tmp"
+          npx -y skills add "$GITHUB_WORKSPACE" -y 2>&1 | tee install.log || true
+          count=$(find . -name SKILL.md 2>/dev/null | wc -l)
+          echo "installed SKILL.md count: $count"
+          if [ "$count" -lt 15 ]; then
+            echo "::error::expected >=15 skills installed from this checkout, got $count (see install.log output above)"
+            exit 1
+          fi
