@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.2] - 2026-08-06
+
+### Fixed
+
+- Evaluatorq-family skills re-verified against **evaluatorq v1.10.1** (RES-1220):
+  - `orq-red-team`: credential-priority rule corrected — `ORQ_API_KEY` (gateway) wins when both keys are set, not `OPENAI_API_KEY`; the "uv run + .env credential trap" section, conflict guidance, and troubleshooting rows rewritten around the verified routing order. Removed the nonexistent `[ui]` extra (`eq redteam ui` ships inside `[redteam]`; `openai`/`typer` are core deps).
+  - `evaluatorq`: `eq sim` quick references corrected — the target flag is `--target agent:<key>` (no `--agent-key`), datapoint-driven runs use `eq sim simulate` (not `run`), and the generate→export example now includes the required simulate step. Dashboard stage-file name fixed (`03_summary_report.json`).
+  - `orq-simulate-agent`: `simulate()`/`generate_and_simulate()` examples no longer pass `agent_key=` (a TypeError — the parameter is `target=`); `red_team` import path corrected to `evaluatorq.redteam`; raw-model targets use `OpenAIModelTarget` (the `llm:` prefix is rejected); run store documented as CWD-relative `.evaluatorq/` with `$EVALUATORQ_DIR` override.
+  - `orq-compare-agents`: the `my.`→`api.` staging URL rewrite no longer exists (removed in evaluatorq v1.10.0) — `ORQ_BASE_URL` is used verbatim with default `https://my.orq.ai`; the obsolete workaround was replaced with a historical note.
+
+### Added
+
+- Evaluatorq v1.10 features now referenced: LLM-jury and pairwise judging (`llm_jury`, `llm_jury_pairwise`, `PairwiseComparator`), `eq dashboard` run browser, `eq sim ui`, CrewAI and Pydantic AI target wrappers, redteam `--strategy`/`--delivery-method`/`--executive-summary` flags, and the `ORQ_WORKSPACE`/`ORQ_UI_BASE_URL` dashboard deep-link variables.
+
 ## [2.2.1] - 2026-08-06
 
 ### Changed

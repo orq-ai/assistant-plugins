@@ -226,6 +226,6 @@ const vercelJob = wrapAISdkAgent("VercelAgent", agent);
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `ORQ_API_KEY` | orq.ai API key (required for platform integration) | — |
-| `ORQ_BASE_URL` | orq.ai base URL | `https://api.orq.ai` |
+| `ORQ_BASE_URL` | orq.ai base URL (used verbatim — no host rewriting) | `https://my.orq.ai` |
 
 When `ORQ_API_KEY` is set, evaluatorq automatically reports results to the orq.ai Experiment UI.

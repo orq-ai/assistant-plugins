@@ -81,6 +81,8 @@ Evaluatorq Progress:
 | **CLI: `eq redteam`** | Adversarial safety testing against OWASP categories | → `orq-red-team` skill |
 | **CLI: `eq sim`** | Multi-turn conversation simulation, goal-achievement scoring | → `orq-simulate-agent` skill |
 
+Since v1.10 the library also exports **LLM-jury and pairwise judging**: `llm_jury()`, `llm_jury_pairwise()`, and `PairwiseComparator` (plurality/majority vote or numeric mean/median aggregation) — see the upstream `docs/llm-as-a-jury.md` and `docs/pairwise-judging.md` for usage.
+
 ---
 
 ## Phase 1: Identify the Target
@@ -187,8 +189,8 @@ eq redteam ui report.json   # open Streamlit dashboard
 Quick reference:
 
 ```bash
-eq sim generate --agent-description "..." --agent-key <AGENT_KEY>
-eq sim run --datapoints dp.jsonl --agent-key <AGENT_KEY>
+eq sim generate --agent-description "..." --target agent:<AGENT_KEY>
+eq sim simulate --datapoints dp.jsonl --target agent:<AGENT_KEY>
 ```
 
 ---
@@ -268,7 +270,7 @@ Environment variables:
 
 | Variable | Required for | Purpose |
 |----------|-------------|---------|
-| `ORQ_API_KEY` | Platform reporting, `--agent-key` | orq.ai API key |
+| `ORQ_API_KEY` | Platform reporting, `--target agent:<key>` | orq.ai API key |
 | `OPENAI_API_KEY` | `--openai-model` target | OpenAI key |
 
 ---

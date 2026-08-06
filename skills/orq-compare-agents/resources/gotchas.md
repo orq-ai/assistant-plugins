@@ -133,6 +133,6 @@ TypeScript evaluatorq exits with code 1 when any evaluator returns `pass: false`
 
 ## Staging Environment
 
-When using `ORQ_BASE_URL` with a staging URL like `https://my.staging.orq.ai`, evaluatorq internally transforms `my.` to `api.` in URLs. If `api.staging.orq.ai` doesn't exist, this will cause connection errors.
+`ORQ_BASE_URL` is used **verbatim** — set `https://my.staging.orq.ai` (or any self-hosted host) and evaluatorq talks to exactly that host for inference, upload, and OTEL. Default: `https://my.orq.ai`.
 
-**Workaround:** Set `ORQ_BASE_URL=https://api.staging.orq.ai` directly, bypassing the transformation.
+> Historical note: evaluatorq versions before v1.10.0 rewrote `my.` to `api.` internally, which broke staging hosts. That rewrite is gone — if you carried an `api.staging.orq.ai` workaround, drop it.

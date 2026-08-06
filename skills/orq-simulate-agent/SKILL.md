@@ -27,7 +27,7 @@ violations. You almost never need to hand-roll the loop.
 
 ## Constraints
 
-- **NEVER** use the same model for the user simulator and the agent under test if a downstream LLM-as-judge is reading both. Collusion inflates scores. `simulate()` accepts one `sim_model=` kwarg that drives the simulator, judge, and first-message generator. The agent's own model lives inside `agent_key` or the `target_callback`. To customize the user simulator separately, build a `UserSimulatorAgent(model=...)` and pass it as `user_simulator=`.
+- **NEVER** use the same model for the user simulator and the agent under test if a downstream LLM-as-judge is reading both. Collusion inflates scores. `simulate()` accepts one `sim_model=` kwarg that drives the simulator, judge, and first-message generator. The agent's own model lives inside the target (`target="agent:<key>"` or the callback). To customize the user simulator separately, build a `UserSimulatorAgent(model=...)` and pass it as `user_simulator=`.
 - **NEVER** let the simulator run unbounded. `simulate()` defaults to `max_turns=10`. Lower it for cheap exploration, raise it for memory tests.
 - **NEVER** hand-roll the loop around `orq.agents.responses.create()` when `simulate()` or `wrap_simulation_agent()` covers the case. The framework already handles parallelism, judge-based termination, OTel tracing, and result conversion.
 - **NEVER** invent persona scalars from a one-line brief. `patience`, `assertiveness`, `politeness`, `technical_level` are floats `[0-1]`. Pick them deliberately and write them down.
@@ -56,7 +56,7 @@ violations. You almost never need to hand-roll the loop.
 
 - Real production conversations are available, use `orq-analyze-trace-failures`
 - Single-turn input/output evaluation, use `orq-run-experiment`
-- Red-teaming sweeps with attack categories, call `evaluatorq.red_team()` directly (see [resources/redteam-mode.md](resources/redteam-mode.md))
+- Red-teaming sweeps with attack categories, call `red_team()` directly (`from evaluatorq.redteam import red_team` — see [resources/redteam-mode.md](resources/redteam-mode.md))
 
 ## Workflow Checklist
 
@@ -78,8 +78,8 @@ Pick one of the three target shapes that `simulate()` accepts:
 
 | Shape | When | How |
 |---|---|---|
-| `agent_key="..."` | Agent lives in orq.ai as a deployment | Pass the deployment key directly |
-| `target_callback=fn` | Agent is a local function or third-party SDK | Wrap with `from_chat_completions(...)` or write a `Callable[[list[Message]], str]` |
+| `target="agent:<key>"` | Agent lives in orq.ai | Pass the target string (`"agent:<key>"` or `"deployment:<key>"`; a bare key defaults to `agent:`). There is no `agent_key=` parameter on `simulate()` |
+| `target=fn` (or legacy `target_callback=fn`) | Agent is a local function or third-party SDK | Wrap with `from_chat_completions(...)` or write a `Callable[[list[Message]], str]` |
 | `target=AgentTarget(...)` | Full control over memory, clone, agent context, or building a custom agent on top of the orq.ai Responses API | Implement the `AgentTarget` protocol from `evaluatorq.contracts`, or use the bundled `OrqResponsesTarget(config=LLMCallConfig(...))`. See [resources/simulation-loop.md](resources/simulation-loop.md) for the full signature |
 
 If the user wants to drive an existing orq agent, use `search_entities` with `type: "agent"` to resolve the key. Verify it answers one turn end-to-end before wrapping it in a loop.

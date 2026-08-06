@@ -15,11 +15,12 @@ flows, so there is no need to hand-roll a simulator.
 
 ```python
 import asyncio
-from evaluatorq import red_team, TargetConfig
+from evaluatorq.redteam import red_team
+from evaluatorq.redteam.contracts import TargetConfig
 
 async def main():
     report = await red_team(
-        "llm:gpt-4o-mini",
+        OpenAIModelTarget("gpt-4o-mini"),   # llm:/openai: string prefixes are rejected — wrap raw models
         mode="dynamic",
         categories=["LLM01", "LLM07"],     # prompt injection, system prompt leakage
         max_dynamic_datapoints=5,
@@ -34,7 +35,7 @@ asyncio.run(main())
 
 ## Outputs
 
-- Local: `~/.evaluatorq/runs/<name>_<timestamp>.json`
+- Local: `.evaluatorq/runs/<name>_<timestamp>.json` (relative to the working directory; override the store root with `$EVALUATORQ_DIR` — never `~/`)
 - orq.ai: auto-uploaded as an Experiment run when `ORQ_API_KEY` is set
 - Local UI: `eq redteam ui` opens five dashboard tabs (Summary, Breakdown, Explorer, Usage, Methodology)
 
