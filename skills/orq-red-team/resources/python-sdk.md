@@ -51,7 +51,7 @@ report = await red_team(
     max_dynamic_datapoints=None,
     max_static_datapoints=None,
     dataset=None,                 # path | "hf:org/repo" | "hf:org/repo/file.json" | None (default HF dataset)
-    output_dir=None,
+    artifacts_dir=None,
     save="final",                 # SaveMode: "none" | "final" | "detail"
     name=None,
     attacker_instructions=None,   # domain context to steer attack generation
@@ -70,7 +70,7 @@ from evaluatorq.contracts import AgentTarget        # base class for custom targ
 ```
 
 - **orq agent / deployment** — pass the string `"agent:<key>"` or `"deployment:<key>"` straight to `red_team()`; no wrapper class needed, the backend is selected for you.
-- **`OpenAIModelTarget(model, system_prompt=None, *, client=None, max_tokens=None, timeout_ms=None)`** — wraps a bare model. Stateless. If `client` is omitted, one is created from env (same auto-detection as the CLI: `OPENAI_API_KEY` direct, else `ORQ_API_KEY` gateway).
+- **`OpenAIModelTarget(model, system_prompt=None, *, client=None, max_tokens=None, timeout_ms=None)`** — wraps a bare model. Stateless. If `client` is omitted, one is created from env (same auto-detection as the CLI: `ORQ_API_KEY` gateway first, else `OPENAI_API_KEY` direct).
 - **`AgentTarget`** — subclass it and implement `async def respond(self, messages) -> AgentResponse` to red-team any system you can call from Python.
 - **`OrqResponsesTarget`** — the hosted-agent target that wraps orq's Responses v3 API. You rarely build it by hand: passing `"agent:<key>"` already routes through the `openresponses` backend, which constructs one for you. Build it directly only when you need a custom client, system `instructions`, `timeout_ms`, or retry policy. Stateless (`respond(messages)` sends the full transcript each turn). Import: `from evaluatorq.openresponses.target import OrqResponsesTarget`. Signature: `OrqResponsesTarget(config: LLMCallConfig, *, instructions=None, tools=None, memory_entity_id=None, client=None, retry_attempts=None, retry_statuses=None, require_orq=False)`.
   ```python
@@ -98,6 +98,7 @@ To red-team an agent built on an external framework, wrap it in the matching tar
 
 - **LangChain** — agents built with `create_react_agent`/`StateGraph` run on LangGraph → use `LangGraphTarget`. Legacy chains / `AgentExecutor` → wrap with `CallableTarget`. (`pip install 'evaluatorq[langchain]'`)
 - A **Vercel AI SDK** wrapper (`VercelAISdkTarget`) also exists under `evaluatorq.integrations.vercel_ai_sdk_integration`.
+- **CrewAI** (`CrewAITarget`, `pip install 'evaluatorq[crewai]'`) and **Pydantic AI** (`PydanticAITarget`, `pip install 'evaluatorq[pydantic-ai]'`) wrappers ship since v1.10.
 - `CallableTarget` is the simplest path for anything without a dedicated wrapper — wrap any `async def(prompt: str) -> str` (sync functions are auto-run in a thread). Use `reset_fn` to clear shared state between attacks.
 
 ```python
@@ -222,7 +223,7 @@ Map each recommendation to a concrete change in the agent under test (harden sys
 
 ```python
 from evaluatorq.redteam import (
-    list_categories,       # list_available_categories() -> list[str]
+    list_categories,       # -> list[str]
     get_category_info,     # -> dict[str, dict]  (code -> metadata)
     OWASP_ASI_TOP_10,
     OWASP_LLM_TOP_10,
@@ -231,4 +232,4 @@ from evaluatorq.redteam import (
 
 ## Credentials
 
-Same auto-detection as the CLI (see `../SKILL.md`): `OPENAI_API_KEY` → direct OpenAI (bare model names); else `ORQ_API_KEY` → orq gateway (`openai/gpt-5-mini` prefixed form). `ORQ_API_KEY` is still required to hit `agent:`/`deployment:` targets. Missing both → `CredentialError`.
+Same auto-detection as the CLI (see `../SKILL.md`): `ORQ_API_KEY` → orq gateway (`openai/gpt-5-mini` prefixed form), and it **wins when both keys are set**; else `OPENAI_API_KEY` → direct OpenAI (bare model names). `ORQ_API_KEY` is also required to hit `agent:`/`deployment:` targets. Missing both → `CredentialError`.

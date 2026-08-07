@@ -72,7 +72,7 @@ uv pip install 'evaluatorq[redteam]'    # installs into the active/.venv; then E
 uv tool install 'evaluatorq[redteam]'
 ```
 
-The `[redteam]` extra is required (pulls in `openai`, `typer`, `huggingface-hub`). The interactive dashboard (`eq redteam ui`) additionally needs the `[ui]` extra: add `evaluatorq[redteam,ui]`.
+The `[redteam]` extra is required (pulls in `huggingface-hub` plus Streamlit/Plotly for the interactive dashboard, so `eq redteam ui` works with `[redteam]` alone — there is no `[ui]` extra). `openai` and `typer` are core dependencies, installed with the base package.
 
 > Throughout this skill, `eq redteam …` is written assuming `eq` is on PATH. If you resolved it via `$EQ` above (e.g. `uv run --package evaluatorq eq`), substitute that prefix — **but read the uv `.env` trap below first; running `eq` via `uv run` has a credential gotcha when an env-file (`UV_ENV_FILE`) is in play.**
 
@@ -80,8 +80,8 @@ The `[redteam]` extra is required (pulls in `openai`, `typer`, `huggingface-hub`
 
 The attack and evaluator LLMs need credentials. Routing is decided purely by **which env var is set** — the model string itself is never inspected for routing:
 
-1. **OpenAI directly** — if `OPENAI_API_KEY` is set (optionally `OPENAI_BASE_URL`), all attack/evaluator model strings go straight to OpenAI. Use **bare** model names here (e.g. `gpt-5-mini`). `OPENAI_API_KEY` **wins if both keys are set**.
-2. **orq gateway** — else if `ORQ_API_KEY` is set (optionally `ORQ_BASE_URL`), model strings route through the orq LLM gateway (`{ORQ_BASE_URL}/v3/router`, default `https://my.orq.ai`). Use the **provider-prefixed** form here (e.g. `openai/gpt-5-mini`).
+1. **orq gateway** — if `ORQ_API_KEY` is set (optionally `ORQ_BASE_URL`), model strings route through the orq LLM gateway (`{ORQ_BASE_URL}/v3/router`, default `https://my.orq.ai`). Use the **provider-prefixed** form here (e.g. `openai/gpt-5-mini`). `ORQ_API_KEY` **wins if both keys are set** (verified live).
+2. **OpenAI directly** — else if `OPENAI_API_KEY` is set (optionally `OPENAI_BASE_URL`), all attack/evaluator model strings go straight to OpenAI. Use **bare** model names here (e.g. `gpt-5-mini`).
 
 If neither key is set the run fails with `CredentialError`. There is no Azure credential path — the CLI does not support Azure OpenAI directly.
 
@@ -95,17 +95,17 @@ If neither key is set the run fails with `CredentialError`. There is no Azure cr
 
 ### The `uv run` + `.env` credential trap (read before running `eq` via uv)
 
-**Symptom:** every gateway model string (`openai/gpt-5-mini`) fails with `401 Incorrect API key` even though `ORQ_API_KEY` is set, and a shell-level `unset OPENAI_API_KEY` doesn't stick once you run via `uv run`.
+**Symptom:** you want a **direct-OpenAI** run (bare model names like `gpt-5-mini`), but every call routes to the orq gateway and fails on the bare name — even after a shell-level `unset ORQ_API_KEY`, the unset doesn't stick once you run via `uv run`.
 
-**Cause:** `uv` injects an env-file into the subprocess **only when you opt in** — `UV_ENV_FILE` is set in the environment, or you pass `--env-file`. It does **not** auto-read `./.env` from a bare `uv run` (verified on uv 0.11.19). But when an env-file *is* in play and contains `OPENAI_API_KEY`, uv loads it **after** your shell-level `unset`/`env -u`, so the key comes back → routing flips to direct-OpenAI (see routing rules above, `OPENAI_API_KEY` wins) → gateway-prefixed strings like `openai/gpt-5-mini` are sent to OpenAI, which rejects the `openai/` prefix and the orq key → `401`. A plain `env -u OPENAI_API_KEY eq …` (no `uv run`) is unaffected — the re-injection is uv re-reading the env-file. Common ways `UV_ENV_FILE` gets set without you noticing: direnv / a project `.envrc`, or a Makefile/CI wrapper.
+**Cause:** `uv` injects an env-file into the subprocess **only when you opt in** — `UV_ENV_FILE` is set in the environment, or you pass `--env-file`. It does **not** auto-read `./.env` from a bare `uv run` (verified on uv 0.11.19). But when an env-file *is* in play and contains `ORQ_API_KEY`, uv loads it **after** your shell-level `unset`/`env -u`, so the key comes back → routing stays on the gateway (see routing rules above, `ORQ_API_KEY` wins) → bare model names are sent to the gateway, which expects the provider-prefixed form → the run fails on model resolution. A plain `env -u ORQ_API_KEY eq …` (no `uv run`) is unaffected — the re-injection is uv re-reading the env-file. Common ways `UV_ENV_FILE` gets set without you noticing: direnv / a project `.envrc`, or a Makefile/CI wrapper.
 
 **Diagnostic — detect env-file injection** (compare uv with its default env-file loading vs `--no-env-file`; prints presence only, never the key value):
 ```bash
 # Is uv pointed at an env-file at all? (a path here, not a secret)
 echo "UV_ENV_FILE: ${UV_ENV_FILE:-unset}"
-WITH=$(uv run python3 -c "import os;print('set' if os.getenv('OPENAI_API_KEY') else 'unset')")
-WITHOUT=$(uv run --no-env-file python3 -c "import os;print('set' if os.getenv('OPENAI_API_KEY') else 'unset')")
-echo "OPENAI_API_KEY — uv default: $WITH | uv --no-env-file: $WITHOUT"
+WITH=$(uv run python3 -c "import os;print('set' if os.getenv('ORQ_API_KEY') else 'unset')")
+WITHOUT=$(uv run --no-env-file python3 -c "import os;print('set' if os.getenv('ORQ_API_KEY') else 'unset')")
+echo "ORQ_API_KEY — uv default: $WITH | uv --no-env-file: $WITHOUT"
 # default=set, --no-env-file=unset → uv's env-file is injecting it (the trap; check UV_ENV_FILE above)
 # both set                         → comes from your shell env, not an env-file
 # both unset                       → clean
@@ -114,20 +114,20 @@ uv loads an env-file only via `UV_ENV_FILE` or `--env-file`; `--no-env-file` is 
 
 **Decide — don't auto-strip `.env`.** A key in `.env` usually means the user wants it; suppressing it silently is wrong. Check the state and guide:
 
-- `OPENAI_API_KEY` only, no `ORQ_API_KEY` → direct-OpenAI run, bare model names (`gpt-5-mini`). No conflict.
 - `ORQ_API_KEY` only → gateway run, `openai/`-prefixed names. No conflict.
-- **both set + gateway target (`openai/…` model)** → conflict: `OPENAI_API_KEY` wins → the gateway-prefixed string is sent to OpenAI → 401. Surface it and let the user choose, e.g.:
-  > "`OPENAI_API_KEY` is set (likely exported in your shell or pulled in via an env-file such as `UV_ENV_FILE`). With a gateway model string that routes to direct OpenAI and 401s. To use the orq gateway for this run, suppress it for the subprocess [Fix A]. To use direct OpenAI instead, drop the `openai/` prefix. If neither `ORQ_API_KEY` nor the gateway is what you want, set the key you intend here."
+- `OPENAI_API_KEY` only, no `ORQ_API_KEY` → direct-OpenAI run, bare model names (`gpt-5-mini`). No conflict.
+- **both set** → the gateway wins. With provider-prefixed model strings that's usually exactly what you want — no action. It's a conflict only when the user *intends* a direct-OpenAI run (bare names): surface it and let them choose, e.g.:
+  > "`ORQ_API_KEY` is set (exported in your shell or pulled in via an env-file such as `UV_ENV_FILE`), so this run routes through the orq gateway and bare model names won't resolve. To run direct-OpenAI, suppress it for the subprocess [Fix A]. To stay on the gateway instead, use provider-prefixed names (`openai/gpt-5-mini`)."
 
-**Fix A — strip the key for this run and block uv from re-adding it** (used when the user wants the gateway; does **not** modify `.env` or `UV_ENV_FILE`, writes nothing to disk):
+**Fix A — strip the key for this run and block uv from re-adding it** (used when the user wants direct OpenAI; does **not** modify `.env` or `UV_ENV_FILE`, writes nothing to disk). A direct-OpenAI red-team run means a **raw-model target, which is SDK-only** — the CLI's `--target` takes only `agent:`/`deployment:`, and those require `ORQ_API_KEY` regardless — so the command wraps your SDK script (see [python-sdk.md](resources/python-sdk.md)):
 ```bash
-env -u OPENAI_API_KEY uv run --no-env-file --package evaluatorq eq redteam run --target agent:<key> ...
+env -u ORQ_API_KEY uv run --no-env-file python redteam_raw_model.py
 ```
-`env -u OPENAI_API_KEY` drops the direct-OpenAI key from the environment for this one command; `--no-env-file` stops uv re-loading it from any env-file (`UV_ENV_FILE` / `--env-file`). `ORQ_API_KEY` (and `ORQ_BASE_URL` if set) pass through from your shell, so routing stays on the gateway.
+`env -u ORQ_API_KEY` drops the gateway key from the environment for this one command; `--no-env-file` stops uv re-loading it from any env-file (`UV_ENV_FILE` / `--env-file`). `OPENAI_API_KEY` (and `OPENAI_BASE_URL` if set) pass through from your shell, so routing goes direct.
 
-> Caveat: `--no-env-file` suppresses **all** env-file loading, so if `ORQ_API_KEY`/`ORQ_BASE_URL` live *only* in an env-file (not exported in your shell), they'll be dropped too. Export them first (`export ORQ_API_KEY=…`) or pass them inline: `env -u OPENAI_API_KEY ORQ_API_KEY="$ORQ_API_KEY" uv run --no-env-file …`. Do **not** combine `--no-env-file` with `--env-file` — `--no-env-file` overrides `--env-file` (either order) and nothing gets injected. Only set `ORQ_BASE_URL` if the user already has one; do **not** synthesize a base URL.
+> Caveat: `--no-env-file` suppresses **all** env-file loading, so if `OPENAI_API_KEY` lives *only* in an env-file (not exported in your shell), it will be dropped too. Export it first (`export OPENAI_API_KEY=…`) or pass it inline: `env -u ORQ_API_KEY OPENAI_API_KEY="$OPENAI_API_KEY" uv run --no-env-file …`. Do **not** combine `--no-env-file` with `--env-file` — `--no-env-file` overrides `--env-file` (either order) and nothing gets injected.
 
-**Fix B — don't use `uv run`.** If `eq` is on PATH (e.g. via `uv tool install`), invoke it directly so the trap can't fire: `env -u OPENAI_API_KEY eq redteam run …`.
+**Fix B — don't use `uv run`.** Run the script with the venv's interpreter directly so the trap can't fire: `env -u ORQ_API_KEY .venv/bin/python redteam_raw_model.py`.
 
 Check before running — **always run this preflight when the skill is invoked**, before any `eq redteam run`:
 ```bash
@@ -256,7 +256,7 @@ eq redteam run \
   [--max-dynamic-datapoints 50] \
   [--attack-model openai/gpt-5-mini] \
   [--evaluator-model openai/gpt-5-mini] \
-  [--save-report ./output/my-run/report.json] \
+  [--report ./output/my-run/report.json] \
   [--yes]
 ```
 
@@ -270,7 +270,7 @@ eq redteam run \
 
 ### Key flags
 
-These are the flags you need for a first run. For the complete set (`--max-static-datapoints`, `--max-per-category`, `--generated-strategy-count`, `--no-generate-strategies`, `--parallelism`, `--export-md`/`--export-html`, `--attacker-instructions`, `--name`, `--max-turns`, `--verbose`/`--quiet`, …) run `eq redteam run --help`.
+These are the flags you need for a first run. For the complete set (`--max-static-datapoints`, `--max-per-category`, `--generated-strategy-count`, `--no-generate-strategies`, `--parallelism`, `--report-md`/`--report-html`, `--attacker-instructions`, `--name`, `--max-turns`, `--verbose`/`--quiet`, …) run `eq redteam run --help`.
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -283,10 +283,13 @@ These are the flags you need for a first run. For the complete set (`--max-stati
 | `--evaluator-model` | `gpt-5-mini` | Model judging whether attacks succeeded |
 | `--system-prompt` | none | System prompt for the target model/agent |
 | `--save` | `final` | `none` (no files, run not listed by `eq redteam runs`), `final` (summary JSON), or `detail` (all stage artifacts) |
-| `--save-report` | none | Explicit path to write the report JSON |
-| `--output-dir` | none | Directory for saved JSON stage files (**required** with `--save detail`) |
+| `--report` | none | Explicit path to write the report JSON |
+| `--artifacts-dir` | none | Directory for saved JSON stage files (**required** with `--save detail`) |
 | `--dataset` | HuggingFace `orq/redteam-vulnerabilities` | Static/hybrid mode: local path, `hf:org/repo`, or `hf:org/repo/file.json` |
 | `--no-cleanup-memory` | false | Keep memory entities written during a dynamic run instead of cleaning them up (debugging). Only relevant for memory-backed agents — see Constraints |
+| `--strategy` / `-s` | all | Filter to specific attack strategies. Repeatable |
+| `--delivery-method` / `-d` | all | Filter to specific delivery methods. Repeatable |
+| `--executive-summary` / `--no-executive-summary` | on | LLM-written executive summary in the report |
 | `--yes` / `-y` | false | Skip confirmation prompt |
 
 ### Category examples
@@ -319,9 +322,9 @@ eq redteam run --target deployment:my-deployment --category ASI01
 
 ## Output and reports
 
-After a run, the report is auto-saved to `.evaluatorq/runs/<name>_<ts>.json`. If `--save-report <path>` is passed, the report JSON is also written there.
+After a run, the report is auto-saved to `.evaluatorq/runs/<name>_<ts>.json`. If `--report <path>` is passed, the report JSON is also written there.
 
-With `--save detail` and `--output-dir <dir>`, staged artifacts are saved:
+With `--save detail` and `--artifacts-dir <dir>`, staged artifacts are saved:
 
 ```
 <output-dir>/
@@ -343,7 +346,14 @@ eq redteam ui
 
 # Launch dashboard for a specific report
 eq redteam ui ./path/to/report.json
+
+# Lightweight run browser across redteam AND sim runs (needs the [dashboard] extra)
+eq dashboard
 ```
+
+Dashboard trace deep-link buttons appear only when `ORQ_WORKSPACE` (or
+`ORQ_WORKSPACE_SLUG`) is set; `ORQ_UI_BASE_URL` overrides the app host for
+self-hosted/staging.
 
 ### Reading the report JSON
 
@@ -449,7 +459,7 @@ eq redteam run \
   --max-dynamic-datapoints 20 \
   --attack-model openai/gpt-5-mini \
   --evaluator-model openai/gpt-5-mini \
-  --save-report ./output/customer-support-report.json \
+  --report ./output/customer-support-report.json \
   --yes
 
 # 3. List runs and view summary
@@ -476,15 +486,15 @@ vulnerabilities_found: 7
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
 | `eq: command not found` | Package not installed or not on PATH | Run the discovery ladder (PATH / `.venv` / uv workspace / `python -m`) before installing; install into a project venv with `uv pip install 'evaluatorq[redteam]'` (global `uv tool install` only as a last resort) |
-| `401 Incorrect API key` on `openai/...` despite `ORQ_API_KEY` set, when running via `uv run` | uv loaded `OPENAI_API_KEY` from an env-file (`UV_ENV_FILE` / explicit `--env-file`) after your `unset`, flipping routing to direct OpenAI (uv does **not** auto-read `./.env`) | `env -u OPENAI_API_KEY uv run --no-env-file …`, or run `eq` directly off PATH. See the uv `.env` trap section |
+| Bare model names (`gpt-5-mini`) fail via `uv run` even after `unset ORQ_API_KEY` | uv loaded `ORQ_API_KEY` from an env-file (`UV_ENV_FILE` / explicit `--env-file`) after your `unset`, keeping routing on the gateway (uv does **not** auto-read `./.env`) | `env -u ORQ_API_KEY uv run --no-env-file …`, or run `eq` directly off PATH. See the uv `.env` trap section |
 | `Agent not found` / `deployment_not_found` mid-run | Wrong `--target` key, **or** the shell `ORQ_API_KEY` is scoped to a different project than the target (MCP said it exists, but the run key can't see it) | Verify up front with the **shell `ORQ_API_KEY`** — agents via `GET /v2/agents/{key}` (or SDK `agents.retrieve`), deployments via `POST /v2/deployments/get_config` (or SDK `deployments.get_config`). An MCP hit alone is not proof — its key may be another project. On a mismatch, ask the user for the right key (the one scoped to the target's project). See "Verify the target agent or deployment exists" |
 | `ORQ_API_KEY not set` or 401 errors | Missing env var for target agent | **Export** `ORQ_API_KEY` in your shell (`export ORQ_API_KEY=…`); a key only in `.env` is **not** auto-read by a bare `eq` run — see the preflight verify block, which exports it for you |
-| `ImportError` for `openai`/`typer` | Incomplete install (missing extra) | `pip install 'evaluatorq[redteam]'` |
+| `ImportError` for `huggingface-hub`/`streamlit` | Incomplete install (missing extra) | `pip install 'evaluatorq[redteam]'` (`openai`/`typer` are core — an ImportError on those means the package itself is missing) |
 | `CredentialError` / run hangs at attack generation | No LLM credential for attack/evaluator | Set `OPENAI_API_KEY` (bare model names) **or** `ORQ_API_KEY` (provider-prefixed, e.g. `openai/gpt-5-mini`) |
 | ASR = 0.0 on all categories | Evaluator routing/credential issue, or genuinely resistant | Confirm the evaluator model string matches the active route (gateway → `openai/gpt-5-mini`); check creds before assuming a stronger judge is needed |
-| `openai/...` model rejected | `OPENAI_API_KEY` set → direct OpenAI rejects the prefix | Use a bare name (`gpt-5-mini`) for direct OpenAI, or unset `OPENAI_API_KEY` to route via the gateway |
+| `openai/...` model rejected | Only `OPENAI_API_KEY` is set → the run goes direct to OpenAI, which rejects the prefix | Use a bare name (`gpt-5-mini`) for direct OpenAI, or set `ORQ_API_KEY` to route via the gateway (the gateway wins when both are set) |
 | Confirmation prompt blocks CI | Interactive terminal required | Pass `--yes` / `-y` to skip |
-| No runs shown in `eq redteam runs` | `--save none` was used | Re-run with `--save final` (default) or pass `--save-report <path>` |
+| No runs shown in `eq redteam runs` | `--save none` was used | Re-run with `--save final` (default) or pass `--report <path>` |
 
 ## Python SDK (when the CLI can't)
 
@@ -501,7 +511,7 @@ The CLI covers the common case (red-teaming an orq `agent:`/`deployment:` target
 
 - Run completes without errors
 - Summary is printed to stdout (happens automatically after each run)
-- Report JSON exists (in `.evaluatorq/runs/` or at `--save-report` path)
+- Report JSON exists (in `.evaluatorq/runs/` or at `--report` path)
 - Categories are described to the user by their correct names (e.g. ASI01 = Agent Goal Hijacking, not "prompt injection")
 - Categories tested and coverage gaps are noted (e.g. "only ASI01–ASI02 tested; LLM01–LLM09 not covered")
 

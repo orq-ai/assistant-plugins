@@ -16,6 +16,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `orq-manage-skills`: `create_skill`, `update_skill`, and `delete_skill` removed from `allowed-tools` (reads stay pre-approved) so every write and delete prompts; its delete workflow now uses the repo's `## Destructive Actions` + `AskUserQuestion` convention with per-entity confirmation and no bulk deletes without listing every item first.
+## [2.2.2] - 2026-08-06
+
+### Added
+
+- Evaluatorq v1.10 features now referenced: LLM-jury and pairwise judging (`llm_jury`, `llm_jury_pairwise`, `PairwiseComparator`), `eq dashboard` run browser, `eq sim ui`, CrewAI and Pydantic AI target wrappers, redteam `--strategy`/`--delivery-method`/`--executive-summary` flags, and the `ORQ_WORKSPACE`/`ORQ_UI_BASE_URL` dashboard deep-link variables.
+
+### Fixed
+
+- Evaluatorq-family skills re-verified against the **current evaluatorq release (1.11.x)** (RES-1220):
+  - CLI flags aligned to 1.11: `eq sim generate` writes via `--datapoints/-d`; `eq sim simulate` reads via `--input/-i` and writes via `--results/-r`; redteam report flags are `--report`/`--artifacts-dir`/`--report-md`/`--report-html` (the pre-1.11 `--save-report`/`--output-dir`/`--export-md`/`--export-html` no longer exist); Python `red_team(artifacts_dir=)` likewise.
+  - `target_callback=` removed everywhere — it does not exist in the library (`target=` is the only name; passing it raises `TypeError`).
+  - `simulate()`/`generate_and_simulate()` report kwargs documented (`report=`, `executive_summary=`, `save=`, `orq_results_path=`); `eq sim` subcommand list completed (`from-traces`, `upload-dataset`, `validate` with `validate-dataset` as deprecated alias); OWASP table carries `ASI10` Rogue Agents; async scorer example uses `await orq.evals.invoke_async(...)` with env-derived credentials; `orq-ai-sdk` added to the install table.
+  - `orq-red-team`: credential-priority rule corrected — `ORQ_API_KEY` (gateway) wins when both keys are set, not `OPENAI_API_KEY`; the "uv run + .env credential trap" section, conflict guidance, and troubleshooting rows rewritten around the verified routing order. Removed the nonexistent `[ui]` extra (`eq redteam ui` ships inside `[redteam]`; `openai`/`typer` are core deps).
+  - `evaluatorq`: `eq sim` quick references corrected — the target flag is `--target agent:<key>` (no `--agent-key`), datapoint-driven runs use `eq sim simulate` (not `run`), and the generate→export example now includes the required simulate step. Dashboard stage-file name fixed (`03_summary_report.json`).
+  - `orq-simulate-agent`: `simulate()`/`generate_and_simulate()` examples no longer pass `agent_key=` (a TypeError — the parameter is `target=`); `red_team` import path corrected to `evaluatorq.redteam`; raw-model targets use `OpenAIModelTarget` (the `llm:` prefix is rejected); run store documented as CWD-relative `.evaluatorq/` with `$EVALUATORQ_DIR` override.
+  - `orq-compare-agents`: the `my.`→`api.` staging URL rewrite no longer exists (removed in evaluatorq v1.10.0) — `ORQ_BASE_URL` is used verbatim with default `https://my.orq.ai`; the obsolete workaround was replaced with a historical note.
 
 ## [2.2.1] - 2026-08-06
 
