@@ -51,7 +51,7 @@ Trace Analysis Progress:
 - `orq-run-experiment` — measure improvements with experiments (absorbs action-plan)
 - `orq-generate-synthetic-dataset` — generate test data when no production data exists
 - `orq-optimize-prompt` — optimize prompts based on identified failures
-- `orq-cli` — pull traces from the shell (`orq traces search`, `traces list-spans`) when the MCP tools are unavailable or you need bulk export to a file
+- `orq-cli` — pull traces from the shell (`orq traces search`, `traces list-spans`) for anything that must run again without an agent present (CI, cron, scripts) or bulk export to a file. See its "MCP tools or the CLI?" table before choosing.
 
 ## When to use
 

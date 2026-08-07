@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `orq-cli`: command map re-verified live against the **4.13** CLI and rewritten to describe the 4.13 surface only — no version deltas or cross-version caveats. Covers the `annotation-queues` group (eval corrections / unified annotations), per-trace drill-down (`traces get` / `list-spans` / `get-span`), and notes there is no `experiments` group. The map is scoped to the supported surface; some CLI groups are intentionally not covered. (RES-1210)
 - `orq-cli`: caveats re-tested live on 4.13 — plain strings accepted by generated flags (double-JSON-quoting workaround deleted); no client-side enum validation (documented as such: read the server error).
+- `orq-cli`: the global projection flag is `-j/--jmespath` — 4.13 removed `-q/--query`, and body fields no longer shadow globals (colliding body fields get a `body-` prefix; a body `query` field is plain `--query`, full-text search). Every example updated; the shadowing section replaced with the `--query`-is-not-a-projection trap and the `-q`-muscle-memory error.
+- MCP tool-name rot fixed across resources: `evaluator_get` → `get_llm_eval`/`get_python_eval` (4 files); phantom `list_registry_keys` row removed from `orq-invoke-deployment`; `## Companion Skills` heading case normalized.
 - `orq-cli`: "MCP tools or the CLI?" decision table extended with the coverage split — MCP-exclusive (experiments, docs/entity search) vs CLI-only (schedules, identities, projects, API keys, webhooks, knowledge bases, memory stores, files).
 - All 12 MCP-primary skills now cross-reference `orq-cli` for anything that must run again without an agent present (CI, cron, scripts, bulk), pointing at the canonical decision table. (RES-1163)
 

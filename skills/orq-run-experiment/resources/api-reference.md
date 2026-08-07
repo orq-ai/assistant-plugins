@@ -16,7 +16,7 @@ Use the orq MCP server (`https://my.orq.ai/v2/mcp`) as the primary interface. Fo
 |------|---------|
 | `create_llm_eval` | Create an LLM evaluator |
 | `create_python_eval` | Create a Python evaluator for code-based checks |
-| `evaluator_get` | Retrieve any evaluator by ID |
+| `get_llm_eval` / `get_python_eval` | Retrieve an evaluator by ID |
 | `list_traces` | List and filter traces for error analysis |
 | `list_spans` | List spans within a trace |
 | `get_span` | Get detailed span information |

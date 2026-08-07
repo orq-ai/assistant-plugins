@@ -1,6 +1,7 @@
 # orq CLI Command Map
 
-Verified live against the **4.13** CLI (v4.13.0-rc.53, 2026-08-06). The CLI is
+Verified live against the **4.13** CLI (last full pass: build 4.13.0-rc.62,
+2026-08-07). The CLI is
 generated from the orq.ai OpenAPI spec, so this drifts between releases —
 `orq <group> --help` wins over anything written here.
 
@@ -31,37 +32,44 @@ curl -fsSL https://raw.githubusercontent.com/orq-ai/orq-cli/main/openapi.yaml -o
 
 ## Global flags
 
-Accepted by most commands, but **not all** — see the shadowing note below:
-
 | Flag | Effect |
 |---|---|
 | `--json` | Alias for `-o json` |
 | `-o, --output-format` | `json`, `yaml`, or `toon` (default `toon`) |
-| `-q, --query` | JMESPath expression applied to the response |
-| `--raw` | Emit the query result unquoted instead of as JSON |
+| `-j, --jmespath` | JMESPath expression applied to the response |
+| `--raw` | Emit the `--jmespath` result unquoted instead of as JSON |
 | `--profile` | Credential profile (default `default`) |
 | `--server` | Override the server URL for this call |
 | `--verbose` | Verbose log output. **Prints every stored API key in plaintext — never use in shared output.** |
 
 Each flag has an env-var twin: uppercase, `ORQ_` prefix, underscores for dashes.
 `ORQ_VERBOSE=1` equals `--verbose`, `ORQ_PROFILE=ci` equals `--profile ci`,
-`ORQ_OUTPUT_FORMAT=json` equals `-o json`.
+`ORQ_JMESPATH='auth.status'` equals `-j 'auth.status'`.
 
-### Generated flags shadow global flags
+**There is no `-q`/`--query` global flag.** Muscle memory from other CLIs (or
+older orq builds) will produce `Error: unknown shorthand flag: 'q' in -q` on
+every command — the projection flag is `-j`.
 
-Per-field flags are generated from each command's request body. When a body field
-collides with a global flag name, the body field wins and the global flag stops
-working for that command. Confirmed live:
+### Body fields do not collide with global flags
 
-| Command | Shadowed | Effect |
-|---|---|---|
-| `traces search` | `-q` / `--query` | `-q` errors; `--query` is silently treated as body full-text search |
-| `webhooks query` | `-q` | `unknown shorthand flag: 'q'` |
-| `knowledge-bases search` | `-q` | same |
-| `evals invoke` | `-q` | same |
-| `rerank create` | `-q` | same |
-| `images generate` | `-o` | `unknown shorthand flag: 'o'` |
-| `auth setup` | `--profile` | body field wins |
+Per-field flags are generated from each command's request body. When a body
+field would clash with a global flag name, the generator renames the *body*
+flag with a `body-` prefix and keeps the global one working — verified:
+`images generate` exposes its `output_format` body field as
+`--body-output-format`, and its help text says so explicitly. A body field
+named `query` simply gets `--query`, because the global projection flag is
+`-j/--jmespath`.
+
+**The trap that remains:** on search commands (`traces search`,
+`knowledge-bases search`, `webhooks query`, …) `--query` is the body's
+**full-text search field**, not a projection. `orq traces search --query
+'data[].trace_id'` parses fine, is sent as a full-text search for that literal
+string, and returns zero rows at exit 0 — it looks like "no data" rather than
+"wrong flag". Project with `-j`; use `--query` only when you mean full-text
+search.
+
+Built-in exception: on `auth setup`, `--profile` is the profile being created
+or updated, not the global credential-profile selector.
 
 Two related parsing facts, verified live:
 
@@ -71,13 +79,6 @@ Two related parsing facts, verified live:
   one — passes flag parsing and is sent to the server, which rejects it there.
   `-o bogus` likewise silently falls back to JSON output. Do not rely on the CLI
   to catch a typo'd enum value; read the server error.
-
-The dangerous one is `--query` on `traces search`: it is accepted, sent as the
-body's full-text `query` field, and returns zero rows at exit 0. It looks like
-"no data" rather than "wrong flag".
-
-Workaround: use `--json` and pipe to `jq`. To find collisions ahead of time,
-compare `orq <group> <cmd> --help` flags against the global list.
 
 Config files are read from `~/.orq/config.json` (and `/etc/orq/config.json` on
 Unix), using the same key names:
@@ -246,8 +247,8 @@ Two things to read carefully:
 Quick unauthenticated triage:
 
 ```sh
-orq doctor --json -q 'auth.status' --raw            # missing | ok | invalid
-orq doctor --json -q "checks[?status!='pass']"      # only the problems
+orq doctor --json -j 'auth.status' --raw            # missing | ok | invalid
+orq doctor --json -j "checks[?status!='pass']"      # only the problems
 ```
 
 ---
@@ -381,27 +382,29 @@ Full grammar: `orq help-input`.
 
 ## JMESPath recipes
 
-`-q` runs against the parsed response. `--raw` unwraps a single value for shell
+`-j` runs against the parsed response. `--raw` unwraps a single value for shell
 capture.
 
 ```sh
 # active workspace key, bare — needs an OAuth session, not an API key
-orq auth whoami --json -q active_workspace_key --raw
+orq auth whoami --json -j active_workspace_key --raw
 
 # workspace keys and names — also session-only
-orq workspace list --json -q 'workspaces[].{key: key, name: name}'
+orq workspace list --json -j 'workspaces[].{key: key, name: name}'
 
 # agent id + display name (agents use _id; deployments use id, projects project_id)
-orq agents list --json -q 'data[].{id: _id, name: display_name}'
+orq agents list --json -j 'data[].{id: _id, name: display_name}'
 
 # first agent's key, bare
-orq agents list --json -q 'data[0].key' --raw
+orq agents list --json -j 'data[0].key' --raw
 
 # models have no envelope — project the array directly
-orq models list --json -q '[].id'
+orq models list --json -j '[].id'
 ```
 
-`traces search` shadows `-q`, so trace projections must go through `jq`:
+`-j` works on `traces search` too (remember `--query` there is the body's
+full-text field, not a projection). `jq` remains handy for multi-step
+transforms:
 
 ```sh
 # failed traces in a window
@@ -419,14 +422,14 @@ Span-level reads go through `traces list-spans` / `traces get-span` (see
 
 ### Comparing against a string in a filter
 
-A bare backtick literal does **not** work. `-q 'checks[?status!=`pass`]'` fails
+A bare backtick literal does **not** work. `-j 'checks[?status!=`pass`]'` fails
 with `invalid character 'p' looking for beginning of value`, because backticks
 delimit a *JSON* literal and `pass` is not valid JSON. Two forms that do work,
 both verified live:
 
 ```sh
-orq doctor --json -q "checks[?status!='pass']"      # raw-string literal, outer double quotes
-orq doctor --json -q 'checks[?status!=`"pass"`]'    # JSON literal, note the inner quotes
+orq doctor --json -j "checks[?status!='pass']"      # raw-string literal, outer double quotes
+orq doctor --json -j 'checks[?status!=`"pass"`]'    # JSON literal, note the inner quotes
 ```
 
 Prefer the first. The second needs backticks to survive the shell, which they do
@@ -463,10 +466,11 @@ Field names, confirmed against **live responses** unless marked:
   `updated_at`, `created_by_id`, `updated_by_id`. Two departures from every other
   resource: the identifier is **`project_id`** (neither `id` nor `_id`), and the
   timestamps are **`created_at` / `updated_at`**, not `created` / `updated`.
-- **span summaries** (`traces list-spans`, *spec only*): `trace_id`, `span_id`,
+- **span summaries** (`traces list-spans`): `trace_id`, `span_id`,
   `parent_span_id`, `name`, `type`, `operation`, `status`, `started_at`,
   `ended_at`, `duration_ms`, `provider`, `model`, `usage`, `cost`, `has_detail`.
-  Unverifiable in practice — the endpoint 404s, see below.
+  Field names from the spec — see [Per-trace drill-down](#per-trace-drill-down)
+  for the 404 fallback on pre-4.13 deployments.
 
 There is no universal identifier convention: `_id` for agents, prompts, datasets
 and knowledge-bases; `id` for deployments; `project_id` for projects. Check the
@@ -529,7 +533,7 @@ https://my.orq.ai/<workspace-key>/experiments/<experiment-id>
 ```
 
 ```sh
-key="$(orq auth whoami --json -q active_workspace_key --raw)"
+key="$(orq auth whoami --json -j active_workspace_key --raw)"
 echo "https://my.orq.ai/${key}/traces?query=$(printf 'trace_id:is:%s' "$trace_id" | jq -sRr @uri)"
 ```
 
@@ -540,7 +544,7 @@ them moves when you log in:
 
 ```sh
 orq server current --json                        # resource commands
-orq doctor --json -q 'config.api_base_url'       # built-in auth commands
+orq doctor --json -j 'config.api_base_url'       # built-in auth commands
 ```
 
 `orq server current` returns `server`, `server_index`, and `server_override`.
@@ -591,7 +595,7 @@ and `--server` like everything else.
 **It does not return the bare response body.** `orq request` wraps everything:
 
 ```sh
-orq request GET /v2/traces/fields --json -q 'keys(@)' </dev/null
+orq request GET /v2/traces/fields --json -j 'keys(@)' </dev/null
 # [ "body", "ok", "status", "headers" ]
 ```
 

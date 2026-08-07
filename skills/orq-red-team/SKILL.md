@@ -504,7 +504,7 @@ The CLI covers the common case (red-teaming an orq `agent:`/`deployment:` target
 - Categories are described to the user by their correct names (e.g. ASI01 = Agent Goal Hijacking, not "prompt injection")
 - Categories tested and coverage gaps are noted (e.g. "only ASI01–ASI02 tested; LLM01–LLM09 not covered")
 
-## Companion skills
+## Companion Skills
 
 - `orq-build-evaluator` — build custom LLM judges for failure modes surfaced by red teaming
 - `orq-analyze-trace-failures` — deeper failure taxonomy from production traces

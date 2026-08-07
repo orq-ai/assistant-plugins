@@ -17,7 +17,6 @@ Use the orq MCP server (`https://my.orq.ai/v2/mcp`) as the primary interface.
 |------|---------|
 | `search_entities` | Find deployments (`type: "deployment"`), agents (`type: "agent"`) |
 | `list_models` | List available models for AI Router calls |
-| `list_registry_keys` | List deployment registry keys |
 | `list_traces` | Inspect traces after invocation |
 
 ## HTTP API
