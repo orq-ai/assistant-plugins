@@ -37,7 +37,7 @@ asyncio.run(main())
 
 - Local: `.evaluatorq/runs/<name>_<timestamp>.json` (relative to the working directory; override the store root with `$EVALUATORQ_DIR` — never `~/`)
 - orq.ai: auto-uploaded as an Experiment run when `ORQ_API_KEY` is set
-- Local UI: `eq redteam ui` opens five dashboard tabs (Summary, Breakdown, Explorer, Usage, Methodology)
+- Local UI: `eq redteam ui` opens a dashboard with Summary, Breakdown, Explorer, and Methodology tabs always present, plus Usage, Error Analysis, and Comparison tabs when the run has usage data, errors, or multiple agents
 
 ## When red_team() is NOT enough
 

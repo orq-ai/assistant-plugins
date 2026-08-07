@@ -19,7 +19,7 @@ eq redteam run \
   --target agent:my-agent \
   --mode dynamic \
   --save detail \
-  --output-dir ./redteam-results
+  --artifacts-dir ./redteam-results
 
 eq redteam ui ./redteam-results/03_summary_report.json
 ```
@@ -33,12 +33,12 @@ eq sim generate \
   --agent-description "Travel booking assistant" \
   --num-personas 5 \
   --num-scenarios 5 \
-  --output datapoints.jsonl
+  --datapoints datapoints.jsonl
 
 eq sim simulate \
-  --datapoints datapoints.jsonl \
+  --input datapoints.jsonl \
   --target agent:my-travel-agent \
-  --output sim-results.jsonl
+  --results sim-results.jsonl
 
 eq sim export \
   --input sim-results.jsonl \
@@ -73,6 +73,6 @@ Multi-turn agent simulation with a user-simulator and LLM judge.
 Quick reference:
 
 ```bash
-eq sim generate --agent-description "..." --output dp.jsonl   # --output is required
-eq sim simulate --datapoints dp.jsonl --target agent:<AGENT_KEY>
+eq sim generate --agent-description "..." --datapoints dp.jsonl   # --datapoints is required
+eq sim simulate --input dp.jsonl --target agent:<AGENT_KEY>
 ```

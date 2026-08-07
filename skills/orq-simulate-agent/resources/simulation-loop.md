@@ -10,10 +10,9 @@ The framework provides three entry points. Pick by what you have on hand.
 
 `simulate()` and `generate_and_simulate()` accept `target=` — an
 `"agent:<key>"` / `"deployment:<key>"` string (bare key defaults to agent),
-a callable, or a custom `AgentTarget` — plus the legacy `target_callback=`.
-Neither takes an `agent_key=` parameter (that's a TypeError; verified on
-v1.10.1). Only `wrap_simulation_agent()` accepts `agent_key` or
-`target_callback`.
+a callable, or a custom `AgentTarget`. `target=` is the only name: neither
+function takes `agent_key=` or any other alias (TypeError; verified live).
+Only `wrap_simulation_agent()` additionally accepts `agent_key=`.
 
 ## Target shapes
 
@@ -61,7 +60,7 @@ from evaluatorq.simulation import wrap_simulation_agent
 
 job = wrap_simulation_agent(
     name="refund-flow-sim",
-    agent_key="agent_xyz",               # or target_callback=callback (the wrapper keeps agent_key)
+    agent_key="agent_xyz",               # or target=callback (the wrapper also keeps agent_key)
     max_turns=6,
     model="openai/gpt-5.4-mini",      # wrapper keeps model= for simulator + judge
 )
@@ -136,6 +135,12 @@ The default simulation model is `openai/gpt-5.4-mini` (`DEFAULT_MODEL`).
 `simulate()` routes through `evaluatorq()` and auto-uploads when
 `upload_results=True` and `ORQ_API_KEY` is set.
 
+Both `simulate()` and `generate_and_simulate()` also take report/persistence
+kwargs mirroring the CLI: `report=` (write the full SimulationRun report
+JSON), `executive_summary=` (LLM narrative at the top of the report),
+`save=` (what to persist under `.evaluatorq/sim-runs/`), and
+`orq_results_path=` (where uploaded results land).
+
 ## Pattern 3: `generate_and_simulate()`, when you only have an agent description
 
 ```python
@@ -168,7 +173,8 @@ num_scenarios` simulations.
 The evaluatorq CLI exposes the same simulation workflow for shell-driven
 runs. Install `evaluatorq[simulation,redteam,otel]` (or `evaluatorq[all]`),
 then use `eq sim --help` to discover `simulate`, `run`, `generate`, `export`,
-`validate-dataset`, `runs`, and `ui`. Its simulation-model flag is `--sim-model`,
+`from-traces`, `validate` (with `validate-dataset` as a deprecated alias),
+`upload-dataset`, `runs`, and `ui`. Its simulation-model flag is `--sim-model`,
 matching the Python `sim_model=` keyword.
 
 ## Reading `SimulationResult`

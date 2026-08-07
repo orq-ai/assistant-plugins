@@ -79,12 +79,12 @@ Pick one of the three target shapes that `simulate()` accepts:
 | Shape | When | How |
 |---|---|---|
 | `target="agent:<key>"` | Agent lives in orq.ai | Pass the target string (`"agent:<key>"` or `"deployment:<key>"`; a bare key defaults to `agent:`). There is no `agent_key=` parameter on `simulate()` |
-| `target=fn` (or legacy `target_callback=fn`) | Agent is a local function or third-party SDK | Wrap with `from_chat_completions(...)` or write a `Callable[[list[Message]], str]` |
+| `target=fn` | Agent is a local function or third-party SDK | Wrap with `from_chat_completions(...)` or write a `Callable[[list[Message]], str]` |
 | `target=AgentTarget(...)` | Full control over memory, clone, agent context, or building a custom agent on top of the orq.ai Responses API | Implement the `AgentTarget` protocol from `evaluatorq.contracts`, or use the bundled `OrqResponsesTarget(config=LLMCallConfig(...))`. See [resources/simulation-loop.md](resources/simulation-loop.md) for the full signature |
 
 If the user wants to drive an existing orq agent, use `search_entities` with `type: "agent"` to resolve the key. Verify it answers one turn end-to-end before wrapping it in a loop.
 
-The framework ships `from_orq_deployment(agent_key)` and `from_chat_completions(fn)` adapters in `evaluatorq.simulation.adapters`. For Vercel AI SDK or LangChain agents, write a small `target_callback` that calls your agent's generate/invoke method and returns the assistant text.
+The framework ships `from_orq_deployment(agent_key)` and `from_chat_completions(fn)` adapters in `evaluatorq.simulation.adapters`. For Vercel AI SDK or LangChain agents, write a small callable and pass it as `target=` — it calls your agent's generate/invoke method and returns the assistant text.
 
 ## Phase 2: Define the persona
 
@@ -147,13 +147,13 @@ capabilities from `evaluatorq.__version__` alone.
 
 | Entry point | Use when | Auto-upload to orq.ai |
 |---|---|---|
-| `wrap_simulation_agent()` | You want a simulation job inside an `evaluatorq()` run; accepts `agent_key` or `target_callback` | Yes, when you pass the returned job into `evaluatorq(...)` with `ORQ_API_KEY` set |
+| `wrap_simulation_agent()` | You want a simulation job inside an `evaluatorq()` run; accepts `agent_key` or `target` | Yes, when you pass the returned job into `evaluatorq(...)` with `ORQ_API_KEY` set |
 | `simulate()` | You have personas + scenarios already and just want results back | Yes by default when `ORQ_API_KEY` is set; pass `upload_results=False` for a local-only run |
 | `generate_and_simulate()` | You only have an `agent_description` and want personas + scenarios synthesized | Same as `simulate()` |
 
 Use `simulate()` for the direct API and `wrap_simulation_agent()` when composing the simulation as a job inside a larger `evaluatorq()` run. Both paths support auto-upload, OTel, and the results table.
 
-The APIs intentionally differ: `simulate()` and `generate_and_simulate()` take `sim_model=` plus `evaluator_names=[...]`, defaulting to `["goal_achieved", "criteria_met"]`. `wrap_simulation_agent()` retains `model=`, accepts only `agent_key` or `target_callback`, and rejects `evaluators=`. Put evaluatorq scorers on the outer `evaluatorq(..., evaluators=[...])` call, then close the returned job with `await job.aclose()`.
+The APIs intentionally differ: `simulate()` and `generate_and_simulate()` take `sim_model=` plus `evaluator_names=[...]`, defaulting to `["goal_achieved", "criteria_met"]`. `wrap_simulation_agent()` retains `model=`, accepts only `agent_key` or `target`, and rejects `evaluators=`. Put evaluatorq scorers on the outer `evaluatorq(..., evaluators=[...])` call, then close the returned job with `await job.aclose()`.
 
 Full code in [resources/simulation-loop.md](resources/simulation-loop.md).
 
@@ -199,4 +199,4 @@ Tell the user all four. The OTel span and Experiment URL are what designers and 
 
 - [resources/persona-scenario-template.md](resources/persona-scenario-template.md), `Persona` and `Scenario` filled examples with all enum values listed
 - [resources/simulation-loop.md](resources/simulation-loop.md), `simulate()`, `generate_and_simulate()`, `wrap_simulation_agent()` patterns with all target shapes
-- [resources/redteam-mode.md](resources/redteam-mode.md), when to switch to `evaluatorq.red_team()` instead
+- [resources/redteam-mode.md](resources/redteam-mode.md), when to switch to `evaluatorq.redteam.red_team()` instead

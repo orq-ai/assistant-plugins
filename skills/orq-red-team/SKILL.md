@@ -79,7 +79,7 @@ The `[redteam]` extra is required (pulls in `huggingface-hub` plus Streamlit/Plo
 
 The attack and evaluator LLMs need credentials. Routing is decided purely by **which env var is set** — the model string itself is never inspected for routing:
 
-1. **orq gateway** — if `ORQ_API_KEY` is set (optionally `ORQ_BASE_URL`), model strings route through the orq LLM gateway (`{ORQ_BASE_URL}/v3/router`, default `https://my.orq.ai`). Use the **provider-prefixed** form here (e.g. `openai/gpt-5-mini`). `ORQ_API_KEY` **wins if both keys are set** (verified against evaluatorq v1.10.1).
+1. **orq gateway** — if `ORQ_API_KEY` is set (optionally `ORQ_BASE_URL`), model strings route through the orq LLM gateway (`{ORQ_BASE_URL}/v3/router`, default `https://my.orq.ai`). Use the **provider-prefixed** form here (e.g. `openai/gpt-5-mini`). `ORQ_API_KEY` **wins if both keys are set** (verified live).
 2. **OpenAI directly** — else if `OPENAI_API_KEY` is set (optionally `OPENAI_BASE_URL`), all attack/evaluator model strings go straight to OpenAI. Use **bare** model names here (e.g. `gpt-5-mini`).
 
 If neither key is set the run fails with `CredentialError`. There is no Azure credential path — the CLI does not support Azure OpenAI directly.
@@ -255,7 +255,7 @@ eq redteam run \
   [--max-dynamic-datapoints 50] \
   [--attack-model openai/gpt-5-mini] \
   [--evaluator-model openai/gpt-5-mini] \
-  [--save-report ./output/my-run/report.json] \
+  [--report ./output/my-run/report.json] \
   [--yes]
 ```
 
@@ -269,7 +269,7 @@ eq redteam run \
 
 ### Key flags
 
-These are the flags you need for a first run. For the complete set (`--max-static-datapoints`, `--max-per-category`, `--generated-strategy-count`, `--no-generate-strategies`, `--parallelism`, `--export-md`/`--export-html`, `--attacker-instructions`, `--name`, `--max-turns`, `--verbose`/`--quiet`, …) run `eq redteam run --help`.
+These are the flags you need for a first run. For the complete set (`--max-static-datapoints`, `--max-per-category`, `--generated-strategy-count`, `--no-generate-strategies`, `--parallelism`, `--report-md`/`--report-html`, `--attacker-instructions`, `--name`, `--max-turns`, `--verbose`/`--quiet`, …) run `eq redteam run --help`.
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -282,8 +282,8 @@ These are the flags you need for a first run. For the complete set (`--max-stati
 | `--evaluator-model` | `gpt-5-mini` | Model judging whether attacks succeeded |
 | `--system-prompt` | none | System prompt for the target model/agent |
 | `--save` | `final` | `none` (no files, run not listed by `eq redteam runs`), `final` (summary JSON), or `detail` (all stage artifacts) |
-| `--save-report` | none | Explicit path to write the report JSON |
-| `--output-dir` | none | Directory for saved JSON stage files (**required** with `--save detail`) |
+| `--report` | none | Explicit path to write the report JSON |
+| `--artifacts-dir` | none | Directory for saved JSON stage files (**required** with `--save detail`) |
 | `--dataset` | HuggingFace `orq/redteam-vulnerabilities` | Static/hybrid mode: local path, `hf:org/repo`, or `hf:org/repo/file.json` |
 | `--no-cleanup-memory` | false | Keep memory entities written during a dynamic run instead of cleaning them up (debugging). Only relevant for memory-backed agents — see Constraints |
 | `--strategy` / `-s` | all | Filter to specific attack strategies. Repeatable |
@@ -321,9 +321,9 @@ eq redteam run --target deployment:my-deployment --category ASI01
 
 ## Output and reports
 
-After a run, the report is auto-saved to `.evaluatorq/runs/<name>_<ts>.json`. If `--save-report <path>` is passed, the report JSON is also written there.
+After a run, the report is auto-saved to `.evaluatorq/runs/<name>_<ts>.json`. If `--report <path>` is passed, the report JSON is also written there.
 
-With `--save detail` and `--output-dir <dir>`, staged artifacts are saved:
+With `--save detail` and `--artifacts-dir <dir>`, staged artifacts are saved:
 
 ```
 <output-dir>/
@@ -458,7 +458,7 @@ eq redteam run \
   --max-dynamic-datapoints 20 \
   --attack-model openai/gpt-5-mini \
   --evaluator-model openai/gpt-5-mini \
-  --save-report ./output/customer-support-report.json \
+  --report ./output/customer-support-report.json \
   --yes
 
 # 3. List runs and view summary
@@ -493,7 +493,7 @@ vulnerabilities_found: 7
 | ASR = 0.0 on all categories | Evaluator routing/credential issue, or genuinely resistant | Confirm the evaluator model string matches the active route (gateway → `openai/gpt-5-mini`); check creds before assuming a stronger judge is needed |
 | `openai/...` model rejected | Only `OPENAI_API_KEY` is set → the run goes direct to OpenAI, which rejects the prefix | Use a bare name (`gpt-5-mini`) for direct OpenAI, or set `ORQ_API_KEY` to route via the gateway (the gateway wins when both are set) |
 | Confirmation prompt blocks CI | Interactive terminal required | Pass `--yes` / `-y` to skip |
-| No runs shown in `eq redteam runs` | `--save none` was used | Re-run with `--save final` (default) or pass `--save-report <path>` |
+| No runs shown in `eq redteam runs` | `--save none` was used | Re-run with `--save final` (default) or pass `--report <path>` |
 
 ## Python SDK (when the CLI can't)
 
@@ -510,7 +510,7 @@ The CLI covers the common case (red-teaming an orq `agent:`/`deployment:` target
 
 - Run completes without errors
 - Summary is printed to stdout (happens automatically after each run)
-- Report JSON exists (in `.evaluatorq/runs/` or at `--save-report` path)
+- Report JSON exists (in `.evaluatorq/runs/` or at `--report` path)
 - Categories are described to the user by their correct names (e.g. ASI01 = Agent Goal Hijacking, not "prompt injection")
 - Categories tested and coverage gaps are noted (e.g. "only ASI01–ASI02 tested; LLM01–LLM09 not covered")
 

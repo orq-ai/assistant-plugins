@@ -77,6 +77,8 @@ To use an orq.ai LLM-as-a-judge evaluator inside a scorer, call `orq.evals.invok
 
 **Python:**
 ```python
+import os
+
 from orq_ai_sdk import Orq
 from evaluatorq import EvaluationResult
 
@@ -86,8 +88,10 @@ async def orq_eval_scorer(params):
     data: DataPoint = params["data"]
     output = params["output"]
 
-    orq = Orq(api_key=ORQ_API_KEY, server_url=ORQ_BASE_URL)
-    result = orq.evals.invoke(
+    orq = Orq(api_key=os.environ["ORQ_API_KEY"],
+              server_url=os.environ.get("ORQ_BASE_URL", "https://my.orq.ai"))
+    # invoke_async — never the blocking invoke() inside an async scorer
+    result = await orq.evals.invoke_async(
         id=EVALUATOR_ID,
         query=data.inputs["query"],
         output=output["response"],

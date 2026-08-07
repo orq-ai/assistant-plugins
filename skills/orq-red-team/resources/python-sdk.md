@@ -51,7 +51,7 @@ report = await red_team(
     max_dynamic_datapoints=None,
     max_static_datapoints=None,
     dataset=None,                 # path | "hf:org/repo" | "hf:org/repo/file.json" | None (default HF dataset)
-    output_dir=None,
+    artifacts_dir=None,
     save="final",                 # SaveMode: "none" | "final" | "detail"
     name=None,
     attacker_instructions=None,   # domain context to steer attack generation
@@ -223,7 +223,7 @@ Map each recommendation to a concrete change in the agent under test (harden sys
 
 ```python
 from evaluatorq.redteam import (
-    list_categories,       # list_available_categories() -> list[str]
+    list_categories,       # -> list[str]
     get_category_info,     # -> dict[str, dict]  (code -> metadata)
     OWASP_ASI_TOP_10,
     OWASP_LLM_TOP_10,
