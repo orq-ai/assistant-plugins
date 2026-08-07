@@ -10,14 +10,22 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const fixMode = process.argv.includes("--fix");
 let errors = 0;
 const err = (msg) => { console.error(`ERROR: ${msg}`); errors++; };
 const warn = (msg) => { console.error(`warn: ${msg}`); };
+
+// JSON.parse with the filename in the error instead of a raw SyntaxError stack.
+const readJson = (path) => {
+  const text = readFileSync(path, "utf8");
+  try { return JSON.parse(text); }
+  catch (e) { err(`${relative(root, path)}: invalid JSON — ${e.message}`); return null; }
+};
 
 // ---------- helpers ----------
 const walkFiles = (dir, base = dir, acc = []) => {
@@ -61,29 +69,43 @@ const readFrontmatter = (text) => {
 };
 
 // ---------- 1. lock <-> dirs + hash freshness ----------
-const lock = JSON.parse(readFileSync(join(root, "skills-lock.json"), "utf8"));
+const lockPath = join(root, "skills-lock.json");
+const lock = readJson(lockPath) ?? { skills: {} };
 const skillDirs = readdirSync(join(root, "skills"), { withFileTypes: true })
   .filter((e) => e.isDirectory()).map((e) => e.name).sort();
 
+if (fixMode) {
+  // Regenerate the lock in place from the directories on disk — same output
+  // as the CLAUDE.md snippet — then continue validating everything else.
+  const skills = {};
+  for (const name of skillDirs)
+    skills[name] = { source: "orq-ai/assistant-plugins", sourceType: "github",
+      computedHash: folderHash(join(root, "skills", name)) };
+  writeFileSync(lockPath, JSON.stringify({ version: 1, skills }, null, 2) + "\n");
+  lock.skills = skills;
+  console.error(`fixed: skills-lock.json regenerated for ${skillDirs.length} skills`);
+}
+
+const FIX_HINT = "run `node tests/scripts/validate-skills.mjs --fix` to regenerate";
 for (const name of skillDirs) {
   const entry = lock.skills?.[name];
-  if (!entry) { err(`skills/${name} has no entry in skills-lock.json`); continue; }
+  if (!entry) { err(`skills/${name} has no entry in skills-lock.json — ${FIX_HINT}`); continue; }
   if (entry.source !== "orq-ai/assistant-plugins")
     err(`skills-lock.json '${name}': source is '${entry.source}', expected 'orq-ai/assistant-plugins'`);
   if (entry.sourceType !== "github")
     err(`skills-lock.json '${name}': sourceType is '${entry.sourceType}', expected 'github'`);
   const actual = folderHash(join(root, "skills", name));
   if (entry.computedHash !== actual)
-    err(`skills-lock.json hash stale for '${name}' — regenerate per CLAUDE.md`);
+    err(`skills-lock.json hash stale for '${name}' — ${FIX_HINT}`);
 }
 const lockKeys = Object.keys(lock.skills ?? {});
 for (const key of lockKeys) {
   try { statSync(join(root, "skills", key)); }
-  catch { err(`skills-lock.json entry '${key}' has no skills/ directory`); }
+  catch { err(`skills-lock.json entry '${key}' has no skills/ directory — ${FIX_HINT}`); }
 }
 const sorted = [...lockKeys].sort((a, b) => a.localeCompare(b));
 if (JSON.stringify(lockKeys) !== JSON.stringify(sorted))
-  err("skills-lock.json keys are not sorted alphabetically (CLAUDE.md invariant)");
+  err(`skills-lock.json keys are not sorted alphabetically (CLAUDE.md invariant) — ${FIX_HINT}`);
 
 // ---------- 2. manifest version sync ----------
 const manifests = [
@@ -92,10 +114,11 @@ const manifests = [
   ".cursor-plugin/plugin.json",
   "plugins/orq/.codex-plugin/plugin.json",
 ];
-const versions = manifests.map((m) => ({
-  m, v: JSON.parse(readFileSync(join(root, m), "utf8")).version,
-}));
-const canonical = versions[0].v;
+const versions = manifests
+  .map((m) => ({ m, json: readJson(join(root, m)) }))
+  .filter(({ json }) => json !== null)
+  .map(({ m, json }) => ({ m, v: json.version }));
+const canonical = versions[0]?.v;
 for (const { m, v } of versions.slice(1))
   if (v !== canonical) err(`manifest version drift: ${m} has ${v}, ${manifests[0]} has ${canonical}`);
 
@@ -114,6 +137,11 @@ for (const name of skillDirs) {
   const lineCount = text.split("\n").length;
   if (lineCount > 500)
     warn(`skills/${name}: SKILL.md is ${lineCount} lines — consider moving content to resources/`);
+  // A skill with valid frontmatter but no instructions passes every other
+  // check; require a real body.
+  const body = text.split(/^---$/m).slice(2).join("").replace(/\s/g, "");
+  if (body.length < 200)
+    err(`skills/${name}: SKILL.md body is ${body.length} non-whitespace chars (min 200) — a skill with no instructions ships as an empty capability`);
 }
 
 // ---------- 4. content-pattern lint ----------
@@ -126,10 +154,12 @@ const lintTargets = [
   join(root, "CHANGELOG.md"),
   join(root, "README.md"),
 ];
-// Casing matches the PR-title lint in skills-ci.yml (both case-insensitive).
+// Keep in sync with the PR-title lint in skills-ci.yml. The ticket-id pattern
+// catches ANY uppercase JIRA-style id that is not RES- (so a new internal
+// prefix can't slip through), minus known-benign technical prefixes.
 const patterns = [
   [/owner decision/i, "decision-context language"],
-  [/\b(ENG|INN|BOPS|TOPS)-[0-9]+\b/i, "non-project ticket id"],
+  [/\b(?!RES-|UTF-|ISO-|GPT-|ADR-|SHA-|OWASP-|ASI-|A2A-)[A-Z]{2,5}-[0-9]+\b/, "non-project ticket id"],
 ];
 for (const file of lintTargets) {
   let text;

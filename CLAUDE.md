@@ -17,6 +17,8 @@ This repo follows [Semantic Versioning](https://semver.org/). Version is tracked
 | New skill, new command, backward-compatible capability | **MINOR** (0.x.0) |
 | Skill removed/renamed, breaking frontmatter change, MCP server URL change | **MAJOR** (x.0.0) |
 
+Exception: removing shipped content that was never the canonical surface (e.g. stale duplicates tracked outside `skills/`) is a **PATCH**, not MAJOR — cleanup is not a breaking change.
+
 ### How to bump
 
 1. Update `version` in all 4 plugin.json files (same value).
