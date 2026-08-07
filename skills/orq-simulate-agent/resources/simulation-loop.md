@@ -8,9 +8,11 @@ The framework provides three entry points. Pick by what you have on hand.
 | `simulate()` | Lists of personas and scenarios (or pre-built datapoints) | Runs through `evaluatorq()`, auto-uploads by default, returns `list[SimulationResult]` |
 | `generate_and_simulate()` | Only an `agent_description` | Synthesizes personas and scenarios first, then runs through `evaluatorq()` |
 
-`simulate()` and `generate_and_simulate()` accept `agent_key`,
-`target_callback`, or a custom `AgentTarget`. `wrap_simulation_agent()`
-accepts only `agent_key` or `target_callback`.
+`simulate()` and `generate_and_simulate()` accept `target=` — an
+`"agent:<key>"` / `"deployment:<key>"` string (bare key defaults to agent),
+a callable, or a custom `AgentTarget`. `target=` is the only name: neither
+function takes `agent_key=` or any other alias (TypeError; verified live).
+Only `wrap_simulation_agent()` additionally accepts `agent_key=`.
 
 ## Target shapes
 
@@ -18,7 +20,7 @@ accepts only `agent_key` or `target_callback`.
 from evaluatorq.simulation import from_orq_deployment, from_chat_completions
 from openai import AsyncOpenAI
 
-# (1) Orq deployment, use the agent_key argument directly OR build a callback:
+# (1) Orq agent/deployment — pass target="agent:<key>" directly OR build a callback:
 callback = from_orq_deployment("agent_xyz")
 
 # (2) Raw OpenAI / Azure / any OpenAI-compatible provider:
@@ -58,7 +60,7 @@ from evaluatorq.simulation import wrap_simulation_agent
 
 job = wrap_simulation_agent(
     name="refund-flow-sim",
-    agent_key="agent_xyz",            # or target_callback=callback
+    agent_key="agent_xyz",               # or target=callback (the wrapper also keeps agent_key)
     max_turns=6,
     model="openai/gpt-5.4-mini",      # wrapper keeps model= for simulator + judge
 )
@@ -110,7 +112,7 @@ from evaluatorq.simulation import simulate
 async def main():
     results = await simulate(
         evaluation_name="refund-flow-sim",
-        agent_key="agent_xyz",                # or target_callback=..., or target=AgentTarget(...)
+        target="agent:agent_xyz",             # or a callable, or an AgentTarget(...)
         personas=[skeptical_founder, patient_grandparent],
         scenarios=[refund_digital, lost_password],
         max_turns=6,
@@ -133,6 +135,12 @@ The default simulation model is `openai/gpt-5.4-mini` (`DEFAULT_MODEL`).
 `simulate()` routes through `evaluatorq()` and auto-uploads when
 `upload_results=True` and `ORQ_API_KEY` is set.
 
+Both `simulate()` and `generate_and_simulate()` also take report/persistence
+kwargs mirroring the CLI: `report=` (write the full SimulationRun report
+JSON), `executive_summary=` (LLM narrative at the top of the report),
+`save=` (what to persist under `.evaluatorq/sim-runs/`), and
+`orq_results_path=` (where uploaded results land).
+
 ## Pattern 3: `generate_and_simulate()`, when you only have an agent description
 
 ```python
@@ -146,7 +154,7 @@ async def main():
             "Customer support agent for a digital downloads marketplace. "
             "Handles refunds, license keys, download link regeneration."
         ),
-        agent_key="agent_xyz",
+        target="agent:agent_xyz",
         num_personas=5,
         num_scenarios=5,
         max_turns=6,
@@ -165,7 +173,8 @@ num_scenarios` simulations.
 The evaluatorq CLI exposes the same simulation workflow for shell-driven
 runs. Install `evaluatorq[simulation,redteam,otel]` (or `evaluatorq[all]`),
 then use `eq sim --help` to discover `simulate`, `run`, `generate`, `export`,
-`validate-dataset`, and `runs`. Its simulation-model flag is `--sim-model`,
+`from-traces`, `validate` (with `validate-dataset` as a deprecated alias),
+`upload-dataset`, `runs`, and `ui`. Its simulation-model flag is `--sim-model`,
 matching the Python `sim_model=` keyword.
 
 ## Reading `SimulationResult`

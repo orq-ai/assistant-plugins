@@ -19,9 +19,9 @@ eq redteam run \
   --target agent:my-agent \
   --mode dynamic \
   --save detail \
-  --output-dir ./redteam-results
+  --artifacts-dir ./redteam-results
 
-eq redteam ui ./redteam-results/05_summary_report.json
+eq redteam ui ./redteam-results/03_summary_report.json
 ```
 
 ### Generate + simulate + export
@@ -31,15 +31,21 @@ export ORQ_API_KEY="..."
 
 eq sim generate \
   --agent-description "Travel booking assistant" \
-  --agent-key my-travel-agent \
   --num-personas 5 \
   --num-scenarios 5 \
-  --output sim-results.jsonl
+  --datapoints datapoints.jsonl
+
+eq sim simulate \
+  --input datapoints.jsonl \
+  --target agent:my-travel-agent \
+  --results sim-results.jsonl
 
 eq sim export \
   --input sim-results.jsonl \
   --output openresponses-payload.json
 ```
+
+(`export --input` takes a **results** JSONL — the simulate step in between is required; generated datapoints alone won't export.)
 
 ---
 
@@ -67,6 +73,6 @@ Multi-turn agent simulation with a user-simulator and LLM judge.
 Quick reference:
 
 ```bash
-eq sim generate --agent-description "..." --agent-key <AGENT_KEY>
-eq sim run --datapoints dp.jsonl --agent-key <AGENT_KEY>
+eq sim generate --agent-description "..." --datapoints dp.jsonl   # --datapoints is required
+eq sim simulate --input dp.jsonl --target agent:<AGENT_KEY>
 ```
