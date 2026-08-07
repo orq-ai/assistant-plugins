@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.3] - 2026-08-07
+
+### Added
+- Curated `allowed-tools` on five read-dominant skills (`orq-analyze-trace-failures`, `orq-optimize-prompt`, `orq-run-experiment`, `orq-build-evaluator`, `orq-build-agent`) — the `orq*` wildcard (which matched no tool and pre-approved nothing) replaced with explicit read/search orq tools for prompt-free lookups. Writes are not pre-approved: `create_*`/`update_*`/`invoke_*` and shell commands still prompt on these five skills. Each skill states this rationale under its title.
+- `disallowed-tools` on the same five skills disables every `delete_*` orq tool outright while the skill is active — these skills never delete, so the tools are removed from the pool, not merely left prompting.
+- `allowed-tools` on `orq-evaluator-alignment`, the last skill in the suite that declared none. It drives the orq API through its own bundled `uv run scripts/*.py` toolkit rather than orq tools, so its allowlist is narrow (`Bash(uv run:*)` plus file and question tools); the `delete_*` set is disallowed for consistency.
+- Finished the `orq*` sweep across the remaining nine skills: the dead wildcard is replaced with the orq tools each skill's body actually calls, and `disallowed-tools` now covers every skill except `orq-manage-skills` (which legitimately deletes) and `orq-generate-synthetic-dataset` (which legitimately deletes datapoints, so only that one delete stays available — and only behind a prompt).
+- Scoped `Bash` to the commands each skill actually runs (`Bash(orq:*)`, `Bash(eq:*)`, `Bash(curl:*)`, …), and dropped it entirely from the four skills with no shell examples. Unscoped `Bash` in `allowed-tools` pre-approved every shell command without a prompt, which was a wider grant than the `delete_*` tools this release set out to close.
+
+### Changed
+- `orq-manage-skills`: `create_skill`, `update_skill`, and `delete_skill` removed from `allowed-tools` (reads stay pre-approved) so every write and delete prompts; its delete workflow now uses the repo's `## Destructive Actions` + `AskUserQuestion` convention with per-entity confirmation and no bulk deletes without listing every item first.
 ## [2.2.2] - 2026-08-06
 
 ### Added

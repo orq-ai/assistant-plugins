@@ -7,7 +7,7 @@ description: >
   and how Skills get consumed (the `{{skill.<display_name>}}` template placeholder
   inside prompts and agent instructions). Use when the user wants to create,
   audit, edit, retire, or hook up orq.ai Skills.
-allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__list_skills, mcp__orq-workspace__get_skill, mcp__orq-workspace__create_skill, mcp__orq-workspace__update_skill, mcp__orq-workspace__delete_skill, mcp__orq-workspace__search_entities, mcp__orq-workspace__get_deployment, mcp__orq-workspace__get_agent
+allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__list_skills, mcp__orq-workspace__get_skill, mcp__orq-workspace__search_entities, mcp__orq-workspace__get_deployment, mcp__orq-workspace__get_agent
 ---
 
 # Manage Skills
@@ -66,6 +66,12 @@ When the user says "create a Skill" without context, ask which one they mean. Th
 - **ALWAYS** before `delete_skill`, find places that may reference the Skill via `{{skill.<display_name>}}` or `{{snippet.<display_name>}}` (other Skills' `instructions`, deployment prompts, agent instructions) and warn the user — those references will silently render to empty/missing content after the Skill is gone.
 - **ALWAYS** offer tagging the Skill with `retired` (via `update_skill`) as an alternative to `delete_skill`. This is a reversible soft-retire signal visible in the Studio; `delete_skill` is permanent.
 - **NEVER** rely on `+NEVER+` (or any prose negation) inside `instructions` as a hard guardrail. Skill instructions are *soft* hints to the model; hard constraints belong in **MCP tool gates** (refuse the call at the tool layer). See [resources/known-caveats.md](resources/known-caveats.md).
+
+## Destructive Actions
+
+The following require explicit user confirmation via `AskUserQuestion`:
+
+- **`delete_skill`** — before every call, print the exact `skill_id` and `display_name` that will be deleted and confirm via `AskUserQuestion`. Never bulk-delete without first listing every item that will be removed. Deletes are permanent; when in doubt, stop and ask. (`delete_skill` is deliberately not in `allowed-tools`, so the harness prompts too — do not ask the user to pre-approve it for the session; see Phase 5 for the reference scan that precedes any delete.)
 
 ## orq.ai Documentation
 
