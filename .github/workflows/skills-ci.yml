@@ -20,6 +20,8 @@ jobs:
         run: tests/scripts/validate-plugin-manifests.sh
       - name: Validate skills (frontmatter, lock invariants + hash freshness, version sync, content patterns)
         run: node tests/scripts/validate-skills.mjs
+      - name: Self-test the validator (a stale lock hash must fail the run)
+        run: bash tests/scripts/validate-skills.test.sh
       - name: PR title pattern lint
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}

@@ -14,7 +14,10 @@ import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+// Optional positional arg points the checks at another repo-shaped tree, so
+// the validator's own failure paths can be exercised against a fixture.
+const root = process.argv.slice(2).find((a) => !a.startsWith("--"))
+  ?? join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const fixMode = process.argv.includes("--fix");
 let errors = 0;
 const err = (msg) => { console.error(`ERROR: ${msg}`); errors++; };
@@ -174,8 +177,15 @@ for (const file of lintTargets) {
 // Skill installers walk the whole repo for SKILL.md files, so a tracked copy
 // anywhere outside skills/ ships to every consumer (this caught nine stale
 // pre-rename skills accidentally tracked under .agents/skills/).
-const tracked = execFileSync("git", ["ls-files"], { cwd: root, encoding: "utf8" })
-  .split("\n").filter(Boolean);
+// Skipped rather than fatal when root isn't a git checkout — the other checks
+// still apply to a plain directory (e.g. a test fixture).
+let tracked = [];
+try {
+  tracked = execFileSync("git", ["ls-files"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+    .split("\n").filter(Boolean);
+} catch {
+  warn(`not a git checkout (${root}) — skipping the stray-tracked-skill check`);
+}
 for (const f of tracked) {
   if (!f.endsWith("/SKILL.md")) continue;
   if (!f.startsWith("skills/") && !f.startsWith("plugins/"))
