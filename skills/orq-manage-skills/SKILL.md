@@ -7,7 +7,7 @@ description: >
   and how Skills get consumed (the `{{skill.<display_name>}}` template placeholder
   inside prompts and agent instructions). Use when the user wants to create,
   audit, edit, retire, or hook up orq.ai Skills.
-allowed-tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__list_skills, mcp__orq-workspace__get_skill, mcp__orq-workspace__search_entities, mcp__orq-workspace__get_deployment, mcp__orq-workspace__get_agent
+allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__list_skills, mcp__orq-workspace__get_skill, mcp__orq-workspace__search_entities, mcp__orq-workspace__get_deployment, mcp__orq-workspace__get_agent
 ---
 
 # Manage Skills
