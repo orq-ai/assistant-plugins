@@ -193,12 +193,12 @@ with Orq(api_key=os.environ["ORQ_API_KEY"]) as orq:   # KeyError if unset — do
 
 #### MCP caveat — a miss is not proof of nonexistence
 
-The orq MCP (`mcp__orq-mcp-global__agent_get` / `agent_list`) is convenient for *browsing* and **can be correct**, but it uses its own key, often in a **different project** than the run. So neither verdict is authoritative for the run:
+The orq MCP (`mcp__orq-workspace__get_agent`, or `search_entities` for listing) is convenient for *browsing* and **can be correct**, but it uses its own key, often in a **different project** than the run. So neither verdict is authoritative for the run:
 
 - **MCP miss ≠ agent absent** — its key may be in the wrong project; the agent may exist for your run key. Confirm with the REST/SDK check above, never conclude "no such agent" from an MCP miss.
 - **MCP hit ≠ run will work** — it may see the agent in a project your run key can't reach; the run still dies with *Agent not found*.
 
-The run key decides. If REST and MCP disagree, see the `Agent not found` row in [Troubleshooting](#troubleshooting-common-failures) for how to resolve it. *Verified live: `agent_get` found `clarabelle-cow` while `curl` with a different-project key returned `404` for the same agent.*
+The run key decides. If REST and MCP disagree, see the `Agent not found` row in [Troubleshooting](#troubleshooting-common-failures) for how to resolve it. *Verified live: `get_agent` found `clarabelle-cow` while `curl` with a different-project key returned `404` for the same agent.*
 
 ## Plan the run — decide parameters with the user
 
@@ -504,8 +504,9 @@ The CLI covers the common case (red-teaming an orq `agent:`/`deployment:` target
 - Categories are described to the user by their correct names (e.g. ASI01 = Agent Goal Hijacking, not "prompt injection")
 - Categories tested and coverage gaps are noted (e.g. "only ASI01–ASI02 tested; LLM01–LLM09 not covered")
 
-## Companion skills
+## Companion Skills
 
 - `orq-build-evaluator` — build custom LLM judges for failure modes surfaced by red teaming
 - `orq-analyze-trace-failures` — deeper failure taxonomy from production traces
 - `orq-run-experiment` — run controlled experiments using orq deployments
+- **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.

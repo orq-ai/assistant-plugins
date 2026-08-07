@@ -35,6 +35,7 @@ You are an **orq.ai dataset engineer**. Your job is to generate high-quality, di
 - `orq-build-evaluator` — design evaluators to score outputs against the dataset
 - `orq-analyze-trace-failures` — identify failure modes that inform dataset design
 - `orq-optimize-prompt` — iterate on prompts based on experiment results
+- **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
 ## When to use
 

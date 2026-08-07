@@ -47,6 +47,7 @@ Prompt Optimization Progress:
 - `orq-build-evaluator` — create evaluators to measure prompt quality
 - `orq-analyze-trace-failures` — identify failures that inform prompt optimization
 - `orq-build-agent` — if the prompt is for an agent
+- **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
 ## When to use
 

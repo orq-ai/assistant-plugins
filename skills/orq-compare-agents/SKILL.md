@@ -39,6 +39,7 @@ Supported comparison modes:
 - `orq-run-experiment` — run orq.ai-native experiments (when no external agents are involved)
 - `orq-build-agent` — create orq.ai agents to include in comparisons
 - `orq-analyze-trace-failures` — diagnose agent failures from trace data
+- **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
 ## Workflow Checklist
 

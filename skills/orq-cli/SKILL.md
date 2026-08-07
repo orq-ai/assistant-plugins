@@ -65,14 +65,14 @@ between releases — treat `--help` as the source of truth, never your memory.
   ```sh
   [ -n "${ORQ_API_KEY:-}" ] && echo "ORQ_API_KEY: set" || echo "ORQ_API_KEY: unset"
   ```
-- **ALWAYS** check `-q` actually works on the command you are using. On commands
-  whose request body has a `query` field, the generated `--query` flag shadows
-  the global `-q`, and the failure modes differ (see "When `-q` is unavailable").
-- **ALWAYS** prefer `-q` (JMESPath) over piping to `jq` **when `-q` works on that
-  command and can express the projection**. It runs inside the CLI, so it needs
-  no `jq` installed. Reach for `jq` without hesitation when `-q` is shadowed, when
-  you need something JMESPath lacks (`@uri` encoding, text munging), or when
-  reading a file rather than a command's output.
+- **ALWAYS** project with the global `-j/--jmespath`, never `--query`. On search
+  commands `--query` is the body's full-text search field — it accepts a
+  JMESPath expression and silently returns zero rows (see "`--query` is not the
+  projection flag").
+- **ALWAYS** prefer `-j` (JMESPath) over piping to `jq` **when it can express
+  the projection**. It runs inside the CLI, so it needs no `jq` installed.
+  Reach for `jq` when you need something JMESPath lacks (`@uri` encoding, text
+  munging), or when reading a file rather than a command's output.
 
 **Why these constraints:** the generated command surface is large and drifts
 between versions, so guessed flags fail in ways that look like auth problems.
@@ -113,12 +113,14 @@ interchangeable. Pick by job, not by habit:
 |---|---|---|
 | One-off lookup mid-conversation | **MCP** | typed arguments, no install, no shell |
 | Anything inside a script, Makefile, or CI job | **CLI** | MCP tools do not exist outside the agent session |
-| Piping results into other shell tools or a file | **CLI** | `--json` plus `-q` composes with the shell |
+| Piping results into other shell tools or a file | **CLI** | `--json` plus `-j` composes with the shell |
 | Bulk export or pagination loops | **CLI** | cursors are easier to drive in a loop |
-| Endpoint with no MCP tool | **CLI** | the command surface is generated from the whole spec |
-| Endpoint with neither | **CLI** | `orq request <method> <path>` |
+| Endpoint with no MCP tool — or no generated command either | **CLI** | the command surface is generated from the whole spec; `orq request <method> <path>` covers the rest |
 | Checking why auth or routing is broken | **CLI** | `orq doctor` has no MCP equivalent |
 | Acting as a specific profile or a self-hosted host | **CLI** | `--profile` and `--server` are CLI-only |
+| Running experiments (create/run/export) | **MCP or evaluatorq SDK** | the CLI has no `experiments` group |
+| Finding an entity by name, browsing docs | **MCP** | `search_entities` / `search_docs` have no CLI equivalent |
+| Schedules, identities, projects, API keys, webhooks, KBs, memory stores, files | **CLI** | no MCP tools exist for these areas |
 
 The deciding question is usually **does this need to run again without an agent
 present?** If yes, it has to be the CLI.
@@ -148,7 +150,7 @@ orq CLI Progress:
 ## Phase 1 — Verify the install
 
 ```sh
-orq --version          # e.g. orq version 4.12.15
+orq --version          # e.g. orq version 4.13.0
 ```
 
 If it is missing:
@@ -177,9 +179,9 @@ single most confusing thing about the CLI, so check it before anything else.
 | Built-ins: `auth whoami`, `workspace list`, `workspace use` | **fails** | works |
 | `doctor`'s `auth` block | **reports `missing`** | reports real state |
 
-Verified on v4.12.15: with a valid `ORQ_API_KEY` exported, `orq agents list`
+Verified live: with a valid `ORQ_API_KEY` exported, `orq agents list`
 returns data while `orq auth whoami` prints `Error: you are not logged in` and
-`orq doctor --json -q 'auth.status' --raw` prints `missing`.
+`orq doctor --json -j 'auth.status' --raw` prints `missing`.
 
 **The practical consequences:**
 
@@ -197,7 +199,7 @@ returns data while `orq auth whoami` prints `Error: you are not logged in` and
   a wrong `--profile`:
 
   ```sh
-  orq doctor --json -q "checks[?id=='bootstrap_token'].details.expires_at" --raw
+  orq doctor --json -j "checks[?id=='bootstrap_token'].details.expires_at" --raw
   ```
 
 ```sh
@@ -211,9 +213,9 @@ orq --profile ci agents list
 Checking state, given that all of these exit 0 either way:
 
 ```sh
-orq auth whoami --json -q authenticated --raw    # true | (error text if no session)
-orq doctor --json -q 'auth.status' --raw         # ok | missing | invalid
-orq agents list --json -q 'length(data)' --raw   # the only real proof a key works
+orq auth whoami --json -j authenticated --raw    # true | (error text if no session)
+orq doctor --json -j 'auth.status' --raw         # ok | missing | invalid
+orq agents list --json -j 'length(data)' --raw   # the only real proof a key works
 ```
 
 `orq whoami` is an alias for `orq auth whoami`.
@@ -274,8 +276,8 @@ Use `orq projects list` as the canary, not `agents list`:
 
 ```sh
 [ -n "${ORQ_API_KEY:-}" ] && echo "key present — resource reads use ITS workspace, not the session's"
-orq auth whoami --json -q active_workspace_key --raw           # session's workspace
-orq projects list --json --limit 200 -q 'length(data)' --raw   # scope of whatever authenticated
+orq auth whoami --json -j active_workspace_key --raw           # session's workspace
+orq projects list --json --limit 200 -j 'length(data)' --raw   # scope of whatever authenticated
 ```
 
 The `--limit` is not decoration: without it this command returns 25 regardless of
@@ -291,8 +293,8 @@ from the working directory, so the CLI reads it straight back off disk. `unset`,
 `env -u ORQ_API_KEY`, and `ORQ_API_KEY=` are each insufficient on their own:
 
 ```sh
-cd repo-with-env && env -u ORQ_API_KEY orq projects list --json -q 'length(data)' --raw   # 1
-cd /tmp          && env -u ORQ_API_KEY orq projects list --json -q 'length(data)' --raw   # 25
+cd repo-with-env && env -u ORQ_API_KEY orq projects list --json -j 'length(data)' --raw   # 1
+cd /tmp          && env -u ORQ_API_KEY orq projects list --json -j 'length(data)' --raw   # 25
 ```
 
 To actually read as the session, run from a directory with no `.env`, or remove
@@ -301,7 +303,7 @@ the key from that file. Nothing warns you which one applied.
 Resolve the active key, when a session exists:
 
 ```sh
-orq auth whoami --json -q active_workspace_key --raw
+orq auth whoami --json -j active_workspace_key --raw
 ```
 
 Fall back to the session file only when the CLI is unavailable. Same value, under
@@ -322,7 +324,7 @@ optional:
 # caller can target a workspace they are not switched to.
 workspace_key="${ORQ_WORKSPACE:-${ORQ_WORKSPACE_SLUG:-}}"
 if [ -z "$workspace_key" ]; then
-  workspace_key="$(orq auth whoami --json -q active_workspace_key --raw 2>/dev/null)"
+  workspace_key="$(orq auth whoami --json -j active_workspace_key --raw 2>/dev/null)"
 fi
 case "$workspace_key" in
   ''|null) echo "no active orq workspace; run 'orq auth login'" >&2; exit 1 ;;
@@ -354,8 +356,8 @@ tree, JMESPath recipes, and body-input patterns.
 ```sh
 orq agents list --json
 orq agents list -o yaml
-orq agents list --json -q 'data[].{id: _id, name: display_name}'
-orq agents list --json -q 'data[0]._id' --raw   # bare scalar, no quotes
+orq agents list --json -j 'data[].{id: _id, name: display_name}'
+orq agents list --json -j 'data[0]._id' --raw   # bare scalar, no quotes
 ```
 
 **Identifier names are not consistent across resources.** There are three
@@ -371,7 +373,7 @@ projecting the wrong one yields a silent column of `null` rather than an error:
 Confirm the field on the resource you are actually querying before projecting:
 
 ```sh
-orq deployments list --json -q 'data[0]' | jq 'keys'
+orq deployments list --json -j 'data[0]' | jq 'keys'
 ```
 
 ### Lists truncate silently
@@ -393,25 +395,24 @@ complete:
 from a default page:
 
 ```sh
-orq deployments list --json -q 'has_more' --raw      # true → the count below is wrong
-orq deployments list --json --limit 50 -q 'length(data)' --raw
+orq deployments list --json -j 'has_more' --raw      # true → the count below is wrong
+orq deployments list --json --limit 50 -j 'length(data)' --raw
 ```
 
 `agents` is the exception that returns everything, which is why it makes a
 misleading canary — see Phase 3.
 
-`-q` takes JMESPath and runs after the response is parsed. `--raw` unwraps the
+`-j` takes JMESPath and runs after the response is parsed. `--raw` unwraps the
 result so a single string comes out unquoted — use it whenever the value feeds a
 shell variable.
 
-### When `-q` is unavailable
+### `--query` is not the projection flag
 
-Generated per-field flags are built from the request body, and a body field named
-`query` shadows the global `-q/--query`. On v4.12.15 that affects at least
-`traces search`, `budgets list`, `webhooks query`, `knowledge-bases search`,
-`evals invoke`, and `rerank create`; `images generate` shadows `-o` the same way.
-
-Both failure modes matter, and the quiet one is worse:
+The projection flag is the global `-j/--jmespath`. On commands whose request
+body has a `query` field (`traces search`, `knowledge-bases search`,
+`webhooks query`, …), `--query` is that **body field — a full-text search**,
+and a stray `-q` (muscle memory from other CLIs or older orq builds) is an
+unknown flag everywhere. The quiet failure is the one that costs turns:
 
 ```sh
 orq traces search -q 'data[].trace_id' ...
@@ -423,8 +424,8 @@ orq traces search --query 'data[].trace_id' ...
 #                                                      exit 0
 ```
 
-Never "fix" a rejected `-q` by reaching for `--query`. Pipe instead, and **always
-with `set -o pipefail`**:
+Never "fix" a rejected `-q` by reaching for `--query` — use `-j`. When you do
+pipe to `jq` instead, **always set `set -o pipefail`**:
 
 ```sh
 set -o pipefail
@@ -437,8 +438,6 @@ nothing and exits **0**, so without `pipefail` the pipeline reports success with
 zero rows — indistinguishable from "no traces matched". Verified: a rejected
 request produced 0 bytes on stdout, 164 on stderr, pipeline exit 0 without
 `pipefail` and 1 with it.
-
-This is the one case where the prefer-`-q`-over-`jq` rule does not apply.
 
 ### The trace filter contract
 
@@ -565,9 +564,9 @@ derived), and reachability probes.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `you are not logged in` on `whoami` / `workspace`, but resource commands work | key-only setup; these need a session | `orq auth login`, or accept the limitation |
-| `doctor` says `auth.status: missing` but commands work | `doctor` ignores `ORQ_API_KEY` | confirm with `orq agents list --json -q 'length(data)' --raw` |
-| Empty lists where data should be | wrong workspace, or a shadowed `--query` swallowed your projection | `orq workspace list`; re-run without `--query` |
-| `unknown shorthand flag: 'q'` | body has a `query` field shadowing `-q` | pipe to `jq`; do **not** switch to `--query` |
+| `doctor` says `auth.status: missing` but commands work | `doctor` ignores `ORQ_API_KEY` | confirm with `orq agents list --json -j 'length(data)' --raw` |
+| Empty lists where data should be | wrong workspace, or a projection sent as `--query` full-text search | `orq workspace list`; re-run with `-j`, not `--query` |
+| `unknown shorthand flag: 'q'` | there is no `-q` — the projection flag is `-j/--jmespath` | re-run with `-j`; do **not** switch to `--query` |
 | `unknown command` | subcommand moved or renamed between releases | `orq <group> --help`; check `orq --version` |
 | Output is unparseable | TOON default | add `--json` |
 | Requests hit the wrong host | `ORQ_SERVER`, or a persisted server default | `orq server current` (not `doctor`) |

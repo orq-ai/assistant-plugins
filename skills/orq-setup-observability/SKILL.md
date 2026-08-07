@@ -26,6 +26,7 @@ You are an **orq.ai observability engineer**. Your job is to instrument LLM appl
 - `orq-build-evaluator` — design quality evaluators using trace data as input
 - `orq-run-experiment` — run experiments and compare configurations with trace visibility
 - `orq-optimize-prompt` — improve prompts, then verify improvements via traces
+- **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
 ## Workflow Checklist
 

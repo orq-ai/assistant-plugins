@@ -1,8 +1,8 @@
 # orq CLI Command Map
 
-Command tree captured from `orq` **v4.12.15**; pagination defaults, identifier
-conventions, trace sort and trace retention re-confirmed on **v4.12.16**. The CLI
-is generated from the orq.ai OpenAPI spec, so this drifts between releases —
+Verified live against the **4.13** CLI (last full pass: build 4.13.0-rc.62,
+2026-08-07). The CLI is
+generated from the orq.ai OpenAPI spec, so this drifts between releases —
 `orq <group> --help` wins over anything written here.
 
 To re-derive the tree after a CLI upgrade, instead of editing it by hand. Run it
@@ -32,45 +32,53 @@ curl -fsSL https://raw.githubusercontent.com/orq-ai/orq-cli/main/openapi.yaml -o
 
 ## Global flags
 
-Accepted by most commands, but **not all** — see the shadowing note below:
-
 | Flag | Effect |
 |---|---|
 | `--json` | Alias for `-o json` |
 | `-o, --output-format` | `json`, `yaml`, or `toon` (default `toon`) |
-| `-q, --query` | JMESPath expression applied to the response |
-| `--raw` | Emit the query result unquoted instead of as JSON |
+| `-j, --jmespath` | JMESPath expression applied to the response |
+| `--raw` | Emit the `--jmespath` result unquoted instead of as JSON |
 | `--profile` | Credential profile (default `default`) |
 | `--server` | Override the server URL for this call |
 | `--verbose` | Verbose log output. **Prints every stored API key in plaintext — never use in shared output.** |
 
 Each flag has an env-var twin: uppercase, `ORQ_` prefix, underscores for dashes.
 `ORQ_VERBOSE=1` equals `--verbose`, `ORQ_PROFILE=ci` equals `--profile ci`,
-`ORQ_OUTPUT_FORMAT=json` equals `-o json`.
+`ORQ_JMESPATH='auth.status'` equals `-j 'auth.status'`.
 
-### Generated flags shadow global flags
+**There is no `-q`/`--query` global flag.** Muscle memory from other CLIs (or
+older orq builds) will produce `Error: unknown shorthand flag: 'q' in -q` on
+every command — the projection flag is `-j`.
 
-Per-field flags are generated from each command's request body. When a body field
-collides with a global flag name, the body field wins and the global flag stops
-working for that command. Confirmed on v4.12.15:
+### Body fields do not collide with global flags
 
-| Command | Shadowed | Effect |
-|---|---|---|
-| `traces search` | `-q` / `--query` | `-q` errors; `--query` is silently treated as body full-text search |
-| `budgets list` | `-q` | `unknown shorthand flag: 'q'` |
-| `webhooks query` | `-q` | same |
-| `knowledge-bases search` | `-q` | same |
-| `evals invoke` | `-q` | same |
-| `rerank create` | `-q` | same |
-| `images generate` | `-o` | `unknown shorthand flag: 'o'` |
-| `auth setup`, `models create-autorouter`, `models update-autorouter` | `--profile` | body field wins |
+Per-field flags are generated from each command's request body. When a body
+field would clash with a global flag name, the generator renames the *body*
+flag with a `body-` prefix and keeps the global one working — verified:
+`images generate` exposes its `output_format` body field as
+`--body-output-format`, and its help text says so explicitly. A body field
+named `query` simply gets `--query`, because the global projection flag is
+`-j/--jmespath`.
 
-The dangerous one is `--query` on `traces search`: it is accepted, sent as the
-body's full-text `query` field, and returns zero rows at exit 0. It looks like
-"no data" rather than "wrong flag".
+**The trap that remains:** on search commands (`traces search`,
+`knowledge-bases search`, `webhooks query`, …) `--query` is the body's
+**full-text search field**, not a projection. `orq traces search --query
+'data[].trace_id'` parses fine, is sent as a full-text search for that literal
+string, and returns zero rows at exit 0 — it looks like "no data" rather than
+"wrong flag". Project with `-j`; use `--query` only when you mean full-text
+search.
 
-Workaround: use `--json` and pipe to `jq`. To find collisions ahead of time,
-compare `orq <group> <cmd> --help` flags against the global list.
+Built-in exception: on `auth setup`, `--profile` is the profile being created
+or updated, not the global credential-profile selector.
+
+Two related parsing facts, verified live:
+
+- **Plain strings are accepted by generated string flags** (`--model`, `--input`,
+  …). Only nested objects, arrays of objects, and unions need a JSON string.
+- **There is no client-side enum validation.** Any value — including an invalid
+  one — passes flag parsing and is sent to the server, which rejects it there.
+  `-o bogus` likewise silently falls back to JSON output. Do not rely on the CLI
+  to catch a typo'd enum value; read the server error.
 
 Config files are read from `~/.orq/config.json` (and `/etc/orq/config.json` on
 Unix), using the same key names:
@@ -132,7 +140,7 @@ logged in` when a valid key is exported, and they exit **0** while doing it.
 
 ### `auth whoami --json` shape
 
-Observed on v4.12.15 against a live session:
+Observed against a live session:
 
 ```json
 {
@@ -197,11 +205,11 @@ never print it.
   `ORQ_SERVER` changes where requests go but produces no change anywhere in
   `doctor` output. Use `orq server current` instead.
 
-Abridged real output from a logged-out v4.12.15:
+Abridged real output from a logged-out session:
 
 ```json
 {
-  "binary":  { "name": "orq", "version": "4.12.15" },
+  "binary":  { "name": "orq", "version": "4.13.0" },
   "runtime": { "name": "go", "version": "go1.26.5", "platform": "darwin", "arch": "arm64" },
   "output":  { "default_format": "toon", "supported_formats": ["json", "yaml", "toon"] },
   "config": {
@@ -239,8 +247,8 @@ Two things to read carefully:
 Quick unauthenticated triage:
 
 ```sh
-orq doctor --json -q 'auth.status' --raw            # missing | ok | invalid
-orq doctor --json -q "checks[?status!='pass']"      # only the problems
+orq doctor --json -j 'auth.status' --raw            # missing | ok | invalid
+orq doctor --json -j "checks[?status!='pass']"      # only the problems
 ```
 
 ---
@@ -251,11 +259,12 @@ One group per API tag. Groups marked with a leading `→` are the ones worth
 knowing by heart.
 
 ```
-→ agents             create delete get-response invoke list refresh-agent-card
-                     retrieve run stream stream-run update
+→ agents             create delete get-response invoke list retrieve run
+                     stream stream-run update
   agents-responses   create
+  annotation-queues  add-items clear create delete get get-item list
+                     query-items remove-items update
   api-keys           create delete get list list-capabilities update
-  budgets            create delete get get-consumption list reset-consumption update
   chat               create
   chunking           parse
   completions        create
@@ -264,7 +273,7 @@ knowing by heart.
                      update-datapoint
 → deployments        get-config invoke list stream
   embeddings         create
-→ evals              all create delete invoke list-versions update
+→ evals              all create delete get invoke list-versions update
   feedback           create delete evaluation evaluation-remove
   files              content delete get list update upload
   identities         create delete list retrieve update
@@ -274,18 +283,16 @@ knowing by heart.
                      list-chunks-paginated list-datasources retrieve
                      retrieve-chunk retrieve-datasource search update
                      update-chunk update-datasource
-  management-keys    create delete get list list-capabilities update
   memory-stores      create create-document create-memory delete delete-document
                      delete-memory list list-documents list-memories retrieve
                      retrieve-document retrieve-memory update update-document
                      update-memory
   models             list create delete disable enable import-litellm
-                     list-litellm update validate create-autorouter
+                     list-litellm update validate
                      create-aws-bedrock create-openai-like create-vertex
-                     azure-foundry-deployments update-autorouter
+                     azure-foundry-deployments
                      update-aws-bedrock update-openai-like validate-aws-bedrock
   moderations        create
-  notifiers          create delete get list update
   ocr                ocr
   pii                detect redact restore
 → projects           create delete get list update
@@ -296,7 +303,6 @@ knowing by heart.
   schedules          create delete list retrieve trigger update
 → skills             create delete get list update
   speech             create
-  telemetry          query
   tools              create delete get-version list list-versions retrieve update
 → traces             aggregate create delete get get-span list-facet-values
                      list-facets list-fields list-spans query-oql search
@@ -304,6 +310,17 @@ knowing by heart.
   translations       create
   webhooks           count create delete generate-secret get list query update
 ```
+
+There is no `experiments` group — experiments are MCP/evaluatorq-only.
+`annotation-queues` is the CLI surface for the eval-corrections /
+unified-annotation model (annotation review workflows); its subcommands parse
+correctly but have not yet been exercised against production data.
+
+The CLI also lists groups that are intentionally not covered by this skill
+(`budgets`, `notifiers`, `management-keys`, `activities`, `alerts`, `logs`,
+`people`, `smart-routers`, `workspace-settings`) — leave them out when
+re-deriving the tree. Autorouter management lives in `smart-routers` and is
+likewise not covered.
 
 Note `orq evals all` (not `list`) is the evaluator listing command, and
 `orq traces create` / `orq traces delete` add and remove **span annotations**,
@@ -365,27 +382,29 @@ Full grammar: `orq help-input`.
 
 ## JMESPath recipes
 
-`-q` runs against the parsed response. `--raw` unwraps a single value for shell
+`-j` runs against the parsed response. `--raw` unwraps a single value for shell
 capture.
 
 ```sh
 # active workspace key, bare — needs an OAuth session, not an API key
-orq auth whoami --json -q active_workspace_key --raw
+orq auth whoami --json -j active_workspace_key --raw
 
 # workspace keys and names — also session-only
-orq workspace list --json -q 'workspaces[].{key: key, name: name}'
+orq workspace list --json -j 'workspaces[].{key: key, name: name}'
 
 # agent id + display name (agents use _id; deployments use id, projects project_id)
-orq agents list --json -q 'data[].{id: _id, name: display_name}'
+orq agents list --json -j 'data[].{id: _id, name: display_name}'
 
 # first agent's key, bare
-orq agents list --json -q 'data[0].key' --raw
+orq agents list --json -j 'data[0].key' --raw
 
 # models have no envelope — project the array directly
-orq models list --json -q '[].id'
+orq models list --json -j '[].id'
 ```
 
-`traces search` shadows `-q`, so trace projections must go through `jq`:
+`-j` works on `traces search` too (remember `--query` there is the body's
+full-text field, not a projection). `jq` remains handy for multi-step
+transforms:
 
 ```sh
 # failed traces in a window
@@ -398,19 +417,19 @@ orq traces search --json \
 orq traces search --json --from ... --to ... | jq -r '.next_page_token'
 ```
 
-There is no working span-level recipe: `traces list-spans` 404s (see
-[Per-trace drill-down](#per-trace-drill-down-is-currently-404)).
+Span-level reads go through `traces list-spans` / `traces get-span` (see
+[Per-trace drill-down](#per-trace-drill-down)).
 
 ### Comparing against a string in a filter
 
-A bare backtick literal does **not** work. `-q 'checks[?status!=`pass`]'` fails
+A bare backtick literal does **not** work. `-j 'checks[?status!=`pass`]'` fails
 with `invalid character 'p' looking for beginning of value`, because backticks
 delimit a *JSON* literal and `pass` is not valid JSON. Two forms that do work,
-both verified against v4.12.15:
+both verified live:
 
 ```sh
-orq doctor --json -q "checks[?status!='pass']"      # raw-string literal, outer double quotes
-orq doctor --json -q 'checks[?status!=`"pass"`]'    # JSON literal, note the inner quotes
+orq doctor --json -j "checks[?status!='pass']"      # raw-string literal, outer double quotes
+orq doctor --json -j 'checks[?status!=`"pass"`]'    # JSON literal, note the inner quotes
 ```
 
 Prefer the first. The second needs backticks to survive the shell, which they do
@@ -447,10 +466,11 @@ Field names, confirmed against **live responses** unless marked:
   `updated_at`, `created_by_id`, `updated_by_id`. Two departures from every other
   resource: the identifier is **`project_id`** (neither `id` nor `_id`), and the
   timestamps are **`created_at` / `updated_at`**, not `created` / `updated`.
-- **span summaries** (`traces list-spans`, *spec only*): `trace_id`, `span_id`,
+- **span summaries** (`traces list-spans`): `trace_id`, `span_id`,
   `parent_span_id`, `name`, `type`, `operation`, `status`, `started_at`,
   `ended_at`, `duration_ms`, `provider`, `model`, `usage`, `cost`, `has_detail`.
-  Unverifiable in practice — the endpoint 404s, see below.
+  Field names from the spec — see [Per-trace drill-down](#per-trace-drill-down)
+  for the 404 fallback on pre-4.13 deployments.
 
 There is no universal identifier convention: `_id` for agents, prompts, datasets
 and knowledge-bases; `id` for deployments; `project_id` for projects. Check the
@@ -478,47 +498,28 @@ orq traces list-facet-values <field> --json \
   --from 2026-07-01T00:00:00Z --to 2026-07-31T00:00:00Z   # values + counts for one facet
 ```
 
-### Per-trace drill-down is currently 404
+### Per-trace drill-down
 
-Against `my.orq.ai` on v4.12.15, **every per-trace read returns HTTP 404**, using
-ids taken from a `traces search` response seconds earlier:
+`traces search` is the bulk read; the per-trace reads are:
 
 ```
-orq traces get <trace_id>              -> HTTP 404
-orq traces list-spans <trace_id>       -> HTTP 404
-orq traces get-span <trace_id> <span>  -> HTTP 404
-orq request GET /v2/traces/<id>/spans  -> HTTP 404
+orq traces get <trace_id>
+orq traces list-spans <trace_id>
+orq traces get-span <trace_id> <span>
 ```
 
-Reproduced across 5 traces including agent traces, and via `orq request`, so it
-is server-side rather than a CLI routing bug. The endpoints are in the spec; this
-deployment does not serve them.
-
-**Practical consequence:** `traces search` is the only working trace read. Get
-what you need from the search response itself — it already carries `attributes`,
-`usage`, `cost`, `status`, and timing per row. Do not build a workflow that
-searches and then drills into spans; it will 404 at the second step.
-
-Re-check with a single `orq traces get <trace_id> --json` before assuming this is
-still true.
+These endpoints are served from the 4.13 platform onward. If every per-trace
+read returns HTTP 404 while `traces search` works, the deployment behind your
+server is older than 4.13 — fall back to the search response itself, which
+already carries `attributes`, `usage`, `cost`, `status`, and timing per row.
+Quick probe: `orq traces get <trace_id> --json` with an id taken from a
+`traces search` response seconds earlier.
 
 ### Aggregation
 
-`traces aggregate` still exists but its own help marks it **deprecated**:
-
-```
-Deprecated: use TelemetryService.Query (POST /v2/telemetry/query,
-source=TRACES, grain=none) instead.
-```
-
-Use `orq telemetry query` for new work. It is a different shape, not a drop-in:
-its help describes a "unified query envelope" taking a **source**, a **compute
-list**, and a time range, with optional grain, group-by, and filters, returning
-either a time series or one aggregate row per group. Start from
-`orq telemetry query --help`.
-
-*Not exercised during authoring — the deprecation notice and the envelope
-description are from the CLI's own help text, not from a run.*
+`traces aggregate` handles per-window trace aggregation. There is no
+`telemetry` group — for cross-trace analysis use `orq reporting query`
+(start from `orq reporting query --help`).
 
 ---
 
@@ -532,7 +533,7 @@ https://my.orq.ai/<workspace-key>/experiments/<experiment-id>
 ```
 
 ```sh
-key="$(orq auth whoami --json -q active_workspace_key --raw)"
+key="$(orq auth whoami --json -j active_workspace_key --raw)"
 echo "https://my.orq.ai/${key}/traces?query=$(printf 'trace_id:is:%s' "$trace_id" | jq -sRr @uri)"
 ```
 
@@ -543,13 +544,13 @@ them moves when you log in:
 
 ```sh
 orq server current --json                        # resource commands
-orq doctor --json -q 'config.api_base_url'       # built-in auth commands
+orq doctor --json -j 'config.api_base_url'       # built-in auth commands
 ```
 
 `orq server current` returns `server`, `server_index`, and `server_override`.
 Read `server_override` first: **`orq auth login` persists an override to the host
 it authenticated against**, so the resource host is not fixed. Observed on the
-same machine, v4.12.15:
+same machine:
 
 | State | `server` | `server_override` |
 |---|---|---|
@@ -594,7 +595,7 @@ and `--server` like everything else.
 **It does not return the bare response body.** `orq request` wraps everything:
 
 ```sh
-orq request GET /v2/traces/fields --json -q 'keys(@)' </dev/null
+orq request GET /v2/traces/fields --json -j 'keys(@)' </dev/null
 # [ "body", "ok", "status", "headers" ]
 ```
 

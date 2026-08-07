@@ -57,7 +57,7 @@ When the user says "create a Skill" without context, ask which one they mean. Th
 - `orq-optimize-prompt` — review prose quality for `instructions`
 - `orq-run-experiment` — verify a Skill change improves downstream behavior
 - `orq-analyze-trace-failures` — diagnose Skills that aren't producing the expected output in production
-- `orq-cli` — the same Skills CRUD from a shell (`orq skills list|get|create|update|delete`), for scripting or bulk audits
+- `orq-cli` — the same Skills CRUD from a shell (`orq skills list|get|create|update|delete`), for scripting or bulk audits. See its "MCP tools or the CLI?" table before choosing.
 
 ## Constraints
 

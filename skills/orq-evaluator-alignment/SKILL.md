@@ -231,3 +231,7 @@ Every artifact lives in `runs/<key>_<ts>_<model>_<N>dp/`: `evaluator.json`, `tra
 `recommendations.json`, `aggregated.md`, `new_prompt.md`, `rewrite_status.json`,
 `approval.json`, `new_evaluator.json`, `experiment_report.md`. Any step is
 re-runnable in isolation against an existing run directory.
+
+## Companion Skills
+
+- **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.

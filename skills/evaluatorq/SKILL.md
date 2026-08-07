@@ -37,6 +37,7 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 - `orq-analyze-trace-failures` — diagnose agent failures from production traces
 - `orq-red-team` — full `eq redteam` walkthrough: modes, categories, output, dashboard
 - `orq-simulate-agent` — full `eq sim` walkthrough: personas, scenarios, goal scoring
+- **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
 ## When to use
 
