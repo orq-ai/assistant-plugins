@@ -16,7 +16,6 @@
 .cursor/
 .windsurf/
 context
-/tests/
 
 # Local skills install artifacts
 .agents/skills/

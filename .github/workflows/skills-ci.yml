@@ -1,0 +1,99 @@
+name: skills-ci
+on:
+  pull_request:
+    # `edited` re-runs the checks when the PR is retargeted or retitled — a
+    # green status computed against the old base/title must not carry over.
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Validate plugin manifests
+        run: tests/scripts/validate-plugin-manifests.sh
+      - name: Validate skills (frontmatter, lock invariants + hash freshness, version sync, content patterns)
+        run: node tests/scripts/validate-skills.mjs
+      - name: Self-test the validator (a stale lock hash must fail the run)
+        run: bash tests/scripts/validate-skills.test.sh
+      - name: PR title pattern lint
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # Keep in sync with the patterns in tests/scripts/validate-skills.mjs.
+          if echo "$PR_TITLE" | grep -qi "owner decision" \
+             || echo "$PR_TITLE" | grep -qP '\b(?!RES-|UTF-|ISO-|GPT-|ADR-|SHA-|OWASP-|ASI-|A2A-)[A-Z]{2,5}-[0-9]+\b'; then
+            echo "::error::PR title contains internal decision context or a non-project ticket id"
+            exit 1
+          fi
+          echo "title ok"
+
+  version-bump-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require manifest version bump + changelog entry when the shipped surface changes
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          mb=$(git merge-base "origin/$BASE_REF" HEAD)
+          # Key the gate on skills-lock.json: the lockfile is the definition of
+          # the shipped surface (the validate job enforces its hashes are fresh),
+          # so it provably changes whenever any shipped skill does — regardless
+          # of which path the skill shipped from.
+          if ! git diff --name-only "$mb"..HEAD | grep -qx 'skills-lock.json'; then
+            echo "skills-lock.json unchanged — shipped surface unchanged, gate not applicable"
+            exit 0
+          fi
+          # Compare parsed versions at the merge-base vs HEAD; a grep on the diff
+          # would also match unchanged context lines near the version field.
+          base_v=$(git show "$mb:.claude-plugin/plugin.json" | jq -r .version)
+          head_v=$(jq -r .version .claude-plugin/plugin.json)
+          if [ "$base_v" = "$head_v" ]; then
+            echo "::error::shipped surface changed (skills-lock.json) but the manifest version is still $head_v — bump all 4 manifests (see CLAUDE.md; the validate job enforces they match)"
+            exit 1
+          fi
+          # A downgrade must not satisfy the gate: head must sort strictly after base.
+          if [ "$(printf '%s\n%s\n' "$base_v" "$head_v" | sort -V | tail -1)" != "$head_v" ]; then
+            echo "::error::manifest version went backwards ($base_v -> $head_v)"
+            exit 1
+          fi
+          # Require an actual entry for the new version, not just a touched file.
+          if ! git diff "$mb"..HEAD -- CHANGELOG.md | grep -q "^+## \[$head_v\]"; then
+            echo "::error::version bumped ($base_v -> $head_v) but CHANGELOG.md gained no '## [$head_v]' entry (see CLAUDE.md)"
+            exit 1
+          fi
+          echo "shipped surface changed, version $base_v -> $head_v, changelog entry present — ok"
+
+  install-sanity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the suite from this checkout via npx skills
+        run: |
+          expected=$(jq -r '.skills | length' "$GITHUB_WORKSPACE/skills-lock.json")
+          tmp=$(mktemp -d) && cd "$tmp"
+          # || true: a failed install is caught by the count assertion below,
+          # which also surfaces install.log context.
+          npx -y skills add "$GITHUB_WORKSPACE" -y 2>&1 | tee install.log || true
+          # Count unique skill names, not SKILL.md files — installers may write
+          # the same skill to several agent locations.
+          count=$(find . -name SKILL.md -exec dirname {} \; | xargs -n1 basename | sort -u | wc -l | tr -d ' ')
+          echo "unique skills installed: $count (expected >= $expected)"
+          if [ "$count" -lt "$expected" ]; then
+            echo "--- tail of install.log (registry blip vs real regression) ---"
+            tail -n 30 install.log || true
+            echo "::error::expected >=$expected unique skills installed from this checkout, got $count (install.log tail above)"
+            exit 1
+          fi
