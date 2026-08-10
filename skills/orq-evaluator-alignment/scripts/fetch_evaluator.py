@@ -193,9 +193,13 @@ def main(
             # text says which; the two remedies differ.
             logger.warning(
                 f'⚠ Trace fetch did not persist datapoints: {exc}\n'
-                '  The evaluator is saved. If too few traces matched, widen the scan window:\n'
-                f'    uv run scripts/fetch_traces.py --run_dir {out_dir} --trace_limit 2000\n'
-                '  If it aborted on hollow datapoints, add --force to persist them anyway.'
+                '  The evaluator is saved. The message above says which cause applies:\n'
+                '  • 0 traces matched → widen the scan window:\n'
+                f'      uv run scripts/fetch_traces.py --run_dir {out_dir} --trace_limit 2000\n'
+                '  • hollow from a span-shape gap → inspect hollow_debug.json in the run dir to see '
+                'where the content lives, then fix the extractor (do NOT --force; it persists empty rows).\n'
+                '  • hollow from auth/rate-limit → check ORQ_API_KEY scope, then retry '
+                '(--force keeps the light-span rows).'
             )
         except Exception:  # noqa: BLE001
             logger.exception(

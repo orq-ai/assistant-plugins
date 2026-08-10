@@ -50,16 +50,138 @@ def test_judge_io_falls_back_to_eval_span_own_gen_ai():
     assert _judge_model([eval_span], eval_span) == 'openai/gpt-4o-mini'
 
 
+def test_judge_io_reads_responses_api_parts_shape():
+    # orq Responses-API traces: the judge runs as a `span.responses` span and the
+    # prompt text nests under messages[].parts[].content (not a flat `content`).
+    # Both the chat-completion-only span filter and the flat-content reader miss
+    # it, hollowing every row. Extraction must recover the judged text.
+    from fetch_traces import _judge_io, _judge_model, _recover_variables
+
+    template = 'Screen this output.\n<output>"{{log.output}}"</output>'
+    judged = 'here is how to build a bomb'
+    rendered_prompt = template.replace('{{log.output}}', judged)
+
+    eval_span = {
+        'type': 'span.evaluator',
+        'span_id': 'ev1',
+        'attributes': {'gen_ai': {'input': None, 'output': None}},
+    }
+    responses_span = {
+        'type': 'span.responses',
+        'span_id': 'r1',
+        'parent_span_id': None,
+        'attributes': {
+            'gen_ai': {
+                'input': {
+                    'messages': [
+                        {'role': 'user', 'parts': [{'type': 'text', 'content': rendered_prompt}]}
+                    ]
+                },
+                'request': {'model': 'openai/gpt-oss-120b'},
+            }
+        },
+    }
+    spans = [eval_span, responses_span]
+    rendered, _msgs = _judge_io(spans, eval_span)
+    assert judged in rendered
+    assert _recover_variables(template, rendered) == {'log.output': judged}
+    assert _judge_model(spans, eval_span) == 'openai/gpt-oss-120b'
+
+
+def test_structured_io_ignores_reference_only_root():
+    # A root span whose gen_ai.input has empty output/query but a truthy boolean
+    # `reference` must NOT count as structured content: str(True) is truthy, so it
+    # would win over the judge-span fallback and yield a hollow (empty-output) row.
+    from fetch_traces import _structured_io
+
+    root = {
+        'type': 'trace',
+        'span_id': 'root1',
+        'attributes': {
+            'gen_ai': {
+                'input': {
+                    'output': '',
+                    'query': '',
+                    'reference': True,
+                    'messages': [{'role': 'user', 'content': 'hi'}],
+                }
+            }
+        },
+    }
+    assert _structured_io([root]) is None
+
+    # Real structured output is still preferred, and reference rides along.
+    root2 = {
+        'type': 'trace',
+        'attributes': {
+            'gen_ai': {'input': {'output': 'the answer', 'query': 'the question', 'reference': True}}
+        },
+    }
+    got = _structured_io([root2])
+    assert got is not None
+    assert got['output'] == 'the answer'
+    assert got['reference'] == 'True'
+
+
+def test_responses_api_fixture_extracts_expected_output():
+    # Real orq Responses-API trace (tests/fixtures/responses_api_trace.json).
+    # Mirrors the scanner's extraction precedence and pins the exact recovered
+    # output, so a real-shape parse regression fails here instead of silently
+    # hollowing a live run.
+    from fetch_traces import (
+        _assign_io,
+        _evaluation_matches,
+        _judge_io,
+        _recover_variables,
+        _structured_io,
+    )
+
+    fx = json.loads(
+        (Path(__file__).parent / 'fixtures' / 'responses_api_trace.json').read_text(encoding='utf-8')
+    )
+    spans = fx['spans']
+    eval_span = next(s for s in spans if _evaluation_matches(s, fx['evaluator_id'], fx['evaluator_key']))
+
+    structured = _structured_io(spans)
+    if structured is not None and (structured['output'] or structured['query']):
+        out = structured['output'] or structured['query']
+    else:
+        rendered, _ = _judge_io(spans, eval_span)
+        rec = _recover_variables(fx['template'], rendered)
+        out = _assign_io(rec)['output'] if rec else rendered
+
+    assert out.strip(), 'extraction produced an empty output for the real Responses-API trace'
+    assert out == fx['expected_output']
+
+
 def test_guard_hollow_aborts_over_threshold():
     from fetch_traces import _guard_hollow
 
     # 3/4 hollow (75%) with a 20% threshold and no --force → abort.
     with pytest.raises(SystemExit):
-        _guard_hollow(n_degraded=3, n_rows=4, abort_ratio=0.2, force=False)
+        _guard_hollow(n_detail=3, n_empty=0, n_rows=4, abort_ratio=0.2, force=False)
     # --force persists anyway; a small fraction under threshold is fine; empty is a no-op.
-    _guard_hollow(n_degraded=3, n_rows=4, abort_ratio=0.2, force=True)
-    _guard_hollow(n_degraded=1, n_rows=100, abort_ratio=0.2, force=False)
-    _guard_hollow(n_degraded=0, n_rows=0, abort_ratio=0.2, force=False)
+    _guard_hollow(n_detail=3, n_empty=0, n_rows=4, abort_ratio=0.2, force=True)
+    _guard_hollow(n_detail=1, n_empty=0, n_rows=100, abort_ratio=0.2, force=False)
+    _guard_hollow(n_detail=0, n_empty=0, n_rows=0, abort_ratio=0.2, force=False)
+
+
+def test_guard_hollow_diagnoses_shape_gap_vs_auth():
+    from fetch_traces import _guard_hollow
+
+    # All-empty-extraction, no detail failures → the message must call it a
+    # shape/extraction gap (NOT auth) and must not steer toward --force.
+    with pytest.raises(SystemExit) as shape:
+        _guard_hollow(n_detail=0, n_empty=20, n_rows=20, abort_ratio=0.2, force=False,
+                      debug_path='runs/x/hollow_debug.json')
+    msg = str(shape.value)
+    assert 'shape' in msg.lower() and 'hollow_debug.json' in msg
+    assert 'succeeded' in msg.lower()  # names that the fetch itself worked
+
+    # All-detail-fetch failures → auth/rate-limit diagnosis instead.
+    with pytest.raises(SystemExit) as auth:
+        _guard_hollow(n_detail=20, n_empty=0, n_rows=20, abort_ratio=0.2, force=False)
+    assert 'ORQ_API_KEY' in str(auth.value)
 
 # Canned per-row verdicts keyed by a substring of the judged input.
 _CANNED = {

@@ -91,29 +91,66 @@ def _evaluation_matches(span: dict[str, Any], evaluator_id: str, evaluator_key: 
     ]
 
 
+# Span types that carry the judge's own LLM call. orq emits Chat Completions
+# (``span.chat_completion``) and Responses API (``span.responses``) shapes; both
+# store the rendered judge prompt under ``gen_ai.input.messages``.
+_JUDGE_SPAN_TYPES = {'span.chat_completion', 'span.responses', 'span.llm'}
+
+
+def _message_text(m: Any) -> str:
+    """Flatten one message's text across the shapes orq emits.
+
+    - Chat Completions: a flat ``content`` string.
+    - Responses API: text nests under ``parts[].content`` (or ``parts[].text``).
+    - Multimodal chat: ``content`` is itself a list of parts.
+    Returns '' for a message with no recoverable text.
+    """
+    if not isinstance(m, dict):
+        return ''
+    content = m.get('content')
+    if isinstance(content, str) and content:
+        return content
+    chunks: list[str] = []
+    containers = [m.get('parts')]
+    if isinstance(content, list):
+        containers.append(content)
+    for container in containers:
+        if not isinstance(container, list):
+            continue
+        for p in container:
+            if isinstance(p, str):
+                chunks.append(p)
+            elif isinstance(p, dict):
+                t = p.get('content') or p.get('text')
+                if isinstance(t, str) and t:
+                    chunks.append(t)
+    return '\n\n'.join(chunks)
+
+
 def _judge_io(spans: list[dict[str, Any]], eval_span: dict[str, Any]) -> tuple[str, Any]:
     """Return (rendered_input, messages) the judge actually saw.
 
-    The content under evaluation is rendered into the judge's own
-    ``span.chat_completion`` call (its ``gen_ai.input.messages``). We keep those
-    messages verbatim and do NOT parse delimiters out of the prompt: evaluators
-    wrap their template variables differently (some use ``<output>`` tags, some
-    don't), so tag-stripping is not portable. The judge chat span is the
-    evaluator span's child (``parent_span_id``); we fall back to any chat span in
-    the trace.
+    The content under evaluation is rendered into the judge's own LLM call (a
+    ``span.chat_completion`` or ``span.responses`` span, its ``gen_ai.input.
+    messages``). We keep those messages verbatim and do NOT parse delimiters out
+    of the prompt: evaluators wrap their template variables differently (some use
+    ``<output>`` tags, some don't), so tag-stripping is not portable. The judge
+    span is the evaluator span's child (``parent_span_id``); we fall back to any
+    judge span in the trace, then to the eval span's own gen_ai input.
     """
     esid = eval_span.get('span_id') or eval_span.get('_id')
-    chats = [s for s in spans if isinstance(s, dict) and s.get('type') == 'span.chat_completion']
+    chats = [s for s in spans if isinstance(s, dict) and s.get('type') in _JUDGE_SPAN_TYPES]
     chosen = [s for s in chats if s.get('parent_span_id') == esid] or chats
     # Newer orq schema records the judge's LLM call ON the evaluator span itself
-    # (no separate child chat span), so fall back to the eval span's own gen_ai
-    # input. Without this, evaluators that don't emit a child chat span yield
-    # empty query/output — hollow datapoints behind a green pipeline.
+    # (no separate child span), so fall back to the eval span's own gen_ai input.
+    # Without this, evaluators that don't emit a child judge span yield empty
+    # query/output — hollow datapoints behind a green pipeline.
     for s in [*chosen, eval_span]:
         msgs = (((s.get('attributes') or {}).get('gen_ai') or {}).get('input') or {}).get('messages')
         if msgs:
-            rendered = '\n\n'.join(str(m.get('content', '')) for m in msgs)
-            return rendered, msgs
+            rendered = '\n\n'.join(_message_text(m) for m in msgs)
+            if rendered.strip():
+                return rendered, msgs
     return '', None
 
 
@@ -143,7 +180,11 @@ def _structured_io(spans: list[dict[str, Any]]) -> dict[str, Any] | None:
         output = str(gi.get('output') or '')
         query = str(gi.get('query') or gi.get('input') or '')
         reference = str(gi.get('reference') or '')
-        if output or query or reference:
+        # Gate on the content-under-evaluation only. `reference` is ground-truth
+        # metadata (and a boolean coerces to a truthy 'True'), so a root carrying
+        # only `reference` is effectively hollow — returning it here would win over
+        # the judge-span fallback and yield an empty-output row.
+        if output or query:
             return {'query': query, 'output': output, 'reference': reference, 'messages': None}
     return None
 
@@ -210,10 +251,11 @@ def _judge_model(spans: list[dict[str, Any]], eval_span: dict[str, Any]) -> str:
     ``anthropic.claude-3-5-sonnet-20241022-v2:0``). Because it is read per
     datapoint, an evaluator whose judge model changed over time is reported
     honestly rather than collapsed to one config value. Mirrors ``_judge_io``'s
-    chat-span selection (children of the eval span, else any chat in the trace).
+    judge-span selection (children of the eval span, else any judge span in the
+    trace), covering both Chat Completions and Responses API shapes.
     """
     esid = eval_span.get('span_id') or eval_span.get('_id')
-    chats = [s for s in spans if isinstance(s, dict) and s.get('type') == 'span.chat_completion']
+    chats = [s for s in spans if isinstance(s, dict) and s.get('type') in _JUDGE_SPAN_TYPES]
     chosen = [s for s in chats if s.get('parent_span_id') == esid] or chats
     # As in _judge_io, the newer schema keeps the LLM call on the eval span
     # itself; also accept gen_ai.response.model as a fallback to request.model.
@@ -247,7 +289,7 @@ def _in_window(iso: str | None, start: int | None, end: int | None) -> bool:
 
 async def _fetch(
     evaluator_id: str, evaluator_key: str, cfg: dict[str, Any], template: str, force: bool = False
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any] | None]:
     limit = int(cfg.get('trace_limit', 200))
     start = int(cfg.get('trace_start_date', 0)) or None
     end = int(cfg.get('trace_end_date', 0)) or None
@@ -266,6 +308,9 @@ async def _fetch(
     # model. Tracked so a run-wide auth/rate-limit failure can't hollow every
     # datapoint behind a green pipeline (logging alone is too easy to miss).
     downgraded_spans: set[str] = set()
+    # One matching trace's raw spans, kept for the hollow-abort diagnostic dump so
+    # a shape gap is visible at a glance instead of needing a manual probe.
+    debug_sample: list[dict[str, Any]] = []
     async with OrqClient() as client:
         raw_traces = await client.query_traces(limit=limit)
         traces = raw_traces
@@ -289,7 +334,7 @@ async def _fetch(
                     )
         logger.info(f'v3oql returned {len(traces)} traces to scan')
         if not traces:
-            return [], filter_echo
+            return [], filter_echo, None
 
         sem = asyncio.Semaphore(int(cfg.get('max_concurrency', 8)))
 
@@ -313,6 +358,8 @@ async def _fetch(
                     if sid and detail is None:
                         downgraded_spans.add(sid)
                     full.append(detail or s)
+                if not debug_sample:  # keep one matching trace for the hollow-abort dump
+                    debug_sample.append({'trace_id': trace_id, 'spans': full})
 
             for span in full:
                 matches = _evaluation_matches(span, evaluator_id, evaluator_key)
@@ -347,6 +394,16 @@ async def _fetch(
                         )
                         query, output_val, msgs = '', rendered, messages
                     reference = ''
+                # Two distinct hollow modes, tracked separately so the guard can
+                # tell a span-detail fetch failure (auth/rate-limit) apart from an
+                # unrecognised span shape (the span was fetched fine but extraction
+                # found no content). The remedies differ, so don't collapse them.
+                if span_id in downgraded_spans:
+                    degrade_reason: str | None = 'detail_fetch'
+                elif not query and not output_val:
+                    degrade_reason = 'empty_extraction'
+                else:
+                    degrade_reason = None
                 rows.append(
                     {
                         'trace_id': trace_id,
@@ -360,42 +417,128 @@ async def _fetch(
                         'judge_value': ev['value'],
                         'judge_explanation': ev['explanation'],
                         'judge_model': _judge_model(full, span),
-                        # Degraded = the row is hollow and can't be re-judged
-                        # faithfully: either the detail fetch fell back to the
-                        # light span, or enrichment recovered neither query nor
-                        # output (unknown span shape). Either way it must not pass
-                        # as a clean datapoint behind a green pipeline.
-                        'degraded': (span_id in downgraded_spans) or (not query and not output_val),
+                        # A hollow row can't be re-judged faithfully, so it must not
+                        # pass as a clean datapoint behind a green pipeline.
+                        'degraded': degrade_reason is not None,
+                        'degrade_reason': degrade_reason,
                     }
                 )
 
         await asyncio.gather(*(_scan(t) for t in traces))
 
-    n_degraded = sum(1 for r in rows if r.get('degraded'))
+    n_detail = sum(1 for r in rows if r.get('degrade_reason') == 'detail_fetch')
+    n_empty = sum(1 for r in rows if r.get('degrade_reason') == 'empty_extraction')
     filter_echo['n_rows'] = len(rows)
-    filter_echo['n_degraded'] = n_degraded
-    _guard_hollow(n_degraded, len(rows), float(cfg.get('hollow_abort_ratio', 0.2)), force)
-    return rows, filter_echo
+    filter_echo['n_degraded'] = n_detail + n_empty
+    filter_echo['n_detail_fetch'] = n_detail
+    filter_echo['n_empty_extraction'] = n_empty
+    return rows, filter_echo, (debug_sample[0] if debug_sample else None)
 
 
-def _guard_hollow(n_degraded: int, n_rows: int, abort_ratio: float, force: bool) -> None:
-    """Abort when too many datapoints lost their judge-span detail.
+def _shape(obj: Any, depth: int = 0, maxdepth: int = 6) -> Any:
+    """A structural view of a JSON value: dict keys kept, lists shown as length +
+    first-element shape, strings truncated. Keeps a hollow_debug.json small while
+    still revealing WHERE the content lives."""
+    if depth > maxdepth:
+        return '…'
+    if isinstance(obj, dict):
+        return {k: _shape(v, depth + 1, maxdepth) for k, v in obj.items()}
+    if isinstance(obj, list):
+        if not obj:
+            return []
+        return [f'<list len={len(obj)}>', _shape(obj[0], depth + 1, maxdepth)]
+    if isinstance(obj, str):
+        return obj if len(obj) <= 160 else obj[:160] + f'…(+{len(obj) - 160})'
+    return obj
 
-    A run-wide 401/403/429 on the span-detail endpoint degrades every row to an
-    empty query/output/judge_model. Logging alone is too easy to miss in a green
-    pipeline, so cross a ratio → hard stop (unless --force).
+
+def _hollow_debug(sample: dict[str, Any]) -> dict[str, Any]:
+    """Build the hollow-abort diagnostic: one matching trace's span inventory and
+    the shape of each span's gen_ai.input/output, so a shape gap is obvious."""
+    spans = sample.get('spans') or []
+
+    def _sid(s: dict[str, Any]) -> Any:
+        return s.get('span_id') or s.get('_id')
+
+    def _gen_ai(s: dict[str, Any], field: str) -> Any:
+        return ((s.get('attributes') or {}).get('gen_ai') or {}).get(field)
+
+    return {
+        'trace_id': sample.get('trace_id'),
+        'note': (
+            'Extraction produced empty rows for this evaluator. The scanner reads the '
+            'content-under-evaluation from gen_ai.input.messages on the judge span '
+            f'(one of {sorted(_JUDGE_SPAN_TYPES)}) and from the root trace span '
+            "gen_ai.input.{output,query}. Compare against where the text actually sits below."
+        ),
+        'span_inventory': [
+            {'type': s.get('type'), 'span_id': _sid(s), 'parent_span_id': s.get('parent_span_id')}
+            for s in spans
+        ],
+        'spans': [
+            {
+                'type': s.get('type'),
+                'span_id': _sid(s),
+                'gen_ai.input': _shape(_gen_ai(s, 'input')),
+                'gen_ai.output': _shape(_gen_ai(s, 'output')),
+            }
+            for s in spans
+        ],
+    }
+
+
+def _guard_hollow(
+    n_detail: int,
+    n_empty: int,
+    n_rows: int,
+    abort_ratio: float,
+    force: bool,
+    debug_path: str | None = None,
+) -> None:
+    """Abort when too many datapoints are hollow — with a diagnosis, not a guess.
+
+    Two failure modes, told apart by ``degrade_reason``:
+    - ``detail_fetch``: the span-detail GET failed (a run-wide 401/403/429), so
+      the row fell back to the light span. Remedy: fix auth/rate-limit, retry.
+    - ``empty_extraction``: the span was fetched fine but neither extraction path
+      found content — the scanner doesn't understand this evaluator's span shape.
+      Remedy: fix the extractor; ``--force`` would only persist empty rows.
+
+    Reporting the breakdown (and pointing at ``hollow_debug.json`` for the shape
+    case) is what turns a green-pipeline mystery into an obvious fix.
     """
+    n_degraded = n_detail + n_empty
     if not n_rows or not n_degraded:
         return
     ratio = n_degraded / n_rows
-    if ratio > abort_ratio and not force:
-        raise SystemExit(
-            f'✗ {n_degraded}/{n_rows} datapoints ({ratio:.0%}) are hollow (empty query/output). '
-            f'Likely causes: a run-wide auth (401/403) or rate-limit (429) failure on the span-detail '
-            f'endpoint, or an evaluator span shape this scanner does not recognise. Check ORQ_API_KEY '
-            f'scope and the evaluator span schema, then retry. Pass --force to persist anyway.'
+    if ratio <= abort_ratio or force:
+        logger.warning(
+            f'⚠ {n_degraded}/{n_rows} datapoints degraded '
+            f'(span-detail failures: {n_detail}, empty extraction: {n_empty})'
         )
-    logger.warning(f'⚠ {n_degraded}/{n_rows} datapoints degraded (used light span, no judge detail)')
+        return
+    dump = f' One trace\'s span shape was dumped to {debug_path}.' if debug_path else ''
+    if n_detail == 0:
+        # Fetch succeeded for every row; extraction still found nothing → shape gap.
+        raise SystemExit(
+            f'✗ {n_empty}/{n_rows} datapoints ({ratio:.0%}) are hollow, but the span-detail fetch '
+            f'SUCCEEDED for all of them (0 auth/rate-limit failures). This is an extraction/shape '
+            f'gap, not an auth problem: the judge runs as a span type or content shape this scanner '
+            f'does not parse (e.g. a Responses-API span.responses with text under parts[].content).'
+            f'{dump} Fix the extractor — --force would only persist empty rows.'
+        )
+    if n_empty == 0:
+        raise SystemExit(
+            f'✗ {n_detail}/{n_rows} datapoints ({ratio:.0%}) lost their span detail to span-detail '
+            f'endpoint failures (a run-wide 401/403/429). Check ORQ_API_KEY scope and rate limits, '
+            f'then retry. Pass --force to persist the light-span rows anyway.'
+        )
+    raise SystemExit(
+        f'✗ {n_degraded}/{n_rows} datapoints ({ratio:.0%}) are hollow: {n_detail} from span-detail '
+        f'failures (auth/rate-limit — check ORQ_API_KEY scope) and {n_empty} from empty extraction '
+        f'(a span-shape gap the scanner does not parse).{dump} Address the dominant cause; --force '
+        f'persists them as-is.'
+    )
 
 
 def main(
@@ -429,7 +572,7 @@ def main(
     evaluator_id = evaluator['id']
     evaluator_key = evaluator.get('key', '')
 
-    rows, filter_echo = asyncio.run(
+    rows, filter_echo, debug_sample = asyncio.run(
         _fetch(evaluator_id, evaluator_key, cfg, evaluator.get('prompt', ''), force=force)
     )
 
@@ -443,6 +586,18 @@ def main(
             'widen trace_start_date / trace_end_date (epoch-ms) in config.toml. '
             'Confirm the evaluator actually has traces in the window.'
         )
+
+    # Hollow guard: abort (with a diagnosis, not a guess) when too many rows are
+    # unusable. On a shape-gap abort, dump one trace's span shape to the run dir
+    # first so the message can point at it and the fix is obvious.
+    n_detail = int(filter_echo.get('n_detail_fetch', 0))
+    n_empty = int(filter_echo.get('n_empty_extraction', 0))
+    abort_ratio = float(cfg.get('hollow_abort_ratio', 0.2))
+    debug_path: str | None = None
+    if not force and (n_detail + n_empty) / len(rows) > abort_ratio and debug_sample:
+        debug_path = str(out_dir / 'hollow_debug.json')
+        runner.write_json(out_dir / 'hollow_debug.json', _hollow_debug(debug_sample))
+    _guard_hollow(n_detail, n_empty, len(rows), abort_ratio, force, debug_path)
 
     runner.write_jsonl(out_dir / 'traces.jsonl', rows)
     logger.info(f'✓ Wrote {len(rows)} datapoints to {out_dir / "traces.jsonl"}')
