@@ -117,6 +117,37 @@ def _judge_io(spans: list[dict[str, Any]], eval_span: dict[str, Any]) -> tuple[s
     return '', None
 
 
+def _structured_io(spans: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Prefer the clean, structured content orq records on the trace-level span.
+
+    An orq evaluator run records the content under evaluation on the root span
+    (``type == 'trace'`` / ``attributes.type == 'workflow_run'``) as
+    ``attributes.gen_ai.input = {input, output, query, reference}`` — ``output``
+    is exactly the content the judge scored. This is robust across judge API
+    shapes: the Responses API nests text under ``messages[].parts[].content``,
+    which the per-message ``gen_ai.input.messages`` reader in ``_judge_io`` cannot
+    see (it yields empty rows → the hollow guard aborts). ``query`` falls back to
+    ``input`` since ``make_replacements`` collapses both leaves onto the row's
+    ``query``. Returns None when no root span carries a non-empty structured input
+    so the caller falls back to the template-stencil recovery.
+    """
+    for s in spans:
+        if not isinstance(s, dict):
+            continue
+        is_root = s.get('type') == 'trace' or ((s.get('attributes') or {}).get('type')) == 'workflow_run'
+        if not is_root:
+            continue
+        gi = (((s.get('attributes') or {}).get('gen_ai') or {}).get('input'))
+        if not isinstance(gi, dict):
+            continue
+        output = str(gi.get('output') or '')
+        query = str(gi.get('query') or gi.get('input') or '')
+        reference = str(gi.get('reference') or '')
+        if output or query or reference:
+            return {'query': query, 'output': output, 'reference': reference, 'messages': None}
+    return None
+
+
 _VAR_TOKEN = re.compile(r'{{\s*([\w.]+)\s*}}')
 
 
@@ -289,22 +320,33 @@ async def _fetch(
                     continue
                 ev = matches[0]
                 span_id = span.get('span_id') or span.get('_id')
-                rendered, messages = _judge_io(full, span)
-                # The judge span stores the prompt post-substitution. Recover the
-                # original variable values via the template stencil so the row
-                # holds the *content under evaluation*, not the whole rendered
-                # judge prompt (which step 4 would otherwise re-nest inside itself
-                # and the annotation UI would show verbatim).
-                recovered = _recover_variables(template, rendered)
-                if recovered:
-                    io = _assign_io(recovered)
-                    query, output_val, msgs = io['query'], io['output'], io['messages']
+                # Prefer the clean, structured content orq records on the
+                # trace-level span (gen_ai.input = {input, output, query,
+                # reference}) — robust across judge API shapes. Fall back to the
+                # template-stencil recovery from the (post-substitution) judge span
+                # when the structured input is absent.
+                structured = _structured_io(full)
+                if structured is not None:
+                    query, output_val, msgs = structured['query'], structured['output'], structured['messages']
+                    reference = structured['reference']
                 else:
-                    logger.warning(
-                        f'⚠ could not recover template variables for span '
-                        f'{span.get("span_id") or span.get("_id")}; storing raw rendered judge input'
-                    )
-                    query, output_val, msgs = '', rendered, messages
+                    rendered, messages = _judge_io(full, span)
+                    # The judge span stores the prompt post-substitution. Recover the
+                    # original variable values via the template stencil so the row
+                    # holds the *content under evaluation*, not the whole rendered
+                    # judge prompt (which step 4 would otherwise re-nest inside itself
+                    # and the annotation UI would show verbatim).
+                    recovered = _recover_variables(template, rendered)
+                    if recovered:
+                        io = _assign_io(recovered)
+                        query, output_val, msgs = io['query'], io['output'], io['messages']
+                    else:
+                        logger.warning(
+                            f'⚠ could not recover template variables for span '
+                            f'{span.get("span_id") or span.get("_id")}; storing raw rendered judge input'
+                        )
+                        query, output_val, msgs = '', rendered, messages
+                    reference = ''
                 rows.append(
                     {
                         'trace_id': trace_id,
@@ -313,6 +355,7 @@ async def _fetch(
                         'evaluator_key': ev['evaluator_key'],
                         'query': query,
                         'output': output_val,
+                        'reference': reference,
                         'messages': msgs,
                         'judge_value': ev['value'],
                         'judge_explanation': ev['explanation'],

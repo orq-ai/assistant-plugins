@@ -1,21 +1,32 @@
-"""Async client for the orq.ai endpoints the alignment skill touches.
+"""Client for the orq.ai endpoints the alignment skill touches.
 
-Covers four routes:
-- GET  /v2/evaluators/{id}              — fetch the evaluator under audit (step 1)
-- POST /v2/traces/v3oql                 — query traces by evaluator (step 2, hop 1)
-- GET  /v2/traces/{trace_id}/v3spans    — per-trace spans (step 2, hop 2)
-- POST /v2/evaluators                   — create the rewritten evaluator (step 9b)
+Two transports:
+- The ``orq`` CLI (>=4.13) for the two one-shot evaluator CRUD calls:
+    - ``orq evals get <id>``  — fetch the evaluator under audit (step 1)
+    - ``orq evals create``    — create the rewritten evaluator (step 9b)
+  The CLI is a Go binary, so it does its own TLS (no Windows OpenSSL Applink
+  crash) and inherits the CLI's ambient auth — an OAuth session (`orq auth`)
+  or ``ORQ_API_KEY`` in the environment.
+- httpx (async) for the trace/model routes — a concurrent fan-out the CLI can't
+  serve one-shot:
+    - GET  /v2/models                    — resolve the judge model slug
+    - POST /v2/traces/v3oql              — query traces by evaluator (step 2, hop 1)
+    - GET  /v2/traces/{trace_id}/v3spans — per-trace spans (step 2, hop 2)
 
 Lifted and trimmed from the validated `evaluator_alignment.client.OrqEvalsClient`.
-TLS verification is disabled *only on Windows*, where the bundled OpenSSL aborts
-the process on some cert chains (project memory: OpenSSL Applink crash). On
-macOS/Linux verification stays on — the API key travels on these connections.
+httpx TLS verification is disabled *only on Windows*, where the bundled OpenSSL
+aborts the process on some cert chains (project memory: OpenSSL Applink crash).
+On macOS/Linux verification stays on — the API key travels on these connections.
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from typing import Any
@@ -122,24 +133,27 @@ class OrqClient:
 
     # ── Step 1 ───────────────────────────────────────────────────────────────
     async def get_evaluator(self, evaluator_id: str) -> EvaluatorConfig:
-        """Fetch and normalise the evaluator under audit.
+        """Fetch and normalise the evaluator under audit — via ``orq evals get``.
 
-        A 404 is ambiguous: the id is wrong OR the evaluator lives in a project
-        this API key cannot see. We surface both possibilities rather than
-        asserting "not found" (design §8).
+        A "not found" is ambiguous: the id is wrong OR the evaluator lives in a
+        project this API key cannot see. We surface both possibilities rather
+        than asserting "not found" (design §8). The CLI hits the same single
+        GET /v2/evaluators/{id} record this used to read over httpx, so the JSON
+        shape — and the parsing below — is unchanged.
         """
-        resp = await self._client.get(f'/v2/evaluators/{evaluator_id}')
-        if resp.status_code == 404:
-            raise EvaluatorNotFound(evaluator_id)
-        if resp.status_code >= 400:
-            logger.error(f'✗ get_evaluator failed [{resp.status_code}]: {resp.text}')
-            resp.raise_for_status()
-        data = resp.json()
+        proc = await _run_orq(['evals', 'get', evaluator_id, '--json'])
+        if proc.returncode != 0:
+            stderr = (proc.stderr or '').strip()
+            if '404' in stderr or 'not found' in stderr.lower():
+                raise EvaluatorNotFound(evaluator_id)
+            logger.error(f'✗ orq evals get failed [{proc.returncode}]: {stderr[:500]}')
+            raise RuntimeError(f'`orq evals get {evaluator_id}` failed: {stderr[:200]}')
+        data = _envelope_dict(_parse_orq_json(proc.stdout)) or {}  # tolerate a {"data": {...}} envelope
         prompt = _first_str(data, ('prompt', 'instructions')) or ''
         judge_model = _extract_judge_model(data)
         output_type = _first_str(data, ('output_type', 'outputType')) or ''
         return EvaluatorConfig(
-            id=data.get('_id', evaluator_id),
+            id=data.get('_id') or data.get('id') or evaluator_id,
             key=data.get('key', ''),
             prompt=prompt,
             judge_model=judge_model,
@@ -258,15 +272,24 @@ class OrqClient:
         model: str,
         description: str | None = None,
         guardrail_value: bool = True,
+        project_id: str | None = None,
     ) -> CreateResult:
-        """Create a single-judge boolean LLM-as-judge evaluator (the rewrite)."""
+        """Create a single-judge boolean LLM-as-judge evaluator (the rewrite).
+
+        Project placement: ``project_id`` and ``path`` are mutually exclusive on
+        ``orq evals create`` — ``path``'s first segment merely *names* the owning
+        project, so a path that names no real project silently drops the new
+        evaluator into the CLI's active project. When a ``project_id`` is known
+        (the source evaluator's own project, so the aligned copy lands beside it)
+        we send that and omit ``path`` entirely; otherwise we fall back to
+        ``path``.
+        """
         body: dict[str, Any] = {
             'type': 'llm_eval',
             'mode': 'single',
             'model': model,
             'prompt': prompt,
             'output_type': 'boolean',
-            'path': path,
             'key': key,
             'guardrail_config': {
                 'type': 'boolean',
@@ -275,13 +298,22 @@ class OrqClient:
                 'alert_on_failure': False,
             },
         }
+        # Mutually exclusive — prefer the explicit project_id (co-locates the
+        # aligned evaluator with its source); only fall back to path otherwise.
+        if project_id:
+            body['project_id'] = project_id
+        else:
+            body['path'] = path
         if description is not None:
             body['description'] = description
-        resp = await self._client.post('/v2/evaluators', json=body)
-        if resp.status_code >= 400:
-            logger.error(f'✗ create evaluator failed [{resp.status_code}]: {resp.text}')
-            resp.raise_for_status()
-        data = _envelope_dict(resp.json()) or {}  # tolerate a {"data": {...}} envelope
+        # Whole body via stdin so the nested guardrail_config passes through
+        # unchanged — no field-by-field flag mapping.
+        proc = await _run_orq(['evals', 'create', '--stdin', '--json'], stdin=json.dumps(body))
+        if proc.returncode != 0:
+            stderr = (proc.stderr or '').strip()
+            logger.error(f'✗ orq evals create failed [{proc.returncode}]: {stderr[:500]}')
+            raise RuntimeError(f'`orq evals create` failed: {stderr[:200]}')
+        data = _envelope_dict(_parse_orq_json(proc.stdout)) or {}  # tolerate a {"data": {...}} envelope
         new_id = data.get('_id') or data.get('id')
         if not new_id:
             # The evaluator may already exist server-side; surface the shape so a
@@ -322,3 +354,51 @@ def _extract_judge_model(data: dict[str, Any]) -> str:
         if isinstance(mid, str):
             return mid
     return ''
+
+
+# ── orq CLI transport ─────────────────────────────────────────────────────────
+# get_evaluator / create_boolean_evaluator shell out to the `orq` CLI (>=4.13)
+# instead of httpx: the CLI is a Go binary (its own TLS, no Windows OpenSSL
+# Applink crash) and inherits the CLI's ambient auth (OAuth session or
+# ORQ_API_KEY). The trace/model routes stay on httpx — a concurrent fan-out,
+# not one-shot.
+
+
+def _orq_exe() -> str:
+    exe = shutil.which('orq')
+    if exe is None:
+        raise RuntimeError(
+            'orq CLI not found on PATH. Install with `npm i -g @orq-ai/cli` '
+            '(the `evals get` command needs >=4.13).'
+        )
+    return exe
+
+
+async def _run_orq(
+    args: list[str], *, stdin: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run `orq <args>` off the event loop, returning the completed process."""
+    return await asyncio.to_thread(_run_orq_sync, args, stdin)
+
+
+def _run_orq_sync(args: list[str], stdin: str | None) -> subprocess.CompletedProcess[str]:
+    # On Windows `orq` resolves to `orq.CMD`, which CreateProcess can't launch
+    # directly — go through the shell (cmd.exe /c), matching the `claude -p`
+    # backend in lib/model_backend.py. Python quotes the list via list2cmdline.
+    return subprocess.run(
+        [_orq_exe(), *args],
+        input=stdin,
+        capture_output=True,
+        text=True,
+        encoding='utf-8',
+        shell=(os.name == 'nt'),
+    )
+
+
+def _parse_orq_json(stdout: str) -> Any:
+    try:
+        return json.loads(stdout)
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError(
+            f'orq CLI did not return JSON (got {stdout[:200]!r})'
+        ) from exc
