@@ -54,7 +54,9 @@ def _diff(old: str, new: str) -> str:
     return '\n'.join(lines)
 
 
-async def _create(evaluator: dict[str, Any], prompt: str, key: str, path: str) -> dict[str, Any]:
+async def _create(
+    evaluator: dict[str, Any], prompt: str, key: str, path: str, project_id: str | None
+) -> dict[str, Any]:
     async with OrqClient() as client:
         result = await client.create_boolean_evaluator(
             key=key,
@@ -62,6 +64,7 @@ async def _create(evaluator: dict[str, Any], prompt: str, key: str, path: str) -
             prompt=prompt,
             model=evaluator['judge_model'],
             description=f'Human-aligned rewrite of evaluator {evaluator["id"]} (RES-930).',
+            project_id=project_id,
         )
     return {'id': result.id, 'key': result.key, 'raw': result.raw}
 
@@ -90,8 +93,15 @@ def main(
 
     evaluator = runner.read_json(out_dir / 'evaluator.json')
     status = runner.read_json(out_dir / 'rewrite_status.json')
-    new_prompt = (Path(edits).read_text(encoding='utf-8') if edits else (out_dir / 'new_prompt.md').read_text(encoding='utf-8')).strip()
-    aggregated = (out_dir / 'aggregated.md').read_text(encoding='utf-8')
+    # utf-8-sig on these human-editable artifacts: a Windows editor can save
+    # new_prompt.md / aggregated.md / an --edits file with a leading BOM, which
+    # would otherwise be prepended to the prompt's first line and silently
+    # corrupt the created evaluator. -sig strips it; no-op when absent.
+    new_prompt = (
+        Path(edits).read_text(encoding='utf-8-sig') if edits
+        else (out_dir / 'new_prompt.md').read_text(encoding='utf-8-sig')
+    ).strip()
+    aggregated = (out_dir / 'aggregated.md').read_text(encoding='utf-8-sig')
 
     # Presentation (always shown).
     logger.info('── Aggregated recommendations ──')
@@ -126,7 +136,19 @@ def main(
     source_key = evaluator.get('key') or runner.slugify(evaluator['id'])
     new_key = f'{source_key}-aligned-{runner.utc_timestamp()}'
     path = evaluator.get('raw', {}).get('path') or source_key
-    created = asyncio.run(_create(evaluator, new_prompt, new_key, path))
+    # Co-locate the aligned evaluator with its source. Without an explicit
+    # project_id the CLI drops it into whatever project is currently active
+    # (path only *names* a project via its first segment), so a bare slug lands
+    # it in the wrong place. Prefer the source's own project_id when present.
+    source_project_id = evaluator.get('raw', {}).get('project_id')
+    if source_project_id:
+        logger.info(f'  target project: {source_project_id} (inherited from source evaluator)')
+    else:
+        logger.warning(
+            '  target project: UNKNOWN (source has no project_id) — the new evaluator '
+            'will land in the orq CLI\'s active project. Set the CLI project first if that matters.'
+        )
+    created = asyncio.run(_create(evaluator, new_prompt, new_key, path, source_project_id))
 
     new_eval = {
         'id': created['id'],

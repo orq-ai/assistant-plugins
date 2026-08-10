@@ -45,6 +45,21 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
     evaluator = runner.read_json(out_dir / 'evaluator.json')
     rows = runner.read_jsonl(out_dir / 'traces.jsonl')
 
+    # Drop degraded/hollow rows before sampling. fetch_traces marks a row
+    # ``degraded`` when its span detail couldn't be recovered (empty query/output);
+    # re-judging an empty output wastes calls and pollutes the flip metrics with a
+    # trivially-stable verdict. Kept only when the operator opts in.
+    if not bool(overrides.get('include_degraded')):
+        kept = [r for r in rows if not r.get('degraded')]
+        dropped = len(rows) - len(kept)
+        if dropped:
+            logger.warning(
+                f'⚠ skipping {dropped}/{len(rows)} degraded/hollow datapoints '
+                f'(empty output, cannot be meaningfully re-judged). '
+                f'Pass --include_degraded to keep them.'
+            )
+        rows = kept
+
     n_repeats = int(overrides.get('n_repeats') or cfg.get('n_repeats', 5))
     num_samples = overrides.get('num_samples')
     num_samples = cfg.get('num_samples', -1) if num_samples is None else num_samples
@@ -153,6 +168,7 @@ def main(
     max_concurrency: int | None = None,
     temperature: float | None = None,
     metrics: bool = True,
+    include_degraded: bool = False,
 ) -> str:
     """Run the stability protocol over a run directory's traces.
 
@@ -164,6 +180,8 @@ def main(
         max_concurrency: Parallel judge calls (overrides config).
         temperature: Per-call judge temperature (overrides config).
         metrics: When True (default), compute metrics on the result.
+        include_degraded: Keep degraded/hollow rows (empty output) instead of
+            skipping them. Off by default.
     """
     cfg = runner.load_config(config)
     out_dir = runner.resolve_run_dir(run_dir) if run_dir else runner.latest_run_dir(cfg.get('runs_dir', 'runs'))
@@ -179,6 +197,7 @@ def main(
                 'n_repeats': n_repeats,
                 'max_concurrency': max_concurrency,
                 'temperature': temperature,
+                'include_degraded': include_degraded,
             },
         )
     )

@@ -31,6 +31,13 @@ cached environment on first run — no `uv sync`, no project venv, no repo neede
 Always invoke as `uv run scripts/<name>.py` (not `uv run python scripts/...`, which
 bypasses the inline metadata).
 
+> **TLS-intercepting antivirus / corporate proxy:** the first run of each script
+> reaches PyPI to build its env. Behind SSL-inspecting AV (e.g. Norton) or a
+> corporate proxy that re-signs HTTPS, `uv` fails with `invalid peer certificate:
+> UnknownIssuer`. Add `--system-certs` so `uv` trusts the OS certificate store:
+> `uv run --system-certs scripts/<name>.py ...`. Only the first (uncached) build
+> per script needs it.
+
 ## Constraints
 
 - **Boolean Pass/Fail judges only** (V1). Step 1 fails fast on anything else.

@@ -186,11 +186,16 @@ def main(
             # both are known, so adopt its returned path for the final print.
             renamed = fetch_traces.main(run_dir=str(out_dir), config=config, trace_limit=trace_limit)
             out_dir = runner.resolve_run_dir(renamed)
-        except SystemExit as exc:  # fetch_traces raises this on an empty result
+        except SystemExit as exc:  # fetch_traces raises this on an empty scan OR a hollow abort
+            # Two distinct causes, so don't claim "found nothing": either 0 traces
+            # matched this evaluator in the scan window, or datapoints matched but
+            # too many were hollow and the guard refused to persist. The exception
+            # text says which; the two remedies differ.
             logger.warning(
-                f'⚠ Trace fetch found nothing: {exc}\n'
-                '  The evaluator is saved. Rerun with a wider window once ready:\n'
-                f'    uv run scripts/fetch_traces.py --run_dir {out_dir} --trace_limit 2000'
+                f'⚠ Trace fetch did not persist datapoints: {exc}\n'
+                '  The evaluator is saved. If too few traces matched, widen the scan window:\n'
+                f'    uv run scripts/fetch_traces.py --run_dir {out_dir} --trace_limit 2000\n'
+                '  If it aborted on hollow datapoints, add --force to persist them anyway.'
             )
         except Exception:  # noqa: BLE001
             logger.exception(

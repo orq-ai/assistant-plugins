@@ -105,14 +105,31 @@ def apply_run_meta(run_dir: Path, model: str, n_datapoints: int) -> Path:
     new_dir = run_dir.parent / f'{base}_{model_slug}_{n_datapoints}dp'
     if new_dir == run_dir or new_dir.exists():
         return run_dir
-    run_dir.rename(new_dir)
+    try:
+        run_dir.rename(new_dir)
+    except OSError as exc:
+        # The rename is cosmetic: it only makes the folder name self-describing,
+        # and the step's artifacts are already on disk by the time this runs. On
+        # Windows a transient lock on the directory (OneDrive sync, a lingering
+        # handle) raises PermissionError/WinError 32 here — this must never fail
+        # a step that already succeeded. Keep the original name and carry on.
+        from loguru import logger  # lazy: keep this module import-cheap
+
+        logger.warning(
+            f'⚠ could not rename run dir to {new_dir.name!r} ({exc}); '
+            f'keeping {run_dir.name!r}. Artifacts are unaffected.'
+        )
+        return run_dir
     return new_dir
 
 
 def read_json(path: Path) -> Any:
-    # utf-8 explicit: judge explanations carry non-cp1252 bytes (emoji, smart
-    # quotes) and the Windows default codec aborts on them.
-    return json.loads(Path(path).read_text(encoding='utf-8'))
+    # utf-8-sig: judge explanations carry non-cp1252 bytes (emoji, smart quotes)
+    # that the Windows default codec aborts on, and the -sig variant transparently
+    # strips a leading BOM. Human-edited artifacts (aggregated.md, an --edits file)
+    # saved by a Windows editor often gain one, which would otherwise make
+    # json.loads raise "Unexpected UTF-8 BOM". Harmless no-op when absent.
+    return json.loads(Path(path).read_text(encoding='utf-8-sig'))
 
 
 def write_json(path: Path, data: Any) -> None:
@@ -123,7 +140,8 @@ def write_json(path: Path, data: Any) -> None:
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for line in Path(path).read_text(encoding='utf-8').splitlines():
+    # utf-8-sig strips a leading BOM if a Windows editor added one (see read_json).
+    for line in Path(path).read_text(encoding='utf-8-sig').splitlines():
         line = line.strip()
         if line:
             out.append(json.loads(line))
