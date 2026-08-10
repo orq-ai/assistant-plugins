@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.4] - 2026-08-10
+
+### Changed
+- `orq-evaluator-alignment`: evaluator CRUD (`evals get` / `evals create`) now shells out to the `orq` CLI instead of httpx against `/v2/evaluators`, using the CLI's own TLS and ambient auth (avoids the Windows OpenSSL Applink crash). Trace/model routes stay on httpx. Create is project-aware — an aligned copy is co-located with its source evaluator's project.
+
+### Fixed
+- `orq-evaluator-alignment`: trace extraction now reads the orq Responses API span shape (`span.responses`, with text under `messages[].parts[].content`) and no longer treats a reference-only root span as content. Previously every datapoint from a Responses-API evaluator came back hollow and the scan aborted with a misleading auth/rate-limit guess.
+- `orq-evaluator-alignment`: the hollow-datapoint guard now distinguishes a span-detail fetch failure (auth/rate-limit) from an unrecognised span shape, and writes `hollow_debug.json` with the offending span shape on a shape-gap abort instead of guessing.
+- `orq-evaluator-alignment`: Windows robustness — the cosmetic run-dir rename is guarded against OneDrive/WinError 32 locks, and human-edited artifacts are read as `utf-8-sig` so an editor-written BOM no longer crashes reads or corrupts the created prompt's first line.
+- `orq-evaluator-alignment`: the stability step now skips degraded/hollow datapoints by default (they waste judge calls and flatten the flip metrics); `--include_degraded` keeps them.
+
 ## [2.2.3] - 2026-08-07
 
 ### Added
