@@ -72,6 +72,26 @@ def extract_template_variables(prompt: str) -> list[str]:
     return list(seen)
 
 
+def extract_categorical_labels(data: dict[str, Any]) -> list[str]:
+    """The full DECLARED label set (K) of a categorical evaluator, in order.
+
+    orq's record carries the rich `categorical_labels` — a list of
+    ``{"value", "description"}`` — plus a flat `categories` mirror (§8.1). We keep
+    the `value` strings (the actual verdict labels); fall back to `categories`; and
+    return ``[]`` when neither is present, so a non-categorical record is a no-op.
+    K is ``len()`` of this list — the count of allowed labels, never the observed.
+    """
+    labels = data.get('categorical_labels')
+    if isinstance(labels, list):
+        values = [item['value'] for item in labels if isinstance(item, dict) and item.get('value')]
+        if values:
+            return values
+    flat = data.get('categories')
+    if isinstance(flat, list):
+        return [c for c in flat if isinstance(c, str) and c]
+    return []
+
+
 @dataclass
 class EvaluatorConfig:
     """The audited evaluator's config, normalised for downstream steps."""
@@ -82,6 +102,7 @@ class EvaluatorConfig:
     judge_model: str
     output_type: str
     variables: list[str]
+    categorical_labels: list[str] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -145,6 +166,7 @@ class OrqClient:
             judge_model=judge_model,
             output_type=output_type,
             variables=extract_template_variables(prompt),
+            categorical_labels=extract_categorical_labels(data),
             raw=data,
         )
 

@@ -11,11 +11,12 @@
 # ///
 """Step 1 — fetch the evaluator under audit and pin its config.
 
-GET /v2/evaluators/{id}, assert it is a boolean single-judge evaluator (V1
-scope), extract the judge prompt, judge model, output type, and declared
-`{{...}}` variables, and write `evaluator.json` into a fresh run directory.
-The declared variable set is stored so step 9a can enforce variable
-preservation on the rewrite.
+GET /v2/evaluators/{id}, assert it is a single-judge evaluator of a supported
+output type — boolean | categorical | number (RES-978) — then extract the judge
+prompt, judge model, output type, the declared categorical label set (K), the
+resolved numeric scale (override-only), and the declared `{{...}}` variables, and
+write `evaluator.json` into a fresh run directory. The declared variable set is
+stored so step 9a can enforce variable preservation on the rewrite.
 
 Usage:
     cd skills/orq-evaluator-alignment
@@ -41,6 +42,45 @@ from lib.orq_client import EvaluatorNotFound, OrqClient
 load_dotenv()
 
 _UUID_RE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', re.IGNORECASE)
+
+# RES-978: the three orq output types Part 1 measures (`numeric` tolerated as an
+# alias of `number`, §8.1). Anything else is out of scope and fails the gate.
+_ACCEPTED_OUTPUT_TYPES = frozenset({'boolean', 'categorical', 'number', 'numeric'})
+
+
+def _check_output_type(output_type: str) -> str:
+    """Normalise + validate the evaluator output type (§5.2 type gate).
+
+    Returns the lower-cased type for `boolean | categorical | number`; raises
+    ``ValueError`` for anything else so the caller can stop with guidance.
+    """
+    t = (output_type or '').strip().lower()
+    if t not in _ACCEPTED_OUTPUT_TYPES:
+        raise ValueError(
+            f'output_type={output_type!r} is not supported. RES-978 measures '
+            'boolean | categorical | number evaluators only.'
+        )
+    return t
+
+
+def _resolve_scale(
+    cfg: dict, scale_min: float | None, scale_max: float | None
+) -> tuple[float, float] | None:
+    """Resolve the numeric scale override-only: flags beat config, both-or-neither.
+
+    Numeric evaluators carry NO scale in their orq record (§8.1), so the
+    normalising denominator is supplied out-of-band via ``--scale_min``/
+    ``--scale_max`` or ``config.toml``. Neither present → ``None`` (numeric rows
+    become ``unmeasurable`` — the expected path until a scale is known). Exactly
+    one present is a user error, not a silent ``None``.
+    """
+    lo = scale_min if scale_min is not None else cfg.get('scale_min')
+    hi = scale_max if scale_max is not None else cfg.get('scale_max')
+    if lo is None and hi is None:
+        return None
+    if lo is None or hi is None:
+        raise ValueError('numeric scale needs BOTH scale_min and scale_max (override-only).')
+    return (float(lo), float(hi))
 
 
 async def _fetch(evaluator_id: str, judge_model_override: str | None = None) -> dict:
@@ -68,6 +108,7 @@ async def _fetch(evaluator_id: str, judge_model_override: str | None = None) -> 
         'judge_model': judge_model,
         'judge_model_id': cfg.judge_model,
         'output_type': cfg.output_type,
+        'categorical_labels': cfg.categorical_labels,
         'variables': cfg.variables,
         'raw': cfg.raw,
     }
@@ -80,6 +121,8 @@ def main(
     with_traces: bool = True,
     trace_limit: int = 200,
     judge_model: str | None = None,
+    scale_min: float | None = None,
+    scale_max: float | None = None,
 ) -> str:
     """Fetch an evaluator and create its run directory.
 
@@ -141,16 +184,39 @@ def main(
     except EvaluatorNotFound as exc:
         raise SystemExit(str(exc)) from exc
 
-    output_type = (evaluator['output_type'] or '').lower()
-    if output_type != 'boolean':
-        raise SystemExit(
-            f'Evaluator {evaluator_id} has output_type={evaluator["output_type"]!r}. '
-            'V1 supports boolean Pass/Fail judges only (design §1, §8). Stopping.'
-        )
+    try:
+        output_type = _check_output_type(evaluator['output_type'])
+    except ValueError as exc:
+        raise SystemExit(f'Evaluator {evaluator_id}: {exc}') from exc
+    evaluator['output_type'] = output_type
+
     if not evaluator['prompt']:
         raise SystemExit(
             f'Evaluator {evaluator_id} returned an empty judge prompt — nothing to audit. '
             'Confirm this is an LLM-judge (llm_eval) evaluator.'
+        )
+
+    # Categorical needs its declared label set to define K (the entropy
+    # denominator). Fail loud rather than guess K from the labels observed in
+    # traces — a silent guess would make the instability scale drift with the data.
+    if output_type == 'categorical' and not evaluator['categorical_labels']:
+        raise SystemExit(
+            f'Evaluator {evaluator_id} is categorical but returned no categorical_labels — '
+            'cannot determine K. Confirm the evaluator declares its label set.'
+        )
+
+    # Numeric scale is override-only (§4a, §8.1): resolve it now so evaluator.json
+    # carries it. Absent scale is allowed and expected — numeric rows are then
+    # reported `unmeasurable` rather than guessed.
+    try:
+        scale = _resolve_scale(cfg, scale_min, scale_max)
+    except ValueError as exc:
+        raise SystemExit(f'Evaluator {evaluator_id}: {exc}') from exc
+    evaluator['scale'] = scale if output_type in {'number', 'numeric'} else None
+    if output_type in {'number', 'numeric'} and scale is None:
+        logger.warning(
+            '  numeric scale: NONE — numeric rows will be reported `unmeasurable` until you pass '
+            '--scale_min/--scale_max (or set scale_min/scale_max in config.toml).'
         )
 
     key = evaluator['key'] or runner.slugify(evaluator_id)
@@ -171,6 +237,13 @@ def main(
             'production spans; if that also misses, rerun with --judge_model <slug>.'
         )
     logger.info(f'  variables:   {evaluator["variables"]}')
+    if output_type == 'categorical':
+        labels = evaluator['categorical_labels']
+        logger.info(f'  output type: categorical (K={len(labels)}: {labels})')
+    elif output_type in {'number', 'numeric'}:
+        logger.info(f'  output type: {output_type} (scale={evaluator["scale"]})')
+    else:
+        logger.info(f'  output type: {output_type}')
     logger.info(f'  run dir:     {out_dir}')
 
     if with_traces:
