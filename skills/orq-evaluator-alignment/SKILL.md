@@ -1,24 +1,25 @@
 ---
 name: orq-evaluator-alignment
 description: >-
-  Align, calibrate, or improve an existing binary Pass/Fail LLM-as-a-judge (orq
-  evaluator) so its verdicts match human judgment. Use when the user wants to
-  "align my evaluator", "improve my eval", "annotate an evaluator", "find
-  ambiguous cases", or "build an annotation queue" — i.e. they have a boolean
-  judge (evaluator = LLM-as-a-judge) that disagrees with human labels or is
-  inconsistent. Measures judge self-consistency (flip-rate) via repeated runs,
-  surfaces the most ambiguous datapoints for human annotation, rewrites the judge
-  prompt from the labels, and creates the new evaluator only after the human
-  approves. If the evaluator ID isn't given, ask for it after triggering. Do NOT
-  use to build an evaluator from scratch (use orq-build-evaluator), to fix
-  failures with prompt tweaks (use orq-optimize-prompt), or for non-boolean judges.
+  Align, calibrate, or improve an existing LLM-as-a-judge (orq evaluator) so its
+  verdicts match human judgment — boolean, categorical, or numeric judges. Use
+  when the user wants to "align my evaluator", "improve my eval", "annotate an
+  evaluator", "find ambiguous cases", or "build an annotation queue" — i.e. they
+  have an LLM judge that disagrees with human labels or is inconsistent. Measures
+  judge self-consistency as one 0..1 instability score (boolean flip-rate,
+  categorical label entropy, or numeric score spread) via repeated runs, surfaces
+  the most unstable datapoints for human annotation, rewrites the judge prompt
+  from the labels, and creates the new evaluator only after the human approves. If
+  the evaluator ID isn't given, ask for it after triggering. Do NOT use to build
+  an evaluator from scratch (use orq-build-evaluator) or to fix failures with
+  prompt tweaks (use orq-optimize-prompt).
 allowed-tools: Read, Write, Edit, Grep, Glob, Bash(uv run:*), AskUserQuestion
 ---
 
 # Evaluator Alignment
 
 You are the **conductor** of a human-in-the-loop pipeline (RES-930) that rewrites
-a binary LLM-judge evaluator to better match human judgment. You run small,
+an LLM-judge evaluator to better match human judgment. You run small,
 independently-runnable scripts under `scripts/`; each writes one artifact into a
 per-run working directory (`runs/<key>_<ts>_<model>_<N>dp/`). **The human stays in control of
 every consequential action** — the prompt rewrite, creating the new evaluator,
@@ -39,13 +40,20 @@ bypasses the inline metadata).
 
 ## Constraints
 
-- **Boolean Pass/Fail judges only** (V1). Step 1 fails fast on anything else.
-- **Self-consistency is a ceiling, not proof.** A low flip-rate means the judge
+- **Measurement is multi-type; the feedback loop is boolean for now.** Steps 1–5
+  (fetch → stability → instability metrics → confuser ranking) support **boolean,
+  categorical, and numeric** judges, all measured on one 0..1 instability scale —
+  boolean flip-rate, categorical label entropy, numeric score spread (RES-978).
+  The annotation → rewrite → create steps (6–9) are still **boolean only**;
+  multi-type feedback arrives with the grey-zone work (RES-980). Step 1 accepts
+  all three output types and fails fast on anything else.
+- **Self-consistency is a ceiling, not proof.** Low instability means the judge
   is *stable*, not *correct* — a judge can be consistently wrong. You surface
   ambiguity; the human supplies truth.
-- **Known blind spot:** flip-ranking never surfaces consistently-wrong items
-  (flip-rate ≈ 0). You MUST state this in your final summary, and you offer the
-  low-flip sanity sample (config `low_flip_sample_size`) as the cheap mitigation.
+- **Known blind spot:** instability-ranking never surfaces consistently-wrong
+  items (instability ≈ 0). You MUST state this in your final summary, and you
+  offer the low-instability sanity sample (config `low_flip_sample_size`) as the
+  cheap mitigation.
 
 ## The flow
 
@@ -83,8 +91,8 @@ folder is created as `<key>_<ts>` and, once the trace scan resolves the judge
 model and datapoint count, is renamed to `<key>_<ts>_<model>_<N>dp` so it is
 self-describing (re-fetching traces with a wider window updates the `<model>`/
 `<N>dp` in place). Always use the **printed** path, not the pre-scan name. If
-the evaluator is not boolean the script stops before scanning; relay that V1 is
-boolean-only.
+the evaluator's output type isn't boolean, categorical, or number, the script
+stops before scanning; relay which three types are supported.
 
 **Then offer more data.** Matching is client-side (v3oql has no evaluator
 filter), so the scan covers the most recent `--trace_limit` traces (default
@@ -129,14 +137,18 @@ uv run scripts/stability.py --run_dir <run_dir>
 (Add `--num_samples 2` first for a smoke check.) Writes `stability.json` and
 auto-runs metrics.
 
-### 4. Report the flips
-metrics.py wrote `metrics.json` with a `flip_report`. **Tell the user how much
-the judge is flipping**: overall 1-Flip Consistency, Gwet AC1, how many
-datapoints flipped, and where instability concentrates. This is the evidence the
-user needs to choose an annotation count.
+### 4. Report the instability
+metrics.py wrote `metrics.json` with a lean `report`. **Tell the user how
+self-consistent the judge is** on the unified 0..1 instability scale (boolean
+flip-rate, categorical label entropy, or numeric score spread): the mean
+instability, the band histogram (stable / noisy / unreliable), and the
+most-unstable datapoints with their type-native detail. (For boolean judges the
+heavier agreement stats — 1-Flip Consistency, Gwet AC1, Fleiss κ — are computed
+too and surfaced on request.) This is the evidence the user needs to choose an
+annotation count.
 
 ### 5. Ask how many to annotate  ⟵ GATE
-*After* they have seen the flip report, ask how many top-ambiguous datapoints
+*After* they have seen the instability report, ask how many top-ambiguous datapoints
 they want to label (an informed choice, not a fixed number). Mention the
 low-flip sanity sample. Then:
 ```
@@ -148,8 +160,10 @@ uv run scripts/build_queue.py --run_dir <run_dir> --count <N>
 uv run scripts/serve_annotation.py --run_dir <run_dir>
 ```
 Tell the user to open the printed URL and label each item **True/False** (the
-judge's own verdict space). Labels auto-save to `annotations.json`; they can
-stop and resume. Wait for them to say they are done.
+judge's own verdict space). *Annotation onward (steps 6–9) is boolean-only today
+— categorical / numeric feedback lands with the grey-zone work (RES-980).*
+Labels auto-save to `annotations.json`; they can stop and resume. Wait for them
+to say they are done.
 
 ### 7. Recommend → aggregate
 ```

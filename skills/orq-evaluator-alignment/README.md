@@ -1,7 +1,7 @@
 # Evaluator Alignment skill (RES-930)
 
 A standalone, human-in-the-loop Claude Code skill that realigns an existing
-**binary LLM-judge evaluator** to human judgment. Given an orq evaluator id and
+**LLM-judge evaluator** (boolean, categorical, or numeric) to human judgment. Given an orq evaluator id and
 its production traces, it measures the judge's self-consistency, surfaces the
 most ambiguous datapoints for human annotation, turns those labels into a
 rewritten judge prompt (via PO2), and — only after the human approves — creates
@@ -88,15 +88,20 @@ The test runs the full pipeline (stability → metrics → build_queue →
 annotation-load → recommend → aggregate → rewrite) on a 3-row synthetic fixture
 with the judge monkeypatched and the `fake` backend — no network.
 
-## V1 scope & limitations
+## Scope & limitations
 
-- **Boolean Pass/Fail judges only.** Step 1 fails fast otherwise.
-- **Self-consistency ≠ validity.** Flip-rate localises where the judge is
+- **Measurement is multi-type; the feedback loop is boolean for now.** Steps 1–5
+  (fetch → stability → instability → confuser ranking) support **boolean,
+  categorical, and numeric** judges on one 0..1 instability scale — flip-rate,
+  label entropy, or score spread (RES-978). The annotation → rewrite → create
+  steps (6–9) are still **boolean only** until the grey-zone work (RES-980). Step
+  1 accepts all three output types and fails fast on anything else.
+- **Self-consistency ≠ validity.** Instability localises where the judge is
   unstable; it cannot prove the judge is correct.
-- **Consistently-wrong blind spot.** Flip-ranking never surfaces items the judge
-  gets wrong *consistently* (flip-rate ≈ 0). The `low_flip_sample_size` config
-  adds a random low-flip sanity sample as the cheap mitigation, and every final
-  report states the limitation.
+- **Consistently-wrong blind spot.** Instability-ranking never surfaces items the
+  judge gets wrong *consistently* (instability ≈ 0). The `low_flip_sample_size`
+  config adds a random low-instability sanity sample as the cheap mitigation, and
+  every final report states the limitation.
 - **Local annotation store.** Annotations persist to disk (ADR-14 `human_review`
   shape). orq-native human-review-column persistence lands with RES-843.
 - **Step 10 is a retest, not a scheduler.** The resumable run directory is the
