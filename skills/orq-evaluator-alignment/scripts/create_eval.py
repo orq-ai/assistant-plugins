@@ -54,9 +54,7 @@ def _diff(old: str, new: str) -> str:
     return '\n'.join(lines)
 
 
-async def _create(
-    evaluator: dict[str, Any], prompt: str, key: str, path: str, project_id: str | None
-) -> dict[str, Any]:
+async def _create(evaluator: dict[str, Any], prompt: str, key: str, path: str) -> dict[str, Any]:
     async with OrqClient() as client:
         result = await client.create_boolean_evaluator(
             key=key,
@@ -64,7 +62,6 @@ async def _create(
             prompt=prompt,
             model=evaluator['judge_model'],
             description=f'Human-aligned rewrite of evaluator {evaluator["id"]} (RES-930).',
-            project_id=project_id,
         )
     return {'id': result.id, 'key': result.key, 'raw': result.raw}
 
@@ -135,26 +132,11 @@ def main(
 
     source_key = evaluator.get('key') or runner.slugify(evaluator['id'])
     new_key = f'{source_key}-aligned-{runner.utc_timestamp()}'
-    raw = evaluator.get('raw', {})
-    path = raw.get('path') or source_key
-    # Co-locate the aligned evaluator with its source. Without an explicit
-    # project_id the CLI drops it into whatever project is currently active
-    # (path only *names* a project via its first segment), so a bare slug lands
-    # it in the wrong place. Prefer the source's own project_id when present.
-    # Dual-key it: the CLI's evaluator JSON has used both snake_case and camelCase
-    # for this field (as orq_client dual-keys output_type / _id vs id), and a
-    # single-key miss would surface the UNKNOWN warning below and silently drop
-    # the copy into the CLI's active project — the project-aware create quietly
-    # not being project-aware.
-    source_project_id = raw.get('project_id') or raw.get('projectId')
-    if source_project_id:
-        logger.info(f'  target project: {source_project_id} (inherited from source evaluator)')
-    else:
-        logger.warning(
-            '  target project: UNKNOWN (source has no project_id) — the new evaluator '
-            'will land in the orq CLI\'s active project. Set the CLI project first if that matters.'
-        )
-    created = asyncio.run(_create(evaluator, new_prompt, new_key, path, source_project_id))
+    # Co-locate the aligned evaluator with its source: reuse the source's own
+    # path, whose first segment names the owning project, so the copy lands in
+    # the same project. Falls back to a bare key when the source has no path.
+    path = evaluator.get('raw', {}).get('path') or source_key
+    created = asyncio.run(_create(evaluator, new_prompt, new_key, path))
 
     new_eval = {
         'id': created['id'],
