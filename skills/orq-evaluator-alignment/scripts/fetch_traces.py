@@ -154,6 +154,36 @@ def _judge_io(spans: list[dict[str, Any]], eval_span: dict[str, Any]) -> tuple[s
     return '', None
 
 
+def _content_source_span_ids(spans: list[dict[str, Any]], eval_span: dict[str, Any]) -> set[str]:
+    """Span ids whose detail carries a row's query/output — the spans the two
+    extractors actually read from: the root/trace span (``_structured_io``), every
+    judge span and the eval span itself (``_judge_io``'s child-or-any + eval-span
+    fallback).
+
+    Used to tell a hollow row caused by a *failed detail fetch on one of these
+    spans* apart from a genuine shape gap. A 429 on the root span's ``get_span``
+    hollows the row (``_structured_io`` sees only the light span, falls through)
+    while the eval span's own fetch succeeded — so keying the classification off
+    the eval span id alone misfiles it as ``empty_extraction`` and sends the
+    operator chasing an extractor bug that is not there. Intersecting this set
+    with ``downgraded_spans`` closes that gap.
+    """
+    ids: set[str] = set()
+    esid = eval_span.get('span_id') or eval_span.get('_id')
+    if esid:
+        ids.add(esid)
+    for s in spans:
+        if not isinstance(s, dict):
+            continue
+        sid = s.get('span_id') or s.get('_id')
+        if not sid:
+            continue
+        is_root = s.get('type') == 'trace' or ((s.get('attributes') or {}).get('type')) == 'workflow_run'
+        if is_root or s.get('type') in _JUDGE_SPAN_TYPES:
+            ids.add(sid)
+    return ids
+
+
 def _structured_io(spans: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Prefer the clean, structured content orq records on the trace-level span.
 
@@ -308,8 +338,12 @@ async def _fetch(
     # model. Tracked so a run-wide auth/rate-limit failure can't hollow every
     # datapoint behind a green pipeline (logging alone is too easy to miss).
     downgraded_spans: set[str] = set()
-    # One matching trace's raw spans, kept for the hollow-abort diagnostic dump so
-    # a shape gap is visible at a glance instead of needing a manual probe.
+    # The raw spans of the first trace that actually produces a hollow
+    # (empty_extraction) row, kept for the hollow-abort diagnostic dump so the
+    # *offending* shape is visible at a glance instead of needing a manual probe.
+    # Captured at classification time, not on the first matching trace: on a run
+    # where most traces parse cleanly and a minority hit an unrecognised shape,
+    # the first matching trace is a healthy one and would misrepresent the dump.
     debug_sample: list[dict[str, Any]] = []
     async with OrqClient() as client:
         raw_traces = await client.query_traces(limit=limit)
@@ -358,8 +392,6 @@ async def _fetch(
                     if sid and detail is None:
                         downgraded_spans.add(sid)
                     full.append(detail or s)
-                if not debug_sample:  # keep one matching trace for the hollow-abort dump
-                    debug_sample.append({'trace_id': trace_id, 'spans': full})
 
             for span in full:
                 matches = _evaluation_matches(span, evaluator_id, evaluator_key)
@@ -401,7 +433,18 @@ async def _fetch(
                 if span_id in downgraded_spans:
                     degrade_reason: str | None = 'detail_fetch'
                 elif not query and not output_val:
-                    degrade_reason = 'empty_extraction'
+                    # Hollow. The content is read from the root/judge spans, not
+                    # just the eval span, so a failed detail fetch on ONE of those
+                    # (e.g. a 429 on the root span while the eval span's own fetch
+                    # succeeded) is a fetch failure, not a shape gap. Check the
+                    # content-source set against downgraded_spans before blaming
+                    # the extractor.
+                    lost_source = _content_source_span_ids(full, span) & downgraded_spans
+                    degrade_reason = 'detail_fetch' if lost_source else 'empty_extraction'
+                    if degrade_reason == 'empty_extraction' and not debug_sample:
+                        # Capture the trace that genuinely hollowed on shape (not
+                        # the first matching trace, which may parse cleanly).
+                        debug_sample.append({'trace_id': trace_id, 'spans': full})
                 else:
                     degrade_reason = None
                 rows.append(

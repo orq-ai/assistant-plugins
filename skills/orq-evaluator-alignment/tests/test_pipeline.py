@@ -154,6 +154,26 @@ def test_responses_api_fixture_extracts_expected_output():
     assert out == fx['expected_output']
 
 
+def test_content_source_ids_include_root_and_judge_not_just_eval():
+    # The hollow guard must blame a failed detail fetch on the spans the content
+    # is READ from (root/judge), not only the eval span. A 429 on the root span
+    # hollows the row while the eval span's own fetch succeeds; keying off the
+    # eval span id alone would misfile it as a shape gap (empty_extraction).
+    from fetch_traces import _content_source_span_ids
+
+    eval_span = {'type': 'span.evaluator', 'span_id': 'ev1'}
+    root = {'type': 'trace', 'span_id': 'root1'}
+    judge = {'type': 'span.chat_completion', 'span_id': 'chat1', 'parent_span_id': 'ev1'}
+    unrelated = {'type': 'span.tool', 'span_id': 'tool1'}
+
+    ids = _content_source_span_ids([eval_span, root, judge, unrelated], eval_span)
+    assert ids == {'ev1', 'root1', 'chat1'}  # eval + root + judge, never the tool span
+
+    # A downgraded root span (its detail fetch 429'd) intersects the set even
+    # though the eval span itself fetched fine — the detail_fetch-vs-shape-gap fix.
+    assert ids & {'root1'} == {'root1'}
+
+
 def test_guard_hollow_aborts_over_threshold():
     from fetch_traces import _guard_hollow
 
