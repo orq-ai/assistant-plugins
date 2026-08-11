@@ -41,10 +41,11 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from collections import Counter
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 import fire
 from dotenv import load_dotenv
@@ -724,11 +725,46 @@ def _guard_hollow(
     )
 
 
+def _judged_input_key(row: dict[str, Any]) -> str:
+    """Exact-match dedup key: the content the judge actually scores.
+
+    Keys off the fields ``lib.judge.make_replacements`` feeds the judge
+    (query / output / reference / messages), NOT trace/span provenance — so the
+    same input captured on two different traces is one datapoint. Serialised to a
+    stable JSON string so an unhashable value (a ``messages`` list) still keys.
+    """
+    return json.dumps(
+        [row.get('query', ''), row.get('output', ''), row.get('reference', ''), row.get('messages')],
+        sort_keys=True,
+        ensure_ascii=False,
+        default=str,
+    )
+
+
+def _dedup_rows(
+    rows: list[dict[str, Any]], key: Callable[[dict[str, Any]], Any]
+) -> tuple[list[dict[str, Any]], int]:
+    """Drop later exact-duplicate rows, keeping the first occurrence of each key.
+
+    Order-preserving, first-wins. Returns ``(deduped_rows, n_dropped)``.
+    """
+    seen: set[Any] = set()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        k = key(row)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(row)
+    return out, len(rows) - len(out)
+
+
 def main(
     run_dir: str | None = None,
     config: str = 'config.toml',
     trace_limit: int | None = 200,
     force: bool = False,
+    dedup: bool = True,
 ) -> str:
     """Fetch traces for the evaluator recorded in the run directory.
 
@@ -745,6 +781,9 @@ def main(
             auth/rate-limit failure aborts instead of writing garbage. It covers
             the span-detail half ONLY — an extraction/shape gap still aborts,
             since forcing that writes empty rows that look perfectly stable.
+        dedup: Drop exact-duplicate datapoints (identical judged input) before
+            writing, keeping the first occurrence. On by default; pass
+            --dedup=False to keep every trace.
     """
     cfg = runner.load_config(config)
     if trace_limit is not None:
@@ -783,6 +822,16 @@ def main(
         debug_path = str(out_dir / 'hollow_debug.json')
         runner.write_json(out_dir / 'hollow_debug.json', _hollow_debug(debug_sample))
     _guard_hollow(n_detail, n_empty, len(rows), abort_ratio, force, debug_path)
+
+    # Exact-match dedup: identical judged inputs (same query/output/reference/
+    # messages) are one datapoint — no point judging (and re-judging) a repeat.
+    # Runs after the hollow guard, which keys off the raw scan counts.
+    if dedup:
+        before = len(rows)
+        rows, n_dropped = _dedup_rows(rows, _judged_input_key)
+        filter_echo['n_deduped'] = n_dropped
+        if n_dropped:
+            logger.info(f'✓ deduped {n_dropped} identical inputs ({len(rows)} unique of {before})')
 
     runner.write_jsonl(out_dir / 'traces.jsonl', rows)
     logger.info(f'✓ Wrote {len(rows)} datapoints to {out_dir / "traces.jsonl"}')
