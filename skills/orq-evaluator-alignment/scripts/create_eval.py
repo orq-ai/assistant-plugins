@@ -135,12 +135,18 @@ def main(
 
     source_key = evaluator.get('key') or runner.slugify(evaluator['id'])
     new_key = f'{source_key}-aligned-{runner.utc_timestamp()}'
-    path = evaluator.get('raw', {}).get('path') or source_key
+    raw = evaluator.get('raw', {})
+    path = raw.get('path') or source_key
     # Co-locate the aligned evaluator with its source. Without an explicit
     # project_id the CLI drops it into whatever project is currently active
     # (path only *names* a project via its first segment), so a bare slug lands
     # it in the wrong place. Prefer the source's own project_id when present.
-    source_project_id = evaluator.get('raw', {}).get('project_id')
+    # Dual-key it: the CLI's evaluator JSON has used both snake_case and camelCase
+    # for this field (as orq_client dual-keys output_type / _id vs id), and a
+    # single-key miss would surface the UNKNOWN warning below and silently drop
+    # the copy into the CLI's active project — the project-aware create quietly
+    # not being project-aware.
+    source_project_id = raw.get('project_id') or raw.get('projectId')
     if source_project_id:
         logger.info(f'  target project: {source_project_id} (inherited from source evaluator)')
     else:
