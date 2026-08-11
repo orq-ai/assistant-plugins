@@ -155,10 +155,11 @@ def _judge_io(spans: list[dict[str, Any]], eval_span: dict[str, Any]) -> tuple[s
 
 
 def _content_source_span_ids(spans: list[dict[str, Any]], eval_span: dict[str, Any]) -> set[str]:
-    """Span ids whose detail carries a row's query/output — the spans the two
-    extractors actually read from: the root/trace span (``_structured_io``), every
-    judge span and the eval span itself (``_judge_io``'s child-or-any + eval-span
-    fallback).
+    """Span ids whose detail carries THIS row's query/output — exactly the spans
+    the two extractors read from for this eval span: the root/trace span
+    (``_structured_io``), the eval span itself, and its judge span(s) scoped the
+    same way ``_judge_io`` scopes them (this eval span's children, or all judge
+    spans only as a fallback when it has none).
 
     Used to tell a hollow row caused by a *failed detail fetch on one of these
     spans* apart from a genuine shape gap. A 429 on the root span's ``get_span``
@@ -167,21 +168,69 @@ def _content_source_span_ids(spans: list[dict[str, Any]], eval_span: dict[str, A
     the eval span id alone misfiles it as ``empty_extraction`` and sends the
     operator chasing an extractor bug that is not there. Intersecting this set
     with ``downgraded_spans`` closes that gap.
+
+    The judge scoping mirrors ``_judge_io`` deliberately: a trace with two
+    evaluator calls has two judge spans, and borrowing the *other* eval span's
+    429'd judge span into this set would misfile this row as ``detail_fetch``
+    (and, because the debug sample is only captured on ``empty_extraction``,
+    leave the real shape gap invisible). Only spans ``_judge_io`` would actually
+    read for this eval span count.
     """
     ids: set[str] = set()
     esid = eval_span.get('span_id') or eval_span.get('_id')
     if esid:
         ids.add(esid)
+
+    # Judge spans, scoped to this eval span's children first (matching _judge_io);
+    # fall back to every judge span only when this eval span has no child of its own.
+    chats = [s for s in spans if isinstance(s, dict) and s.get('type') in _JUDGE_SPAN_TYPES]
+    chosen = [s for s in chats if s.get('parent_span_id') == esid] or chats
+    for s in chosen:
+        sid = s.get('span_id') or s.get('_id')
+        if sid:
+            ids.add(sid)
+
+    # Root/trace span — where _structured_io reads the row's structured content.
     for s in spans:
         if not isinstance(s, dict):
             continue
-        sid = s.get('span_id') or s.get('_id')
-        if not sid:
-            continue
         is_root = s.get('type') == 'trace' or ((s.get('attributes') or {}).get('type')) == 'workflow_run'
-        if is_root or s.get('type') in _JUDGE_SPAN_TYPES:
-            ids.add(sid)
+        if is_root:
+            sid = s.get('span_id') or s.get('_id')
+            if sid:
+                ids.add(sid)
     return ids
+
+
+def _classify_degrade(
+    span_id: str | None,
+    query: str,
+    output_val: str,
+    spans: list[dict[str, Any]],
+    eval_span: dict[str, Any],
+    downgraded_spans: set[str],
+) -> str | None:
+    """Classify why a row is degraded, or None if it is a clean datapoint.
+
+    Two distinct hollow modes, kept apart so the guard points the operator at the
+    right remedy (they don't collapse):
+
+    - ``detail_fetch`` — a span whose detail carries this row's content failed to
+      fetch (auth / rate-limit). True when the eval span itself downgraded, or
+      when any content-source span (root + this eval span's judge spans, per
+      ``_content_source_span_ids``) is in ``downgraded_spans``.
+    - ``empty_extraction`` — every source span fetched fine but no query/output
+      came out: a genuine unrecognised-shape gap.
+
+    Extracted from the fetch loop so the decision is unit-testable at the call
+    site, not just via the helper set.
+    """
+    if span_id in downgraded_spans:
+        return 'detail_fetch'
+    if not query and not output_val:
+        lost_source = _content_source_span_ids(spans, eval_span) & downgraded_spans
+        return 'detail_fetch' if lost_source else 'empty_extraction'
+    return None
 
 
 def _structured_io(spans: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -426,27 +475,14 @@ async def _fetch(
                         )
                         query, output_val, msgs = '', rendered, messages
                     reference = ''
-                # Two distinct hollow modes, tracked separately so the guard can
-                # tell a span-detail fetch failure (auth/rate-limit) apart from an
-                # unrecognised span shape (the span was fetched fine but extraction
-                # found no content). The remedies differ, so don't collapse them.
-                if span_id in downgraded_spans:
-                    degrade_reason: str | None = 'detail_fetch'
-                elif not query and not output_val:
-                    # Hollow. The content is read from the root/judge spans, not
-                    # just the eval span, so a failed detail fetch on ONE of those
-                    # (e.g. a 429 on the root span while the eval span's own fetch
-                    # succeeded) is a fetch failure, not a shape gap. Check the
-                    # content-source set against downgraded_spans before blaming
-                    # the extractor.
-                    lost_source = _content_source_span_ids(full, span) & downgraded_spans
-                    degrade_reason = 'detail_fetch' if lost_source else 'empty_extraction'
-                    if degrade_reason == 'empty_extraction' and not debug_sample:
-                        # Capture the trace that genuinely hollowed on shape (not
-                        # the first matching trace, which may parse cleanly).
-                        debug_sample.append({'trace_id': trace_id, 'spans': full})
-                else:
-                    degrade_reason = None
+                # Two distinct hollow modes, tracked separately (see
+                # _classify_degrade) so the guard can tell a span-detail fetch
+                # failure (auth/rate-limit) apart from an unrecognised span shape.
+                degrade_reason = _classify_degrade(span_id, query, output_val, full, span, downgraded_spans)
+                if degrade_reason == 'empty_extraction' and not debug_sample:
+                    # Capture the trace that genuinely hollowed on shape (not the
+                    # first matching trace, which may parse cleanly).
+                    debug_sample.append({'trace_id': trace_id, 'spans': full})
                 rows.append(
                     {
                         'trace_id': trace_id,

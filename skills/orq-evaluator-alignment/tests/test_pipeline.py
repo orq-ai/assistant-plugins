@@ -169,9 +169,47 @@ def test_content_source_ids_include_root_and_judge_not_just_eval():
     ids = _content_source_span_ids([eval_span, root, judge, unrelated], eval_span)
     assert ids == {'ev1', 'root1', 'chat1'}  # eval + root + judge, never the tool span
 
-    # A downgraded root span (its detail fetch 429'd) intersects the set even
-    # though the eval span itself fetched fine — the detail_fetch-vs-shape-gap fix.
-    assert ids & {'root1'} == {'root1'}
+
+def test_classify_degrade_detail_fetch_on_downgraded_root():
+    # Pins the real call-site decision (not just the helper set): a hollow row
+    # whose ROOT span — a _structured_io content source — had its detail fetch
+    # 429'd is a fetch failure, even though the eval span's own fetch succeeded.
+    from fetch_traces import _classify_degrade
+
+    eval_span = {'type': 'span.evaluator', 'span_id': 'ev1'}
+    root = {'type': 'trace', 'span_id': 'root1'}
+    judge = {'type': 'span.chat_completion', 'span_id': 'chat1', 'parent_span_id': 'ev1'}
+    full = [eval_span, root, judge]
+
+    # Root downgraded + hollow row → detail_fetch (root is in the source set).
+    assert _classify_degrade('ev1', '', '', full, eval_span, {'root1'}) == 'detail_fetch'
+    # Nothing downgraded + hollow → genuine shape gap.
+    assert _classify_degrade('ev1', '', '', full, eval_span, set()) == 'empty_extraction'
+    # Eval span itself downgraded → detail_fetch (short-circuit, before the set check).
+    assert _classify_degrade('ev1', '', '', full, eval_span, {'ev1'}) == 'detail_fetch'
+    # A non-hollow row is a clean datapoint regardless of downgrades.
+    assert _classify_degrade('ev1', 'q', 'o', full, eval_span, {'root1'}) is None
+
+
+def test_classify_degrade_does_not_borrow_another_eval_spans_judge():
+    # Two evaluator calls in one trace. Row A parses hollow; A's own judge span
+    # fetched fine, but a DIFFERENT eval span B's judge span 429'd. A must be
+    # filed as a shape gap (empty_extraction), not detail_fetch — the source set
+    # is scoped to A's own judge span, mirroring _judge_io. (Fails on the old
+    # take-all-judge-spans scoping.)
+    from fetch_traces import _classify_degrade
+
+    eval_a = {'type': 'span.evaluator', 'span_id': 'evA'}
+    judge_a = {'type': 'span.chat_completion', 'span_id': 'chatA', 'parent_span_id': 'evA'}
+    eval_b = {'type': 'span.evaluator', 'span_id': 'evB'}
+    judge_b = {'type': 'span.chat_completion', 'span_id': 'chatB', 'parent_span_id': 'evB'}
+    root = {'type': 'trace', 'span_id': 'root1'}
+    full = [eval_a, judge_a, eval_b, judge_b, root]
+
+    # Only B's judge downgraded → classifying A is a shape gap, not A's fetch failure.
+    assert _classify_degrade('evA', '', '', full, eval_a, {'chatB'}) == 'empty_extraction'
+    # Sanity: A's OWN judge span downgrading IS a detail fetch failure for A.
+    assert _classify_degrade('evA', '', '', full, eval_a, {'chatA'}) == 'detail_fetch'
 
 
 def test_guard_hollow_aborts_over_threshold():
