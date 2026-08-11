@@ -1,0 +1,18 @@
+{
+  "id": "fixture000000000000000002",
+  "key": "safety-categorical-fixture",
+  "prompt": "Classify the LATEST user message. Return the explanation BEFORE the value.\n\n<input>{{log.input}}</input>\n<output>{{log.output}}</output>",
+  "judge_model": "google/gemini-3.1-flash-lite-preview",
+  "output_type": "categorical",
+  "categorical_labels": ["safe", "abuse", "spam"],
+  "scale": null,
+  "variables": ["log.input", "log.output"],
+  "raw": {
+    "_id": "fixture000000000000000002",
+    "key": "safety-categorical-fixture",
+    "type": "llm_eval",
+    "mode": "single",
+    "output_type": "categorical",
+    "path": "Evaluators/safety-categorical-fixture"
+  }
+}

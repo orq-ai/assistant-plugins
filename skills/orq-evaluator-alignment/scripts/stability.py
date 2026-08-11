@@ -95,6 +95,13 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
     prompt_template = evaluator['prompt']
     judge_model = evaluator['judge_model']
     variables = evaluator.get('variables', [])
+    # Verdict space (RES-978 §5.4): the judge emits + parses per output type, and
+    # metrics dispatches to the matching instability formula. Carried from
+    # evaluator.json; boolean is the default when absent (older run dirs).
+    output_type = (evaluator.get('output_type') or 'boolean').strip().lower()
+    categorical_labels = evaluator.get('categorical_labels') or []
+    scale_raw = evaluator.get('scale')
+    scale = tuple(scale_raw) if isinstance(scale_raw, (list, tuple)) and len(scale_raw) == 2 else None
     if not judge_model:
         raise RuntimeError(
             'evaluator.json has no judge_model — cannot reconstruct the judge. '
@@ -118,7 +125,10 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
         async with sem:
             t0 = time.monotonic()
             try:
-                res = await run_jury_for_row(spec, judge_model, client=client, repetitions=n_repeats)
+                res = await run_jury_for_row(
+                    spec, judge_model, client=client, repetitions=n_repeats,
+                    output_type=output_type, labels=categorical_labels, scale=scale,
+                )
                 n_failed = int(res.get('repetitions_failed') or 0)
                 # A row counts as judged only if >=1 repetition produced a usable
                 # verdict. An all-failed vote (success=False) used to be recorded
@@ -137,7 +147,10 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
                         )
             except Exception as exc:  # noqa: BLE001
                 logger.exception(f'✗ stability row {idx} failed')
-                res = {'repetitions': [], 'repetitions_failed': n_repeats, 'value': None, 'explanation': None}
+                res = {
+                    'repetitions': [], 'repetitions_failed': n_repeats, 'n_wrong_output_type': 0,
+                    'value': None, 'explanation': None,
+                }
                 ok, err = False, f'{type(exc).__name__}: {exc}'
         return {
             'source_index': idx,
@@ -149,6 +162,7 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
             'error': err,
             'repetitions': res['repetitions'],
             'repetitions_failed': res['repetitions_failed'],
+            'n_wrong_output_type': int(res.get('n_wrong_output_type') or 0),
             'aggregate_value': res['value'],
             'representative_explanation': res.get('explanation'),
             'elapsed_s': time.monotonic() - t0,
@@ -170,6 +184,7 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
             'evaluator_id': evaluator['id'],
             'evaluator_key': evaluator.get('key'),
             'judge_model': judge_model,
+            'output_type': output_type,
             'n_repeats': n_repeats,
             'temperature': temperature,
             'num_rows': len(records),

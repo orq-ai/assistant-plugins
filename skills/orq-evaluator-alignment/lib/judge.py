@@ -81,6 +81,44 @@ JUDGE_RESPONSE_FORMAT: dict[str, Any] = {
     },
 }
 
+
+def build_response_format(output_type: str, labels: Sequence[str] | None = None) -> dict[str, Any]:
+    """The structured-output contract to request, per output type (RES-978 §5.3).
+
+    boolean → `value: boolean`; categorical → `value: string` constrained to an
+    `enum` of the K declared labels; numeric → `value: number`. `explanation` is
+    always first so the model reasons before committing. Best-effort only — some
+    judges ignore json_schema and free-text the verdict, which the parsers recover.
+    """
+    kind = (output_type or 'boolean').strip().lower()
+    if kind == 'boolean':
+        return JUDGE_RESPONSE_FORMAT
+    if kind == 'categorical':
+        value_schema: dict[str, Any] = {'type': 'string', 'description': 'Exactly one of the allowed labels.'}
+        if labels:
+            value_schema['enum'] = list(labels)
+    elif kind in {'number', 'numeric'}:
+        value_schema = {'type': 'number', 'description': 'The numeric score the rubric asks for.'}
+    else:
+        raise ValueError(f'unknown output_type {output_type!r} (expected boolean | categorical | number)')
+    return {
+        'type': 'json_schema',
+        'json_schema': {
+            'name': 'evaluator_verdict',
+            'strict': True,
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'explanation': {'type': 'string', 'description': 'Reasoning, written BEFORE the verdict.'},
+                    'value': value_schema,
+                },
+                'required': ['explanation', 'value'],
+                'additionalProperties': False,
+            },
+        },
+    }
+
+
 # Trailing/standalone boolean token. Tool-capable judges (e.g. glm-5.2 via the
 # orq router) ignore `response_format: json_schema` and instead follow the
 # judge prompt's literal free-text contract ("explanation, value"), emitting
@@ -327,12 +365,45 @@ def _is_transient(exc: BaseException) -> bool:
 
 
 def build_judge_fn(
-    spec: JudgeSpec, client: Any
+    spec: JudgeSpec,
+    client: Any,
+    *,
+    output_type: str = 'boolean',
+    labels: Sequence[str] | None = None,
+    scale: tuple[float, float] | None = None,
 ) -> Callable[[str], Awaitable[Prediction]]:
-    """Return a `judge_fn(model) -> Prediction` bound to one datapoint."""
+    """Return a `judge_fn(model) -> Prediction` bound to one datapoint.
+
+    The requested response format and the verdict parser are both chosen by
+    `output_type` (§5.3). An off-contract completion — a non-K label, a
+    non-number, or a number outside `scale` — becomes an ABSTAINED prediction: it
+    produced output (so it is not an error / failed repetition) but it is not a
+    scored verdict either (§4a). The boolean path is unchanged.
+    """
     prompt = render_template(spec.prompt_template, spec.replacements)
     # Emulate orq: the rubric alone in a single user message, no system turn.
     messages = [{'role': 'user', 'content': prompt}]
+    kind = (output_type or 'boolean').strip().lower()
+    response_format = build_response_format(kind, labels)
+
+    def _to_prediction(raw: str, usage: Any) -> Prediction:
+        if kind == 'boolean':
+            payload = parse_verdict(raw)  # raises on no verdict → failed repetition
+            return Prediction(
+                value=payload.value,
+                explanation=payload.explanation,
+                token_usage=usage,
+                abstained=payload.abstain,
+            )
+        parsed = parse_categorical(raw, labels or []) if kind == 'categorical' else parse_numeric(raw, scale)
+        if parsed.status == _OK:
+            return Prediction(value=parsed.value, explanation=parsed.explanation, token_usage=usage)
+        # Off-contract: abstain (surfaced, not scored, not a failure).
+        return Prediction(
+            abstained=True,
+            explanation=f'{_WRONG_OUTPUT_TYPE}: {parsed.explanation}'.strip(),
+            token_usage=usage,
+        )
 
     async def judge_fn(model: str) -> Prediction:
         try:
@@ -353,20 +424,25 @@ def build_judge_fn(
                         span=None,
                         timeout_s=spec.timeout_s,
                         temperature=spec.temperature,
-                        response_format=JUDGE_RESPONSE_FORMAT,
+                        response_format=response_format,
                     )
             raw = response.choices[0].message.content or '{}'
-            payload = parse_verdict(raw)
-            return Prediction(
-                value=payload.value,
-                explanation=payload.explanation,
-                token_usage=usage,
-                abstained=payload.abstain,
-            )
+            return _to_prediction(raw, usage)
         except Exception as exc:  # noqa: BLE001 — recorded as a failed repetition
             return Prediction(error=f'{type(exc).__name__}: {exc}')
 
     return judge_fn
+
+
+def _count_off_contract(repetitions: list[Any], repetitions_failed: int) -> int:
+    """Off-contract (wrong_output_type) repetition count.
+
+    Abstained reps surface as `None` in the jury's `repetitions` list but are NOT
+    in `repetitions_failed` (which counts errored calls only). So the off-contract
+    tally is the `None` count minus the failures. Never negative.
+    """
+    n_none = sum(1 for r in repetitions if r is None)
+    return max(0, n_none - repetitions_failed)
 
 
 async def run_jury_for_row(
@@ -375,31 +451,44 @@ async def run_jury_for_row(
     *,
     client: Any,
     repetitions: int,
+    output_type: str = 'boolean',
+    labels: Sequence[str] | None = None,
+    scale: tuple[float, float] | None = None,
 ) -> dict[str, Any]:
     """Run the single-judge panel `repetitions` times over one datapoint.
 
-    Returns the raw per-repetition verdicts (`repetitions`), the count that
-    errored (`repetitions_failed`), and evaluatorq's aggregated majority
-    verdict (`value`). `propagate_errors=False` keeps a transient judge outage
-    on one repetition from aborting the whole row.
+    Returns the raw per-repetition verdicts (`repetitions` — bool/str/float for
+    the type, `None` for a failed or off-contract rep), the count that errored
+    (`repetitions_failed`), the off-contract count split out of the Nones
+    (`n_wrong_output_type`, §4a), and evaluatorq's aggregated verdict (`value`).
+    `propagate_errors=False` keeps a transient judge outage on one repetition
+    from aborting the whole row. The numeric type aggregates by mean, the others
+    by plurality (`VerdictKind`).
     """
+    kind = (output_type or 'boolean').strip().lower()
+    verdict_kind = VerdictKind.NUMERIC if kind in {'number', 'numeric'} else VerdictKind.CATEGORICAL
     deliberation = await run_jury(
-        judge_fn=build_judge_fn(spec, client),
+        judge_fn=build_judge_fn(spec, client, output_type=kind, labels=labels, scale=scale),
         panel=[judge_model],  # single-judge "panel"
         repetitions=repetitions,
-        verdict_kind=VerdictKind.CATEGORICAL,  # boolean Pass/Fail (no BINARY kind)
+        verdict_kind=verdict_kind,
         propagate_errors=False,
     )
     vote = deliberation.jury.votes[0]
+    reps = list(vote.repetitions)
     return {
         # evaluatorq marks an all-failed vote success=False and carries the
         # underlying judge error (e.g. a router 500) on vote.error. Propagate
         # both so callers never mistake an all-None row for a real verdict.
         'success': vote.success,
         'error': vote.error,
-        'repetitions': list(vote.repetitions),
+        'repetitions': reps,
         'repetitions_failed': vote.repetitions_failed,
+        # Off-contract reps abstained (surfaced as None but not errored), so split
+        # them out of the Nones for the §4a signal / the usable-verdict floor.
+        'n_wrong_output_type': _count_off_contract(reps, vote.repetitions_failed),
         'value': vote.value,
+        'output_type': kind,
         # run_jury collapses the N rationales to one representative for the
         # majority class. We keep that for the annotation queue's "what did the
         # judge say" panel; per-repetition rationales are not exposed by the
