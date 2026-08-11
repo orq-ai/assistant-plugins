@@ -2,7 +2,9 @@
 // Repo-invariant checks for the skills suite, in one pass:
 //   1. skills-lock.json <-> skills/ directories, both directions, with hash freshness
 //      (recomputes every computedHash and fails on drift)
-//   2. the four plugin manifests agree on one version
+//   2. the four plugin manifests agree on one version, and the root
+//      plugin.json conforms to Agent Plugins 1.0.0 (closed field set,
+//      name constraints, skills/ discovery matches the lock)
 //   3. SKILL.md frontmatter is loadable and consistent with its directory,
 //      including full length of folded (>-style) descriptions
 //   4. content-pattern lint on public files
@@ -112,10 +114,10 @@ if (JSON.stringify(lockKeys) !== JSON.stringify(sorted))
 
 // ---------- 2. manifest version sync ----------
 const manifests = [
+  "plugin.json",
   ".claude-plugin/plugin.json",
   ".codex-plugin/plugin.json",
   ".cursor-plugin/plugin.json",
-  "plugins/orq/.codex-plugin/plugin.json",
 ];
 const versions = manifests
   .map((m) => ({ m, json: readJson(join(root, m)) }))
@@ -124,6 +126,34 @@ const versions = manifests
 const canonical = versions[0]?.v;
 for (const { m, v } of versions.slice(1))
   if (v !== canonical) err(`manifest version drift: ${m} has ${v}, ${manifests[0]} has ${canonical}`);
+
+// ---------- 2b. root plugin.json conforms to Agent Plugins 1.0.0 ----------
+// Field-level checks mirroring the published plugin.schema.json (closed
+// schema, required $schema + name, name pattern from spec §5.5).
+const SPEC_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
+const SPEC_FIELDS = new Set(["$schema", "name", "version", "description", "author",
+  "homepage", "repository", "license", "keywords", "extensions"]);
+const SPEC_NAME_RE = /^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/;
+const rootManifest = readJson(join(root, "plugin.json"));
+if (rootManifest) {
+  if (rootManifest.$schema !== SPEC_SCHEMA)
+    err(`plugin.json: $schema is '${rootManifest.$schema}', spec 1.0.0 requires '${SPEC_SCHEMA}'`);
+  if (typeof rootManifest.name !== "string" || !SPEC_NAME_RE.test(rootManifest.name) || rootManifest.name.length > 64)
+    err(`plugin.json: name '${rootManifest.name}' violates the spec §5.5 name constraints`);
+  for (const key of Object.keys(rootManifest))
+    if (!SPEC_FIELDS.has(key))
+      err(`plugin.json: unknown top-level field '${key}' — the 1.0.0 manifest schema is closed`);
+
+  // Spec §7.1 discovery: every immediate child of skills/ holding a regular
+  // SKILL.md is one skill; a conformant client must find exactly the shipped set.
+  const discovered = skillDirs.filter((name) => {
+    try { return statSync(join(root, "skills", name, "SKILL.md")).isFile(); }
+    catch { return false; }
+  });
+  const shipped = Object.keys(lock.skills ?? {}).length;
+  if (discovered.length !== shipped)
+    err(`spec §7.1 discovery mismatch: ${discovered.length} skills/*/SKILL.md found, skills-lock.json ships ${shipped}`);
+}
 
 // ---------- 3. frontmatter consistency ----------
 for (const name of skillDirs) {

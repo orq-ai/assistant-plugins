@@ -4,10 +4,10 @@
 
 This repo follows [Semantic Versioning](https://semver.org/). Version is tracked in **4 plugin manifests that must stay in sync**:
 
+- `plugin.json` — portable [Agent Plugins 1.0.0](https://github.com/agentplugins/agent-plugins-spec) manifest
 - `.claude-plugin/plugin.json`
 - `.codex-plugin/plugin.json`
 - `.cursor-plugin/plugin.json`
-- `plugins/orq/.codex-plugin/plugin.json`
 
 ### When to bump
 
@@ -28,8 +28,9 @@ Exception: removing shipped content that was never the canonical surface (e.g. s
 
 ## Plugin manifest rules
 
-- All 4 plugin.json `version` fields must match — `validate-plugin-manifests.sh` does not enforce this yet, but drift is a bug.
-- `plugins/orq/.mcp.json`, `plugins/orq/mcp.json`, `plugins/orq/skills` are symlinks. Do not replace with copies.
+- All 4 plugin.json `version` fields must match — `validate-skills.mjs` enforces this in CI.
+- Root `plugin.json` is a **closed** Agent Plugins 1.0.0 manifest: only `$schema`, `name`, `version`, `description`, `author`, `homepage`, `repository`, `license`, `keywords`, `extensions` are permitted. Never add `skills`/`mcpServers` to it — the spec fixes those locations (`skills/`, `mcp.json`); CI rejects unknown fields.
+- `mcp.json`, `.claude-plugin/.mcp.json`, `.claude-plugin/skills` are symlinks. Do not replace with copies; every tracked symlink must resolve inside the repo root (CI enforces).
 - New skill = add to: `skills/<name>/SKILL.md`, `agents/AGENTS.md` (path list + `<available_skills>` block), `README.md` skills table, `tests/skills.md` (smoke tests + Critical Files), and `skills-lock.json` (see below).
 
 ## skills-lock.json

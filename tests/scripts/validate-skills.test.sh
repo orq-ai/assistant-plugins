@@ -38,10 +38,12 @@ cat > "$fixture/skills-lock.json" <<'EOF'
 }
 EOF
 
-for m in .claude-plugin .codex-plugin .cursor-plugin plugins/orq/.codex-plugin; do
+for m in .claude-plugin .codex-plugin .cursor-plugin; do
   mkdir -p "$fixture/$m"
   printf '{\n  "name": "orq",\n  "version": "0.0.0"\n}\n' > "$fixture/$m/plugin.json"
 done
+# Root manifest in the spec-conformant 1.0.0 shape the validator checks.
+printf '{\n  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",\n  "name": "orq",\n  "version": "0.0.0"\n}\n' > "$fixture/plugin.json"
 
 rc=0
 out=$(node "$repo_root/tests/scripts/validate-skills.mjs" "$fixture" 2>&1) || rc=$?

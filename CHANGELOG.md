@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-08-11
+
+### Added
+- Root `plugin.json` conforming to [Agent Plugins 1.0.0](https://github.com/agentplugins/agent-plugins-spec) — one portable manifest (`$schema`, closed field set) any spec-conformant client can load from the repo root. Skills ship from the fixed `skills/` location; `mcp.json` stays as-is for now (a 1.0.0 client disables MCP for the plugin and still loads skills; conformant MCP config is a follow-up).
+- CI now validates the root manifest against the 1.0.0 shape (canonical `$schema`, §5.5 name constraints, closed top-level field set), checks §7.1 skill discovery against `skills-lock.json`, and asserts every tracked symlink resolves inside the plugin root (§4.1 path containment).
+
+### Changed
+- `.agents/plugins/marketplace.json` `source.path` now points at the repo root (`.`) instead of the removed `plugins/orq` copy.
+- Manifest version sync now covers the root `plugin.json` alongside the three per-harness manifests.
+
+### Removed
+- `plugins/orq/` — a duplicate Codex surface wired to the repo root via symlinks that escaped its own plugin root (spec §4.1 violation). The repo root is now the single plugin root; never the canonical surface, so this is not a breaking change.
+
 ## [2.2.3] - 2026-08-07
 
 ### Added

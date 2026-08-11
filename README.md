@@ -30,6 +30,7 @@ Built on the [Agent Skills](https://agentskills.io/home#adoption) standard forma
 | Cursor | [Cursor install guide](docs/install-cursor.md) |
 | Codex | [Codex install](#codex) |
 | Gemini CLI, Cline, Copilot, Windsurf | [Skills-only install (npx)](#skills-only-install) |
+| Any [Agent Plugins 1.0.0](https://agent-plugins.org) client | [Agent Plugins install](#agent-plugins-100-clients) |
 | Any MCP-capable client | [MCP-only install](#mcp-only-install) |
 
 ---
@@ -95,6 +96,19 @@ Agent-specific install guides:
 - [Cursor plugin](docs/install-cursor.md)
 - [Codex plugin](docs/install-codex.md)
 - [Manual clone (Claude Code)](docs/install-manual.md)
+
+---
+
+### Agent Plugins 1.0.0 clients
+
+The repo root is a portable [Agent Plugins 1.0.0](https://agent-plugins.org) plugin: `plugin.json` manifest, skills in `skills/`. Point any spec-conformant client at a clone of this repo:
+
+```bash
+git clone https://github.com/orq-ai/assistant-plugins.git
+# then register the cloned directory as a plugin in your client
+```
+
+All `skills/*` skills are discovered per the spec. The bundled MCP config predates the spec's `mcp.json` schema, so conformant clients disable MCP for this plugin and load skills only — register the MCP server separately via the [MCP-only install](#mcp-only-install).
 
 ---
 

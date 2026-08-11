@@ -8,7 +8,7 @@
       "name": "orq",
       "source": {
         "source": "local",
-        "path": "./plugins/orq"
+        "path": "."
       },
       "policy": {
         "installation": "INSTALLED_BY_DEFAULT",

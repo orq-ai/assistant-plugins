@@ -11,6 +11,8 @@ Use this document when:
 - You want to symlink skills from a checkout for local development
 - You're debugging an install and want to see exactly where files should land
 
+> **Agent Plugins 1.0.0 clients:** the repo root is a portable [Agent Plugins](https://agent-plugins.org) plugin (`plugin.json` + `skills/`). If your tool supports the spec, register a clone of this repo directly and skip Part 1.
+
 ---
 
 ## Prerequisites

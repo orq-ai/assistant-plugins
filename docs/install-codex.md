@@ -9,7 +9,7 @@ Make sure `ORQ_API_KEY` is exported (see [Prerequisites](../README.md#prerequisi
 
 ## Option A: Bundled plugin (skills + MCP)
 
-Repo ships a Codex plugin at [plugins/orq](../plugins/orq) (`plugins/orq/.codex-plugin/plugin.json`) and a repo-level marketplace at [.agents/plugins/marketplace.json](../.agents/plugins/marketplace.json).
+Repo ships a Codex plugin at the repo root (`.codex-plugin/plugin.json`) and a repo-level marketplace at [.agents/plugins/marketplace.json](../.agents/plugins/marketplace.json) whose `source.path` points at the root.
 
 Codex reads marketplace manifests from:
 - `$REPO_ROOT/.agents/plugins/marketplace.json` (repo-level)
@@ -32,10 +32,10 @@ The manifest registers the skills folder and the `orq-workspace` MCP server auto
 ### Personal install — use the plugin outside this repo
 
 ```bash
-# Copy the plugin bundle into Codex's personal plugins dir
-# -rL dereferences symlinks so the copied files resolve correctly
+# Clone the repo into Codex's personal plugins dir — the repo root is the
+# plugin root (.codex-plugin/plugin.json, skills/, .mcp.json)
 mkdir -p ~/.codex/plugins
-cp -rL plugins/orq ~/.codex/plugins/orq
+git clone https://github.com/orq-ai/orq-skills.git ~/.codex/plugins/orq
 
 # Reference it in your personal marketplace (use an absolute path —
 # tilde expansion is not guaranteed inside JSON string values)
