@@ -88,3 +88,27 @@ def test_scale_half_specified_raises():
     # A half-specified scale is a user error, not a silent None.
     with pytest.raises(ValueError):
         fe._resolve_scale({}, 1.0, None)
+
+
+# --- _routable_slug: prefer the provider-qualified refId over the display model_id ---
+# The registry's `model_id` is a display alias that can address the wrong provider
+# path (e.g. `openai/gpt-oss-120b` hits OpenAI → 403 for an open-weights model
+# actually served by groq); `refId` is the routable, provider-qualified id
+# (`groq/openai/gpt-oss-120b`), so it must win.
+
+
+def test_routable_slug_prefers_refid():
+    m = {'model_id': 'openai/gpt-oss-120b', 'refId': 'groq/openai/gpt-oss-120b'}
+    assert orq_client._routable_slug(m) == 'groq/openai/gpt-oss-120b'
+
+
+def test_routable_slug_falls_back_to_model_id():
+    assert orq_client._routable_slug({'model_id': 'openai/gpt-4o-mini'}) == 'openai/gpt-4o-mini'
+
+
+def test_routable_slug_empty_refid_falls_back():
+    assert orq_client._routable_slug({'model_id': 'x', 'refId': ''}) == 'x'
+
+
+def test_routable_slug_none_when_absent():
+    assert orq_client._routable_slug({}) is None

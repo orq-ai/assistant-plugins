@@ -92,6 +92,20 @@ def extract_categorical_labels(data: dict[str, Any]) -> list[str]:
     return []
 
 
+def _routable_slug(model_record: dict[str, Any]) -> str | None:
+    """The routable slug for a `/v2/models` registry entry.
+
+    Prefer `refId` — the provider-qualified id the router actually routes on
+    (e.g. `groq/openai/gpt-oss-120b`, `openai/gpt-4o-mini`) — over `model_id`,
+    which is a display alias that can address the wrong provider path. Concretely:
+    an open-weights model served via groq has `model_id="openai/gpt-oss-120b"`,
+    and that bare `openai/…` slug hits OpenAI's provider path → `403
+    permission_error`, while its `refId="groq/openai/gpt-oss-120b"` routes. Fall
+    back to `model_id` when no `refId` is present.
+    """
+    return model_record.get('refId') or model_record.get('model_id') or None
+
+
 @dataclass
 class EvaluatorConfig:
     """The audited evaluator's config, normalised for downstream steps."""
@@ -175,10 +189,12 @@ class OrqClient:
 
         Evaluator configs store the judge model as a workspace-registry UUID
         (e.g. ``ce490df4-...``), not a routable slug. ``GET /v2/models`` returns
-        the registry (``id`` -> ``model_id``), so we look the UUID up there.
-        Returns the slug (e.g. ``mistral-large-latest``) or ``None`` if the id
-        isn't found or the call fails — the caller then falls back to trace
-        resolution or an explicit override.
+        the registry, so we look the UUID up there and return its **routable**
+        slug — the provider-qualified ``refId`` (``groq/openai/gpt-oss-120b``),
+        NOT the ``model_id`` display alias, which can address the wrong provider
+        path and 403 (see ``_routable_slug``). Returns ``None`` if the id isn't
+        found or the call fails — the caller then falls back to trace resolution
+        or an explicit override.
         """
         resp = await self._client.get('/v2/models')
         if resp.status_code >= 400:
@@ -186,7 +202,7 @@ class OrqClient:
             return None
         for m in _envelope_list(resp.json(), 'data', 'models', 'items'):
             if isinstance(m, dict) and m.get('id') == model_id:
-                return m.get('model_id') or None
+                return _routable_slug(m)
         return None
 
     # ── Step 2 ───────────────────────────────────────────────────────────────
