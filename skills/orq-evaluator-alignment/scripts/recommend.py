@@ -9,21 +9,29 @@
 #     "tenacity>=8.0",
 # ]
 # ///
-"""Step 8a — one meta-prompt call per annotated datapoint (parallel).
+"""Step 8a — type-aware human-vs-judge disagreements → rubric recommendations.
 
-For each human-labelled item we feed the RES-916 meta-prompt the audited judge
-prompt, the datapoint, the judge's N verdicts + reasoning, and the human's label
-+ note. Positives and negatives go through indiscriminately: the meta-prompt
-affirms what works on agreement and pinpoints the rubric gap on disagreement.
-Each call returns one structured `{reasoning, recommendation}` — written to
-`recommendations.json`.
+For each human-labelled confuser we compare the human `value` (from
+`annotations.json`) against the judge's majority/central verdict (read straight
+off `metrics.json`'s `per_row` detail), **per verdict type** (RES-978 Part 2
+§2.2):
+
+  - boolean     → flip (human ≠ judge mode);
+  - categorical → confusion pair (judge label vs human label);
+  - numeric     → signed error (judge central − human) + magnitude/direction.
+
+Those typed disagreements — plus the human's `reason` — are the grounding for a
+rubric-improvement suggestion per datapoint. When a real backend is configured
+(`lib.model_backend`) the typed disagreement is the INPUT to the meta-prompt,
+which returns one structured `{reasoning, recommendation}`; the `fake` backend
+in tests returns canned JSON. Everything is written to `recommendations.json`
+with the typed disagreement attached, so `aggregate.py` and the rewrite step can
+consume it without re-deriving anything.
 
 The meta-prompt embeds the judge prompt (which carries its own `{{query}}` /
 `{{output}}` tokens) as a variable value. `render_template` substitutes the four
 meta-prompt variables in a single pass and does not re-scan the inserted text,
-so those nested tokens stay literal — the model sees the real rubric. (The one
-backend that would re-template them, `orq_deployment`, self-references them; see
-model_backend.)
+so those nested tokens stay literal — the model sees the real rubric.
 
 Usage:
     cd skills/orq-evaluator-alignment
@@ -33,6 +41,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -46,10 +55,155 @@ from lib.model_backend import get_backend
 
 load_dotenv()
 
-META_PROMPT = (runner.SKILL_ROOT / 'prompts' / 'meta_prompt.md').read_text(encoding='utf-8')
+# Per-datapoint recommendation prompt. Deliberately NOT `meta_prompt.md`:
+# Workstream B repurposed that file into the single verdict-space-preserving
+# *rewrite* prompt (consumed by rewrite_eval.py). recommend.py owns the distinct
+# per-datapoint *suggestion* prompt, whose four variables it fills below.
+RECOMMEND_PROMPT = (runner.SKILL_ROOT / 'prompts' / 'recommend_prompt.md').read_text(encoding='utf-8')
+
+_NUMERIC_TYPES = {'number', 'numeric'}
+# Default agreement band for numeric: |judge − human| at or below this counts as
+# agreement, not a disagreement. Kept small; overridable via config/kwarg.
+_DEFAULT_NUMERIC_TOLERANCE = 0.5
 
 
-def _render_meta(judge_prompt: str, row: dict[str, Any], annotation: dict[str, Any]) -> str:
+# ── pure per-type disagreement extraction (§2.2) ─────────────────────────────
+
+
+def _coerce_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value) if value in (0, 1) else None
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in {'true', 'yes', 'pass', '1'}:
+            return True
+        if v in {'false', 'no', 'fail', '0'}:
+            return False
+    return None
+
+
+def _annotation_reason(annotation: dict[str, Any]) -> str:
+    """The human's free-text note. `reason` is the Part 2 contract (§2.1); the
+    older UI persisted it as `explanation` — accept either so both shapes work."""
+    return (annotation.get('reason') or annotation.get('explanation') or '').strip()
+
+
+def _judge_central(row: dict[str, Any], output_type: str) -> Any:
+    """The judge's majority/central verdict for a metrics per_row entry, per type.
+
+    Boolean → modal value (`mode_value`, falling back to the n_true/n_false split
+    when a single-repeat row has no mode). Categorical → argmax of `counts`.
+    Numeric → the row `mean` (the central value the instability spread is around).
+    """
+    if output_type == 'boolean':
+        mode = row.get('mode_value')
+        if isinstance(mode, bool):
+            return mode
+        coerced = _coerce_bool(mode)
+        if coerced is not None:
+            return coerced
+        n_true = int(row.get('n_true') or 0)
+        n_false = int(row.get('n_false') or 0)
+        if n_true == 0 and n_false == 0:
+            return None
+        return n_true >= n_false
+    if output_type == 'categorical':
+        counts = row.get('counts') or {}
+        if not counts:
+            return None
+        # Deterministic argmax: highest count, ties broken by label order.
+        return max(sorted(counts), key=lambda label: counts[label])
+    if output_type in _NUMERIC_TYPES:
+        mean = row.get('mean')
+        return float(mean) if isinstance(mean, (int, float)) else None
+    return None
+
+
+def _disagreement(
+    row: dict[str, Any],
+    annotation: dict[str, Any],
+    output_type: str,
+    labels: list[str] | None = None,
+    tolerance: float = _DEFAULT_NUMERIC_TOLERANCE,
+) -> dict[str, Any] | None:
+    """Compare a human label against the judge's central verdict, type-natively.
+
+    Returns a typed disagreement record, or None when they agree. Records share a
+    common spine (`source_index`, `type`, `kind`, `judge_value`, `human_value`,
+    `reason`) plus type-specific detail:
+      - boolean     kind='flip';
+      - categorical kind='confusion_pair', + `confusion_pair` (judge, human);
+      - numeric     kind='signed_error', + `signed_error` (judge − human),
+                    `magnitude`, `direction` (over|under).
+    """
+    judge = _judge_central(row, output_type)
+    reason = _annotation_reason(annotation)
+    base = {
+        'source_index': row.get('source_index'),
+        'type': 'number' if output_type in _NUMERIC_TYPES else output_type,
+        'judge_value': judge,
+        'reason': reason,
+    }
+
+    if output_type == 'boolean':
+        human = _coerce_bool(annotation.get('value'))
+        base['human_value'] = human
+        if human is None or judge is None or human == judge:
+            return None
+        return {**base, 'kind': 'flip'}
+
+    if output_type == 'categorical':
+        human = annotation.get('value')
+        human = str(human) if human is not None else None
+        base['human_value'] = human
+        if human is None or judge is None or human == judge:
+            return None
+        return {**base, 'kind': 'confusion_pair', 'confusion_pair': (judge, human)}
+
+    if output_type in _NUMERIC_TYPES:
+        try:
+            human = float(annotation.get('value'))
+        except (TypeError, ValueError):
+            human = None
+        base['human_value'] = human
+        if human is None or judge is None:
+            return None
+        signed = judge - human
+        if abs(signed) <= tolerance:
+            return None
+        return {
+            **base,
+            'kind': 'signed_error',
+            'signed_error': signed,
+            'magnitude': abs(signed),
+            'direction': 'over' if signed > 0 else 'under',
+        }
+
+    return None
+
+
+def _disagreement_summary(d: dict[str, Any]) -> str:
+    """One-line, human-readable rendering of a typed disagreement for the prompt."""
+    kind = d['kind']
+    if kind == 'flip':
+        return f'judge said {d["judge_value"]}, human said {d["human_value"]} (flip)'
+    if kind == 'confusion_pair':
+        return f'judge labelled "{d["judge_value"]}", human labelled "{d["human_value"]}" (confusion pair)'
+    if kind == 'signed_error':
+        return (
+            f'judge scored {d["judge_value"]:.2f}, human scored {d["human_value"]:.2f} — '
+            f'judge {d["direction"]}-scored by {d["magnitude"]:.2f}'
+        )
+    return f'judge {d.get("judge_value")}, human {d.get("human_value")}'
+
+
+# ── meta-prompt rendering (typed disagreement is the INPUT) ──────────────────
+
+
+def _render_meta(judge_prompt: str, row: dict[str, Any], annotation: dict[str, Any],
+                 disagreement: dict[str, Any] | None, output_type: str) -> str:
     from evaluatorq.common.judge import render_template
 
     messages = row.get('messages')
@@ -59,17 +213,28 @@ def _render_meta(judge_prompt: str, row: dict[str, Any], annotation: dict[str, A
         + f'<query>{row.get("query", "")}</query>\n'
         + f'<assistant_output>{row.get("output", "")}</assistant_output>'
     )
-    reps = row.get('repetitions', [])
+    judge_central = _judge_central(row, output_type)
+    detail = _judge_detail_str(row, output_type)
     judge_block = (
-        f'verdicts across {len(reps)} repeats: {reps}\n'
+        f'output_type: {output_type}\n'
+        f'judge central verdict: {judge_central}\n'
+        f'judge verdict spread: {detail}\n'
         f'representative explanation: {row.get("representative_explanation") or "(none)"}'
     )
-    human_block = (
-        f'explanation: {annotation.get("explanation") or "(none)"}\n'
-        f'correction: {annotation.get("value")}'
-    )
+    if disagreement is not None:
+        human_block = (
+            f'human label: {disagreement.get("human_value")}\n'
+            f'disagreement: {_disagreement_summary(disagreement)}\n'
+            f'human reason: {_annotation_reason(annotation) or "(none)"}'
+        )
+    else:
+        human_block = (
+            f'human label: {annotation.get("value")}\n'
+            f'agreement: human matches the judge on this datapoint.\n'
+            f'human reason: {_annotation_reason(annotation) or "(none)"}'
+        )
     return render_template(
-        META_PROMPT,
+        RECOMMEND_PROMPT,
         {
             'evaluator_prompt': judge_prompt,
             'input': input_block,
@@ -77,6 +242,16 @@ def _render_meta(judge_prompt: str, row: dict[str, Any], annotation: dict[str, A
             'human_annotation': human_block,
         },
     )
+
+
+def _judge_detail_str(row: dict[str, Any], output_type: str) -> str:
+    if output_type == 'boolean':
+        return f'{row.get("n_true", "?")}T / {row.get("n_false", "?")}F'
+    if output_type == 'categorical':
+        return f'counts={row.get("counts")} (k={row.get("k")})'
+    if output_type in _NUMERIC_TYPES:
+        return f'mean={row.get("mean")}, stdev={row.get("stdev")}, scale={row.get("scale")}'
+    return ''
 
 
 def _parse_recommendation(text: str) -> dict[str, Any]:
@@ -102,17 +277,50 @@ def _parse_recommendation(text: str) -> dict[str, Any]:
     return {'reasoning': obj.get('reasoning', ''), 'recommendation': obj.get('recommendation', '')}
 
 
-async def _run(out_dir: Path, cfg: dict[str, Any]) -> list[dict[str, Any]]:
+def _labeled_annotations(annotations: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
+    """Human-labelled entries with a concrete value, keyed by source_index.
+
+    Accepts both the Part 2 contract (`{value, reason, low_flip_sample}`, no
+    status) and the older UI shape (`{status: 'labeled', value, explanation,
+    provenance}`). An explicit non-'labeled' status is skipped; otherwise any
+    entry carrying a non-None `value` is taken.
+    """
+    out: list[tuple[int, dict[str, Any]]] = []
+    for k, a in annotations.items():
+        if not isinstance(a, dict):
+            continue
+        status = a.get('status')
+        if status is not None and status != 'labeled':
+            continue
+        if a.get('value') is None:
+            continue
+        try:
+            out.append((int(k), a))
+        except (TypeError, ValueError):
+            continue
+    return sorted(out, key=lambda t: t[0])
+
+
+def _low_flip_flag(annotation: dict[str, Any], row: dict[str, Any]) -> bool:
+    prov = annotation.get('provenance') or {}
+    return bool(
+        annotation.get('low_flip_sample')
+        or prov.get('low_flip_sample')
+        or row.get('low_flip_sample')
+    )
+
+
+async def _run(out_dir: Path, cfg: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     evaluator = runner.read_json(out_dir / 'evaluator.json')
-    stability = runner.read_json(out_dir / 'stability.json')
+    metrics = runner.read_json(out_dir / 'metrics.json')
     annotations = runner.read_json(out_dir / 'annotations.json')
 
-    rows_by_idx = {r['source_index']: r for r in stability.get('rows', [])}
-    labeled = [
-        (int(k), a)
-        for k, a in annotations.items()
-        if a.get('status') == 'labeled' and isinstance(a.get('value'), bool)
-    ]
+    output_type = (evaluator.get('output_type') or metrics.get('metadata', {}).get('output_type') or 'boolean').strip().lower()
+    labels = evaluator.get('categorical_labels') or []
+    tolerance = float(cfg.get('numeric_tolerance', _DEFAULT_NUMERIC_TOLERANCE))
+
+    rows_by_idx = {r.get('source_index'): r for r in metrics.get('per_row', [])}
+    labeled = _labeled_annotations(annotations)
     if not labeled:
         raise RuntimeError('No labeled annotations in annotations.json — run the annotation step first.')
 
@@ -123,8 +331,9 @@ async def _run(out_dir: Path, cfg: dict[str, Any]) -> list[dict[str, Any]]:
     async def _one(idx: int, annotation: dict[str, Any]) -> dict[str, Any]:
         row = rows_by_idx.get(idx)
         if row is None:
-            return {'source_index': idx, 'error': 'no stability row for this annotation', 'success': False}
-        prompt = _render_meta(judge_prompt, row, annotation)
+            return {'source_index': idx, 'error': 'no metrics per_row for this annotation', 'success': False}
+        disagreement = _disagreement(row, annotation, output_type, labels=labels, tolerance=tolerance)
+        prompt = _render_meta(judge_prompt, row, annotation, disagreement, output_type)
         async with sem:
             try:
                 res = await backend.complete(prompt)
@@ -132,9 +341,13 @@ async def _run(out_dir: Path, cfg: dict[str, Any]) -> list[dict[str, Any]]:
                 return {
                     'source_index': idx,
                     'success': True,
+                    'output_type': 'number' if output_type in _NUMERIC_TYPES else output_type,
+                    'agreement': disagreement is None,
+                    'disagreement': disagreement,  # typed record (§2.2) or None on agreement
                     'human_value': annotation.get('value'),
-                    'judge_mode_value': row.get('aggregate_value'),
-                    'low_flip_sample': annotation.get('provenance', {}).get('low_flip_sample', False),
+                    'judge_value': _judge_central(row, output_type),
+                    'reason': _annotation_reason(annotation),
+                    'low_flip_sample': _low_flip_flag(annotation, row),
                     'reasoning': parsed['reasoning'],
                     'recommendation': parsed['recommendation'],
                     'cost_usd': res.cost_usd,
@@ -144,32 +357,46 @@ async def _run(out_dir: Path, cfg: dict[str, Any]) -> list[dict[str, Any]]:
                 return {'source_index': idx, 'success': False, 'error': f'{type(exc).__name__}: {exc}'}
 
     results = await asyncio.gather(*(_one(idx, a) for idx, a in labeled))
-    return sorted(results, key=lambda r: r['source_index'])
+    meta = {'output_type': 'number' if output_type in _NUMERIC_TYPES else output_type,
+            'labels': labels, 'numeric_tolerance': tolerance}
+    return sorted(results, key=lambda r: r['source_index']), meta
 
 
 def main(run_dir: str | None = None, config: str = 'config.toml') -> str:
-    """Generate per-annotation recommendations via the configured backend."""
+    """Generate per-annotation, type-aware recommendations via the configured backend."""
     cfg = runner.load_config(config)
     out_dir = runner.resolve_run_dir(run_dir) if run_dir else runner.latest_run_dir(cfg.get('runs_dir', 'runs'))
     if out_dir is None:
         raise SystemExit('No run directory. Run the annotation step first.')
 
-    results = asyncio.run(_run(out_dir, cfg))
+    results, meta = asyncio.run(_run(out_dir, cfg))
     ok = [r for r in results if r.get('success')]
+    n_disagree = sum(1 for r in ok if r.get('disagreement'))
     total_cost = sum(r.get('cost_usd', 0.0) for r in ok)
+    # Kinds seen (flip / confusion_pair / signed_error) for a quick at-a-glance tally.
+    kinds = Counter(r['disagreement']['kind'] for r in ok if r.get('disagreement'))
     runner.write_json(
         out_dir / 'recommendations.json',
         {
             'metadata': {
                 'backend': cfg.get('backend'),
+                'output_type': meta['output_type'],
+                'labels': meta['labels'],
+                'numeric_tolerance': meta['numeric_tolerance'],
                 'n_annotations': len(results),
                 'n_ok': len(ok),
+                'n_disagreements': n_disagree,
+                'n_agreements': len(ok) - n_disagree,
+                'disagreement_kinds': dict(kinds),
                 'total_cost_usd': round(total_cost, 6),
             },
             'recommendations': results,
         },
     )
-    logger.info(f'✓ Wrote {out_dir / "recommendations.json"} ({len(ok)}/{len(results)} ok, ${total_cost:.4f})')
+    logger.info(
+        f'✓ Wrote {out_dir / "recommendations.json"} '
+        f'({len(ok)}/{len(results)} ok, {n_disagree} disagreement(s), ${total_cost:.4f})'
+    )
     print(out_dir)
     return str(out_dir)
 

@@ -106,6 +106,104 @@ def _routable_slug(model_record: dict[str, Any]) -> str | None:
     return model_record.get('refId') or model_record.get('model_id') or None
 
 
+def _normalise_labels(labels: list[Any]) -> list[dict[str, str]]:
+    """Coerce a declared label set into orq's rich ``[{value, description}]``.
+
+    A source evaluator's labels reach us in one of two shapes: the rich record
+    form (a list of ``{value, description}`` dicts, straight from the API) or the
+    flat form (a list of ``value`` strings, as `evaluator.json`'s top-level
+    `categorical_labels` stores them). orq's `POST /v2/evaluators` body wants the
+    rich shape, so we widen flat strings to ``{value, description: ''}`` and keep
+    any descriptions the rich form already carries. Non-string/dict entries and
+    empty values are dropped, never invented.
+    """
+    out: list[dict[str, str]] = []
+    for item in labels:
+        if isinstance(item, dict):
+            value = item.get('value')
+            if isinstance(value, str) and value:
+                out.append({'value': value, 'description': str(item.get('description') or '')})
+        elif isinstance(item, str) and item:
+            out.append({'value': item, 'description': ''})
+    return out
+
+
+def build_create_body(
+    *,
+    key: str,
+    path: str,
+    prompt: str,
+    model: str,
+    description: str | None,
+    output_type: str,
+    categorical_labels: list[Any] | None = None,
+    scale: list[Any] | None = None,
+    guardrail_value: bool = True,
+) -> dict[str, Any]:
+    """Assemble the `POST /v2/evaluators` request body for a given verdict type.
+
+    A pure function (no httpx) so the per-type request shape is unit-testable:
+    - **boolean**  → `output_type='boolean'` + a boolean `guardrail_config`;
+    - **categorical** → `output_type='categorical'` + the declared label set in
+      orq's rich ``categorical_labels`` shape (``[{value, description}]``) with a
+      flat `categories` mirror, plus a categorical guardrail. Labels are
+      required — a categorical evaluator with no labels has an undefined verdict
+      space, so we refuse rather than send an empty set.
+    - **numeric** (`'number'`) → `output_type='number'`; a `scale` is sent ONLY
+      when the source record carried one — never invented (the record has no
+      scale field of its own; §8.1). No label set is attached.
+
+    Any other `output_type` is rejected: only the three supported verdict spaces
+    can be created.
+    """
+    body: dict[str, Any] = {
+        'type': 'llm_eval',
+        'mode': 'single',
+        'model': model,
+        'prompt': prompt,
+        'output_type': output_type,
+        'path': path,
+        'key': key,
+    }
+    if description is not None:
+        body['description'] = description
+
+    if output_type == 'boolean':
+        body['guardrail_config'] = {
+            'type': 'boolean',
+            'value': guardrail_value,
+            'enabled': True,
+            'alert_on_failure': False,
+        }
+    elif output_type == 'categorical':
+        rich = _normalise_labels(categorical_labels or [])
+        if not rich:
+            raise ValueError(
+                'Cannot create a categorical evaluator without a label set: the '
+                'verdict space would be undefined. Pass the source evaluator\'s '
+                'categorical_labels through.'
+            )
+        body['categorical_labels'] = rich
+        body['categories'] = [item['value'] for item in rich]
+        body['guardrail_config'] = {
+            'type': 'categorical',
+            'enabled': True,
+            'alert_on_failure': False,
+        }
+    elif output_type == 'number':
+        # No scale field is invented: the record carries none of its own, so we
+        # forward one only when the source actually declared it (fixtures pass
+        # [min, max]). A numeric evaluator never carries a label set.
+        if scale:
+            body['scale'] = scale
+    else:
+        raise ValueError(
+            f'Unsupported output_type {output_type!r}: expected one of '
+            "'boolean', 'categorical', 'number'."
+        )
+    return body
+
+
 @dataclass
 class EvaluatorConfig:
     """The audited evaluator's config, normalised for downstream steps."""
@@ -287,7 +385,7 @@ class OrqClient:
         return _envelope_dict(payload)
 
     # ── Step 9b ──────────────────────────────────────────────────────────────
-    async def create_boolean_evaluator(
+    async def create_evaluator(
         self,
         *,
         key: str,
@@ -295,26 +393,32 @@ class OrqClient:
         prompt: str,
         model: str,
         description: str | None = None,
+        output_type: str,
+        categorical_labels: list[Any] | None = None,
+        scale: list[Any] | None = None,
         guardrail_value: bool = True,
     ) -> CreateResult:
-        """Create a single-judge boolean LLM-as-judge evaluator (the rewrite)."""
-        body: dict[str, Any] = {
-            'type': 'llm_eval',
-            'mode': 'single',
-            'model': model,
-            'prompt': prompt,
-            'output_type': 'boolean',
-            'path': path,
-            'key': key,
-            'guardrail_config': {
-                'type': 'boolean',
-                'value': guardrail_value,
-                'enabled': True,
-                'alert_on_failure': False,
-            },
-        }
-        if description is not None:
-            body['description'] = description
+        """Create a single-judge LLM-as-judge evaluator of any verdict type.
+
+        Sends the correct `POST /v2/evaluators` body per ``output_type`` (built by
+        the pure :func:`build_create_body`): boolean, categorical (the declared
+        label set travels in orq's rich ``categorical_labels`` shape), or numeric
+        (`'number'`; a scale is forwarded only when the source declared one — never
+        invented). The verdict space is preserved, so the created evaluator scores
+        the same space as its source. Co-location with the source project is the
+        caller's job via ``path`` (whose first segment names the owning project).
+        """
+        body = build_create_body(
+            key=key,
+            path=path,
+            prompt=prompt,
+            model=model,
+            description=description,
+            output_type=output_type,
+            categorical_labels=categorical_labels,
+            scale=scale,
+            guardrail_value=guardrail_value,
+        )
         resp = await self._client.post('/v2/evaluators', json=body)
         if resp.status_code >= 400:
             logger.error(f'✗ create evaluator failed [{resp.status_code}]: {resp.text}')
@@ -326,6 +430,28 @@ class OrqClient:
             # response drift doesn't crash with a bare KeyError mid-write.
             raise RuntimeError(f'create evaluator returned no id; response shape: {data!r}')
         return CreateResult(id=new_id, key=data.get('key', key), raw=data)
+
+    async def create_boolean_evaluator(
+        self,
+        *,
+        key: str,
+        path: str,
+        prompt: str,
+        model: str,
+        description: str | None = None,
+        guardrail_value: bool = True,
+    ) -> CreateResult:
+        """Create a boolean evaluator. Thin wrapper over :meth:`create_evaluator`
+        so existing boolean callers keep working unchanged."""
+        return await self.create_evaluator(
+            key=key,
+            path=path,
+            prompt=prompt,
+            model=model,
+            description=description,
+            output_type='boolean',
+            guardrail_value=guardrail_value,
+        )
 
 
 class EvaluatorNotFound(RuntimeError):

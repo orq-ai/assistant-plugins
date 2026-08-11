@@ -1,0 +1,174 @@
+"""Tests for the type-parameterized create request body (RES-978 Part 2, §2.4).
+
+Workstream C: `OrqClient.create_boolean_evaluator` generalises to
+`create_evaluator(..., output_type, categorical_labels=None, scale=None)` over
+httpx `POST /v2/evaluators`. The body assembly is factored into a pure function
+(`build_create_body`) so the per-type request shape is unit-testable with no
+network.
+
+Pins the three verdict types against the real record shapes (§8.1):
+  - boolean   → output_type='boolean' + a boolean guardrail_config;
+  - categorical → output_type='categorical' + categorical_labels sent in orq's
+    rich ``[{value, description}]`` shape (the field name orq's record uses);
+  - numeric   → output_type='number', and NO scale field is invented when the
+    record carries none (scale is passed through only if present).
+
+Guards: creating from a categorical source must include its labels; from a
+numeric source must set output_type='number'.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+import _bootstrap  # noqa: F401,E402
+
+import pytest  # noqa: E402
+
+from lib import orq_client  # noqa: E402
+
+build = orq_client.build_create_body
+
+
+# --- boolean: output_type + boolean guardrail, no categorical_labels/scale ---
+
+
+def test_boolean_body_shape():
+    body = build(
+        key='k-aligned',
+        path='Evaluators/k',
+        prompt='PROMPT',
+        model='deepseek-v4-flash',
+        description='desc',
+        output_type='boolean',
+    )
+    assert body['type'] == 'llm_eval'
+    assert body['mode'] == 'single'
+    assert body['model'] == 'deepseek-v4-flash'
+    assert body['prompt'] == 'PROMPT'
+    assert body['output_type'] == 'boolean'
+    assert body['path'] == 'Evaluators/k'
+    assert body['key'] == 'k-aligned'
+    assert body['description'] == 'desc'
+    # Boolean carries a boolean guardrail; never a label set or a scale.
+    assert body['guardrail_config']['type'] == 'boolean'
+    assert 'categorical_labels' not in body
+    assert 'scale' not in body
+
+
+def test_boolean_omits_description_when_none():
+    body = build(
+        key='k', path='p', prompt='x', model='m', description=None, output_type='boolean'
+    )
+    assert 'description' not in body
+
+
+# --- categorical: labels sent in orq's rich [{value, description}] shape ---
+
+
+def test_categorical_body_includes_labels_rich_shape():
+    body = build(
+        key='cat-aligned',
+        path='Evaluators/cat',
+        prompt='CLASSIFY',
+        model='m',
+        description='d',
+        output_type='categorical',
+        categorical_labels=['safe', 'abuse', 'spam'],
+    )
+    assert body['output_type'] == 'categorical'
+    # orq's record shape: a list of {value, description} objects.
+    assert body['categorical_labels'] == [
+        {'value': 'safe', 'description': ''},
+        {'value': 'abuse', 'description': ''},
+        {'value': 'spam', 'description': ''},
+    ]
+    # A flat `categories` mirror comes along too (the record carries both).
+    assert body['categories'] == ['safe', 'abuse', 'spam']
+    # Categorical guardrail, not boolean.
+    assert body['guardrail_config']['type'] == 'categorical'
+    assert 'scale' not in body
+
+
+def test_categorical_preserves_rich_labels_when_given_dicts():
+    # If the source already carries {value, description}, keep the descriptions.
+    body = build(
+        key='c',
+        path='p',
+        prompt='x',
+        model='m',
+        description=None,
+        output_type='categorical',
+        categorical_labels=[
+            {'value': 'value 1', 'description': 'desc 1'},
+            {'value': 'value 2', 'description': 'desc 2'},
+        ],
+    )
+    assert body['categorical_labels'] == [
+        {'value': 'value 1', 'description': 'desc 1'},
+        {'value': 'value 2', 'description': 'desc 2'},
+    ]
+    assert body['categories'] == ['value 1', 'value 2']
+
+
+def test_categorical_guard_requires_labels():
+    # Creating a categorical evaluator with no labels is a programming error:
+    # the verdict space would be undefined. Refuse rather than send an empty set.
+    with pytest.raises(ValueError):
+        build(
+            key='c', path='p', prompt='x', model='m', description=None,
+            output_type='categorical', categorical_labels=[],
+        )
+
+
+# --- numeric: output_type='number', scale only when present, never invented ---
+
+
+def test_numeric_body_sets_number_type_no_invented_scale():
+    body = build(
+        key='num-aligned',
+        path='Evaluators/num',
+        prompt='RATE',
+        model='m',
+        description=None,
+        output_type='number',
+        scale=None,
+    )
+    assert body['output_type'] == 'number'
+    # No scale in the record → DON'T invent one.
+    assert 'scale' not in body
+    # No label set on a numeric evaluator.
+    assert 'categorical_labels' not in body
+
+
+def test_numeric_body_passes_scale_when_present():
+    body = build(
+        key='n', path='p', prompt='x', model='m', description=None,
+        output_type='number', scale=[1, 5],
+    )
+    assert body['output_type'] == 'number'
+    assert body['scale'] == [1, 5]
+
+
+def test_numeric_ignores_stray_categorical_labels():
+    # A numeric source may carry categorical_labels=[] in its evaluator.json;
+    # that must never leak a label field onto a number evaluator.
+    body = build(
+        key='n', path='p', prompt='x', model='m', description=None,
+        output_type='number', categorical_labels=[], scale=[1, 5],
+    )
+    assert 'categorical_labels' not in body
+    assert 'categories' not in body
+
+
+# --- unknown type is rejected (only the three supported verdict spaces) ---
+
+
+def test_unknown_output_type_rejected():
+    with pytest.raises(ValueError):
+        build(
+            key='k', path='p', prompt='x', model='m', description=None,
+            output_type='freeform',
+        )

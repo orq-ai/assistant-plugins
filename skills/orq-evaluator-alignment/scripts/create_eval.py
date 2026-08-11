@@ -54,14 +54,37 @@ def _diff(old: str, new: str) -> str:
     return '\n'.join(lines)
 
 
+def _source_labels(evaluator: dict[str, Any]) -> list[Any]:
+    """Pull the source's declared label set, preferring the rich record shape.
+
+    The rich ``[{value, description}]`` form lives on the API record
+    (`evaluator['raw']['categorical_labels']`); the normalised top-level
+    `categorical_labels` is a flat ``[value, ...]`` mirror. Prefer the rich form so
+    label descriptions survive the copy; fall back to the flat strings.
+    """
+    rich = evaluator.get('raw', {}).get('categorical_labels')
+    if isinstance(rich, list) and rich:
+        return rich
+    flat = evaluator.get('categorical_labels')
+    return flat if isinstance(flat, list) else []
+
+
 async def _create(evaluator: dict[str, Any], prompt: str, key: str, path: str) -> dict[str, Any]:
+    # Preserve the source's verdict space: same output_type, the same label set
+    # for categorical, and the same scale for numeric (forwarded only if the
+    # source declared one — build_create_body never invents a scale). The
+    # original evaluator is only read, never mutated.
+    output_type = evaluator.get('output_type', 'boolean')
     async with OrqClient() as client:
-        result = await client.create_boolean_evaluator(
+        result = await client.create_evaluator(
             key=key,
             path=path,
             prompt=prompt,
             model=evaluator['judge_model'],
             description=f'Human-aligned rewrite of evaluator {evaluator["id"]} (RES-930).',
+            output_type=output_type,
+            categorical_labels=_source_labels(evaluator) if output_type == 'categorical' else None,
+            scale=evaluator.get('scale') if output_type == 'number' else None,
         )
     return {'id': result.id, 'key': result.key, 'raw': result.raw}
 
@@ -143,6 +166,11 @@ def main(
         'key': created['key'],
         'source_evaluator_id': evaluator['id'],
         'judge_model': evaluator['judge_model'],
+        # Record the preserved verdict space so the retest (2.5) knows how to
+        # score the created evaluator against the human labels.
+        'output_type': evaluator.get('output_type', 'boolean'),
+        'categorical_labels': evaluator.get('categorical_labels', []),
+        'scale': evaluator.get('scale'),
         'prompt': new_prompt,
         'created_at': approval['timestamp'],
         'raw': created['raw'],
