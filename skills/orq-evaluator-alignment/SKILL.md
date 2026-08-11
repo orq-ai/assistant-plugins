@@ -40,13 +40,15 @@ bypasses the inline metadata).
 
 ## Constraints
 
-- **Measurement is multi-type; the feedback loop is boolean for now.** Steps 1–5
-  (fetch → stability → instability metrics → confuser ranking) support **boolean,
-  categorical, and numeric** judges, all measured on one 0..1 instability scale —
-  boolean flip-rate, categorical label entropy, numeric score spread (RES-978).
-  The annotation → rewrite → create steps (6–9) are still **boolean only**;
-  multi-type feedback arrives with the grey-zone work (RES-980). Step 1 accepts
-  all three output types and fails fast on anything else.
+- **Fully multi-type, end to end.** Every step — measure (stability → instability
+  metrics → confuser ranking) and improve (score → recommend → rewrite → create →
+  retest) — supports **boolean, categorical, and numeric** judges (RES-978 Part 1
+  + Part 2 / RES-980). Instability is one 0..1 scale (boolean flip-rate,
+  categorical label entropy, numeric score spread); the rewrite preserves the
+  evaluator's verdict space (label set / numeric scale). Numeric rewriting is
+  deliberately shallow — it nudges the scale's anchor descriptions, not a
+  calibration model. Step 1 accepts all three output types and fails fast on
+  anything else.
 - **Self-consistency is a ceiling, not proof.** Low instability means the judge
   is *stable*, not *correct* — a judge can be consistently wrong. You surface
   ambiguity; the human supplies truth.
@@ -73,7 +75,7 @@ step confirms everything the user needs to greenlight the run:
   evaluator's config model id looked up via `GET /v2/models` (registry UUID →
   slug) → the model observed on the production judge spans (step 2, plus
   `judge_models_observed`). Flag it if more than one model shows up (a
-  mixed-model history can inflate the apparent flip-rate).
+  mixed-model history can inflate the apparent instability).
 
   **If the judge model comes out UNRESOLVED** (step 1 logs a warning and the run
   dir is named `…_model-unknown_…`): the config id wasn't in `/v2/models` *and*
@@ -159,57 +161,57 @@ uv run scripts/build_queue.py --run_dir <run_dir> --count <N>
 ```
 uv run scripts/serve_annotation.py --run_dir <run_dir>
 ```
-Tell the user to open the printed URL and label each item **True/False** (the
-judge's own verdict space). *Annotation onward (steps 6–9) is boolean-only today
-— categorical / numeric feedback lands with the grey-zone work (RES-980).*
-Labels auto-save to `annotations.json`; they can stop and resume. Wait for them
-to say they are done.
+Tell the user to open the printed URL and **score each item with its type-native
+input** — boolean → Pass/Fail; categorical → one button per declared label;
+numeric → a number on the evaluator's scale — plus an optional one-line "why"
+(the cheapest lever for a good rewrite). Labels auto-save to `annotations.json`
+as typed values; they can stop and resume. Wait for them to say they are done.
 
 ### 7. Recommend → aggregate
 ```
 uv run scripts/recommend.py --run_dir <run_dir>
 uv run scripts/aggregate.py --run_dir <run_dir>
 ```
-One meta-prompt per annotation (agreements and disagreements alike), then
-`aggregated.md` grouping them into changes-to-make and strengths-to-preserve.
-Show the user the aggregated changes; they may edit `aggregated.md` before the
-rewrite.
+Compares each human label to the judge's central verdict, **type-aware** (boolean
+flips / categorical confusion-pairs / numeric signed-errors), then `aggregated.md`
+groups them into changes-to-make and strengths-to-preserve. Show the user the
+aggregated changes; they may edit `aggregated.md` before the rewrite.
 
 ### 8. Propose → approve → create  ⟵ GATE
 ```
 uv run scripts/rewrite_eval.py --run_dir <run_dir>
 uv run scripts/create_eval.py --run_dir <run_dir>          # presents the diff
 ```
-PO2 rewrites the prompt with a variable-preservation gate (it will not let
-`{{...}}` variables change). The second command **presents** the aggregated
-recommendations, the old→new diff, and the variable-check status — show this to
-the user. **Only after they approve:**
+The single multi-type meta prompt rewrites the rubric with a **preservation gate**
+— it will not let `{{...}}` variables change, drop a categorical label, or move
+the numeric scale. The second command **presents** the aggregated recommendations,
+the old→new diff, and the preservation-check status — show this to the user.
+**Only after they approve:**
 ```
 uv run scripts/create_eval.py --run_dir <run_dir> --approve
 ```
-(Pass `--edits <file>` to fold in inline human edits.) This creates a NEW boolean
-evaluator with `source_evaluator_id` lineage; the original is never touched. If
-the user rejects, stop — nothing is created.
+(Pass `--edits <file>` to fold in inline human edits.) This creates a NEW evaluator
+**of the same output type** (boolean / categorical with its full label set /
+numeric) with `source_evaluator_id` lineage; the original is never touched. If the
+user rejects, stop — nothing is created.
 
 ### 9. Optional retest — confirm repeats first  ⟵ GATE
-Re-judges the annotated datapoints with the new prompt and writes
-`experiment_report.md` comparing old vs new agreement with the human labels.
+Re-judges the scored datapoints with the NEW evaluator and writes
+`retest_metrics.json`. **Success needs both**: instability **drops** on the
+confusers, AND the new evaluator's verdicts **agree with the human labels**
+(boolean TPR/TNR · categorical accuracy · numeric MAE / within-tolerance). A drop
+alone is gameable by a consistently-wrong-but-stable judge — agreement keeps it
+honest.
 
-**First get the variance-aware suggestion, then ask the user how many repeats**
-(default **N=5**). The suggestion floors at the stability N (so the new-judge
-verdict is as trustworthy as the 5-rep `old_judge` it is compared against) and
-adds more repeats for datapoints that flipped a lot during the stability run —
-high flips warrant higher repeats here too:
+**Confirm the repeat count with the user first** (default from `config.toml`; use
+at least the stability N so the new verdict is as trustworthy as the run it is
+compared against):
 ```
-uv run scripts/run_experiment.py --run_dir <run_dir> --recommend_only
+uv run scripts/retest.py --run_dir <run_dir> --n_repeats <N>
 ```
-Show the user the suggested N and its basis (floor, mean/max flip-rate of the
-retested rows), ask them to confirm or override, then run with their choice:
-```
-uv run scripts/run_experiment.py --run_dir <run_dir> --repeats <N>
-```
-(Going below the stability N is allowed but warns — the comparison stops being
-apples-to-apples.)
+(`--tol` sets the numeric within-tolerance band, default 0.5 on the raw scale;
+`--num_samples` limits how many confusers to retest. Going below the stability N
+is allowed but the comparison stops being apples-to-apples.)
 
 ## Final summary
 When you finish, tell the user plainly:
@@ -245,14 +247,16 @@ resolve to the config value shown; overriding a flag beats `config.toml`.
 | `aggregate.py` | — |
 | `rewrite_eval.py` | `--max_attempts` (3) |
 | `create_eval.py` | `--approve` (False), `--edits <file>` (None), `--force` (False; bypass create-side guards, e.g. non-routable judge slug) |
-| `run_experiment.py` | `--repeats` (5, floors up to stability N), `--temperature` (1.0), `--recommend_only` (False) |
+| `retest.py` | `--n_repeats` (cfg, use ≥ stability N), `--num_samples` (cfg, confusers to retest), `--tol` (0.5, numeric within-tolerance band) |
 
 ## Run directory contract
-Every artifact lives in `runs/<key>_<ts>_<model>_<N>dp/`: `evaluator.json`, `traces.jsonl`,
-`stability.json`, `metrics.json`, `queue.json`, `annotations.json`,
-`recommendations.json`, `aggregated.md`, `new_prompt.md`, `rewrite_status.json`,
-`approval.json`, `new_evaluator.json`, `experiment_report.md`. Any step is
-re-runnable in isolation against an existing run directory.
+Every artifact lives in `runs/<key>_<ts>_<model>_<N>dp/`: `evaluator.json` (with
+`output_type` + `categorical_labels`/`scale`), `traces.jsonl`, `stability.json`,
+`metrics.json`, `queue.json` (each confuser carries its `verdict_space`),
+`annotations.json` (typed values), `recommendations.json`, `aggregated.md` +
+`aggregated.json`, `new_prompt.md`, `rewrite_status.json`, `approval.json`,
+`new_evaluator.json`, `retest_metrics.json`. Any step is re-runnable in isolation
+against an existing run directory.
 
 ## Companion Skills
 

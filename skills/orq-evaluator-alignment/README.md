@@ -90,12 +90,13 @@ with the judge monkeypatched and the `fake` backend — no network.
 
 ## Scope & limitations
 
-- **Measurement is multi-type; the feedback loop is boolean for now.** Steps 1–5
-  (fetch → stability → instability → confuser ranking) support **boolean,
-  categorical, and numeric** judges on one 0..1 instability scale — flip-rate,
-  label entropy, or score spread (RES-978). The annotation → rewrite → create
-  steps (6–9) are still **boolean only** until the grey-zone work (RES-980). Step
-  1 accepts all three output types and fails fast on anything else.
+- **Fully multi-type, end to end.** Both halves — measure (stability → instability
+  → confuser ranking) and improve (score → recommend → rewrite → create → retest) —
+  support **boolean, categorical, and numeric** judges (RES-978 Part 1 + Part 2 /
+  RES-980) on one 0..1 instability scale (flip-rate / label entropy / score spread).
+  The rewrite preserves the verdict space (label set / numeric scale); numeric
+  rewriting is deliberately shallow (anchor-nudge, not calibration). Step 1 accepts
+  all three output types and fails fast on anything else.
 - **Self-consistency ≠ validity.** Instability localises where the judge is
   unstable; it cannot prove the judge is correct.
 - **Consistently-wrong blind spot.** Instability-ranking never surfaces items the
