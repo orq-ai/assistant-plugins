@@ -36,6 +36,13 @@ from loguru import logger
 
 DEFAULT_BASE_URL = 'https://api.orq.ai'
 
+# Wall-clock cap on a single `orq` CLI call, matching the httpx transport's 120s
+# default so neither transport can block the pipeline indefinitely. Without it
+# the CLI can sit forever on an interactive auth prompt; asyncio.to_thread can't
+# cancel the stuck worker, so the awaiting coroutine would park with no error, no
+# log line, no traceback — the pipeline would simply stop.
+ORQ_CLI_TIMEOUT = 120.0
+
 # Matches `{{ var.path }}` template tokens in a judge prompt. The captured group
 # is the trimmed variable path (e.g. `log.input`, `query`, `output`).
 _VAR_TOKEN = re.compile(r'\{\{\s*([^}]+?)\s*\}\}')
@@ -384,15 +391,32 @@ async def _run_orq(
 def _run_orq_sync(args: list[str], stdin: str | None) -> subprocess.CompletedProcess[str]:
     # On Windows `orq` resolves to `orq.CMD`, which CreateProcess can't launch
     # directly — go through the shell (cmd.exe /c), matching the `claude -p`
-    # backend in lib/model_backend.py. Python quotes the list via list2cmdline.
-    return subprocess.run(
-        [_orq_exe(), *args],
-        input=stdin,
-        capture_output=True,
-        text=True,
-        encoding='utf-8',
-        shell=(os.name == 'nt'),
-    )
+    # backend in lib/model_backend.py. Python joins the list via list2cmdline,
+    # which quotes for the argv parser but NOT for cmd.exe's own metacharacters
+    # (& | ^ %), so a shell metachar in an argument could break out of the
+    # command on Windows. The exposure is bounded here: the only interpolated
+    # argument on this path is the evaluator id (the JSON body travels via stdin,
+    # never the command line), and the user runs against their own evaluator. To
+    # close it fully, resolve `orq` via shutil.which and launch the resolved .CMD
+    # without a shell.
+    try:
+        return subprocess.run(
+            [_orq_exe(), *args],
+            input=stdin,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            shell=(os.name == 'nt'),
+            timeout=ORQ_CLI_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # Turn the hang into a loud error rather than a silently parked pipeline
+        # (asyncio.to_thread cannot cancel the stuck worker thread).
+        raise RuntimeError(
+            f'`orq {" ".join(args)}` did not return within {ORQ_CLI_TIMEOUT:.0f}s. '
+            f'The CLI may be blocked on an interactive auth prompt — run `orq auth` '
+            f'or set ORQ_API_KEY so it can authenticate non-interactively.'
+        ) from exc
 
 
 def _parse_orq_json(stdout: str) -> Any:
