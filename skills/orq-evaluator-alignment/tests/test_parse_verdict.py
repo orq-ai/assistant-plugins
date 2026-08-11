@@ -17,7 +17,7 @@ import _bootstrap  # noqa: F401,E402
 
 import pytest  # noqa: E402
 
-from lib.judge import parse_verdict  # noqa: E402
+from lib.judge import parse_categorical, parse_numeric, parse_verdict  # noqa: E402
 
 
 def test_strict_json_still_parses():
@@ -102,3 +102,84 @@ def test_fence_inside_explanation_not_truncated():
     p = parse_verdict(raw)
     assert p.value is True
     assert 'code' in p.explanation
+
+
+# --- categorical canonicalization (RES-978 §4a): casefold + exact one-of-K ---
+
+_LABELS = ['abuse', 'safe', 'spam']
+
+
+def test_categorical_exact_casefold_match():
+    p = parse_categorical('ABUSE', _LABELS)
+    assert p.status == 'ok'
+    assert p.value == 'abuse'  # returns the DECLARED label, not the raw casing
+
+
+def test_categorical_non_matching_is_wrong_output_type():
+    # No fuzzy/substring: "Abuse (severe)" must NOT merge into "abuse".
+    p = parse_categorical('Abuse (severe)', _LABELS)
+    assert p.status == 'wrong_output_type'
+    assert p.value is None
+
+
+def test_categorical_json_enum_value():
+    p = parse_categorical('{"explanation": "clearly abusive", "value": "abuse"}', _LABELS)
+    assert p.status == 'ok'
+    assert p.value == 'abuse'
+
+
+def test_categorical_labelled_freetext():
+    p = parse_categorical('Explanation: looks fine.\nValue: Safe', _LABELS)
+    assert p.status == 'ok'
+    assert p.value == 'safe'
+
+
+# --- numeric canonicalization (RES-978 §4a): first token, ,/. normalization ---
+
+
+def test_numeric_plain_int():
+    p = parse_numeric('5')
+    assert p.status == 'ok'
+    assert p.value == 5.0
+
+
+def test_numeric_dot_decimal():
+    p = parse_numeric('3.4')
+    assert p.status == 'ok'
+    assert p.value == 3.4
+
+
+def test_numeric_comma_decimal_normalized():
+    p = parse_numeric('3,4')
+    assert p.status == 'ok'
+    assert p.value == 3.4
+
+
+def test_numeric_first_token_with_trailing_text():
+    p = parse_numeric('4,5 out of 10')
+    assert p.status == 'ok'
+    assert p.value == 4.5
+
+
+def test_numeric_json_number_value():
+    p = parse_numeric('{"explanation": "middling", "value": 4}')
+    assert p.status == 'ok'
+    assert p.value == 4.0
+
+
+def test_numeric_non_number_is_wrong_output_type():
+    p = parse_numeric('no score in here')
+    assert p.status == 'wrong_output_type'
+    assert p.value is None
+
+
+def test_numeric_in_range_ok():
+    p = parse_numeric('7', scale=(1.0, 10.0))
+    assert p.status == 'ok'
+    assert p.value == 7.0
+
+
+def test_numeric_out_of_range_is_wrong_output_type():
+    # A number outside the declared scale is off-contract, not a scored verdict.
+    p = parse_numeric('12', scale=(1.0, 10.0))
+    assert p.status == 'wrong_output_type'

@@ -16,19 +16,39 @@ id). `run_jury_for_row` is the per-row job the stability step fans out.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Sequence
 
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_exponential_jitter
 
-from evaluatorq.common.judge import EvaluatorResponsePayload, _strip_code_fences, render_template
+from evaluatorq.common.judge import EvaluatorResponsePayload, render_template
 from evaluatorq.common.jury import Prediction, VerdictKind, run_jury
 from evaluatorq.common.llm_call import execute_chat_completion
 from evaluatorq.common.llm_client import resolve_llm_client
 
 from lib.content import field_for_variable, stringify_messages
 from lib.orq_client import tls_verify
+
+
+def _strip_code_fences(text: str) -> str:
+    """Strip a surrounding ```lang … ``` markdown fence, if present.
+
+    Vendored (RES-978): evaluatorq stopped exporting its private
+    ``_strip_code_fences``, which broke this module's import (and every test that
+    loads it). Behaviour matches what parse_verdict relies on: only an *outer*
+    fence is removed — a ``` that appears inside a JSON string value is left
+    untouched, so a fenced explanation never truncates the payload.
+    """
+    s = (text or '').strip()
+    if not s.startswith('```'):
+        return text  # no outer fence — don't disturb inner ``` in string values
+    lines = s.split('\n')
+    lines = lines[1:]  # drop the opening ```lang line
+    if lines and lines[-1].strip().startswith('```'):
+        lines = lines[:-1]  # drop the closing fence
+    return '\n'.join(lines).strip()
 
 # Mirror of orq's boolean `explanation_and_value` contract. orq puts the whole
 # rubric in a single user message (no system turn) and pins the output shape with
@@ -129,6 +149,113 @@ def parse_verdict(raw: str) -> EvaluatorResponsePayload:
         spans.append((label.start(), label.end()))
     explanation = _clean_explanation(text, *spans)
     return EvaluatorResponsePayload(value=value, explanation=explanation)
+
+
+# ── Categorical / numeric canonicalization (RES-978 §4a) ───────────────────────
+# instability.py only ever sees clean, canonical verdicts, so all the messy
+# "what did the judge actually emit" logic lives here. A completion that parses
+# but is off-contract (a non-K label, a non-number, a number outside the declared
+# scale) is a SURFACED `wrong_output_type` signal — recorded and shown to the
+# human as a target for eval improvement — never silently scored or bucketed.
+
+_WRONG_OUTPUT_TYPE = 'wrong_output_type'
+_OK = 'ok'
+# First numeric token: optional sign, digits, optional decimal via '.' or ','.
+_NUM_TOKEN = re.compile(r'[-+]?\d+(?:[.,]\d+)?')
+
+
+@dataclass
+class ParsedVerdict:
+    """A canonical categorical/numeric verdict, or an off-contract signal.
+
+    `status` is `ok` (`value` is a clean canonical verdict — the declared label
+    string, or a float) or `wrong_output_type` (`value` is None; the completion
+    parsed but violated the contract).
+    """
+
+    status: str
+    value: str | float | None
+    explanation: str = ''
+
+
+def _loads_obj(text: str) -> dict[str, Any] | None:
+    """Best-effort parse of a JSON object from a fence-stripped completion."""
+    try:
+        obj = json.loads(text)
+    except Exception:  # noqa: BLE001 — free text is the expected fallback
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _freetext_candidate(text: str) -> str:
+    """The label-ish token a free-text judge emitted.
+
+    Prefers the text after the last `Value:`/`Verdict:`/`Answer:` label (the
+    verdict is emitted last); otherwise the last non-empty line.
+    """
+    label: re.Match[str] | None = None
+    for lm in _VALUE_LABEL.finditer(text):
+        label = lm
+    if label is not None:
+        tail = text[label.end():].strip().splitlines()
+        if tail and tail[0].strip():
+            return tail[0].strip()
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    return lines[-1] if lines else text.strip()
+
+
+def parse_categorical(raw: str, labels: Sequence[str]) -> ParsedVerdict:
+    """Canonicalize a categorical completion: casefold+strip, exact one-of-K.
+
+    Matches the emitted label against the declared set case-insensitively and
+    returns the DECLARED label (so K-counting groups on the contract's own
+    spelling). No fuzzy/substring matching — merging `abuse` with `abuse (severe)`
+    would corrupt K and inflate entropy far worse than a visible miss — so a
+    non-match is `wrong_output_type`, never a new bucket.
+    """
+    text = _strip_code_fences((raw or '').strip()).strip()
+    obj = _loads_obj(text)
+    if obj is not None and 'value' in obj:
+        candidate = str(obj.get('value', ''))
+        explanation = str(obj.get('explanation', '') or '')
+    else:
+        candidate = _freetext_candidate(text)
+        explanation = ''
+    key = candidate.casefold().strip()
+    for declared in labels:
+        if declared.casefold().strip() == key:
+            return ParsedVerdict(_OK, declared, explanation)
+    return ParsedVerdict(_WRONG_OUTPUT_TYPE, None, explanation or candidate)
+
+
+def parse_numeric(raw: str, scale: tuple[float, float] | None = None) -> ParsedVerdict:
+    """Canonicalize a numeric completion: first numeric token, `,`/`.` normalized.
+
+    A single `,` with no `.` is a decimal separator (`3,4` → `3.4`); this does NOT
+    disambiguate thousands separators (`3,400`), which bounded eval scores never
+    take (§4a, documented limit). Not a number → `wrong_output_type`; when a scale
+    is set, a value outside `[scale_min, scale_max]` is off-contract too.
+    """
+    text = _strip_code_fences((raw or '').strip()).strip()
+    obj = _loads_obj(text)
+    explanation = ''
+    if obj is not None and isinstance(obj.get('value'), (int, float)) and not isinstance(obj.get('value'), bool):
+        number = float(obj['value'])
+        explanation = str(obj.get('explanation', '') or '')
+    else:
+        match = _NUM_TOKEN.search(text)
+        if match is None:
+            return ParsedVerdict(_WRONG_OUTPUT_TYPE, None, text[:200])
+        token = match.group(0)
+        if token.count(',') == 1 and '.' not in token:
+            token = token.replace(',', '.')
+        try:
+            number = float(token)
+        except ValueError:
+            return ParsedVerdict(_WRONG_OUTPUT_TYPE, None, token)
+    if scale is not None and not (scale[0] <= number <= scale[1]):
+        return ParsedVerdict(_WRONG_OUTPUT_TYPE, None, explanation or str(number))
+    return ParsedVerdict(_OK, number, explanation)
 
 
 @dataclass
