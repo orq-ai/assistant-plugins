@@ -76,13 +76,14 @@ unchanged. See `lib/model_backend.py`.
 
 ```bash
 cd skills/orq-evaluator-alignment
-uv run pytest tests/test_pipeline.py -q -p no:langsmith_plugin
+uv run pytest tests/test_pipeline.py -q
 ```
 
-> **Windows note.** The `-p no:langsmith_plugin` flag is required here: the
-> autoloaded langsmith pytest plugin imports the SSL stack, which aborts the
-> process on this host (the OpenSSL Applink crash, project memory). Disabling
-> that one plugin avoids it. `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` also works.
+> **Windows note.** Only in a fully extra'd research monorepo: an autoloaded
+> third-party pytest plugin there imports the SSL stack, which aborts the process
+> on this host (the OpenSSL Applink crash, project memory). If you hit that, run
+> with `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` to skip plugin autoload. A plain skill
+> install pulls none of that, so you won't need the flag.
 
 The test runs the full pipeline (stability → metrics → build_queue →
 annotation-load → recommend → aggregate → rewrite) on a 3-row synthetic fixture
