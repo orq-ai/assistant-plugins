@@ -31,14 +31,21 @@ The manifest registers the skills folder and the `orq-workspace` MCP server auto
 
 ### Personal install — use the plugin outside this repo
 
-```bash
-# Clone the repo into Codex's personal plugins dir — the repo root is the
-# plugin root (.codex-plugin/plugin.json, skills/, .mcp.json)
-mkdir -p ~/.codex/plugins
-git clone https://github.com/orq-ai/orq-skills.git ~/.codex/plugins/orq
+The repo root is the plugin root (`.codex-plugin/plugin.json`, `skills/`, `.mcp.json`), so point the marketplace at any checkout — including the one you already have, which keeps local edits live:
 
-# Reference it in your personal marketplace (use an absolute path —
-# tilde expansion is not guaranteed inside JSON string values)
+```bash
+# Reuse the checkout you already have (local edits stay live):
+plugin_dir=$(pwd)
+
+# ...or clone a fresh copy into Codex's personal plugins dir:
+mkdir -p ~/.codex/plugins
+git clone https://github.com/orq-ai/assistant-plugins.git ~/.codex/plugins/orq
+plugin_dir=~/.codex/plugins/orq
+```
+
+Then reference it in your personal marketplace. The path must be absolute — tilde expansion is not guaranteed inside JSON string values, and `$plugin_dir` above is already absolute either way:
+
+```bash
 mkdir -p ~/.agents/plugins
 cat > ~/.agents/plugins/marketplace.json <<JSON
 {
@@ -46,7 +53,7 @@ cat > ~/.agents/plugins/marketplace.json <<JSON
   "plugins": [
     {
       "name": "orq",
-      "source": { "source": "local", "path": "$HOME/.codex/plugins/orq" }
+      "source": { "source": "local", "path": "$plugin_dir" }
     }
   ]
 }

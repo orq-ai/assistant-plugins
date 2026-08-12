@@ -7,7 +7,7 @@
     "url": "https://orq.ai"
   },
   "homepage": "https://orq.ai",
-  "repository": "https://github.com/orq-ai/orq-skills",
+  "repository": "https://github.com/orq-ai/assistant-plugins",
   "license": "MIT",
   "keywords": ["orq", "llm", "agents", "prompts", "deployments", "evaluation", "monitoring", "rag", "experiments", "traces"],
   "skills": "./skills/",

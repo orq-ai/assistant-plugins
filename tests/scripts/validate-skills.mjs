@@ -26,10 +26,19 @@ const err = (msg) => { console.error(`ERROR: ${msg}`); errors++; };
 const warn = (msg) => { console.error(`warn: ${msg}`); };
 
 // JSON.parse with the filename in the error instead of a raw SyntaxError stack.
+// The read is inside the try too: a missing manifest is a reportable error, not
+// a Node ENOENT dump.
 const readJson = (path) => {
-  const text = readFileSync(path, "utf8");
-  try { return JSON.parse(text); }
+  let text;
+  try { text = readFileSync(path, "utf8"); }
+  catch (e) { err(`${relative(root, path)}: cannot read — ${e.code ?? e.message}`); return null; }
+  let parsed;
+  try { parsed = JSON.parse(text); }
   catch (e) { err(`${relative(root, path)}: invalid JSON — ${e.message}`); return null; }
+  // A bare `null` body parses clean and is indistinguishable from the failure
+  // return above, so every caller would silently skip its checks. Reject it here.
+  if (parsed === null) { err(`${relative(root, path)}: contains a bare null, not a JSON object`); return null; }
+  return parsed;
 };
 
 // ---------- helpers ----------
@@ -135,7 +144,10 @@ const SPEC_FIELDS = new Set(["$schema", "name", "version", "description", "autho
   "homepage", "repository", "license", "keywords", "extensions"]);
 const SPEC_NAME_RE = /^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/;
 const rootManifest = readJson(join(root, "plugin.json"));
-if (rootManifest) {
+// An array or a primitive body also parses clean and is not a manifest.
+if (rootManifest !== null && (typeof rootManifest !== "object" || Array.isArray(rootManifest))) {
+  err(`plugin.json: top level must be a JSON object, got ${Array.isArray(rootManifest) ? "array" : typeof rootManifest}`);
+} else if (rootManifest) {
   if (rootManifest.$schema !== SPEC_SCHEMA)
     err(`plugin.json: $schema is '${rootManifest.$schema}', spec 1.0.0 requires '${SPEC_SCHEMA}'`);
   if (typeof rootManifest.name !== "string" || !SPEC_NAME_RE.test(rootManifest.name) || rootManifest.name.length > 64)
@@ -145,7 +157,10 @@ if (rootManifest) {
       err(`plugin.json: unknown top-level field '${key}' — the 1.0.0 manifest schema is closed`);
 
   // Spec §7.1 discovery: every immediate child of skills/ holding a regular
-  // SKILL.md is one skill; a conformant client must find exactly the shipped set.
+  // SKILL.md is one skill; a conformant client must find exactly the shipped
+  // set. Belt-and-braces — section 1 already pairs lock keys with skill dirs
+  // both ways and section 3 fails on a missing SKILL.md, so this restates the
+  // invariant in the spec's own terms rather than adding an independent one.
   const discovered = skillDirs.filter((name) => {
     try { return statSync(join(root, "skills", name, "SKILL.md")).isFile(); }
     catch { return false; }

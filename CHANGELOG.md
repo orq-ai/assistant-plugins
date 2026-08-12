@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Manifest version sync now covers the root `plugin.json` alongside the three per-harness manifests.
 
 ### Removed
-- `plugins/orq/` — a duplicate Codex surface wired to the repo root via symlinks that escaped its own plugin root (spec §4.1 violation). The repo root is now the single plugin root; never the canonical surface, so this is not a breaking change.
+- `plugins/orq/` — a duplicate Codex surface wired to the repo root via symlinks that escaped its own plugin root (spec §4.1 violation). The repo root is now the single *orq skills* plugin root; `plugins/trace-hooks/` remains a separate, independently versioned Claude Code plugin. `plugins/orq` was never the canonical surface, so removing it is not a breaking change.
 
 ## [2.2.3] - 2026-08-07
 
