@@ -114,7 +114,7 @@ assert_jq .mcp.json '.mcpServers["orq-workspace"].headers.Authorization == "Bear
 assert_jq .agents/plugins/marketplace.json '.name == "orq-marketplace"' \
   "Marketplace name must be 'orq-marketplace'"
 assert_jq .agents/plugins/marketplace.json \
-  'any(.plugins[]; .name == "orq" and .source.source == "local" and .source.path == "." and .policy.installation == "INSTALLED_BY_DEFAULT" and .policy.authentication == "ON_INSTALL" and .category == "Productivity")' \
+  'any(.plugins[]; .name == "orq" and .source.source == "local" and .source.path == "./" and .policy.installation == "INSTALLED_BY_DEFAULT" and .policy.authentication == "ON_INSTALL" and .category == "Productivity")' \
   "Marketplace must contain orq plugin with correct source, policy, and category"
 
 # --- Symlink integrity ---

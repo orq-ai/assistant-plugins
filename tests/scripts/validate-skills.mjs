@@ -8,12 +8,15 @@
 //   3. SKILL.md frontmatter is loadable and consistent with its directory,
 //      including full length of folded (>-style) descriptions
 //   4. content-pattern lint on public files
+//   5. no tracked SKILL.md outside skills/
+//   6. spec §4.1 — every tracked symlink resolves inside the plugin root
+//   7. the repo root is the only Agent Plugins root
 // Errors fail the run; warnings don't. Run from anywhere in the repo.
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { join, relative, dirname, basename, sep } from "node:path";
+import { join, relative, dirname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Optional positional arg points the checks at another repo-shaped tree, so
@@ -128,12 +131,14 @@ const manifests = [
   ".codex-plugin/plugin.json",
   ".cursor-plugin/plugin.json",
 ];
-// Parse once and keep the objects: sections 2b and 7 need them too, and a
-// second readJson would report an unreadable file twice.
-const manifestEntries = new Map(
-  manifests.map((m) => [m, readJson(join(root, m))]).filter(([, json]) => json !== null),
-);
-const versions = [...manifestEntries].map(([m, json]) => ({ m, v: json?.version }));
+// Parse once and keep the objects: sections 2b and 7 read these too, and a
+// second readJson would report an unreadable file twice. Failures stay in the
+// map as null so that holds for them as well — filtering here would send
+// exactly the already-reported files back through readJson in section 7.
+const manifestEntries = new Map(manifests.map((m) => [m, readJson(join(root, m))]));
+const versions = [...manifestEntries]
+  .filter(([, json]) => json !== null)
+  .map(([m, json]) => ({ m, v: json.version }));
 const [reference, ...rest] = versions;
 for (const { m, v } of rest)
   // Name the manifest the reference version actually came from — with
@@ -204,10 +209,12 @@ for (const file of lintTargets) {
 // still apply to a plain directory (e.g. a test fixture).
 let tracked = [];
 try {
-  tracked = execFileSync("git", ["ls-files"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
-    .split("\n").filter(Boolean);
+  // -z: without it git C-quotes any path with non-ASCII, quote, backslash or
+  // newline bytes, and every check below silently skips that file.
+  tracked = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+    .split("\0").filter(Boolean);
 } catch {
-  warn(`not a git checkout (${root}) — skipping the stray-tracked-skill check`);
+  warn(`not a git checkout (${root}) — skipping the tracked-file checks`);
 }
 for (const f of tracked) {
   if (!f.endsWith("/SKILL.md")) continue;
@@ -245,9 +252,7 @@ for (const f of tracked) {
 // in a client-specific format, and adding another harness must not trip this.
 const SPEC_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 for (const f of tracked) {
-  if (f === "plugin.json" || basename(f) !== "plugin.json") continue;
-  // Reuse the already-parsed copy where there is one; only unlisted manifests
-  // (a newly added harness) cost a read.
+  if (!f.endsWith("/plugin.json")) continue;
   const m = manifestEntries.has(f) ? manifestEntries.get(f) : readJson(join(root, f));
   if (m && typeof m === "object" && m.$schema === SPEC_SCHEMA)
     err(`nested Agent Plugins manifest: ${f} — the repo root must be the only plugin root`);

@@ -5,7 +5,7 @@ Two paths:
 - **Bundled plugin** — skills + MCP via the Codex marketplace.
 - **Separate** — `npx skills` for skills, `~/.codex/config.toml` for MCP.
 
-> **Agent Plugins 1.0.0:** the repo root is also a portable [Agent Plugins](https://agent-plugins.org) plugin. If your Codex build reads root `plugin.json`, it discovers the same `skills/` — but MCP is not portable yet, so pair it with the standalone MCP setup below. See [Agent Plugins 1.0.0 clients](../README.md#agent-plugins-100-clients).
+> **Agent Plugins 1.0.0 client?** The repo root is also a portable plugin — see [Agent Plugins 1.0.0 clients](../README.md#agent-plugins-100-clients).
 
 Make sure `ORQ_API_KEY` is exported (see [Prerequisites](../README.md#prerequisites)).
 
@@ -33,37 +33,35 @@ The manifest registers the skills folder and the `orq-workspace` MCP server auto
 
 ### Personal install — use the plugin outside this repo
 
-The repo root is the plugin root (`.codex-plugin/plugin.json`, `skills/`, `.mcp.json`), so point the marketplace at any checkout — including the one you already have, which keeps local edits live:
+The repo root is the plugin root (`.codex-plugin/plugin.json`, `skills/`, `.mcp.json`), so the personal install is a clone plus a marketplace entry pointing at it.
 
-Either reuse the checkout you already have, from its root (local edits stay live):
-
-```bash
-plugin_dir=$(pwd)
-```
-
-Or clone a fresh copy into Codex's personal plugins dir:
+[Codex resolves `source.path` relative to the marketplace root](https://developers.openai.com/codex/plugins/build) — for a personal marketplace that root is your home directory — and requires the path to start with `./` and stay inside that root. An absolute path, or one that escapes the root, is silently ignored: the marketplace still lists, but no plugin loads. So the clone has to live under `$HOME`:
 
 ```bash
 mkdir -p ~/.codex/plugins
 git clone https://github.com/orq-ai/assistant-plugins.git ~/.codex/plugins/orq
-plugin_dir=~/.codex/plugins/orq
-```
 
-Then reference it in your personal marketplace. The path must be absolute — tilde expansion is not guaranteed inside JSON string values, and `$plugin_dir` above is already absolute either way:
-
-```bash
 mkdir -p ~/.agents/plugins
-cat > ~/.agents/plugins/marketplace.json <<JSON
+cat > ~/.agents/plugins/marketplace.json <<'JSON'
 {
   "name": "personal",
   "plugins": [
     {
       "name": "orq",
-      "source": { "source": "local", "path": "$plugin_dir" }
+      "source": { "source": "local", "path": "./.codex/plugins/orq" }
     }
   ]
 }
 JSON
+```
+
+> Writing `~/.agents/plugins/marketplace.json` replaces any personal marketplace you already have. If the file exists, add the `orq` entry to its `plugins` array by hand instead.
+
+To run from a checkout elsewhere and keep local edits live, symlink it into place — the marketplace entry stays the same:
+
+```bash
+mkdir -p ~/.codex/plugins
+ln -s "$(pwd)" ~/.codex/plugins/orq
 ```
 
 Restart Codex. See the [Codex plugin docs](https://developers.openai.com/codex/plugins/build) for the full plugin spec.
