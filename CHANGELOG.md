@@ -16,7 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Manifest version sync now covers the root `plugin.json` alongside the three per-harness manifests.
 
 ### Removed
-- `plugins/orq/` — a duplicate Codex surface wired to the repo root via symlinks that escaped its own plugin root (spec §4.1 violation). The repo root is now the single *orq skills* plugin root; `plugins/trace-hooks/` remains a separate, independently versioned Claude Code plugin. `plugins/orq` was never the canonical surface, so removing it is not a breaking change.
+- `plugins/orq/` — a duplicate Codex surface wired to the repo root via symlinks that escaped its own plugin root (spec §4.1 violation). The repo root is now the single *orq skills* plugin root; `plugins/trace-hooks/` remains a separate, independently versioned Claude Code plugin. It was the documented target of the Codex personal install (`cp -rL plugins/orq …`), so `docs/install-codex.md` moves to the repo root in the same release; existing installs are unaffected, which is why this is MINOR rather than MAJOR.
+
+### Note
+- This release does **not** reduce the number of hand-maintained manifests. The `plugins/orq` manifest it removes was a symlink and could not drift, so the count goes from three to four (the new root `plugin.json`). Consolidation happens when the per-harness manifests are removed — see the `extensions` blocker in `CLAUDE.md`.
 
 ## [2.2.3] - 2026-08-07
 

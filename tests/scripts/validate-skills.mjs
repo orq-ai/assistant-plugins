@@ -12,8 +12,8 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join, relative, dirname } from "node:path";
+import { lstatSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { join, relative, dirname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Optional positional arg points the checks at another repo-shaped tree, so
@@ -128,47 +128,28 @@ const manifests = [
   ".codex-plugin/plugin.json",
   ".cursor-plugin/plugin.json",
 ];
-const versions = manifests
+// Parse once and keep the objects: section 2b reads the root manifest too, and
+// a second readJson would report an unreadable file twice.
+const parsed = manifests
   .map((m) => ({ m, json: readJson(join(root, m)) }))
-  .filter(({ json }) => json !== null)
-  .map(({ m, json }) => ({ m, v: json.version }));
-const canonical = versions[0]?.v;
+  .filter(({ json }) => json !== null);
+const versions = parsed.map(({ m, json }) => ({ m, v: json?.version }));
+const canonical = versions[0];
 for (const { m, v } of versions.slice(1))
-  if (v !== canonical) err(`manifest version drift: ${m} has ${v}, ${manifests[0]} has ${canonical}`);
+  // Name the manifest `canonical` actually came from — with plugin.json absent
+  // that is not manifests[0], and blaming a missing file sends you hunting.
+  if (v !== canonical.v) err(`manifest version drift: ${m} has ${v}, ${canonical.m} has ${canonical.v}`);
 
-// ---------- 2b. root plugin.json conforms to Agent Plugins 1.0.0 ----------
-// Field-level checks mirroring the published plugin.schema.json (closed
-// schema, required $schema + name, name pattern from spec §5.5).
+// ---------- 2b. root plugin.json is a usable manifest ----------
+// Full Agent Plugins 1.0.0 field validation is the vendored schema's job —
+// `ajv` runs it in CI against tests/schemas/agent-plugins-1.0.0.plugin.schema.json.
+// Duplicating its rules here produced a strictly weaker copy that accepted
+// `"author": "orq.ai"` and a non-string `version`. What stays is the shape
+// assumption the version-sync check above depends on: a non-null JSON object.
 const SPEC_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
-const SPEC_FIELDS = new Set(["$schema", "name", "version", "description", "author",
-  "homepage", "repository", "license", "keywords", "extensions"]);
-const SPEC_NAME_RE = /^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/;
-const rootManifest = readJson(join(root, "plugin.json"));
-// An array or a primitive body also parses clean and is not a manifest.
-if (rootManifest !== null && (typeof rootManifest !== "object" || Array.isArray(rootManifest))) {
+const rootManifest = parsed.find(({ m }) => m === "plugin.json")?.json ?? null;
+if (rootManifest !== null && (typeof rootManifest !== "object" || Array.isArray(rootManifest)))
   err(`plugin.json: top level must be a JSON object, got ${Array.isArray(rootManifest) ? "array" : typeof rootManifest}`);
-} else if (rootManifest) {
-  if (rootManifest.$schema !== SPEC_SCHEMA)
-    err(`plugin.json: $schema is '${rootManifest.$schema}', spec 1.0.0 requires '${SPEC_SCHEMA}'`);
-  if (typeof rootManifest.name !== "string" || !SPEC_NAME_RE.test(rootManifest.name) || rootManifest.name.length > 64)
-    err(`plugin.json: name '${rootManifest.name}' violates the spec §5.5 name constraints`);
-  for (const key of Object.keys(rootManifest))
-    if (!SPEC_FIELDS.has(key))
-      err(`plugin.json: unknown top-level field '${key}' — the 1.0.0 manifest schema is closed`);
-
-  // Spec §7.1 discovery: every immediate child of skills/ holding a regular
-  // SKILL.md is one skill; a conformant client must find exactly the shipped
-  // set. Belt-and-braces — section 1 already pairs lock keys with skill dirs
-  // both ways and section 3 fails on a missing SKILL.md, so this restates the
-  // invariant in the spec's own terms rather than adding an independent one.
-  const discovered = skillDirs.filter((name) => {
-    try { return statSync(join(root, "skills", name, "SKILL.md")).isFile(); }
-    catch { return false; }
-  });
-  const shipped = Object.keys(lock.skills ?? {}).length;
-  if (discovered.length !== shipped)
-    err(`spec §7.1 discovery mismatch: ${discovered.length} skills/*/SKILL.md found, skills-lock.json ships ${shipped}`);
-}
 
 // ---------- 3. frontmatter consistency ----------
 for (const name of skillDirs) {
@@ -233,8 +214,43 @@ try {
 }
 for (const f of tracked) {
   if (!f.endsWith("/SKILL.md")) continue;
-  if (!f.startsWith("skills/") && !f.startsWith("plugins/"))
+  if (!f.startsWith("skills/"))
     err(`stray tracked skill outside skills/: ${f} — installers will ship it`);
+}
+
+// ---------- 6. spec §4.1 path containment ----------
+// Every path a client resolves must stay inside the plugin root. Symlinks are
+// allowed to point within it (§4.1), so resolve each tracked link fully —
+// realpathSync follows the whole chain, including a final component that is
+// itself a link, and throws on a dangling target. Resolving only the parent
+// directory and appending the last component would accept both `a/../..` and
+// links to nowhere. Uses the same `tracked` list and the same skip-when-not-a-
+// checkout policy as section 5.
+const rootPhys = realpathSync(root);
+for (const f of tracked) {
+  let stat;
+  try { stat = lstatSync(join(root, f)); } catch { continue; }
+  if (!stat.isSymbolicLink()) continue;
+  let resolved;
+  try { resolved = realpathSync(join(root, f)); }
+  catch (e) { err(`symlink ${f} does not resolve (${e.code ?? e.message})`); continue; }
+  if (resolved !== rootPhys && !resolved.startsWith(rootPhys + sep))
+    err(`symlink ${f} resolves outside the plugin root: ${resolved}`);
+}
+
+// ---------- 7. one Agent Plugins root ----------
+// Section 6 measures containment against the repo root, which is the right
+// yardstick only while the repo root is the sole Agent Plugins root. A nested
+// one would re-create the plugins/orq escape this release removed: its symlinks
+// stayed inside the repo while leaving their own plugin root.
+// Identified by the manifest's own $schema, not by filename — .claude-plugin,
+// .codex-plugin, .cursor-plugin and plugins/trace-hooks all ship a plugin.json
+// in a client-specific format, and adding another harness must not trip this.
+for (const f of tracked) {
+  if (f === "plugin.json" || !f.endsWith("plugin.json")) continue;
+  const m = readJson(join(root, f));
+  if (m && typeof m === "object" && m.$schema === SPEC_SCHEMA)
+    err(`nested Agent Plugins manifest: ${f} — the repo root must be the only plugin root`);
 }
 
 // ---------- result ----------

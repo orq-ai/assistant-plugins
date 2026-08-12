@@ -15,8 +15,8 @@ Repo root doubles as Cursor plugin (`.cursor-plugin/plugin.json` declares `./ski
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/orq-ai/orq-skills.git
-cd orq-skills
+git clone https://github.com/orq-ai/assistant-plugins.git
+cd assistant-plugins
 
 # 2. Symlink into Cursor's local plugins directory
 mkdir -p ~/.cursor/plugins/local
@@ -28,7 +28,7 @@ Restart Cursor (or run **Developer: Reload Window**).
 ## Option B: Skills only (npx)
 
 ```bash
-npx skills add orq-ai/orq-skills
+npx skills add orq-ai/assistant-plugins
 ```
 
 Writes skills to `.cursor/rules/`. Then add the MCP server separately (see below).

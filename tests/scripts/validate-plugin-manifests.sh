@@ -126,52 +126,11 @@ assert_symlink "mcp.json" ".mcp.json"
 assert_symlink ".claude-plugin/.mcp.json" "../.mcp.json"
 assert_symlink ".claude-plugin/skills" "../skills"
 
-# --- Path containment (spec §4.1): every tracked symlink resolves inside the repo root ---
-
-# Run git outside the process substitution below: `set -e` does not inspect the
-# exit status of `<(...)`, so a failing `git ls-files` (dubious ownership, not a
-# checkout) would feed the loop zero lines and pass silently.
-git ls-files -s >/dev/null
-
-# The repo root is the one plugin root (see the stray-manifest check below), so
-# containment is measured against it. Physical paths on both sides: a symlinked
-# parent directory must not be able to mask an escape.
-root_phys="$(cd "$ROOT_DIR" && pwd -P)"
-
-while IFS= read -r link; do
-  target="$(readlink "$link")"
-  # An absolute target is resolved as-is; a relative one against the link's dir.
-  case "$target" in
-    /*) target_dir="$(dirname "$target")" ;;
-    *)  target_dir="$(dirname "$link")/$(dirname "$target")" ;;
-  esac
-  if ! resolved_dir="$(cd "$target_dir" 2>/dev/null && pwd -P)"; then
-    echo "FAIL: symlink $link -> $target does not resolve"
-    exit 1
-  fi
-  case "$resolved_dir/$(basename "$target")" in
-    "$root_phys"/*) ;;
-    *)
-      echo "FAIL: symlink $link resolves outside the plugin root: $resolved_dir/$(basename "$target")"
-      exit 1
-      ;;
-  esac
-done < <(git ls-files -s | awk -F'\t' '$1 ~ /^120000 / {print $2}')
-
-# --- One plugin root: no stray manifests ---
-
-# The containment check above measures against the repo root, which is only the
-# right yardstick while the repo root is the sole Agent Plugins root. A nested
-# manifest would re-create the plugins/orq escape this release removed — its
-# symlinks stayed inside the repo while leaving their own plugin root.
-# plugins/trace-hooks is a Claude Code plugin (.claude-plugin/plugin.json), not
-# an Agent Plugins root, so it does not count.
-stray="$(git ls-files -- '*/plugin.json' ':!:.claude-plugin/plugin.json' ':!:.codex-plugin/plugin.json' ':!:.cursor-plugin/plugin.json' ':!:plugins/trace-hooks/.claude-plugin/plugin.json')"
-if [[ -n "$stray" ]]; then
-  echo "FAIL: nested plugin manifest(s) found — the repo root must be the only Agent Plugins root"
-  echo "$stray" | sed 's/^/  /'
-  exit 1
-fi
+# Spec §4.1 path containment and the "one Agent Plugins root" rule are enforced
+# in validate-skills.mjs (sections 6 and 7), next to the tracked-file walk they
+# reuse. Resolving a symlink correctly needs realpath semantics — a bash version
+# that resolved the parent directory and appended the last component accepted
+# both `a/../..` and dangling targets.
 
 # --- Claude Cowork Desktop: symlinks resolve to real targets ---
 

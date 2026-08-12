@@ -20,8 +20,8 @@ Codex reads marketplace manifests from:
 > **Windows:** Git symlinks require `core.symlinks=true` and either Developer Mode or Admin privileges. Without this, symlinked files are checked out as plain text and plugin resolution silently breaks. Run `git config --global core.symlinks true` before cloning, and enable [Windows Developer Mode](https://learn.microsoft.com/en-us/windows/apps/get-started/enable-your-device-for-development).
 
 ```bash
-git clone https://github.com/orq-ai/orq-skills.git
-cd orq-skills
+git clone https://github.com/orq-ai/assistant-plugins.git
+cd assistant-plugins
 
 # Launch Codex from the repo root so it picks up .agents/plugins/marketplace.json
 codex
@@ -65,7 +65,7 @@ Restart Codex. See the [Codex plugin docs](https://developers.openai.com/codex/p
 ## Option B: Skills only (npx)
 
 ```bash
-npx skills add orq-ai/orq-skills
+npx skills add orq-ai/assistant-plugins
 ```
 
 Then register the MCP server separately (see below).

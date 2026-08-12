@@ -18,6 +18,12 @@ jobs:
           node-version: 20
       - name: Validate plugin manifests
         run: tests/scripts/validate-plugin-manifests.sh
+      - name: Validate root plugin.json against the vendored Agent Plugins 1.0.0 schema
+        # The schema is vendored, not fetched: spec §5.2 forbids clients
+        # retrieving a schema while loading a plugin, and a CI check should not
+        # depend on agent-plugins.org being up. ajv itself comes from npx, the
+        # same zero-install pattern the install-sanity job below uses.
+        run: npx -y ajv-cli@5 validate --spec=draft2020 -s tests/schemas/agent-plugins-1.0.0.plugin.schema.json -d plugin.json
       - name: Validate skills (frontmatter, lock invariants + hash freshness, version sync, content patterns)
         run: node tests/scripts/validate-skills.mjs
       - name: Self-test the validator (a stale lock hash must fail the run)

@@ -3,8 +3,8 @@
 Use when you want to run the plugin from a local checkout (e.g. for development).
 
 ```bash
-git clone https://github.com/orq-ai/orq-skills.git
-cd orq-skills
+git clone https://github.com/orq-ai/assistant-plugins.git
+cd assistant-plugins
 claude --plugin-dir .
 ```
 
