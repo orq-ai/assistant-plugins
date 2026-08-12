@@ -3,8 +3,8 @@
 //   1. skills-lock.json <-> skills/ directories, both directions, with hash freshness
 //      (recomputes every computedHash and fails on drift)
 //   2. the four plugin manifests agree on one version, and the root
-//      plugin.json conforms to Agent Plugins 1.0.0 (closed field set,
-//      name constraints, skills/ discovery matches the lock)
+//      plugin.json is a usable object (its Agent Plugins 1.0.0 field rules
+//      are ajv's job — see the vendored schema in tests/schemas/)
 //   3. SKILL.md frontmatter is loadable and consistent with its directory,
 //      including full length of folded (>-style) descriptions
 //   4. content-pattern lint on public files
@@ -13,7 +13,7 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { join, relative, dirname, sep } from "node:path";
+import { join, relative, dirname, basename, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Optional positional arg points the checks at another repo-shaped tree, so
@@ -128,26 +128,23 @@ const manifests = [
   ".codex-plugin/plugin.json",
   ".cursor-plugin/plugin.json",
 ];
-// Parse once and keep the objects: section 2b reads the root manifest too, and
-// a second readJson would report an unreadable file twice.
-const parsed = manifests
-  .map((m) => ({ m, json: readJson(join(root, m)) }))
-  .filter(({ json }) => json !== null);
-const versions = parsed.map(({ m, json }) => ({ m, v: json?.version }));
-const canonical = versions[0];
-for (const { m, v } of versions.slice(1))
-  // Name the manifest `canonical` actually came from — with plugin.json absent
-  // that is not manifests[0], and blaming a missing file sends you hunting.
-  if (v !== canonical.v) err(`manifest version drift: ${m} has ${v}, ${canonical.m} has ${canonical.v}`);
+// Parse once and keep the objects: sections 2b and 7 need them too, and a
+// second readJson would report an unreadable file twice.
+const manifestEntries = new Map(
+  manifests.map((m) => [m, readJson(join(root, m))]).filter(([, json]) => json !== null),
+);
+const versions = [...manifestEntries].map(([m, json]) => ({ m, v: json?.version }));
+const [reference, ...rest] = versions;
+for (const { m, v } of rest)
+  // Name the manifest the reference version actually came from — with
+  // plugin.json absent that is not manifests[0], and blaming a missing file
+  // sends you hunting for it.
+  if (v !== reference.v) err(`manifest version drift: ${m} has ${v}, ${reference.m} has ${reference.v}`);
 
 // ---------- 2b. root plugin.json is a usable manifest ----------
-// Full Agent Plugins 1.0.0 field validation is the vendored schema's job —
-// `ajv` runs it in CI against tests/schemas/agent-plugins-1.0.0.plugin.schema.json.
-// Duplicating its rules here produced a strictly weaker copy that accepted
-// `"author": "orq.ai"` and a non-string `version`. What stays is the shape
-// assumption the version-sync check above depends on: a non-null JSON object.
-const SPEC_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
-const rootManifest = parsed.find(({ m }) => m === "plugin.json")?.json ?? null;
+// Its 1.0.0 field rules are ajv's job (vendored schema, run in CI); only the
+// shape the version check above assumes is asserted here.
+const rootManifest = manifestEntries.get("plugin.json") ?? null;
 if (rootManifest !== null && (typeof rootManifest !== "object" || Array.isArray(rootManifest)))
   err(`plugin.json: top level must be a JSON object, got ${Array.isArray(rootManifest) ? "array" : typeof rootManifest}`);
 
@@ -246,9 +243,12 @@ for (const f of tracked) {
 // Identified by the manifest's own $schema, not by filename — .claude-plugin,
 // .codex-plugin, .cursor-plugin and plugins/trace-hooks all ship a plugin.json
 // in a client-specific format, and adding another harness must not trip this.
+const SPEC_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 for (const f of tracked) {
-  if (f === "plugin.json" || !f.endsWith("plugin.json")) continue;
-  const m = readJson(join(root, f));
+  if (f === "plugin.json" || basename(f) !== "plugin.json") continue;
+  // Reuse the already-parsed copy where there is one; only unlisted manifests
+  // (a newly added harness) cost a read.
+  const m = manifestEntries.has(f) ? manifestEntries.get(f) : readJson(join(root, f));
   if (m && typeof m === "object" && m.$schema === SPEC_SCHEMA)
     err(`nested Agent Plugins manifest: ${f} — the repo root must be the only plugin root`);
 }

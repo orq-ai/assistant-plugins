@@ -9,17 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Root `plugin.json` conforming to [Agent Plugins 1.0.0](https://github.com/agentplugins/agent-plugins-spec) — one portable manifest (`$schema`, closed field set) any spec-conformant client can load from the repo root. Skills ship from the fixed `skills/` location; `mcp.json` stays as-is for now (a 1.0.0 client disables MCP for the plugin and still loads skills; conformant MCP config is a follow-up).
-- CI now validates the root manifest against the 1.0.0 shape (canonical `$schema`, §5.5 name constraints, closed top-level field set), checks §7.1 skill discovery against `skills-lock.json`, and asserts every tracked symlink resolves inside the plugin root (§4.1 path containment).
+- CI validates the root manifest with `ajv` against `tests/schemas/agent-plugins-1.0.0.plugin.schema.json`, a vendored copy of the published 1.0.0 schema, and asserts every tracked symlink resolves inside the plugin root (§4.1 path containment). A nested manifest carrying the 1.0.0 `$schema` is rejected — the repo root must be the only Agent Plugins root.
 
 ### Changed
 - `.agents/plugins/marketplace.json` `source.path` now points at the repo root (`.`) instead of the removed `plugins/orq` copy.
 - Manifest version sync now covers the root `plugin.json` alongside the three per-harness manifests.
+- Install docs now name the repository `orq-ai/assistant-plugins` throughout; several still pointed at the pre-rename `orq-ai/orq-skills`, which worked only via GitHub's redirect.
+- This release does **not** reduce the number of hand-maintained manifests. The `plugins/orq` manifest it removes was a symlink and could not drift, so the count goes from three to four (the new root `plugin.json`). Consolidation happens when the per-harness manifests are removed — see the `extensions` blocker in `CLAUDE.md`.
 
 ### Removed
 - `plugins/orq/` — a duplicate Codex surface wired to the repo root via symlinks that escaped its own plugin root (spec §4.1 violation). The repo root is now the single *orq skills* plugin root; `plugins/trace-hooks/` remains a separate, independently versioned Claude Code plugin. It was the documented target of the Codex personal install (`cp -rL plugins/orq …`), so `docs/install-codex.md` moves to the repo root in the same release; existing installs are unaffected, which is why this is MINOR rather than MAJOR.
-
-### Note
-- This release does **not** reduce the number of hand-maintained manifests. The `plugins/orq` manifest it removes was a symlink and could not drift, so the count goes from three to four (the new root `plugin.json`). Consolidation happens when the per-harness manifests are removed — see the `extensions` blocker in `CLAUDE.md`.
 
 ## [2.2.3] - 2026-08-07
 

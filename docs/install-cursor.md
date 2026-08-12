@@ -5,6 +5,8 @@ Two paths:
 - **Bundled plugin** — skills + MCP in one step (clone + symlink).
 - **Separate** — `npx skills` for skills, manual JSON for MCP.
 
+> **Agent Plugins 1.0.0:** the repo root is also a portable [Agent Plugins](https://agent-plugins.org) plugin. If your Cursor build reads root `plugin.json` it discovers the same `skills/`, but that manifest carries no `displayName` (no client has published an `extensions` namespace yet), so the listing shows `orq` rather than `orq.ai`, and MCP is not portable yet. See [Agent Plugins 1.0.0 clients](../README.md#agent-plugins-100-clients).
+
 Make sure `ORQ_API_KEY` is exported (see [Prerequisites](../README.md#prerequisites)) — the MCP config references `${ORQ_API_KEY}`.
 
 ## Option A: Bundled plugin (skills + MCP)

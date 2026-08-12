@@ -5,6 +5,8 @@ Two paths:
 - **Bundled plugin** — skills + MCP via the Codex marketplace.
 - **Separate** — `npx skills` for skills, `~/.codex/config.toml` for MCP.
 
+> **Agent Plugins 1.0.0:** the repo root is also a portable [Agent Plugins](https://agent-plugins.org) plugin. If your Codex build reads root `plugin.json`, it discovers the same `skills/` — but MCP is not portable yet, so pair it with the standalone MCP setup below. See [Agent Plugins 1.0.0 clients](../README.md#agent-plugins-100-clients).
+
 Make sure `ORQ_API_KEY` is exported (see [Prerequisites](../README.md#prerequisites)).
 
 ## Option A: Bundled plugin (skills + MCP)
@@ -33,11 +35,15 @@ The manifest registers the skills folder and the `orq-workspace` MCP server auto
 
 The repo root is the plugin root (`.codex-plugin/plugin.json`, `skills/`, `.mcp.json`), so point the marketplace at any checkout — including the one you already have, which keeps local edits live:
 
-```bash
-# Reuse the checkout you already have (local edits stay live):
-plugin_dir=$(pwd)
+Either reuse the checkout you already have, from its root (local edits stay live):
 
-# ...or clone a fresh copy into Codex's personal plugins dir:
+```bash
+plugin_dir=$(pwd)
+```
+
+Or clone a fresh copy into Codex's personal plugins dir:
+
+```bash
 mkdir -p ~/.codex/plugins
 git clone https://github.com/orq-ai/assistant-plugins.git ~/.codex/plugins/orq
 plugin_dir=~/.codex/plugins/orq

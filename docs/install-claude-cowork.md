@@ -4,6 +4,8 @@
 
 This document explains how the plugin works with Claude Cowork and how it differs from the Claude Code (CLI) install.
 
+> **Agent Plugins 1.0.0:** the repo root also carries a portable [Agent Plugins](https://agent-plugins.org) manifest (`plugin.json` + `skills/`), which is a *second* manifest at a different location from the `.claude-plugin/` one described below. Cowork uses `.claude-plugin/plugin.json` and the symlinks documented here; the root manifest is for spec-conformant clients and does not change Cowork's resolution. See [Agent Plugins 1.0.0 clients](../README.md#agent-plugins-100-clients).
+
 ---
 
 ## How paths are resolved

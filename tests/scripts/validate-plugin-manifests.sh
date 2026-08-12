@@ -70,11 +70,8 @@ for file in "${json_files[@]}"; do
   fi
 done
 
-# The root manifest's field rules (canonical $schema, spec §5.5 name pattern,
-# closed 10-field set) live in validate-skills.mjs, in one place and one
-# language — expressing a closed field set and a lookahead regex in jq would
-# be a second, weaker copy. This script owns its existence and JSON validity,
-# asserted in the loop above.
+# Root plugin.json: existence and JSON validity above; its 1.0.0 field rules
+# are validated by ajv in CI against the vendored schema in tests/schemas/.
 
 # --- Codex manifest: name, skills, and MCP ---
 
@@ -126,11 +123,8 @@ assert_symlink "mcp.json" ".mcp.json"
 assert_symlink ".claude-plugin/.mcp.json" "../.mcp.json"
 assert_symlink ".claude-plugin/skills" "../skills"
 
-# Spec §4.1 path containment and the "one Agent Plugins root" rule are enforced
-# in validate-skills.mjs (sections 6 and 7), next to the tracked-file walk they
-# reuse. Resolving a symlink correctly needs realpath semantics — a bash version
-# that resolved the parent directory and appended the last component accepted
-# both `a/../..` and dangling targets.
+# Spec §4.1 containment and the one-plugin-root rule live in validate-skills.mjs
+# (sections 6-7): resolving a symlink correctly needs realpath semantics.
 
 # --- Claude Cowork Desktop: symlinks resolve to real targets ---
 
