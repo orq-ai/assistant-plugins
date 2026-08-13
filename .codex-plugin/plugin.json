@@ -1,13 +1,13 @@
 {
   "name": "orq",
-  "version": "2.2.3",
+  "version": "2.3.0",
   "description": "Agent skills for building, deploying, evaluating, and monitoring LLM pipelines on the orq.ai platform.",
   "author": {
     "name": "orq.ai",
     "url": "https://orq.ai"
   },
   "homepage": "https://orq.ai",
-  "repository": "https://github.com/orq-ai/orq-skills",
+  "repository": "https://github.com/orq-ai/assistant-plugins",
   "license": "MIT",
   "keywords": ["orq", "llm", "agents", "prompts", "deployments", "evaluation", "monitoring", "rag", "experiments", "traces"],
   "skills": "./skills/",

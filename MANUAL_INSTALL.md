@@ -3,13 +3,15 @@
 This page is for users who want to install orq-skills **without** the `npx skills` CLI, or who need to register the orq.ai MCP server on a tool other than Claude Code.
 
 If you're on Claude Code, you should use the [plugin install](README.md#option-a--claude-code-plugin-recommended) instead — it's one command.
-If you're on another MCP-capable agent, the easiest path is still `npx skills add orq-ai/orq-skills` followed by Part 2 below (MCP registration).
+If you're on another MCP-capable agent, the easiest path is still `npx skills add orq-ai/assistant-plugins` followed by Part 2 below (MCP registration).
 
 Use this document when:
 
 - The `skills` CLI doesn't support your tool yet
 - You want to symlink skills from a checkout for local development
 - You're debugging an install and want to see exactly where files should land
+
+> **Agent Plugins 1.0.0 clients:** the repo root is a portable [Agent Plugins](https://agent-plugins.org) plugin (`plugin.json` + `skills/`). If your tool supports the spec, register a clone of this repo directly and skip Part 1.
 
 ---
 
@@ -31,8 +33,8 @@ Skills are folders containing a `SKILL.md` file. Manual installation = copy (or 
 Start by cloning the repo somewhere persistent:
 
 ```bash
-git clone https://github.com/orq-ai/orq-skills.git
-cd orq-skills
+git clone https://github.com/orq-ai/assistant-plugins.git
+cd assistant-plugins
 ```
 
 ### Claude Code

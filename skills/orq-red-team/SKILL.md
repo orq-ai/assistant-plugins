@@ -8,7 +8,6 @@ description: >
   evaluators (use orq-build-evaluator) or analyze existing trace failures (use
   orq-analyze-trace-failures).
 allowed-tools: Bash(eq:*), Bash(jq:*), Bash(uv:*), Bash(curl:*), Read, Write, Edit, Grep, Glob, mcp__orq-workspace__search_entities, mcp__orq-workspace__get_agent
-disallowed-tools: mcp__orq-workspace__delete_skill, mcp__orq-workspace__delete_dataset, mcp__orq-workspace__delete_datapoints, mcp__orq-workspace__delete_entity
 ---
 
 # Red Team

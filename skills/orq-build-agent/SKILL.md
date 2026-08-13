@@ -8,7 +8,6 @@ description: >
   orq-analyze-trace-failures) or comparing agents across frameworks (use
   orq-compare-agents).
 allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__get_agent, mcp__orq-workspace__list_models, mcp__orq-workspace__search_entities, mcp__orq-workspace__search_docs
-disallowed-tools: mcp__orq-workspace__delete_skill, mcp__orq-workspace__delete_dataset, mcp__orq-workspace__delete_datapoints, mcp__orq-workspace__delete_entity
 ---
 
 # Build Agent

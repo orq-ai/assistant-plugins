@@ -4,10 +4,10 @@
 
 This repo follows [Semantic Versioning](https://semver.org/). Version is tracked in **4 plugin manifests that must stay in sync**:
 
+- `plugin.json` — portable [Agent Plugins 1.0.0](https://github.com/agentplugins/agent-plugins-spec) manifest
 - `.claude-plugin/plugin.json`
 - `.codex-plugin/plugin.json`
 - `.cursor-plugin/plugin.json`
-- `plugins/orq/.codex-plugin/plugin.json`
 
 ### When to bump
 
@@ -28,9 +28,20 @@ Exception: removing shipped content that was never the canonical surface (e.g. s
 
 ## Plugin manifest rules
 
-- All 4 plugin.json `version` fields must match — `validate-plugin-manifests.sh` does not enforce this yet, but drift is a bug.
-- `plugins/orq/.mcp.json`, `plugins/orq/mcp.json`, `plugins/orq/skills` are symlinks. Do not replace with copies.
+- All 4 plugin.json `version` fields must match — `validate-skills.mjs` enforces this in CI.
+- Root `plugin.json` is a **closed** Agent Plugins 1.0.0 manifest: only `$schema`, `name`, `version`, `description`, `author`, `homepage`, `repository`, `license`, `keywords`, `extensions` are permitted. Never add `skills`/`mcpServers` to it — the spec fixes those locations (`skills/`, `mcp.json`). CI validates it with `ajv` against `tests/schemas/agent-plugins-1.0.0.plugin.schema.json`, a vendored copy of the published schema; re-vendor it if the spec revs.
+- **The per-harness manifests cannot be removed yet, and this is not just a scheduling matter.** The Codex `interface` blob (displayName, logo, brandColor, category, privacy/ToS URLs) and Cursor's `displayName` have nowhere to go in the portable manifest: they belong under `extensions["<reverse.domain>"]`, and no client has published a namespace — the spec defines no registry. Until one does, dropping `.codex-plugin/` or `.cursor-plugin/` loses store-listing metadata. Do not "finish the migration" without checking that first.
+- Only the repo root may be an Agent Plugins root. A nested `plugin.json` carrying the 1.0.0 `$schema` is rejected by CI — it would re-create the `plugins/orq` escape (symlinks that stayed inside the repo but left their own plugin root). Client-specific manifests (`.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/`, `plugins/trace-hooks/`) are unaffected; they are matched by `$schema`, not filename.
+- `mcp.json`, `.claude-plugin/.mcp.json`, `.claude-plugin/skills` are symlinks. Do not replace with copies; every tracked symlink must resolve inside the repo root (CI enforces).
 - New skill = add to: `skills/<name>/SKILL.md`, `agents/AGENTS.md` (path list + `<available_skills>` block), `README.md` skills table, `tests/skills.md` (smoke tests + Critical Files), and `skills-lock.json` (see below).
+
+## SKILL.md frontmatter is a closed field set
+
+Only `name`, `description`, `license`, `compatibility`, `metadata`, `allowed-tools` are permitted — that is the [Agent Skills](https://agentskills.io/specification) field set, and `validate-skills.mjs` enforces it. Do **not** add a field a harness happens to read: Agent Plugins §7.1 requires a conformant client to *skip the whole skill* if it fails the Agent Skills spec, so one extra frontmatter line silently costs the skill everywhere. This is not theoretical — `disallowed-tools` shipped in 2.2.3 and made 14 of 15 skills skippable until 2.3.0 removed it. Harness-specific data belongs in `metadata` (a string→string map), which the spec reserves for exactly that. Cross-check with the reference validator when in doubt:
+
+```bash
+uvx --from "git+https://github.com/agentskills/agentskills.git#subdirectory=skills-ref" skills-ref validate skills/<name>
+```
 
 ## skills-lock.json
 

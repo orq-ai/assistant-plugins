@@ -8,7 +8,6 @@ description: >
   failures are fixable with prompt changes (use orq-optimize-prompt) or when failure
   modes are unknown (use orq-analyze-trace-failures first).
 allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__get_llm_eval, mcp__orq-workspace__get_python_eval, mcp__orq-workspace__search_entities, mcp__orq-workspace__search_docs
-disallowed-tools: mcp__orq-workspace__delete_skill, mcp__orq-workspace__delete_dataset, mcp__orq-workspace__delete_datapoints, mcp__orq-workspace__delete_entity
 ---
 
 # Build Evaluator
