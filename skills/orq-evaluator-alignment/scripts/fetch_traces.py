@@ -576,6 +576,21 @@ def _hollow_debug(sample: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _should_abort_hollow(
+    n_detail: int, n_empty: int, n_rows: int, abort_ratio: float, force: bool
+) -> bool:
+    """Whether the hollow ratio is high enough to abort the run.
+
+    Single source of truth for the abort threshold, shared by ``main`` (which
+    dumps the offending span shape first) and ``_guard_hollow`` (which raises).
+    They previously computed this separately and were free to drift.
+    """
+    n_degraded = n_detail + n_empty
+    if force or not n_rows or not n_degraded:
+        return False
+    return n_degraded / n_rows > abort_ratio
+
+
 def _guard_hollow(
     n_detail: int,
     n_empty: int,
@@ -600,7 +615,7 @@ def _guard_hollow(
     if not n_rows or not n_degraded:
         return
     ratio = n_degraded / n_rows
-    if ratio <= abort_ratio or force:
+    if not _should_abort_hollow(n_detail, n_empty, n_rows, abort_ratio, force):
         logger.warning(
             f'⚠ {n_degraded}/{n_rows} datapoints degraded '
             f'(span-detail failures: {n_detail}, empty extraction: {n_empty})'
@@ -683,7 +698,7 @@ def main(
     n_empty = int(filter_echo.get('n_empty_extraction', 0))
     abort_ratio = float(cfg.get('hollow_abort_ratio', 0.2))
     debug_path: str | None = None
-    if not force and (n_detail + n_empty) / len(rows) > abort_ratio and debug_sample:
+    if _should_abort_hollow(n_detail, n_empty, len(rows), abort_ratio, force) and debug_sample:
         debug_path = str(out_dir / 'hollow_debug.json')
         runner.write_json(out_dir / 'hollow_debug.json', _hollow_debug(debug_sample))
     _guard_hollow(n_detail, n_empty, len(rows), abort_ratio, force, debug_path)
