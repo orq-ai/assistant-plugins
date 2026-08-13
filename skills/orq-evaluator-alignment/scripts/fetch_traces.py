@@ -209,6 +209,7 @@ def _classify_degrade(
     spans: list[dict[str, Any]],
     eval_span: dict[str, Any],
     downgraded_spans: set[str],
+    messages: Any = None,
 ) -> str | None:
     """Classify why a row is degraded, or None if it is a clean datapoint.
 
@@ -219,8 +220,8 @@ def _classify_degrade(
       fetch (auth / rate-limit). True when the eval span itself downgraded, or
       when any content-source span (root + this eval span's judge spans, per
       ``_content_source_span_ids``) is in ``downgraded_spans``.
-    - ``empty_extraction`` — every source span fetched fine but no query/output
-      came out: a genuine unrecognised-shape gap.
+    - ``empty_extraction`` — every source span fetched fine but no content
+      (query / output / messages) came out: a genuine unrecognised-shape gap.
 
     Extracted from the fetch loop so the decision is unit-testable at the call
     site, not just via the helper set.
@@ -229,8 +230,12 @@ def _classify_degrade(
     # spans' detail fetches failed: the eval span may have 429'd while query/
     # output came through fine from the root span. Gate degradation on genuinely
     # empty content so a usable row is never dropped — stability.py skips degraded
-    # rows with an "empty output" reason that would otherwise be false.
-    if query or output_val:
+    # rows with an "empty output" reason that would otherwise be false. `messages`
+    # counts as content: a conversation-only evaluator (judging on {{messages}})
+    # has empty query/output but a populated conversation, and dropping it would be
+    # the same silent data loss the query/output gate prevents. `reference` does
+    # NOT count — it is ground-truth metadata, not content under evaluation.
+    if query or output_val or messages:
         return None
     if span_id in downgraded_spans:
         return 'detail_fetch'
@@ -488,7 +493,7 @@ async def _fetch(
                 # Two distinct hollow modes, tracked separately (see
                 # _classify_degrade) so the guard can tell a span-detail fetch
                 # failure (auth/rate-limit) apart from an unrecognised span shape.
-                degrade_reason = _classify_degrade(span_id, query, output_val, full, span, downgraded_spans)
+                degrade_reason = _classify_degrade(span_id, query, output_val, full, span, downgraded_spans, msgs)
                 if degrade_reason == 'empty_extraction' and not debug_sample:
                     # Capture the trace that genuinely hollowed on shape (not the
                     # first matching trace, which may parse cleanly).

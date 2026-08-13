@@ -212,6 +212,27 @@ def test_classify_degrade_does_not_borrow_another_eval_spans_judge():
     assert _classify_degrade('evA', '', '', full, eval_a, {'chatA'}) == 'detail_fetch'
 
 
+def test_classify_degrade_keeps_conversation_only_rows():
+    # A conversation-only evaluator (template judges on {{messages}}/{{conversation}})
+    # yields a row with empty query/output but a populated `messages` — that IS the
+    # content under evaluation, so the row must NOT be degraded. Before messages
+    # counted, such rows were filed empty_extraction and stability.py dropped valid
+    # conversation data with a false "empty output" reason.
+    from fetch_traces import _classify_degrade
+
+    eval_span = {'type': 'span.evaluator', 'span_id': 'ev1'}
+    root = {'type': 'trace', 'span_id': 'root1'}
+    full = [eval_span, root]
+    convo = [{'role': 'user', 'content': 'hi'}, {'role': 'assistant', 'content': 'hello'}]
+
+    # Populated messages → clean datapoint, even with empty query/output.
+    assert _classify_degrade('ev1', '', '', full, eval_span, set(), messages=convo) is None
+    # Truly empty (no query/output/messages) is still a genuine shape gap.
+    assert _classify_degrade('ev1', '', '', full, eval_span, set(), messages=None) == 'empty_extraction'
+    # An empty messages list is not content — still a shape gap.
+    assert _classify_degrade('ev1', '', '', full, eval_span, set(), messages=[]) == 'empty_extraction'
+
+
 def test_guard_hollow_aborts_over_threshold():
     from fetch_traces import _guard_hollow
 
