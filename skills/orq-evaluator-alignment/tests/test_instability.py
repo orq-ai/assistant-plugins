@@ -74,6 +74,12 @@ def test_categorical_empty_raises():
         instability.categorical([], 3)
 
 
+def test_categorical_off_contract_labels_clamp_to_1():
+    # Judge emits 3 distinct labels but only k=2 were declared: H = ln 3 > ln 2,
+    # so the raw ratio is ~1.58. Must saturate at 1.0, never exceed the 0..1 scale.
+    assert instability.categorical(['a', 'b', 'c'], 2) == pytest.approx(1.0)
+
+
 # --- numeric: population stdev / (scale_max − scale_min) ---
 
 
@@ -99,6 +105,12 @@ def test_numeric_zero_scale_range_raises():
 def test_numeric_empty_raises():
     with pytest.raises(ValueError):
         instability.numeric([], 1.0, 10.0)
+
+
+def test_numeric_out_of_scale_spread_clamps_to_1():
+    # Values far outside the declared [1, 10] scale make stdev exceed the range;
+    # the raw ratio would be > 1. Must saturate at 1.0.
+    assert instability.numeric([-50.0, 50.0], 1.0, 10.0) == pytest.approx(1.0)
 
 
 # --- string: exact-match normalized entropy H/ln(N) ---

@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-08-14
+
+### Added
+- `orq-evaluator-alignment`: multi-type judge alignment. The measure → annotate → rewrite → retest loop now covers all four verdict spaces — boolean (flip-rate), categorical (label entropy), numeric (score spread) and string (exact-match entropy) — on one shared 0..1 instability scale. String is detect + annotate only (no rewrite/retest). The annotation UI, agreement gate, recommend/aggregate stages and the created evaluator all carry the source's verdict space through.
+- `orq-evaluator-alignment`: grey-zone assessment stage (RES-980) — cluster the most-unstable "confuser" datapoints, drive a policy-driven Q&A, and render the resolved policy as the free-text guidance the existing rewrite step already consumes.
+
+### Changed
+- `orq-evaluator-alignment`: run-directory artifacts (`aggregated.md`, `new_prompt.md`, and every JSON/JSONL) are written atomically (temp-then-replace) so an interrupted step can no longer truncate an existing artifact. `aggregate.py` and the grey-zone `apply` step now warn instead of silently clobbering when both write `aggregated.md`.
+- `orq-evaluator-alignment`: judge model-slug resolution de-duplicates a display alias shared by two providers (first routable `refId` wins, with a warning) so alias→refId normalisation can't non-deterministically re-introduce the wrong-provider 403.
+
+### Fixed
+- `orq-evaluator-alignment`: categorical and numeric instability now clamp to `[0, 1]` — a judge that emits labels/scores outside the declared contract can no longer push the score past 1.0 and skew downstream banding.
+- `orq-evaluator-alignment`: creating an aligned copy of a numeric evaluator preserves its scale whether the source stores `output_type` as `number` or `numeric` (the latter previously dropped the scale silently). `build_queue --count 0` now means "no flipped items" (low-flip sample only) instead of being folded into "all". `retest` fails with a clean message on a string evaluator instead of a raw `ValueError`.
+
 ## [2.3.2] - 2026-08-14
 
 ### Fixed

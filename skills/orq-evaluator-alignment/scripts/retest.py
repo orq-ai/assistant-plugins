@@ -261,6 +261,14 @@ def main(
 
     # 3b) Signal (b): the new evaluator agrees with the human labels.
     pairs, output_type, policy = _human_pairs(out_dir, retest_dir)
+    if output_type == 'string':
+        # String is detect + annotate only (no rewrite/retest); agreement() has no
+        # string branch, so reaching here would raise a raw ValueError inside
+        # asyncio.run. Fail with a clean, actionable message instead.
+        raise SystemExit(
+            'retest does not support string evaluators — the string type is '
+            'detect + annotate only. Stop the alignment after annotation.'
+        )
     resolved_tol = _resolve_numeric_tol(tol, cfg, policy)
     if not pairs:
         raise SystemExit(

@@ -136,6 +136,7 @@ def build_create_body(
     model: str,
     description: str | None,
     output_type: str,
+    display_name: str | None = None,
     categorical_labels: list[Any] | None = None,
     scale: list[Any] | None = None,
     guardrail_value: bool = True,
@@ -168,6 +169,10 @@ def build_create_body(
     }
     if description is not None:
         body['description'] = description
+    # orq shows `display_name` as the evaluator's name; when omitted it falls back
+    # to the `key`. Forward the source's name so the aligned copy is recognisable.
+    if display_name is not None:
+        body['display_name'] = display_name
 
     if output_type == 'boolean':
         body['guardrail_config'] = {
@@ -336,6 +341,17 @@ class OrqClient:
                 model_id = m.get('model_id')
                 slug = _routable_slug(m)
                 if model_id and slug:
+                    # A display alias can be shared by two registry entries (the same
+                    # open-weights model served by two providers). First-wins with a
+                    # warning: silently letting the last entry overwrite would map the
+                    # alias to an arbitrary provider's refId and reintroduce the 403
+                    # slug bug this map exists to close (project memory: refId vs id).
+                    if model_id in out and out[model_id] != slug:
+                        logger.warning(
+                            f'duplicate model_id {model_id!r} routes to both '
+                            f'{out[model_id]!r} and {slug!r}; keeping the first'
+                        )
+                        continue
                     out[model_id] = slug
         return out
 
@@ -430,6 +446,7 @@ class OrqClient:
         model: str,
         description: str | None = None,
         output_type: str,
+        display_name: str | None = None,
         categorical_labels: list[Any] | None = None,
         scale: list[Any] | None = None,
         guardrail_value: bool = True,
@@ -452,6 +469,7 @@ class OrqClient:
             model=model,
             description=description,
             output_type=output_type,
+            display_name=display_name,
             categorical_labels=categorical_labels,
             scale=scale,
             guardrail_value=guardrail_value,

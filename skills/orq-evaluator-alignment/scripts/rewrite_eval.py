@@ -376,7 +376,7 @@ def main(
         raise SystemExit('No run directory. Run aggregate.py first.')
 
     result = asyncio.run(_rewrite(out_dir, cfg, max_attempts))
-    (out_dir / 'new_prompt.md').write_text(result['proposed_prompt'], encoding='utf-8')
+    runner.write_text(out_dir / 'new_prompt.md', result['proposed_prompt'])
     runner.write_json(
         out_dir / 'rewrite_status.json',
         {

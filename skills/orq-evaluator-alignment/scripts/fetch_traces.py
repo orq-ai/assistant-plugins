@@ -805,7 +805,7 @@ def main(
             'No candidate datapoints found.\n'
             f'  scan: {filter_echo}\n'
             'Matching is client-side (v3oql has no evaluator filter): raise the '
-            'scan depth with `--trace_limit <N>` (default 300) — the evaluator '
+            'scan depth with `--trace_limit <N>` (default 200) — the evaluator '
             'may be sparse or its traffic older than the scanned window — and/or '
             'widen trace_start_date / trace_end_date (epoch-ms) in config.toml. '
             'Confirm the evaluator actually has traces in the window.'

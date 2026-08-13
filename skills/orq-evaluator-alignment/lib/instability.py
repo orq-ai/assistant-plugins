@@ -62,6 +62,11 @@ def categorical(labels: Sequence[str], k: int) -> float:
     number observed — the denominator is fixed by the evaluator's contract so the
     scale does not drift with the sample. `k <= 1` has no possible disagreement
     and is defined as 0.0 (also avoids the `ln 1 = 0` division).
+
+    Clamped to `[0, 1]`: a judge that emits labels *outside* the declared set (or a
+    caller passing too-small a `k`) makes the observed entropy exceed `ln(k)`, which
+    would push the ratio past 1.0 and break the shared 0..1 scale every downstream
+    band/sort/N-recommendation step relies on. Off-contract labels saturate at 1.0.
     """
     n = len(labels)
     if n == 0:
@@ -72,7 +77,7 @@ def categorical(labels: Sequence[str], k: int) -> float:
     for count in Counter(labels).values():
         p = count / n
         entropy -= p * math.log(p)
-    return entropy / math.log(k)
+    return min(1.0, entropy / math.log(k))
 
 
 def numeric(values: Sequence[float], scale_min: float, scale_max: float) -> float:
@@ -81,13 +86,18 @@ def numeric(values: Sequence[float], scale_min: float, scale_max: float) -> floa
     Uses the declared `[scale_min, scale_max]`, not the observed spread, so the
     number means the same thing regardless of what the judge happened to emit. A
     single value (stdev 0) is 0.0; the scale range must be strictly positive.
+
+    Clamped to `[0, 1]`: values the judge emits *outside* the declared scale can
+    make the stdev exceed the range, which would push the ratio past 1.0 and break
+    the shared 0..1 scale downstream steps depend on. Out-of-scale spread saturates
+    at 1.0.
     """
     if len(values) == 0:
         raise ValueError('numeric instability needs at least one value')
     scale_range = scale_max - scale_min
     if scale_range <= 0:
         raise ValueError(f'numeric scale range must be > 0, got [{scale_min}, {scale_max}]')
-    return pstdev(values) / scale_range
+    return min(1.0, pstdev(values) / scale_range)
 
 
 def string(values: Sequence[str]) -> float:

@@ -164,7 +164,8 @@ def main(
         run_dir: Run directory (defaults to most recent).
         config: TOML config path.
         count: How many top-ambiguous (flipped) items to annotate. -1 = all
-            flipped items. Choose this after reading the step-5 flip report.
+            flipped items; 0 = none (low-flip sanity sample only). Choose this
+            after reading the step-5 flip report.
         low_flip_sample_size: Random low-flip items to append as a sanity check
             (overrides config `low_flip_sample_size`; 0 disables).
     """
@@ -196,7 +197,10 @@ def main(
     verdict_space = _verdict_space(output_type, labels, scale)
 
     flipped = [e for e in per_row if _is_confuser(e)]  # already most-unstable-first
-    if count and count > 0:
+    # -1 (or any negative) = all; count >= 0 = take exactly that many (0 → none, so
+    # the queue is the low-flip sanity sample only). `if count and count > 0` used to
+    # fold 0 into "all", an undocumented trap.
+    if count >= 0:
         flipped = flipped[:count]
 
     items = [

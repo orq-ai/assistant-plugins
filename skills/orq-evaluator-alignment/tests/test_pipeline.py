@@ -560,6 +560,19 @@ def test_pipeline_end_to_end(run_dir):
     assert '{{log.input}}' in new_prompt and '{{log.output}}' in new_prompt
 
 
+def test_build_queue_count_zero_takes_no_flipped_items(run_dir):
+    # Regression: count=0 previously folded into "all flipped" (the `count and
+    # count > 0` guard). It must now mean "none" — queue is the low-flip sample only.
+    import build_queue
+    import stability
+
+    stability.main(run_dir=str(run_dir), config=FAKE_CONFIG)
+    build_queue.main(run_dir=str(run_dir), config=FAKE_CONFIG, count=0)
+    queue = json.loads((run_dir / 'queue.json').read_text(encoding='utf-8'))
+    assert queue['meta']['n_flipped_items'] == 0
+    assert queue['meta']['n_low_flip_sample'] == 1
+
+
 # --- RES-978 §9: categorical + numeric end-to-end through stability→metrics→build_queue ---
 
 

@@ -18,6 +18,7 @@ abort the process at import time).
 from __future__ import annotations
 
 import json
+import os
 import re
 import tomllib
 from datetime import datetime, timezone
@@ -132,10 +133,22 @@ def read_json(path: Path) -> Any:
     return json.loads(Path(path).read_text(encoding='utf-8-sig'))
 
 
+def write_text(path: Path, text: str) -> None:
+    """Atomically write text: tmp-in-same-dir then `os.replace`.
+
+    Every run artifact is produced by writing it whole, and steps are re-runnable
+    and interruptible (Ctrl-C, a crashing serializer). A plain `write_text` that is
+    interrupted mid-flush truncates the existing artifact; the atomic swap means a
+    reader either sees the old file or the fully-written new one, never a partial.
+    """
+    path = Path(path)
+    tmp = path.with_name(path.name + '.tmp')
+    tmp.write_text(text, encoding='utf-8')
+    os.replace(tmp, path)
+
+
 def write_json(path: Path, data: Any) -> None:
-    Path(path).write_text(
-        json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8'
-    )
+    write_text(path, json.dumps(data, indent=2, ensure_ascii=False))
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -150,4 +163,4 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     body = '\n'.join(json.dumps(r, ensure_ascii=False) for r in rows)
-    Path(path).write_text(body + ('\n' if body else ''), encoding='utf-8')
+    write_text(path, body + ('\n' if body else ''))

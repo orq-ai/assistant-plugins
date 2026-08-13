@@ -114,7 +114,7 @@ function firstUnlabeled() {
   }
   return 0;
 }
-function esc(s) { return (s ?? '').toString().replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function esc(s) { return (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 // Minimal markdown -> HTML for the eval prompt box (bold, headings, ordered/
 // unordered lists, inline code). HTML is escaped first, so literal tags in the

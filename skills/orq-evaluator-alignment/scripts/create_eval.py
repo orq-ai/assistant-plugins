@@ -69,6 +69,15 @@ def _source_labels(evaluator: dict[str, Any]) -> list[Any]:
     return flat if isinstance(flat, list) else []
 
 
+def _aligned_display_name(evaluator: dict[str, Any]) -> str | None:
+    """The aligned copy's name: the source's `display_name` (or `key`) with an
+    ` (aligned)` marker so it's recognisable *and* distinct from the original in
+    the orq evaluator list. None when the source has neither — orq then falls back
+    to the key on its own."""
+    source_name = evaluator.get('raw', {}).get('display_name') or evaluator.get('key')
+    return f'{source_name} (aligned)' if source_name else None
+
+
 async def _create(evaluator: dict[str, Any], prompt: str, key: str, path: str) -> dict[str, Any]:
     # Preserve the source's verdict space: same output_type, the same label set
     # for categorical, and the same scale for numeric (forwarded only if the
@@ -82,16 +91,23 @@ async def _create(evaluator: dict[str, Any], prompt: str, key: str, path: str) -
         if output_type == 'categorical'
         else None
     )
+    # Reuse the source evaluator's human-readable name (with an ` (aligned)` marker)
+    # so the copy shows a recognisable name in orq instead of its `-aligned-<ts>` key.
+    display_name = _aligned_display_name(evaluator)
     async with OrqClient() as client:
         result = await client.create_evaluator(
             key=key,
             path=path,
             prompt=prompt,
             model=evaluator['judge_model'],
-            description=f'Human-aligned rewrite of evaluator {evaluator["id"]} (RES-930).',
+            description=f'Human-aligned rewrite of evaluator {evaluator["id"]} (RES-978).',
             output_type=output_type,
+            display_name=display_name,
             categorical_labels=_source_labels(evaluator) if output_type == 'categorical' else None,
-            scale=evaluator.get('scale') if output_type == 'number' else None,
+            # 'number' and 'numeric' are both accepted spellings across the codebase
+            # (fetch_evaluator, instability, judge); gate on both so a source stored
+            # as 'numeric' does not silently lose its scale on creation.
+            scale=evaluator.get('scale') if output_type in ('number', 'numeric') else None,
             guardrail_values=guardrail_values,
         )
     return {'id': result.id, 'key': result.key, 'raw': result.raw}

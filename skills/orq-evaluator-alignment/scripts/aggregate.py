@@ -240,7 +240,15 @@ def main(run_dir: str | None = None, config: str = 'config.toml') -> str:
             _strengths_section(agreements),
         ]
     )
-    (out_dir / 'aggregated.md').write_text(body, encoding='utf-8')
+    agg_path = out_dir / 'aggregated.md'
+    # grey_zone.py apply and this aggregate flow are *alternative* producers of the
+    # same guidance artifact; warn (don't silently clobber) if the other wrote it.
+    if agg_path.exists() and agg_path.read_text(encoding='utf-8-sig').strip():
+        logger.warning(
+            f'Replacing existing {agg_path.name} (from a prior grey-zone apply or '
+            'aggregate run) with these aggregated recommendations.'
+        )
+    runner.write_text(agg_path, body)
 
     structured_meta = {
         'output_type': output_type,

@@ -90,7 +90,15 @@ def apply(run_dir: str | None = None, config: str = 'config.toml') -> str:
     gzlib.validate_policy(policy)
 
     guidance = gzlib.policy_to_guidance(policy)
-    (out_dir / 'aggregated.md').write_text(guidance, encoding='utf-8')
+    agg_path = out_dir / 'aggregated.md'
+    # aggregate.py and this grey-zone flow are *alternative* producers of the same
+    # guidance artifact; warn (don't silently clobber) if the other already wrote it.
+    if agg_path.exists() and agg_path.read_text(encoding='utf-8-sig').strip():
+        logger.warning(
+            f'Replacing existing {agg_path.name} (from a prior aggregate.py or '
+            'grey-zone apply run) with this grey-zone policy guidance.'
+        )
+    runner.write_text(agg_path, guidance)
     logger.info(
         f'✓ Wrote {out_dir / "aggregated.md"} from {len(policy.get("grey_zones", []))} grey zone(s) '
         f'/ {len(policy.get("labels", []))} policy label(s). rewrite_eval.py can run next.'

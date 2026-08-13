@@ -65,6 +65,45 @@ def test_boolean_omits_description_when_none():
     assert 'description' not in body
 
 
+# --- display_name: the created evaluator reuses the source's human-readable name ---
+
+
+def test_display_name_sent_when_provided():
+    # orq shows `display_name` as the evaluator's name; without it, the ugly `key`
+    # (`<source>-aligned-<ts>`) shows instead. Pass the source's name through.
+    body = build(
+        key='sec-aligned-123', path='p', prompt='x', model='m', description=None,
+        output_type='boolean', display_name='Harmful or Illegal content',
+    )
+    assert body['display_name'] == 'Harmful or Illegal content'
+
+
+def test_display_name_omitted_when_none():
+    body = build(
+        key='k', path='p', prompt='x', model='m', description=None, output_type='boolean',
+    )
+    assert 'display_name' not in body
+
+
+def test_aligned_display_name_appends_suffix():
+    import create_eval
+
+    name = create_eval._aligned_display_name({'raw': {'display_name': 'Harmful or Illegal content'}})
+    assert name == 'Harmful or Illegal content (aligned)'
+
+
+def test_aligned_display_name_falls_back_to_key():
+    import create_eval
+
+    assert create_eval._aligned_display_name({'key': 'safety-eval', 'raw': {}}) == 'safety-eval (aligned)'
+
+
+def test_aligned_display_name_none_when_no_name():
+    import create_eval
+
+    assert create_eval._aligned_display_name({'raw': {}}) is None
+
+
 # --- categorical: labels sent in orq's rich [{value, description}] shape ---
 
 
@@ -195,3 +234,47 @@ def test_unknown_output_type_rejected():
             key='k', path='p', prompt='x', model='m', description=None,
             output_type='freeform',
         )
+
+
+# --- _create forwards the source scale for BOTH numeric spellings ---
+
+
+class _FakeResult:
+    def __init__(self) -> None:
+        self.id, self.key, self.raw = 'new-id', 'new-key', {}
+
+
+class _FakeClient:
+    """Records the kwargs create_evaluator was called with (no network)."""
+
+    captured: dict = {}
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def create_evaluator(self, **kwargs):
+        _FakeClient.captured = kwargs
+        return _FakeResult()
+
+
+@pytest.mark.parametrize('spelling', ['number', 'numeric'])
+def test_create_forwards_scale_for_both_numeric_spellings(monkeypatch, spelling):
+    import asyncio
+
+    import create_eval
+
+    monkeypatch.setattr(create_eval, 'OrqClient', _FakeClient)
+    evaluator = {
+        'id': 'src-1',
+        'judge_model': 'm',
+        'output_type': spelling,
+        'scale': [1, 10],
+        'name': 'Quality',
+    }
+    asyncio.run(create_eval._create(evaluator, prompt='RATE', key='num-aligned', path='Evaluators/num'))
+    # A source stored as 'numeric' must not silently drop its scale on creation.
+    assert _FakeClient.captured['scale'] == [1, 10]
+    assert _FakeClient.captured['output_type'] == spelling
