@@ -5,13 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.2.4] - 2026-08-11
+## [2.3.1] - 2026-08-13
 
 ### Fixed
 - `orq-evaluator-alignment`: trace extraction now reads the orq Responses API span shape (`span.responses`, with text under `messages[].parts[].content`) and no longer treats a reference-only root span as content. Previously every datapoint from a Responses-API evaluator came back hollow and the scan aborted with a misleading auth/rate-limit guess.
 - `orq-evaluator-alignment`: the hollow-datapoint guard now distinguishes a span-detail fetch failure (auth/rate-limit) from an unrecognised span shape. It tells the two apart by intersecting the spans a row's content is actually read from — the root span and *this* eval span's own judge spans (scoped as `_judge_io` scopes them, so a repeated evaluator's 429'd judge span isn't borrowed) — with the spans whose detail fetch failed, so a 429 on a content-source span isn't misfiled as an extractor bug; it writes `hollow_debug.json` with the offending span shape on a shape-gap abort instead of guessing.
+- `orq-evaluator-alignment`: `_structured_io` now carries the root span's conversation `messages` instead of dropping them. An evaluator whose judge template has a `{{messages}}`/`{{history}}`/`{{conversation}}` variable was re-judging with a blank conversation, and because the row's output was non-empty nothing flagged it — a silent quality drop behind a green pipeline.
+- `orq-evaluator-alignment`: a datapoint whose query/output extracted cleanly is no longer marked degraded merely because one of its spans' detail fetch was rate-limited. The stability step was dropping such usable rows with a false "empty output, cannot be meaningfully re-judged" reason; only genuinely-empty rows are degraded now.
 - `orq-evaluator-alignment`: Windows robustness — the cosmetic run-dir rename is guarded against OneDrive/WinError 32 locks, and human-edited artifacts are read as `utf-8-sig` so an editor-written BOM no longer crashes reads or corrupts the created prompt's first line.
 - `orq-evaluator-alignment`: the stability step now skips degraded/hollow datapoints by default (they waste judge calls and flatten the flip metrics); `--include_degraded` keeps them.
+
+## [2.3.0] - 2026-08-11
+
+### Added
+- Root `plugin.json` conforming to [Agent Plugins 1.0.0](https://github.com/agentplugins/agent-plugins-spec) — one portable manifest (`$schema`, closed field set) any spec-conformant client can load from the repo root. Skills ship from the fixed `skills/` location; `mcp.json` stays as-is for now (a 1.0.0 client disables MCP for the plugin and still loads skills; conformant MCP config is a follow-up).
+- CI validates the root manifest with `ajv` against `tests/schemas/agent-plugins-1.0.0.plugin.schema.json`, a vendored copy of the published 1.0.0 schema, and asserts every tracked symlink resolves inside the plugin root (§4.1 path containment). A nested manifest carrying the 1.0.0 `$schema` is rejected — the repo root must be the only Agent Plugins root.
+
+- `tests/scripts/validate-skills.test.sh` covers every invariant the validator enforces, not just the stale lock hash: each case breaks one thing in a clean fixture and asserts both a non-zero exit and the message naming the check. A git-backed fixture means the tracked-file checks (§4.1 containment, stray skills, one plugin root) are exercised too — previously they were verified only by hand during review, which is how two of them shipped passing while not checking.
+
+### Removed
+- `disallowed-tools` from all 14 skills that carried it. It is not an Agent Skills frontmatter field — the field set there is closed (`name`, `description`, `license`, `compatibility`, `metadata`, `allowed-tools`) — and Agent Plugins §7.1 requires a client to skip a skill that does not conform to that spec. `skills-ref`, the reference validator the spec links to, reported all 14 as errors, so this release would otherwise have advertised a portable plugin from which a conformant client loads one skill out of fifteen. **This loosens the tool restrictions added in 2.2.3:** `delete_*` orq tools were removed from the pool while those skills were active, and are now merely un-pre-approved, so they prompt instead of being unavailable. No skill's body calls them. Restoring the guarantee needs a mechanism the Agent Skills spec actually has.
+
+### Fixed
+- CI validates every skill against the Agent Skills spec, not just against this repo's own conventions: closed frontmatter field set, `name` pattern and length, `description` and `compatibility` limits. The suite passed all 15 skills while 14 of them were non-conformant, because it only ever checked what this repo had thought to check.
+- A `git ls-files` failure no longer skips the tracked-file checks in silence. The skip exists for a non-git tree (a test fixture); when `.git` is present and git fails anyway — a corrupt index, `detected dubious ownership` under a containerised runner — the run now fails and quotes git, instead of reporting success for three checks that never ran.
+
+### Changed
+- `.agents/plugins/marketplace.json` `source.path` now points at the repo root (`./`) instead of the removed `plugins/orq` copy.
+- `docs/install-codex.md`: the personal install used an absolute `source.path`, which Codex silently ignores — it resolves `source.path` relative to the marketplace root and requires a `./`-relative path inside it. The clone now lives under `$HOME` and the entry is `./.codex/plugins/orq`.
+- Manifest version sync now covers the root `plugin.json` alongside the three per-harness manifests.
+- Install docs now name the repository `orq-ai/assistant-plugins` throughout; several still pointed at the pre-rename `orq-ai/orq-skills`, which worked only via GitHub's redirect.
+
+### Removed
+- `plugins/orq/` — a duplicate Codex surface wired to the repo root via symlinks that escaped its own plugin root (spec §4.1 violation). The repo root is now the single *orq skills* plugin root; `plugins/trace-hooks/` remains a separate, independently versioned Claude Code plugin. It was the documented target of the Codex personal install (`cp -rL plugins/orq …`), so `docs/install-codex.md` moves to the repo root in the same release; existing installs are unaffected, which is why this is MINOR rather than MAJOR.
 
 ## [2.2.3] - 2026-08-07
 

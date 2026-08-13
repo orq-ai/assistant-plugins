@@ -49,15 +49,13 @@ assert_symlink() {
 # --- File existence and JSON validity ---
 
 json_files=(
+  "plugin.json"
   ".codex-plugin/plugin.json"
   ".cursor-plugin/plugin.json"
   ".claude-plugin/plugin.json"
   ".mcp.json"
   "mcp.json"
   ".agents/plugins/marketplace.json"
-  "plugins/orq/.codex-plugin/plugin.json"
-  "plugins/orq/.mcp.json"
-  "plugins/orq/mcp.json"
 )
 
 for file in "${json_files[@]}"; do
@@ -71,6 +69,9 @@ for file in "${json_files[@]}"; do
     exit 1
   fi
 done
+
+# Root plugin.json: existence and JSON validity above; its 1.0.0 field rules
+# are validated by ajv in CI against the vendored schema in tests/schemas/.
 
 # --- Codex manifest: name, skills, and MCP ---
 
@@ -113,37 +114,17 @@ assert_jq .mcp.json '.mcpServers["orq-workspace"].headers.Authorization == "Bear
 assert_jq .agents/plugins/marketplace.json '.name == "orq-marketplace"' \
   "Marketplace name must be 'orq-marketplace'"
 assert_jq .agents/plugins/marketplace.json \
-  'any(.plugins[]; .name == "orq" and .source.source == "local" and .source.path == "./plugins/orq" and .policy.installation == "INSTALLED_BY_DEFAULT" and .policy.authentication == "ON_INSTALL" and .category == "Productivity")' \
+  'any(.plugins[]; .name == "orq" and .source.source == "local" and .source.path == "./" and .policy.installation == "INSTALLED_BY_DEFAULT" and .policy.authentication == "ON_INSTALL" and .category == "Productivity")' \
   "Marketplace must contain orq plugin with correct source, policy, and category"
-
-# --- Codex marketplace plugin folder (wired via symlinks) ---
-
-assert_jq plugins/orq/.codex-plugin/plugin.json '.name == "orq"' \
-  "Nested Codex plugin name must be 'orq'"
-assert_jq plugins/orq/.codex-plugin/plugin.json '.skills == "./skills/"' \
-  "Nested Codex plugin must declare skills path './skills/'"
-assert_jq plugins/orq/.codex-plugin/plugin.json '.mcpServers == "./.mcp.json"' \
-  "Nested Codex plugin must declare mcpServers path './.mcp.json'"
-assert_jq plugins/orq/.mcp.json '.mcpServers["orq-workspace"].url == "https://my.orq.ai/v2/mcp"' \
-  "Nested MCP server URL must be 'https://my.orq.ai/v2/mcp'"
-
-assert_path -d "plugins/orq/skills" \
-  "plugins/orq/skills directory must exist (symlink to ../../skills)"
-assert_path -f "plugins/orq/skills/orq-build-agent/SKILL.md" \
-  "plugins/orq/skills/orq-build-agent/SKILL.md must exist (verifies symlink resolves)"
-assert_path -f "plugins/orq/.mcp.json" \
-  "plugins/orq/.mcp.json must resolve to a readable file"
-assert_path -f "plugins/orq/mcp.json" \
-  "plugins/orq/mcp.json must resolve to a readable file"
 
 # --- Symlink integrity ---
 
 assert_symlink "mcp.json" ".mcp.json"
-assert_symlink "plugins/orq/.mcp.json" "../../.mcp.json"
-assert_symlink "plugins/orq/mcp.json" "../../.mcp.json"
-assert_symlink "plugins/orq/skills" "../../skills"
 assert_symlink ".claude-plugin/.mcp.json" "../.mcp.json"
 assert_symlink ".claude-plugin/skills" "../skills"
+
+# Spec §4.1 containment and the one-plugin-root rule live in validate-skills.mjs
+# (sections 6-7): resolving a symlink correctly needs realpath semantics.
 
 # --- Claude Cowork Desktop: symlinks resolve to real targets ---
 

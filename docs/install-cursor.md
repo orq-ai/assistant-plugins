@@ -5,6 +5,8 @@ Two paths:
 - **Bundled plugin** — skills + MCP in one step (clone + symlink).
 - **Separate** — `npx skills` for skills, manual JSON for MCP.
 
+> **Agent Plugins 1.0.0 client?** The repo root is also a portable plugin — see [Agent Plugins 1.0.0 clients](../README.md#agent-plugins-100-clients).
+
 Make sure `ORQ_API_KEY` is exported (see [Prerequisites](../README.md#prerequisites)) — the MCP config references `${ORQ_API_KEY}`.
 
 ## Option A: Bundled plugin (skills + MCP)
@@ -15,8 +17,8 @@ Repo root doubles as Cursor plugin (`.cursor-plugin/plugin.json` declares `./ski
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/orq-ai/orq-skills.git
-cd orq-skills
+git clone https://github.com/orq-ai/assistant-plugins.git
+cd assistant-plugins
 
 # 2. Symlink into Cursor's local plugins directory
 mkdir -p ~/.cursor/plugins/local
@@ -28,7 +30,7 @@ Restart Cursor (or run **Developer: Reload Window**).
 ## Option B: Skills only (npx)
 
 ```bash
-npx skills add orq-ai/orq-skills
+npx skills add orq-ai/assistant-plugins
 ```
 
 Writes skills to `.cursor/rules/`. Then add the MCP server separately (see below).

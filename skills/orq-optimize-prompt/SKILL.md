@@ -8,7 +8,6 @@ description: >
   failures (use orq-analyze-trace-failures first to identify patterns). Do NOT use
   to build evaluators (use orq-build-evaluator).
 allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__get_agent, mcp__orq-workspace__get_deployment, mcp__orq-workspace__search_docs
-disallowed-tools: mcp__orq-workspace__delete_skill, mcp__orq-workspace__delete_dataset, mcp__orq-workspace__delete_datapoints, mcp__orq-workspace__delete_entity
 ---
 
 # Optimize Prompt

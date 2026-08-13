@@ -8,7 +8,6 @@ description: >
   have identified failure modes and need evaluators (use orq-build-evaluator) or
   datasets (use orq-generate-synthetic-dataset).
 allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, mcp__orq-workspace__list_traces, mcp__orq-workspace__list_spans, mcp__orq-workspace__get_span, mcp__orq-workspace__get_analytics_overview, mcp__orq-workspace__query_analytics, mcp__orq-workspace__search_entities, mcp__orq-workspace__search_docs
-disallowed-tools: mcp__orq-workspace__delete_skill, mcp__orq-workspace__delete_dataset, mcp__orq-workspace__delete_datapoints, mcp__orq-workspace__delete_entity
 ---
 
 # Analyze Trace Failures

@@ -30,6 +30,7 @@ Built on the [Agent Skills](https://agentskills.io/home#adoption) standard forma
 | Cursor | [Cursor install guide](docs/install-cursor.md) |
 | Codex | [Codex install](#codex) |
 | Gemini CLI, Cline, Copilot, Windsurf | [Skills-only install (npx)](#skills-only-install) |
+| Any [Agent Plugins 1.0.0](https://agent-plugins.org) client | [Agent Plugins install](#agent-plugins-100-clients) |
 | Any MCP-capable client | [MCP-only install](#mcp-only-install) |
 
 ---
@@ -95,6 +96,21 @@ Agent-specific install guides:
 - [Cursor plugin](docs/install-cursor.md)
 - [Codex plugin](docs/install-codex.md)
 - [Manual clone (Claude Code)](docs/install-manual.md)
+
+---
+
+### Agent Plugins 1.0.0 clients
+
+The repo root is a portable [Agent Plugins 1.0.0](https://agent-plugins.org) plugin: `plugin.json` manifest, skills in `skills/`. Point any spec-conformant client at a clone of this repo:
+
+```bash
+git clone https://github.com/orq-ai/assistant-plugins.git
+# then register the cloned directory as a plugin in your client
+```
+
+All `skills/*` skills are discovered per the spec.
+
+> **MCP is not yet portable.** The bundled `mcp.json` predates the spec's MCP schema (it declares `"type": "http"` and carries the API key in a header, neither of which 1.0.0 permits), so a conformant client disables MCP for this plugin and loads skills only. Register the server separately via the [MCP-only install](#mcp-only-install). If your client reads the root `plugin.json` *and* you previously got MCP through the Claude Code or Codex plugin, expect to lose it until `mcp.json` is fixed — track that work before relying on this path.
 
 ---
 

@@ -12,7 +12,6 @@ description: >
   red-teaming sweeps (use evaluatorq's built-in `red_team()` directly, see
   `resources/redteam-mode.md`).
 allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities
-disallowed-tools: mcp__orq-workspace__delete_skill, mcp__orq-workspace__delete_dataset, mcp__orq-workspace__delete_datapoints, mcp__orq-workspace__delete_entity
 ---
 
 # Simulate Agent

@@ -2,16 +2,24 @@
 // Repo-invariant checks for the skills suite, in one pass:
 //   1. skills-lock.json <-> skills/ directories, both directions, with hash freshness
 //      (recomputes every computedHash and fails on drift)
-//   2. the four plugin manifests agree on one version
-//   3. SKILL.md frontmatter is loadable and consistent with its directory,
-//      including full length of folded (>-style) descriptions
+//   2. the four plugin manifests agree on one version, and the root
+//      plugin.json is a usable object (its Agent Plugins 1.0.0 field rules
+//      are ajv's job — see the vendored schema in tests/schemas/)
+//   3. SKILL.md frontmatter is loadable, consistent with its directory, and
+//      conforms to the Agent Skills spec — closed field set plus the name,
+//      description and compatibility constraints, measured over the full
+//      length of folded (>-style) values. Agent Plugins §7.1 lets a client
+//      skip a skill that fails this, so it is not cosmetic.
 //   4. content-pattern lint on public files
+//   5. no tracked SKILL.md outside skills/
+//   6. spec §4.1 — every tracked symlink resolves inside the plugin root
+//   7. the repo root is the only Agent Plugins root
 // Errors fail the run; warnings don't. Run from anywhere in the repo.
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join, relative, dirname } from "node:path";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { join, relative, dirname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Optional positional arg points the checks at another repo-shaped tree, so
@@ -24,10 +32,19 @@ const err = (msg) => { console.error(`ERROR: ${msg}`); errors++; };
 const warn = (msg) => { console.error(`warn: ${msg}`); };
 
 // JSON.parse with the filename in the error instead of a raw SyntaxError stack.
+// The read is inside the try too: a missing manifest is a reportable error, not
+// a Node ENOENT dump.
 const readJson = (path) => {
-  const text = readFileSync(path, "utf8");
-  try { return JSON.parse(text); }
+  let text;
+  try { text = readFileSync(path, "utf8"); }
+  catch (e) { err(`${relative(root, path)}: cannot read — ${e.code ?? e.message}`); return null; }
+  let parsed;
+  try { parsed = JSON.parse(text); }
   catch (e) { err(`${relative(root, path)}: invalid JSON — ${e.message}`); return null; }
+  // A bare `null` body parses clean and is indistinguishable from the failure
+  // return above, so every caller would silently skip its checks. Reject it here.
+  if (parsed === null) { err(`${relative(root, path)}: contains a bare null, not a JSON object`); return null; }
+  return parsed;
 };
 
 // ---------- helpers ----------
@@ -112,20 +129,46 @@ if (JSON.stringify(lockKeys) !== JSON.stringify(sorted))
 
 // ---------- 2. manifest version sync ----------
 const manifests = [
+  "plugin.json",
   ".claude-plugin/plugin.json",
   ".codex-plugin/plugin.json",
   ".cursor-plugin/plugin.json",
-  "plugins/orq/.codex-plugin/plugin.json",
 ];
-const versions = manifests
-  .map((m) => ({ m, json: readJson(join(root, m)) }))
-  .filter(({ json }) => json !== null)
-  .map(({ m, json }) => ({ m, v: json.version }));
-const canonical = versions[0]?.v;
-for (const { m, v } of versions.slice(1))
-  if (v !== canonical) err(`manifest version drift: ${m} has ${v}, ${manifests[0]} has ${canonical}`);
+// Parse once and keep the objects: sections 2b and 7 read these too, and a
+// second readJson would report an unreadable file twice. Failures stay in the
+// map as null so that holds for them as well — filtering here would send
+// exactly the already-reported files back through readJson in section 7.
+const manifestEntries = new Map(manifests.map((m) => [m, readJson(join(root, m))]));
+const versions = [...manifestEntries]
+  .filter(([, json]) => json !== null)
+  .map(([m, json]) => ({ m, v: json.version }));
+const [reference, ...rest] = versions;
+for (const { m, v } of rest)
+  // Name the manifest the reference version actually came from — with
+  // plugin.json absent that is not manifests[0], and blaming a missing file
+  // sends you hunting for it.
+  if (v !== reference.v) err(`manifest version drift: ${m} has ${v}, ${reference.m} has ${reference.v}`);
 
-// ---------- 3. frontmatter consistency ----------
+// ---------- 2b. root plugin.json is a usable manifest ----------
+// Its 1.0.0 field rules are ajv's job (vendored schema, run in CI); only the
+// shape the version check above assumes is asserted here.
+const rootManifest = manifestEntries.get("plugin.json") ?? null;
+if (rootManifest !== null && (typeof rootManifest !== "object" || Array.isArray(rootManifest)))
+  err(`plugin.json: top level must be a JSON object, got ${Array.isArray(rootManifest) ? "array" : typeof rootManifest}`);
+
+// ---------- 3. frontmatter consistency + Agent Skills conformance ----------
+// Agent Plugins §7.1 requires every skill to conform to the Agent Skills
+// specification, and a client MUST skip one that doesn't. The frontmatter
+// field set there is closed, so an extra field is not a harmless annotation —
+// it costs the skill. This mirrors ALLOWED_FIELDS in `skills-ref`, the
+// reference validator the spec links to, which reports an extra field as an
+// error rather than a warning. Keep the two in sync if the spec adds a field.
+const SKILL_FIELDS = new Set(["name", "description", "license", "compatibility",
+  "metadata", "allowed-tools"]);
+// 1-64 chars, lowercase alphanumeric and hyphens, no leading/trailing hyphen,
+// no consecutive hyphens. Distinct from the plugin name pattern in §5.5 of
+// Agent Plugins, which also permits periods.
+const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 for (const name of skillDirs) {
   const path = join(root, "skills", name, "SKILL.md");
   let text;
@@ -133,10 +176,17 @@ for (const name of skillDirs) {
   catch { err(`skills/${name}: missing SKILL.md`); continue; }
   const fm = readFrontmatter(text);
   if (!fm) { err(`skills/${name}: SKILL.md has no frontmatter block`); continue; }
+  for (const key of Object.keys(fm))
+    if (!SKILL_FIELDS.has(key))
+      err(`skills/${name}: unknown frontmatter field '${key}' — the Agent Skills field set is closed, so a conformant client skips this skill entirely (Agent Plugins §7.1)`);
   if (fm.name !== name) err(`skills/${name}: frontmatter name '${fm.name}' != directory name`);
+  else if (!SKILL_NAME_RE.test(name) || name.length > 64)
+    err(`skills/${name}: name violates the Agent Skills constraints (1-64 chars, lowercase alphanumeric and single hyphens)`);
   const desc = (fm.description ?? "").trim();
   if (!desc) err(`skills/${name}: missing or empty description`);
   else if (desc.length > 1024) err(`skills/${name}: description ${desc.length} chars (limit 1024)`);
+  const compat = (fm.compatibility ?? "").trim();
+  if (compat.length > 500) err(`skills/${name}: compatibility ${compat.length} chars (limit 500)`);
   const lineCount = text.split("\n").length;
   if (lineCount > 500)
     warn(`skills/${name}: SKILL.md is ${lineCount} lines — consider moving content to resources/`);
@@ -178,18 +228,69 @@ for (const file of lintTargets) {
 // anywhere outside skills/ ships to every consumer (this caught nine stale
 // pre-rename skills accidentally tracked under .agents/skills/).
 // Skipped rather than fatal when root isn't a git checkout — the other checks
-// still apply to a plain directory (e.g. a test fixture).
+// still apply to a plain directory (e.g. a test fixture). That skip is only
+// safe for a genuinely non-git root: if .git is there and git still failed,
+// something is wrong with the checkout (a corrupt index, `detected dubious
+// ownership` under a containerised runner) and skipping would drop sections
+// 5-7 from a run that then reports success. Fail instead, and quote git.
 let tracked = [];
 try {
-  tracked = execFileSync("git", ["ls-files"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
-    .split("\n").filter(Boolean);
-} catch {
-  warn(`not a git checkout (${root}) — skipping the stray-tracked-skill check`);
+  // -z: without it git C-quotes any path with non-ASCII, quote, backslash or
+  // newline bytes, and every check below silently skips that file.
+  tracked = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
+    .split("\0").filter(Boolean);
+} catch (e) {
+  const reason = String(e.stderr || e.message).trim().split("\n")[0];
+  if (existsSync(join(root, ".git")))   // a worktree's .git is a file, not a dir
+    err(`git ls-files failed in a checkout that has .git — sections 5-7 did not run: ${reason}`);
+  else
+    warn(`not a git checkout (${root}) — skipping the tracked-file checks`);
 }
 for (const f of tracked) {
   if (!f.endsWith("/SKILL.md")) continue;
-  if (!f.startsWith("skills/") && !f.startsWith("plugins/"))
+  if (!f.startsWith("skills/"))
     err(`stray tracked skill outside skills/: ${f} — installers will ship it`);
+}
+
+// ---------- 6. spec §4.1 path containment ----------
+// Every path a client resolves must stay inside the plugin root. Symlinks are
+// allowed to point within it (§4.1), so resolve each tracked link fully —
+// realpathSync follows the whole chain, including a final component that is
+// itself a link, and throws on a dangling target. Resolving only the parent
+// directory and appending the last component would accept both `a/../..` and
+// links to nowhere. Uses the same `tracked` list and the same skip-when-not-a-
+// checkout policy as section 5.
+const rootPhys = realpathSync(root);
+for (const f of tracked) {
+  let stat;
+  try { stat = lstatSync(join(root, f)); } catch { continue; }
+  if (!stat.isSymbolicLink()) continue;
+  let resolved;
+  try { resolved = realpathSync(join(root, f)); }
+  catch (e) { err(`symlink ${f} does not resolve (${e.code ?? e.message})`); continue; }
+  if (resolved !== rootPhys && !resolved.startsWith(rootPhys + sep))
+    err(`symlink ${f} resolves outside the plugin root: ${resolved}`);
+}
+
+// ---------- 7. one Agent Plugins root ----------
+// Section 6 measures containment against the repo root, which is the right
+// yardstick only while the repo root is the sole Agent Plugins root. A nested
+// one would re-create the plugins/orq escape this release removed: its symlinks
+// stayed inside the repo while leaving their own plugin root.
+// Identified by the manifest's own $schema, not by filename — .claude-plugin,
+// .codex-plugin, .cursor-plugin and plugins/trace-hooks all ship a plugin.json
+// in a client-specific format, and adding another harness must not trip this.
+// The cost of that choice: a nested plugin root in a *client-specific* format
+// is invisible here, which is the exact shape plugins/orq had. Re-adding it
+// would pass. Matching on filename instead would flag all four manifests
+// above, so this is deliberate — the spec invariant is enforced, the
+// Codex/Claude-shaped one is left to review and the CLAUDE.md rule.
+const SPEC_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
+for (const f of tracked) {
+  if (!f.endsWith("/plugin.json")) continue;
+  const m = manifestEntries.has(f) ? manifestEntries.get(f) : readJson(join(root, f));
+  if (m && typeof m === "object" && m.$schema === SPEC_SCHEMA)
+    err(`nested Agent Plugins manifest: ${f} — the repo root must be the only plugin root`);
 }
 
 // ---------- result ----------
