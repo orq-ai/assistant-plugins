@@ -1,7 +1,7 @@
 # Evaluator Alignment skill (RES-930)
 
 A standalone, human-in-the-loop Claude Code skill that realigns an existing
-**LLM-judge evaluator** (boolean, categorical, or numeric) to human judgment. Given an orq evaluator id and
+**LLM-judge evaluator** (boolean, categorical, numeric, or free-form string) to human judgment. Given an orq evaluator id and
 its production traces, it measures the judge's self-consistency, surfaces the
 most ambiguous datapoints for human annotation, turns those labels into a
 rewritten judge prompt (via PO2), and — only after the human approves — creates
@@ -91,13 +91,17 @@ with the judge monkeypatched and the `fake` backend — no network.
 
 ## Scope & limitations
 
-- **Fully multi-type, end to end.** Both halves — measure (stability → instability
-  → confuser ranking) and improve (score → recommend → rewrite → create → retest) —
-  support **boolean, categorical, and numeric** judges (RES-978 Part 1 + Part 2 /
-  RES-980) on one 0..1 instability scale (flip-rate / label entropy / score spread).
-  The rewrite preserves the verdict space (label set / numeric scale); numeric
-  rewriting is deliberately shallow (anchor-nudge, not calibration). Step 1 accepts
-  all three output types and fails fast on anything else.
+- **Multi-type.** Measurement (stability → instability → confuser ranking) supports
+  **boolean, categorical, numeric, and free-form string** judges on one 0..1
+  instability scale (flip-rate / label entropy / score spread / exact-match string
+  entropy). The **improve** half (score → recommend → rewrite → create → retest)
+  supports **boolean, categorical, and numeric** (RES-978 Part 1 + Part 2 / RES-980);
+  the rewrite preserves the verdict space (label set / numeric scale) and numeric
+  rewriting is deliberately shallow (anchor-nudge, not calibration). **String is
+  detect + annotate only for now** — measurement, the confuser queue, and the
+  free-text annotation widget work, but `recommend`/`rewrite`/`create_eval` don't
+  consume string yet (`create_eval` fails fast on it). Step 1 accepts all four types
+  and fails fast on anything else.
 - **Self-consistency ≠ validity.** Instability localises where the judge is
   unstable; it cannot prove the judge is correct.
 - **Consistently-wrong blind spot.** Instability-ranking never surfaces items the

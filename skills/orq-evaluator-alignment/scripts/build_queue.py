@@ -105,6 +105,8 @@ def _verdict_space(output_type: str, labels: list[str], scale: tuple[float, floa
         return {'type': 'categorical', 'labels': labels, 'k': len(labels)}
     if output_type in {'number', 'numeric'}:
         return {'type': 'number', 'scale': list(scale) if scale else None}
+    if output_type == 'string':
+        return {'type': 'string'}  # free-form: no label set, no scale
     return {'type': 'boolean', 'labels': [False, True]}
 
 

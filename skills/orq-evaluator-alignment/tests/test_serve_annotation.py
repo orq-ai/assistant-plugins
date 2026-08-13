@@ -62,6 +62,11 @@ def test_input_type_number_scale_may_be_absent():
     assert spec['scale'] is None
 
 
+def test_input_type_string():
+    # Free-form string: no label set, no scale — just a text box.
+    assert sa.input_type_for({'type': 'string'})['type'] == 'string'
+
+
 def test_input_type_defaults_to_boolean_when_missing():
     assert sa.input_type_for({})['type'] == 'boolean'
     assert sa.input_type_for(None)['type'] == 'boolean'
@@ -111,6 +116,15 @@ def test_coerce_boolean_rejects_non_bool():
         sa.coerce_value({'type': 'boolean'}, 'true')
 
 
+def test_coerce_string_trims_and_accepts_free_text():
+    assert sa.coerce_value({'type': 'string'}, '  refund request  ') == 'refund request'
+
+
+def test_coerce_string_rejects_empty():
+    with pytest.raises(ValueError):
+        sa.coerce_value({'type': 'string'}, '   ')
+
+
 # --- build_annotation_record: the pinned annotations.json entry ---------------
 
 
@@ -141,6 +155,13 @@ def test_record_contract_number():
         space={'type': 'number', 'scale': [1, 5]}, value='3', reason='mid', low_flip_sample=False
     )
     assert rec['value'] == 3.0 and rec['status'] == 'labeled' and rec['reason'] == 'mid'
+
+
+def test_record_contract_string():
+    rec = sa.build_annotation_record(
+        space={'type': 'string'}, value='billing issue', reason='clear intent', low_flip_sample=False
+    )
+    assert rec == {'status': 'labeled', 'value': 'billing issue', 'reason': 'clear intent', 'low_flip_sample': False}
 
 
 def test_record_reason_defaults_to_empty_string():

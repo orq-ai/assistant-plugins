@@ -43,9 +43,10 @@ load_dotenv()
 
 _UUID_RE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', re.IGNORECASE)
 
-# RES-978: the three orq output types Part 1 measures (`numeric` tolerated as an
-# alias of `number`, §8.1). Anything else is out of scope and fails the gate.
-_ACCEPTED_OUTPUT_TYPES = frozenset({'boolean', 'categorical', 'number', 'numeric'})
+# RES-978: the orq output types Part 1 measures (`numeric` tolerated as an alias
+# of `number`, §8.1; `string` = free-form text, exact-match entropy). Anything
+# else is out of scope and fails the gate.
+_ACCEPTED_OUTPUT_TYPES = frozenset({'boolean', 'categorical', 'number', 'numeric', 'string'})
 
 
 def _check_output_type(output_type: str) -> str:
@@ -58,7 +59,7 @@ def _check_output_type(output_type: str) -> str:
     if t not in _ACCEPTED_OUTPUT_TYPES:
         raise ValueError(
             f'output_type={output_type!r} is not supported. RES-978 measures '
-            'boolean | categorical | number evaluators only.'
+            'boolean | categorical | number | string evaluators only.'
         )
     return t
 

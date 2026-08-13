@@ -89,10 +89,27 @@ def build_response_format(output_type: str, labels: Sequence[str] | None = None)
     `enum` of the K declared labels; numeric → `value: number`. `explanation` is
     always first so the model reasons before committing. Best-effort only — some
     judges ignore json_schema and free-text the verdict, which the parsers recover.
+
+    String is the exception: an orq string evaluator emits ONLY `value` (a
+    free-form string) with no `explanation` field, so its schema has just `value`.
     """
     kind = (output_type or 'boolean').strip().lower()
     if kind == 'boolean':
         return JUDGE_RESPONSE_FORMAT
+    if kind == 'string':
+        return {
+            'type': 'json_schema',
+            'json_schema': {
+                'name': 'evaluator_verdict',
+                'strict': True,
+                'schema': {
+                    'type': 'object',
+                    'properties': {'value': {'type': 'string', 'description': 'The free-form string verdict.'}},
+                    'required': ['value'],
+                    'additionalProperties': False,
+                },
+            },
+        }
     if kind == 'categorical':
         value_schema: dict[str, Any] = {'type': 'string', 'description': 'Exactly one of the allowed labels.'}
         if labels:
@@ -100,7 +117,7 @@ def build_response_format(output_type: str, labels: Sequence[str] | None = None)
     elif kind in {'number', 'numeric'}:
         value_schema = {'type': 'number', 'description': 'The numeric score the rubric asks for.'}
     else:
-        raise ValueError(f'unknown output_type {output_type!r} (expected boolean | categorical | number)')
+        raise ValueError(f'unknown output_type {output_type!r} (expected boolean | categorical | number | string)')
     return {
         'type': 'json_schema',
         'json_schema': {
@@ -296,6 +313,26 @@ def parse_numeric(raw: str, scale: tuple[float, float] | None = None) -> ParsedV
     return ParsedVerdict(_OK, number, explanation)
 
 
+def parse_string(raw: str) -> ParsedVerdict:
+    """Canonicalize a free-form string completion — the value IS the whole output.
+
+    Unlike the other three types there is no `explanation` field: a string
+    evaluator emits only `value`. We take `value` from a JSON object if the judge
+    honored the `{value}` schema, otherwise the entire completion is the value.
+    Canonicalize with casefold + strip + inner-whitespace collapse so trivial
+    formatting differences don't read as instability under exact-match counting
+    (`instability.string`). An empty result is `wrong_output_type` — a surfaced
+    non-verdict, not a counted empty string.
+    """
+    text = _strip_code_fences((raw or '').strip()).strip()
+    obj = _loads_obj(text)
+    candidate = str(obj.get('value', '')) if obj is not None and 'value' in obj else text
+    canonical = ' '.join(candidate.casefold().split())
+    if not canonical:
+        return ParsedVerdict(_WRONG_OUTPUT_TYPE, None, '')
+    return ParsedVerdict(_OK, canonical, '')
+
+
 @dataclass
 class JudgeSpec:
     """Everything needed to reconstruct the audited judge for one datapoint."""
@@ -395,7 +432,12 @@ def build_judge_fn(
                 token_usage=usage,
                 abstained=payload.abstain,
             )
-        parsed = parse_categorical(raw, labels or []) if kind == 'categorical' else parse_numeric(raw, scale)
+        if kind == 'categorical':
+            parsed = parse_categorical(raw, labels or [])
+        elif kind == 'string':
+            parsed = parse_string(raw)
+        else:
+            parsed = parse_numeric(raw, scale)
         if parsed.status == _OK:
             return Prediction(value=parsed.value, explanation=parsed.explanation, token_usage=usage)
         # Off-contract: abstain (surfaced, not scored, not a failure).

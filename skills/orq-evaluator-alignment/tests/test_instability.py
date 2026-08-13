@@ -101,6 +101,34 @@ def test_numeric_empty_raises():
         instability.numeric([], 1.0, 10.0)
 
 
+# --- string: exact-match normalized entropy H/ln(N) ---
+
+
+def test_string_unanimous_is_0():
+    assert instability.string(['refund'] * 8) == pytest.approx(0.0)
+
+
+def test_string_single_value_is_0():
+    # N=1 → ln(1)=0 denominator → defined as 0.0 (no possible disagreement).
+    assert instability.string(['refund']) == pytest.approx(0.0)
+
+
+def test_string_all_distinct_is_1():
+    # Every repetition differs → max entropy for N draws → 1.0.
+    assert instability.string(['a', 'b', 'c', 'd']) == pytest.approx(1.0)
+
+
+def test_string_6_2_2_over_10_uses_lnN_denominator():
+    # counts {6,2,2}, N=10 → H≈0.9503; denominator ln(10)≈2.3026 → ≈0.413.
+    values = ['a'] * 6 + ['b'] * 2 + ['c'] * 2
+    assert instability.string(values) == pytest.approx(0.413, abs=0.005)
+
+
+def test_string_empty_raises():
+    with pytest.raises(ValueError):
+        instability.string([])
+
+
 # --- classify bands: <0.1 stable | 0.1–0.3 noisy | >0.3 unreliable ---
 
 
@@ -150,6 +178,12 @@ def test_row_instability_numeric_no_scale_is_unmeasurable():
 def test_row_instability_accepts_numeric_alias():
     # Guard the open output_type spelling question (§8.1): accept 'numeric' too.
     assert instability.row_instability('numeric', [4.0, 7.0], scale=(1.0, 10.0)) == pytest.approx(1.5 / 9)
+
+
+def test_row_instability_string():
+    # No k / scale needed — denominator is ln(N).
+    values = ['a'] * 6 + ['b'] * 2 + ['c'] * 2
+    assert instability.row_instability('string', values) == pytest.approx(0.413, abs=0.005)
 
 
 def test_row_instability_unknown_type_raises():

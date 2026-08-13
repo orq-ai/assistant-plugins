@@ -73,6 +73,8 @@ def _clean_verdicts(reps: list[Any], output_type: str) -> list[Any]:
                 out.append(float(v))
             except (TypeError, ValueError):
                 pass
+        elif output_type == 'string':
+            out.append(str(v))
         else:
             out.append(v)
     return out
@@ -97,6 +99,9 @@ def _type_detail(output_type: str, clean: list[Any], k: int | None, scale: tuple
         return detail
     if output_type == 'categorical':
         return {'counts': dict(Counter(clean)), 'k': k}
+    if output_type == 'string':
+        # No declared K — report observed distinct count (denominator is ln(N)).
+        return {'counts': dict(Counter(clean)), 'n_distinct': len(set(clean))}
     if output_type in _NUMERIC_TYPES:
         return {
             'mean': (fmean(clean) if clean else None),
@@ -195,6 +200,8 @@ def _detail_str(output_type: str, e: dict[str, Any]) -> str:
         return f"({e.get('n_true', '?')}T/{e.get('n_false', '?')}F)"
     if output_type == 'categorical':
         return f"(counts={e.get('counts')}, k={e.get('k')})"
+    if output_type == 'string':
+        return f"({e.get('n_distinct')} distinct / {e.get('n_successful_repeats', '?')} reps)"
     if output_type in _NUMERIC_TYPES:
         return f"(mean={_num(e.get('mean'))}, stdev={_num(e.get('stdev'))} on scale {e.get('scale')})"
     return ''

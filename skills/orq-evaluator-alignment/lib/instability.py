@@ -15,6 +15,12 @@ Formulas (RES-978 §4), each returning 0.0 = perfectly stable, 1.0 = maximal:
   - boolean:      2·min(yes, N−yes) / N
   - categorical:  H / ln(k)   with H = −Σ p·ln p  over observed labels
   - numeric:      population stdev / (scale_max − scale_min)
+  - string:       H / ln(N)   — exact-match entropy over free-form strings
+
+The string type has no declared label set and no scale, so its denominator is
+ln(N) (the entropy of N all-distinct outputs) rather than ln(k). Comparison is
+exact-match on the canonical string (parse_verdict casefolds + collapses
+whitespace); semantic/paraphrase-aware matching is intentionally out of scope.
 """
 
 from __future__ import annotations
@@ -84,6 +90,27 @@ def numeric(values: Sequence[float], scale_min: float, scale_max: float) -> floa
     return pstdev(values) / scale_range
 
 
+def string(values: Sequence[str]) -> float:
+    """Exact-match normalized entropy `H / ln(N)` over free-form string verdicts.
+
+    Free-form strings have no declared label set (unlike categorical) and no scale
+    (unlike numeric), so the max-entropy denominator is `ln(N)` — the entropy of N
+    all-distinct outputs — not `ln(k)`. 0.0 when the judge agrees with itself every
+    run (or N ≤ 1); 1.0 when every repetition differs. Inputs are already canonical
+    (casefold + whitespace-collapsed in `parse_verdict`), so counting is exact-match.
+    """
+    n = len(values)
+    if n == 0:
+        raise ValueError('string instability needs at least one value')
+    if n == 1:
+        return 0.0
+    entropy = 0.0
+    for count in Counter(values).values():
+        p = count / n
+        entropy -= p * math.log(p)
+    return entropy / math.log(n)
+
+
 def classify(x: float) -> str:
     """Band a 0..1 instability score: `stable` | `noisy` | `unreliable` (§2)."""
     if x < _STABLE_MAX:
@@ -119,4 +146,6 @@ def row_instability(
         if scale is None:
             return None  # unmeasurable: no scale to normalize by (§4a)
         return numeric(verdicts, scale[0], scale[1])
-    raise ValueError(f'unknown output_type {output_type!r} (expected boolean | categorical | number)')
+    if t == 'string':
+        return string(verdicts)  # no k / scale — denominator is ln(N)
+    raise ValueError(f'unknown output_type {output_type!r} (expected boolean | categorical | number | string)')

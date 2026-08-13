@@ -2,12 +2,14 @@
 name: orq-evaluator-alignment
 description: >-
   Align, calibrate, or improve an existing LLM-as-a-judge (orq evaluator) so its
-  verdicts match human judgment — boolean, categorical, or numeric judges. Use
+  verdicts match human judgment — boolean, categorical, numeric, or free-form
+  string judges (string: detect + annotate only, no rewrite/create yet). Use
   when the user wants to "align my evaluator", "improve my eval", "annotate an
   evaluator", "find ambiguous cases", or "build an annotation queue" — i.e. they
   have an LLM judge that disagrees with human labels or is inconsistent. Measures
   judge self-consistency as one 0..1 instability score (boolean flip-rate,
-  categorical label entropy, or numeric score spread) via repeated runs, surfaces
+  categorical label entropy, numeric score spread, or string exact-match entropy)
+  via repeated runs, surfaces
   the most unstable datapoints for human annotation, rewrites the judge prompt
   from the labels, and creates the new evaluator only after the human approves. If
   the evaluator ID isn't given, ask for it after triggering. Do NOT use to build
@@ -40,15 +42,19 @@ bypasses the inline metadata).
 
 ## Constraints
 
-- **Fully multi-type, end to end.** Every step — measure (stability → instability
-  metrics → confuser ranking) and improve (score → recommend → rewrite → create →
-  retest) — supports **boolean, categorical, and numeric** judges (RES-978 Part 1
-  + Part 2 / RES-980). Instability is one 0..1 scale (boolean flip-rate,
-  categorical label entropy, numeric score spread); the rewrite preserves the
-  evaluator's verdict space (label set / numeric scale). Numeric rewriting is
-  deliberately shallow — it nudges the scale's anchor descriptions, not a
-  calibration model. Step 1 accepts all three output types and fails fast on
-  anything else.
+- **Multi-type.** Measurement (stability → instability metrics → confuser ranking)
+  supports **boolean, categorical, numeric, and free-form string** judges; the
+  improve half (score → recommend → rewrite → create → retest) supports **boolean,
+  categorical, and numeric** (RES-978 Part 1 + Part 2 / RES-980). Instability is one
+  0..1 scale (boolean flip-rate, categorical label entropy, numeric score spread,
+  string exact-match entropy `H/ln(N)`); the rewrite preserves the evaluator's
+  verdict space (label set / numeric scale). Numeric rewriting is deliberately
+  shallow — it nudges the scale's anchor descriptions, not a calibration model.
+  **String supports detect + annotate only for now**: measurement, the confuser
+  queue, and the free-text annotation widget all work, but `recommend`/`rewrite`/
+  `create_eval` do **not** consume string yet (`create_eval` fails fast on it) — so
+  string annotations are captured but don't auto-drive a rewrite. Step 1 accepts all
+  four output types and fails fast on anything else.
 - **Self-consistency is a ceiling, not proof.** Low instability means the judge
   is *stable*, not *correct* — a judge can be consistently wrong. You surface
   ambiguity; the human supplies truth.
@@ -93,8 +99,9 @@ folder is created as `<key>_<ts>` and, once the trace scan resolves the judge
 model and datapoint count, is renamed to `<key>_<ts>_<model>_<N>dp` so it is
 self-describing (re-fetching traces with a wider window updates the `<model>`/
 `<N>dp` in place). Always use the **printed** path, not the pre-scan name. If
-the evaluator's output type isn't boolean, categorical, or number, the script
-stops before scanning; relay which three types are supported.
+the evaluator's output type isn't boolean, categorical, number, or string, the
+script stops before scanning; relay which four types are supported (string is
+detect + annotate only — no recommend/rewrite/create yet).
 
 **Then offer more data.** Matching is client-side (v3oql has no evaluator
 filter), so the scan covers the most recent `--trace_limit` traces (default
@@ -163,7 +170,8 @@ uv run scripts/serve_annotation.py --run_dir <run_dir>
 ```
 Tell the user to open the printed URL and **score each item with its type-native
 input** — boolean → Pass/Fail; categorical → one button per declared label;
-numeric → a number on the evaluator's scale — plus an optional one-line "why"
+numeric → a number on the evaluator's scale; string → a free-text box — plus an
+optional one-line "why"
 (the cheapest lever for a good rewrite). Labels auto-save to `annotations.json`
 as typed values; they can stop and resume. Wait for them to say they are done.
 
