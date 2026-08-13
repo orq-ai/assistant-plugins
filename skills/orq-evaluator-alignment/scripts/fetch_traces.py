@@ -225,12 +225,17 @@ def _classify_degrade(
     Extracted from the fetch loop so the decision is unit-testable at the call
     site, not just via the helper set.
     """
+    # A row that actually carries content is a clean datapoint no matter which
+    # spans' detail fetches failed: the eval span may have 429'd while query/
+    # output came through fine from the root span. Gate degradation on genuinely
+    # empty content so a usable row is never dropped — stability.py skips degraded
+    # rows with an "empty output" reason that would otherwise be false.
+    if query or output_val:
+        return None
     if span_id in downgraded_spans:
         return 'detail_fetch'
-    if not query and not output_val:
-        lost_source = _content_source_span_ids(spans, eval_span) & downgraded_spans
-        return 'detail_fetch' if lost_source else 'empty_extraction'
-    return None
+    lost_source = _content_source_span_ids(spans, eval_span) & downgraded_spans
+    return 'detail_fetch' if lost_source else 'empty_extraction'
 
 
 def _structured_io(spans: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -238,8 +243,9 @@ def _structured_io(spans: list[dict[str, Any]]) -> dict[str, Any] | None:
 
     An orq evaluator run records the content under evaluation on the root span
     (``type == 'trace'`` / ``attributes.type == 'workflow_run'``) as
-    ``attributes.gen_ai.input = {input, output, query, reference}`` — ``output``
-    is exactly the content the judge scored. This is robust across judge API
+    ``attributes.gen_ai.input = {input, output, query, reference, messages}`` —
+    ``output`` is exactly the content the judge scored and ``messages`` the prior
+    conversation turns (kept for {{messages}} templates). This is robust across judge API
     shapes: the Responses API nests text under ``messages[].parts[].content``,
     which the per-message ``gen_ai.input.messages`` reader in ``_judge_io`` cannot
     see (it yields empty rows → the hollow guard aborts). ``query`` falls back to
@@ -264,7 +270,11 @@ def _structured_io(spans: list[dict[str, Any]]) -> dict[str, Any] | None:
         # only `reference` is effectively hollow — returning it here would win over
         # the judge-span fallback and yield an empty-output row.
         if output or query:
-            return {'query': query, 'output': output, 'reference': reference, 'messages': None}
+            # The same root span also carries the conversation history under
+            # `messages` (list of {role, content}); an evaluator whose template
+            # has a {{messages}}/{{history}} variable needs it, or make_replacements
+            # renders it blank and the stability run re-judges with no conversation.
+            return {'query': query, 'output': output, 'reference': reference, 'messages': gi.get('messages')}
     return None
 
 
