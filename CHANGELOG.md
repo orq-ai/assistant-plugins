@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Root `plugin.json` conforming to [Agent Plugins 1.0.0](https://github.com/agentplugins/agent-plugins-spec) — one portable manifest (`$schema`, closed field set) any spec-conformant client can load from the repo root. Skills ship from the fixed `skills/` location; `mcp.json` stays as-is for now (a 1.0.0 client disables MCP for the plugin and still loads skills; conformant MCP config is a follow-up).
 - CI validates the root manifest with `ajv` against `tests/schemas/agent-plugins-1.0.0.plugin.schema.json`, a vendored copy of the published 1.0.0 schema, and asserts every tracked symlink resolves inside the plugin root (§4.1 path containment). A nested manifest carrying the 1.0.0 `$schema` is rejected — the repo root must be the only Agent Plugins root.
 
+- `tests/scripts/validate-skills.test.sh` covers every invariant the validator enforces, not just the stale lock hash: each case breaks one thing in a clean fixture and asserts both a non-zero exit and the message naming the check. A git-backed fixture means the tracked-file checks (§4.1 containment, stray skills, one plugin root) are exercised too — previously they were verified only by hand during review, which is how two of them shipped passing while not checking.
+
+### Fixed
+- A `git ls-files` failure no longer skips the tracked-file checks in silence. The skip exists for a non-git tree (a test fixture); when `.git` is present and git fails anyway — a corrupt index, `detected dubious ownership` under a containerised runner — the run now fails and quotes git, instead of reporting success for three checks that never ran.
+
 ### Changed
 - `.agents/plugins/marketplace.json` `source.path` now points at the repo root (`./`) instead of the removed `plugins/orq` copy.
 - `docs/install-codex.md`: the personal install used an absolute `source.path`, which Codex silently ignores — it resolves `source.path` relative to the marketplace root and requires a `./`-relative path inside it. The clone now lives under `$HOME` and the entry is `./.codex/plugins/orq`.

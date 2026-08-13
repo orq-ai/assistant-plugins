@@ -15,7 +15,7 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { lstatSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, dirname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -206,15 +206,23 @@ for (const file of lintTargets) {
 // anywhere outside skills/ ships to every consumer (this caught nine stale
 // pre-rename skills accidentally tracked under .agents/skills/).
 // Skipped rather than fatal when root isn't a git checkout — the other checks
-// still apply to a plain directory (e.g. a test fixture).
+// still apply to a plain directory (e.g. a test fixture). That skip is only
+// safe for a genuinely non-git root: if .git is there and git still failed,
+// something is wrong with the checkout (a corrupt index, `detected dubious
+// ownership` under a containerised runner) and skipping would drop sections
+// 5-7 from a run that then reports success. Fail instead, and quote git.
 let tracked = [];
 try {
   // -z: without it git C-quotes any path with non-ASCII, quote, backslash or
   // newline bytes, and every check below silently skips that file.
-  tracked = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+  tracked = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
     .split("\0").filter(Boolean);
-} catch {
-  warn(`not a git checkout (${root}) — skipping the tracked-file checks`);
+} catch (e) {
+  const reason = String(e.stderr || e.message).trim().split("\n")[0];
+  if (existsSync(join(root, ".git")))   // a worktree's .git is a file, not a dir
+    err(`git ls-files failed in a checkout that has .git — sections 5-7 did not run: ${reason}`);
+  else
+    warn(`not a git checkout (${root}) — skipping the tracked-file checks`);
 }
 for (const f of tracked) {
   if (!f.endsWith("/SKILL.md")) continue;
@@ -250,6 +258,11 @@ for (const f of tracked) {
 // Identified by the manifest's own $schema, not by filename — .claude-plugin,
 // .codex-plugin, .cursor-plugin and plugins/trace-hooks all ship a plugin.json
 // in a client-specific format, and adding another harness must not trip this.
+// The cost of that choice: a nested plugin root in a *client-specific* format
+// is invisible here, which is the exact shape plugins/orq had. Re-adding it
+// would pass. Matching on filename instead would flag all four manifests
+// above, so this is deliberate — the spec invariant is enforced, the
+// Codex/Claude-shaped one is left to review and the CLAUDE.md rule.
 const SPEC_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 for (const f of tracked) {
   if (!f.endsWith("/plugin.json")) continue;

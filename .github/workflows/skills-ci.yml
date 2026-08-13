@@ -26,7 +26,7 @@ jobs:
         run: npx -y ajv-cli@5 validate --spec=draft2020 -s tests/schemas/agent-plugins-1.0.0.plugin.schema.json -d plugin.json
       - name: Validate skills (frontmatter, lock invariants + hash freshness, version sync, content patterns)
         run: node tests/scripts/validate-skills.mjs
-      - name: Self-test the validator (a stale lock hash must fail the run)
+      - name: Self-test the validator (each invariant must fail the run when violated)
         run: bash tests/scripts/validate-skills.test.sh
       - name: PR title pattern lint
         env:
