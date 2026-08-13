@@ -116,8 +116,123 @@ def test_assemble_payload_truncates_long_input():
                  variables=[{'name': 'log.output', 'value': long_val}])
     queue = {'meta': {'verdict_space': vs}, 'items': [item]}
     (confuser,) = grey_zone.assemble_payload(queue, max_chars=200)['confusers']
-    assert len(confuser['input']) <= 220  # max_chars + the ellipsis marker
-    assert confuser['input'].endswith('…')
+    # The budget bounds SOURCE characters shown (§12.5); the elision marker and the
+    # short `name: ` prefix are overhead on top, not charged against it.
+    assert confuser['input_chars_shown'] <= 200
+    assert 'chars elided' in confuser['input']
+
+
+# --- context budget: fair-share windowing + elision accounting (§12) ---
+
+
+def _sized_queue(*variables: tuple[str, str], reasoning: str = 'r') -> dict:
+    """A one-confuser queue whose judged input is the given `(name, value)` vars."""
+    vs = {'type': 'boolean', 'labels': [False, True]}
+    item = _item(
+        1, vs,
+        {'n_true': 3, 'n_false': 2, 'representative_explanation': reasoning},
+        variables=[{'name': n, 'value': v} for n, v in variables],
+    )
+    return {'meta': {'verdict_space': vs}, 'items': [item]}
+
+
+def test_fair_share_does_not_starve_a_small_variable():
+    # The v1 failure: variables were concatenated then head-truncated, so a long
+    # {{query}} consumed the whole budget and {{output}} — the thing actually
+    # judged — never reached the conductor at all.
+    queue = _sized_queue(('query', 'q' * 5000), ('output', 'SHORT-OUTPUT'))
+    (confuser,) = grey_zone.assemble_payload(queue, max_chars=200)['confusers']
+    assert 'SHORT-OUTPUT' in confuser['input']
+
+
+def test_window_keeps_both_head_and_tail_of_a_long_value():
+    # Head-only truncation loses the final assistant turn, which is usually the
+    # part the judge actually scored.
+    queue = _sized_queue(('output', 'HEAD-MARKER' + 'x' * 5000 + 'TAIL-MARKER'))
+    (confuser,) = grey_zone.assemble_payload(queue, max_chars=200)['confusers']
+    assert 'HEAD-MARKER' in confuser['input']
+    assert 'TAIL-MARKER' in confuser['input']
+
+
+def test_truncated_input_reports_how_much_was_elided():
+    queue = _sized_queue(('output', 'x' * 5000))
+    (confuser,) = grey_zone.assemble_payload(queue, max_chars=200)['confusers']
+    assert confuser['input_truncated'] is True
+    assert confuser['input_chars_original'] == 5000
+    assert confuser['input_chars_shown'] < confuser['input_chars_original']
+    assert confuser['input_chars_shown'] > 0
+
+
+def test_short_input_reports_no_elision():
+    queue = _sized_queue(('output', 'tiny'))
+    (confuser,) = grey_zone.assemble_payload(queue, max_chars=200)['confusers']
+    assert confuser['input_truncated'] is False
+    assert confuser['input_chars_shown'] == confuser['input_chars_original'] == 4
+
+
+def test_long_reasoning_is_accounted_separately():
+    queue = _sized_queue(('output', 'tiny'), reasoning='y' * 5000)
+    (confuser,) = grey_zone.assemble_payload(queue, max_chars=200)['confusers']
+    assert confuser['reasoning_truncated'] is True
+    assert confuser['reasoning_chars_original'] == 5000
+    assert confuser['reasoning_chars_shown'] < 5000
+
+
+# --- context budget: token estimate + clamp (§12.6) ---
+
+
+def _many_confusers(n: int, chars: int = 2000) -> dict:
+    vs = {'type': 'boolean', 'labels': [False, True]}
+    votes = {'n_true': 3, 'n_false': 2, 'representative_explanation': 'r'}
+    items = [
+        _item(i, vs, votes, variables=[{'name': 'output', 'value': f'{i}' * chars}])
+        for i in range(n)
+    ]
+    return {'meta': {'verdict_space': vs}, 'items': items}
+
+
+def test_assemble_clamps_confusers_to_the_token_budget():
+    payload = grey_zone.assemble_payload(_many_confusers(20), max_chars=2000, max_tokens=2000)
+
+    assert payload['n_confusers'] < 20
+    assert payload['budget']['estimated_tokens'] <= 2000
+    assert payload['budget']['within_budget'] is True
+    assert payload['budget']['n_dropped_by_budget'] == 20 - payload['n_confusers']
+
+
+def test_clamp_keeps_the_most_unstable_prefix():
+    # queue.json is already most-unstable-first, so the clamp must keep a prefix —
+    # dropping from the middle would silently discard the highest-signal points.
+    payload = grey_zone.assemble_payload(_many_confusers(20), max_chars=2000, max_tokens=2000)
+    kept = [c['source_index'] for c in payload['confusers']]
+    assert kept == list(range(len(kept)))
+
+
+def test_budget_block_totals_the_elision():
+    payload = grey_zone.assemble_payload(_many_confusers(3, chars=5000), max_chars=200)
+    assert payload['budget']['n_truncated'] == 3
+    assert payload['budget']['total_chars_elided'] == 3 * (5000 - 200)
+
+
+def test_keeps_one_confuser_even_when_it_alone_exceeds_the_budget():
+    # Reporting "over budget" beats writing an empty item list the conductor
+    # would read as "no confusers found" (§12.6).
+    payload = grey_zone.assemble_payload(_many_confusers(5), max_chars=2000, max_tokens=1)
+    assert payload['n_confusers'] == 1
+    assert payload['budget']['within_budget'] is False
+
+
+def test_no_budget_means_no_clamp():
+    payload = grey_zone.assemble_payload(_many_confusers(20), max_chars=2000)
+    assert payload['n_confusers'] == 20
+    assert payload['budget']['n_dropped_by_budget'] == 0
+
+
+def test_top_k_sentinel_minus_one_is_all_and_zero_is_none():
+    # -1 is the all-sentinel used everywhere in this skill (num_samples, count);
+    # 0 means none. Pinned because config.toml now ships grey_zone_top_k = -1.
+    assert grey_zone.assemble_payload(_many_confusers(5), top_k=-1)['n_confusers'] == 5
+    assert grey_zone.assemble_payload(_many_confusers(5), top_k=0)['n_confusers'] == 0
 
 
 # --- grey_zone_policy.json contract: validate / labels / guidance ---

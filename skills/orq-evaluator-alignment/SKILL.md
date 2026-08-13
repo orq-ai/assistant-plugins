@@ -156,6 +156,47 @@ heavier agreement stats — 1-Flip Consistency, Gwet AC1, Fleiss κ — are comp
 too and surfaced on request.) This is the evidence the user needs to choose an
 annotation count.
 
+### 4a. If the run is starved — the recovery menu  ⟵ GATE
+Two situations leave nothing to review: **< 10 usable datapoints** after the trace
+scan (step 1), or a **flat** instability profile (step 4 shows no unstable rows).
+When either holds, **don't push on** — tell the user and offer a menu (nothing runs
+without their pick; re-offer the rest if the first choice still leaves the run
+starved):
+
+1. **Widen the scan** (cheapest) — rerun `fetch_traces.py` with a larger
+   `--trace_limit` and/or wider `trace_start_date`/`trace_end_date`.
+2. **Hook up an existing orq dataset** —
+   ```
+   uv run scripts/dataset_inputs.py list --config config.toml        # pick one
+   uv run scripts/dataset_inputs.py pull --run_dir <run_dir> --dataset_id <id>
+   ```
+   Maps the dataset's datapoints onto the evaluator's variables and appends them as
+   fresh rows. If a variable can't be auto-mapped, it tells you which — map that one
+   field by hand, don't guess.
+3. **Generate a few hard points** — use the **`orq-generate-synthetic-dataset`**
+   skill to produce boundary cases, **seeded from the real examples when any exist**
+   (rubric-only when there are none). Write them to `<run_dir>/synthetic_datapoints.json`
+   (a list of `{inputs, messages?, expected_output?, rationale?}`), then:
+   ```
+   uv run scripts/seed_inputs.py convert --run_dir <run_dir>   # → traces.jsonl (synthetic:true)
+   ```
+   Then **ask whether to save them to orq** for reuse:
+   ```
+   uv run scripts/seed_inputs.py save --run_dir <run_dir> --dataset_name "<name>"
+   ```
+4. **Add a second model** — surface disagreement a single self-consistent judge
+   hides (needs a completed `stability.py` run first):
+   ```
+   uv run scripts/cross_model.py --run_dir <run_dir> --model <provider/model>
+   ```
+   Confirm the 2nd-model slug with the user; datapoints where the two models split
+   become confusers (`reason: cross_model` in the queue).
+
+After any option, **re-run stability → metrics** and re-read the report. **Blind-spot
+note:** synthetic/dataset rows probe the rubric's *stated* boundary, not the
+production distribution — say so in the final summary whenever seeded data
+contributed.
+
 ### 5. Choose how many examples to review together  ⟵ GATE
 *After* they have seen the instability report, ask **in plain language** how many of
 the examples the judge was **most inconsistent on** they want to look at together —
@@ -163,10 +204,16 @@ e.g. *"How many of the examples where the judge kept changing its mind should we
 review together? (a number, or 'all')"*. Avoid the internal jargon ("confuser
 queue", "top-ambiguous", "grey-zone"); it's an informed choice, not a fixed number.
 Briefly note you can also mix in a few examples the judge was *fully consistent* on,
-as a spot-check that it isn't consistently wrong. Then:
+as a spot-check that it isn't consistently wrong. Add one clause so the context
+budget is never a surprise: *"give me any number — if it's more than fits in one
+pass I'll tell you which ones made the cut."* Then:
 ```
 uv run scripts/build_queue.py --run_dir <run_dir> --count <N>
 ```
+It also **projects the step-6 context cost** for the count they chose ("~95k tokens
+of 60k; the top 48 will enter context"). If it reports a drop, say so here — the
+coverage decision is this one, so it is corrected in the same breath rather than
+re-asked later.
 
 ### 6. Grey-zone assessment (default) — cluster, then ask in chat
 The default feedback path (RES-980). Instead of labelling every confuser one by
@@ -178,9 +225,26 @@ each resolve a whole cluster.
    uv run scripts/grey_zone.py assemble --run_dir <run_dir>
    ```
    `grey_zone_payload.json` gives each confuser's verdict split, band, one
-   representative rationale, and the (truncated) judged input. *(Per-repetition
+   representative rationale, and the (windowed) judged input. *(Per-repetition
    rationales are not available — evaluatorq's jury layer collapses them to one;
    a documented v1 limit.)*
+
+   **Never `Read` `queue.json` or `stability.json` directly** — they carry every
+   full input and every repetition, and reading them bypasses the context budget
+   entirely. `grey_zone_payload.json` is the only confuser view you open.
+
+   **Then disclose what you actually saw**, before open-coding. The payload's
+   `budget` block tells you: how many confusers entered context, how many
+   `n_dropped_by_budget` the token budget dropped, and how many had their input
+   shortened (`n_truncated`, `total_chars_elided`; per confuser,
+   `input_chars_shown` of `input_chars_original`). Say it plainly — *"48 of 80
+   examples; 12 had long inputs shortened, the worst showing 600 of 41,200
+   characters"*. This matters because a grey zone inferred from a 1% slice of a
+   transcript is confidently wrong in a way nothing downstream can detect: caveat
+   any cluster whose members were heavily elided, and lean on the judge's own
+   rationale for those. If the user wants fuller inputs, raise `--max_chars` (more
+   of each) or `--max_tokens` (more of them) and re-run assemble — it is pure
+   recomputation from `queue.json`, so it costs nothing.
 2. **Open-code into grey zones.** Group the confusers by the pattern that makes
    them hard under the current rubric (e.g. "sarcasm treated inconsistently",
    "quoted third-party abuse", "severity threshold unclear"). Part 1 found *which*
@@ -290,8 +354,13 @@ resolve to the config value shown; overriding a flag beats `config.toml`.
 | `estimate_cost.py` | `--n_repeats` (cfg 8), `--num_samples` (cfg -1 = all) |
 | `stability.py` | `--num_samples` (cfg -1), `--n_repeats` (cfg 8), `--max_concurrency` (cfg 8), `--temperature` (cfg 1), `--metrics` (True; `--no-metrics` to skip) |
 | `metrics.py` | — (run_dir/config only) |
-| `build_queue.py` | `--count` (-1 = all), `--low_flip_sample_size` (cfg 5) |
-| `grey_zone.py assemble` | `--top_k` (cfg `grey_zone_top_k`; all), `--max_chars` (cfg `grey_zone_max_chars`; 600) |
+| `build_queue.py` | `--count` (-1 = all), `--low_flip_sample_size` (cfg 5). Also projects the step-6 context budget into `queue.json` `meta.grey_zone_projection` |
+| `dataset_inputs.py list` | `--limit` (100) |
+| `dataset_inputs.py pull` | `--dataset_id` (req), `--limit` (200) |
+| `seed_inputs.py convert` | — (run_dir/config only) |
+| `seed_inputs.py save` | `--dataset_name` (new) OR `--dataset_id` (append) |
+| `cross_model.py` | `--model` (req; 2nd judge slug), `--num_samples`, `--n_repeats`, `--tol` (0.5) |
+| `grey_zone.py assemble` | `--top_k` (cfg `grey_zone_top_k`; -1 = all, 0 = none), `--max_chars` (cfg `grey_zone_max_chars`; 600 — per-confuser input budget, fair-shared across `{{variables}}`), `--max_tokens` (cfg `grey_zone_max_tokens`; 60000 — payload ceiling, clamps to the fitting prefix) |
 | `grey_zone.py apply` | — (run_dir/config only) |
 | `serve_annotation.py` | `--port` (8765) — the interactive UI fallback |
 | `recommend.py` | — |
@@ -303,8 +372,10 @@ resolve to the config value shown; overriding a flag beats `config.toml`.
 ## Run directory contract
 Every artifact lives in `runs/<key>_<ts>_<model>_<N>dp/`: `evaluator.json` (with
 `output_type` + `categorical_labels`/`scale`), `traces.jsonl`, `stability.json`,
-`metrics.json`, `queue.json` (each confuser carries its `verdict_space`),
-`grey_zone_payload.json` (the conductor's bounded confuser payload),
+`metrics.json`, `queue.json` (each confuser carries its `verdict_space` + a
+`reason` of instability/cross_model/low_flip), `synthetic_datapoints.json`
+(conductor-authored seed, §11) + `cross_model.json` (second-model disagreers) when
+a starved run was seeded, `grey_zone_payload.json` (the conductor's bounded confuser payload),
 `grey_zone_policy.json` (grey zones + questions + answers + per-point policy
 labels — the default feedback artifact), `annotations.json` (typed values — the UI
 fallback), `recommendations.json`, `aggregated.md` + `aggregated.json`,

@@ -157,6 +157,10 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
             'query': row.get('query', ''),
             'output': row.get('output', ''),
             'messages': row.get('messages'),
+            # Seeded-row provenance (RES-980 §11.6) rides through so build_queue /
+            # the report can flag synthetic or dataset-sourced datapoints.
+            'synthetic': row.get('synthetic', False),
+            'source': row.get('source'),
             'prod_judge_value': row.get('judge_value'),
             'success': ok,
             'error': err,

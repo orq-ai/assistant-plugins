@@ -46,6 +46,22 @@ low_flip_sample_size = 5
 # Deterministic seed for the low-flip sample draw.
 seed = 42
 
+# ── Step 6/7: grey-zone payload context budget (design §12) ──────────────────
+# How many (most-unstable-first) confusers may enter the conductor's context.
+# -1 = all, matching the num_samples/count sentinel elsewhere; 0 = none. The token
+# budget below does the real capping — a fixed K is the wrong knob because item
+# size varies by orders of magnitude between evaluators.
+grey_zone_top_k = -1
+# Per-confuser budget for the judged input, in characters. Fair-shared across the
+# evaluator's {{variables}} so a long {{query}} cannot starve {{output}}; an
+# over-share value is shown head+tail with the elided count marked inline.
+grey_zone_max_chars = 600
+# Ceiling for the whole assembled payload, in tokens (~4 chars/token). assemble
+# clamps to the longest prefix that fits and reports what it dropped. Deliberately
+# well below a full context window: the payload shares that window with SKILL.md,
+# evaluator.json, and the multi-turn grey-zone Q&A that follows.
+grey_zone_max_tokens = 60000
+
 # ── Step 8/9: recommendation + rewrite backend ───────────────────────────────
 # Model backend for the meta-prompt (step 8) and PO2 rewrite (step 9). One of:
 #   "claude_subagent" — shell out to `claude -p ... --output-format json`

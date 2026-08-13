@@ -1,0 +1,170 @@
+[
+  {
+    "_case_id": "A1",
+    "inputs": {
+      "input": "CONTEXT:\nOrion's free tier includes 5 GB of object storage and 100 GB of monthly egress. Paid tiers start at $29 per month.\n\nQUESTION: How much object storage does the free tier include?",
+      "output": "The free tier includes 5 GB of object storage."
+    }
+  },
+  {
+    "_case_id": "A2",
+    "inputs": {
+      "input": "CONTEXT:\nThe database migration ran on 14 March 2025 and completed in 42 minutes with no downtime.\n\nQUESTION: How long did the migration take?",
+      "output": "The migration completed in 42 minutes."
+    }
+  },
+  {
+    "_case_id": "A3",
+    "inputs": {
+      "input": "CONTEXT:\nSupport tickets are triaged by the on-call engineer within one business hour. Tickets marked P0 page the on-call engineer immediately.\n\nQUESTION: What happens to P0 tickets?",
+      "output": "P0 tickets page the on-call engineer immediately."
+    }
+  },
+  {
+    "_case_id": "A4",
+    "inputs": {
+      "input": "CONTEXT:\nVault rotates database credentials every 90 days. Each rotation is written to the audit stream.\n\nQUESTION: How often are database credentials rotated?",
+      "output": "Database credentials are rotated every 90 days, and each rotation is written to the audit stream."
+    }
+  },
+  {
+    "_case_id": "A5",
+    "inputs": {
+      "input": "CONTEXT:\nOrion's free tier includes 5 GB of object storage and 100 GB of monthly egress. Paid tiers start at $29 per month.\n\nQUESTION: How much object storage does the free tier include?",
+      "output": "The free tier includes 50 GB of object storage."
+    }
+  },
+  {
+    "_case_id": "A6",
+    "inputs": {
+      "input": "CONTEXT:\nThe 8 May incident was caused by an expired TLS certificate on the edge proxy. The certificate had not been enrolled in automated renewal.\n\nQUESTION: What caused the 8 May incident?",
+      "output": "The incident was caused by a database deadlock during the nightly batch job."
+    }
+  },
+  {
+    "_case_id": "A7",
+    "inputs": {
+      "input": "CONTEXT:\nNimbus supports SAML and OIDC single sign-on. Both are configured from the workspace security settings.\n\nQUESTION: Does Nimbus support single sign-on?",
+      "output": "Yes, Nimbus supports single sign-on through its proprietary NimbusAuth protocol."
+    }
+  },
+  {
+    "_case_id": "A8",
+    "inputs": {
+      "input": "CONTEXT:\nAudit-log retention is 13 months on the Enterprise plan and 30 days on all other plans.\n\nQUESTION: What is the audit-log retention on the Enterprise plan?",
+      "output": "Audit logs are retained indefinitely on every plan."
+    }
+  },
+  {
+    "_case_id": "G1a",
+    "inputs": {
+      "input": "CONTEXT:\nAll Tier-2 accounts receive a 24-hour support SLA. Acme Corp is a Tier-2 account.\n\nQUESTION: What support SLA does Acme Corp receive?",
+      "output": "Acme Corp receives a 24-hour support SLA."
+    }
+  },
+  {
+    "_case_id": "G1b",
+    "inputs": {
+      "input": "CONTEXT:\nThe nightly reconciliation job starts at 02:00 UTC and runs for approximately three hours.\n\nQUESTION: Will the nightly reconciliation job be finished by 06:00 UTC?",
+      "output": "Yes. It starts at 02:00 UTC and takes about three hours, so it should finish around 05:00 UTC."
+    }
+  },
+  {
+    "_case_id": "G1c",
+    "inputs": {
+      "input": "CONTEXT:\nFeature flags are evaluated server-side. Server-side evaluation never exposes flag rules to the browser.\n\nQUESTION: Can a user reading our browser bundle see our feature-flag rules?",
+      "output": "No. Because flags are evaluated server-side, the flag rules are never exposed to the browser."
+    }
+  },
+  {
+    "_case_id": "G2a",
+    "inputs": {
+      "input": "CONTEXT:\nThe service stores personal data belonging to EU residents and must therefore comply with the GDPR.\n\nQUESTION: Which data-protection regulation applies to this service?",
+      "output": "The GDPR applies. It has been enforceable since 25 May 2018 and carries fines of up to 4% of global annual turnover."
+    }
+  },
+  {
+    "_case_id": "G2b",
+    "inputs": {
+      "input": "CONTEXT:\nWe use PostgreSQL 15 as the primary datastore for all transactional workloads.\n\nQUESTION: Which database do we use for transactional workloads?",
+      "output": "PostgreSQL 15, which introduced the MERGE statement and improved logical replication."
+    }
+  },
+  {
+    "_case_id": "G2c",
+    "inputs": {
+      "input": "CONTEXT:\nCustomer payments are processed through Stripe. Refunds are issued from the same dashboard.\n\nQUESTION: Who processes our customer payments?",
+      "output": "Stripe processes customer payments. Stripe is certified as a PCI DSS Level 1 service provider."
+    }
+  },
+  {
+    "_case_id": "G3a",
+    "inputs": {
+      "input": "CONTEXT:\nAfter the change, the cache hit rate improved from 61% to 89%.\n\nQUESTION: How much did the cache hit rate improve?",
+      "output": "It rose by nearly 30 percentage points."
+    }
+  },
+  {
+    "_case_id": "G3b",
+    "inputs": {
+      "input": "CONTEXT:\nP95 request latency dropped from 1,240 ms to 410 ms after the caching layer was introduced.\n\nQUESTION: How much faster is P95 latency now?",
+      "output": "Roughly three times faster."
+    }
+  },
+  {
+    "_case_id": "G3c",
+    "inputs": {
+      "input": "CONTEXT:\nOf the 5 supported regions, 3 have completed the storage-engine upgrade.\n\nQUESTION: How many regions have completed the upgrade?",
+      "output": "Most of the regions have completed the upgrade."
+    }
+  },
+  {
+    "_case_id": "G4a",
+    "inputs": {
+      "input": "CONTEXT:\nThe API returns HTTP 429 when the per-minute request quota is exceeded.\n\nQUESTION: What is the per-minute request quota?",
+      "output": "The context does not state the exact quota, but it is likely 60 requests per minute, which is a common default."
+    }
+  },
+  {
+    "_case_id": "G4b",
+    "inputs": {
+      "input": "CONTEXT:\nBackups run nightly and are written to object storage in a separate account.\n\nQUESTION: Are the backups encrypted at rest?",
+      "output": "The document does not say, though backups written to object storage are usually encrypted at rest by default."
+    }
+  },
+  {
+    "_case_id": "G4c",
+    "inputs": {
+      "input": "CONTEXT:\nThe team deprecated the v1 endpoint in Q2 and published a migration guide.\n\nQUESTION: When will the v1 endpoint be removed?",
+      "output": "Not specified in the context. Deprecations of this kind typically allow a six-month window, so removal is probably in Q4."
+    }
+  },
+  {
+    "_case_id": "T1",
+    "inputs": {
+      "input": "CONTEXT:\nHelios is our managed event-ingestion product, launched in 2023 for teams that need near-real-time analytics. It exposes a REST collector and a gRPC collector, and both accept batched payloads. The collectors are deployed behind a global anycast edge. Customers configure destinations from the workspace console, where they can also replay failed deliveries. Schema drift is handled by a compatibility checker that runs before every write. The product has three plans: Starter, Business, and Enterprise. Starter is intended for evaluation workloads and has no uptime commitment. Enterprise adds private networking, a dedicated ingestion pool, and a named support contact. All plans share the same collector API surface, so upgrading requires no code change. Rate limits are 1,000 requests per minute on the Business plan.\n\nQUESTION: What is the rate limit on the Business plan?",
+      "output": "The Business plan is limited to 1,000 requests per minute."
+    }
+  },
+  {
+    "_case_id": "T2",
+    "inputs": {
+      "input": "CONTEXT:\nThe Helios ingestion pipeline batches events in 30-second windows and writes them to the warehouse through the bulk loader. Batches exceeding 2 million events are split automatically.\n\nQUESTION: How does the Helios pipeline handle very large batches?",
+      "output": "The Helios ingestion pipeline splits batches automatically once they exceed 2 million events, writing each resulting shard through the bulk loader in 15-second windows."
+    }
+  },
+  {
+    "_case_id": "T3",
+    "inputs": {
+      "input": "CONTEXT:\nThe onboarding checklist covers account creation, single sign-on setup, and billing configuration.\n\nQUESTION: What is the response-time SLA for onboarding support?",
+      "output": "The provided context does not mention a response-time SLA for onboarding support."
+    }
+  },
+  {
+    "_case_id": "T4",
+    "inputs": {
+      "input": "CONTEXT:\nRegion eu-west-1 reported 99.98% availability last quarter. Region ap-south-1 reported 99.42% availability over the same period.\n\nQUESTION: What availability did ap-south-1 report last quarter?",
+      "output": "ap-south-1 reported 99.98% availability last quarter."
+    }
+  }
+]

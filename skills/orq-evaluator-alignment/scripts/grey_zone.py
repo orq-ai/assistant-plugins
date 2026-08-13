@@ -41,17 +41,61 @@ def _resolve(run_dir: str | None, cfg: dict) -> object:
     return out_dir
 
 
+def _log_disclosure(payload: dict) -> None:
+    """Spell out what the budget cost, so the conductor can pass it to the human.
+
+    The conductor is required to state this before open-coding (design §12.8):
+    grey zones inferred from a 1%-slice of a transcript are confidently wrong in a
+    way nothing downstream can detect.
+    """
+    budget = payload.get('budget', {})
+    logger.info(
+        f'  Context budget: ~{budget.get("estimated_tokens")} tokens of '
+        f'{budget.get("budget_tokens")}.'
+    )
+    dropped = budget.get('n_dropped_by_budget') or 0
+    if dropped:
+        logger.warning(
+            f'⚠ {dropped} confuser(s) dropped by the token budget — the payload holds the '
+            f'{payload.get("n_confusers")} most unstable. TELL THE USER which ones made the cut.'
+        )
+    if not budget.get('within_budget', True):
+        logger.warning(
+            '⚠ Even a single confuser exceeds the budget. Raise --max_tokens or lower '
+            '--max_chars; do not open-code as if the payload were complete.'
+        )
+    truncated = budget.get('n_truncated') or 0
+    if truncated:
+        worst = min(
+            payload.get('confusers', []),
+            key=lambda c: (c.get('input_chars_shown', 0) / c['input_chars_original'])
+            if c.get('input_chars_original') else 1.0,
+        )
+        logger.warning(
+            f'⚠ {truncated} confuser(s) had their input shortened '
+            f'(~{budget.get("total_chars_elided")} chars elided in total; worst: '
+            f'{worst.get("input_chars_shown")} of {worst.get("input_chars_original")} chars '
+            f'shown). TELL THE USER, and lean on the judge\'s own rationale for those.'
+        )
+
+
 def assemble(
     run_dir: str | None = None,
     config: str = 'config.toml',
     top_k: int | None = None,
     max_chars: int | None = None,
+    max_tokens: int | None = None,
 ) -> str:
     """queue.json → grey_zone_payload.json (the conductor's bounded confuser payload).
 
     `top_k` caps how many (most-unstable-first) confusers enter context; defaults
-    to config `grey_zone_top_k` (absent → all). `max_chars` truncates each judged
-    input (default config `grey_zone_max_chars` → 600).
+    to config `grey_zone_top_k` (-1 → all, 0 → none). `max_chars` is the per-confuser
+    input budget, fair-shared across the evaluator's `{{variables}}` (default config
+    `grey_zone_max_chars` → 600). `max_tokens` clamps the whole payload to the
+    longest prefix that fits (default config `grey_zone_max_tokens` → 60000).
+
+    Never blocks: over-budget clamps and reports rather than stopping, because the
+    coverage decision already happened at the step-5 count (design §12.3).
     """
     cfg = runner.load_config(config)
     out_dir = _resolve(run_dir, cfg)
@@ -59,13 +103,17 @@ def assemble(
     queue = runner.read_json(out_dir / 'queue.json')
     resolved_top_k = top_k if top_k is not None else cfg.get('grey_zone_top_k')
     resolved_max = int(max_chars if max_chars is not None else cfg.get('grey_zone_max_chars', 600))
+    resolved_tokens = int(max_tokens if max_tokens is not None else cfg.get('grey_zone_max_tokens', 60000))
 
-    payload = gzlib.assemble_payload(queue, top_k=resolved_top_k, max_chars=resolved_max)
+    payload = gzlib.assemble_payload(
+        queue, top_k=resolved_top_k, max_chars=resolved_max, max_tokens=resolved_tokens
+    )
     runner.write_json(out_dir / 'grey_zone_payload.json', payload)
     logger.info(
         f'✓ Wrote {out_dir / "grey_zone_payload.json"}: {payload["n_confusers"]} confuser(s) '
         'for grey-zone clustering.'
     )
+    _log_disclosure(payload)
     print(out_dir)
     return str(out_dir)
 

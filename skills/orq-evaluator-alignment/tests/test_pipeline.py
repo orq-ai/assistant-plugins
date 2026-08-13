@@ -742,6 +742,39 @@ def test_retest_prefers_grey_zone_policy_over_annotations(tmp_path, monkeypatch)
     assert rm['agreement']['accuracy'] == 1.0  # policy label used, not the annotation
 
 
+# --- RES-980 §11: data seeding — synthetic rows flow through & stay flagged ---
+
+
+def test_seeding_synthetic_rows_flow_to_queue_tagged(tmp_path, monkeypatch):
+    """seed_inputs.convert → stability → metrics → build_queue: a synthetic confuser
+    reaches the queue and keeps its `synthetic: true` flag end-to-end (§11.6)."""
+    import build_queue
+    import seed_inputs
+    import stability
+
+    d = tmp_path / 'run'
+    d.mkdir()
+    (d / 'evaluator.json').write_text(json.dumps({
+        'id': 'e', 'prompt': 'Judge {{log.input}} {{log.output}}', 'output_type': 'boolean',
+        'variables': ['log.input', 'log.output'], 'judge_model': 'm',
+    }), encoding='utf-8')
+    # A synthetic boundary case whose input the fake judge flips on ("useless").
+    (d / 'synthetic_datapoints.json').write_text(json.dumps([
+        {'inputs': {'log.input': 'this is useless', 'log.output': 'ok'}, 'expected_output': '', 'rationale': 'edge'},
+    ]), encoding='utf-8')
+
+    seed_inputs.convert(run_dir=str(d), config=FAKE_CONFIG)
+    monkeypatch.setattr(stability, 'run_jury_for_row', _fake_run_jury_for_row)
+    monkeypatch.setattr(stability, 'make_judge_client', lambda: object())
+    stability.main(run_dir=str(d), config=FAKE_CONFIG)
+    build_queue.main(run_dir=str(d), config=FAKE_CONFIG, count=-1, low_flip_sample_size=0)
+
+    q = json.loads((d / 'queue.json').read_text(encoding='utf-8'))
+    assert q['items'], 'the synthetic confuser should surface in the queue'
+    assert q['items'][0]['synthetic'] is True
+    assert q['items'][0]['reason'] == 'instability'
+
+
 # --- context-bloat fix: metrics.json must not carry raw inputs into the conductor ---
 
 

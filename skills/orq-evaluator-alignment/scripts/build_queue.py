@@ -35,6 +35,7 @@ import fire
 from loguru import logger
 
 import _bootstrap  # noqa: F401
+from lib import grey_zone as gzlib
 from lib import runner
 
 # Matches an orq prompt placeholder, e.g. `{{ log.output }}`. Names can carry
@@ -112,7 +113,7 @@ def _verdict_space(output_type: str, labels: list[str], scale: tuple[float, floa
 
 def _display_item(
     rank: int, e: dict[str, Any], low_flip: bool, template: str, verdict_space: dict[str, Any],
-    src: dict[str, Any],
+    src: dict[str, Any], reason: str = 'instability',
 ) -> dict[str, Any]:
     # The judged input (query/output/messages) comes from `src` — the stability.json
     # row for this datapoint — not from the metrics entry `e`, which no longer
@@ -123,6 +124,12 @@ def _display_item(
         'rank': rank,
         'source_index': e.get('source_index'),
         'low_flip_sample': low_flip,
+        # Why this datapoint is in the queue: 'instability' (self-inconsistent),
+        # 'cross_model' (two models disagree — §11.3 opt 4), or 'low_flip' (sanity).
+        'reason': reason,
+        # A seeded row's provenance flows through from stability (§11.6), if present.
+        'synthetic': src.get('synthetic', False),
+        'source': src.get('source'),
         'query': src.get('query', ''),
         'output': output,
         # Variables recovered from the rendered prompt so the UI can show the
@@ -150,6 +157,46 @@ def _display_item(
             'representative_explanation': e.get('representative_explanation'),
         },
     }
+
+
+def _project_grey_zone(queue: dict[str, Any], cfg: dict) -> dict[str, Any] | None:
+    """What the step-6 grey-zone payload will cost in the conductor's context (§12.4).
+
+    The context budget rides on the count the user just chose rather than adding a
+    gate of its own, so the projection is reported here. It runs the *same* pure
+    `assemble_payload` that step 6 will run — a projection computed a second way
+    would eventually promise one thing and deliver another.
+
+    Returns None (and warns) if sizing fails: the queue is the artifact that matters.
+    """
+    try:
+        payload = gzlib.assemble_payload(
+            queue,
+            top_k=cfg.get('grey_zone_top_k'),
+            max_chars=int(cfg.get('grey_zone_max_chars', 600)),
+            max_tokens=int(cfg.get('grey_zone_max_tokens', 60000)),
+        )
+        return payload['budget']
+    except Exception:  # noqa: BLE001 — never cost the user their queue over a courtesy
+        logger.warning('⚠ Could not project the grey-zone context budget; the queue is unaffected.')
+        return None
+
+
+def _log_projection(projection: dict[str, Any] | None, n_items: int) -> None:
+    """Tell the user, in the same breath as the count they chose, how much of it
+    will actually reach the conductor's context at step 6."""
+    if not projection:
+        return
+    logger.info(
+        f'  Grey-zone context projection: ~{projection["estimated_tokens"]} tokens of '
+        f'{projection["budget_tokens"]}.'
+    )
+    dropped = projection.get('n_dropped_by_budget') or 0
+    if dropped:
+        logger.warning(
+            f'⚠ {n_items - dropped} of {n_items} will enter context at step 6 (the most '
+            f'unstable); {dropped} exceed the token budget. Tell the user before clustering.'
+        )
 
 
 def main(
@@ -202,10 +249,18 @@ def main(
     # fold 0 into "all", an undocumented trap.
     if count >= 0:
         flipped = flipped[:count]
+    flipped_idx = {e.get('source_index') for e in flipped}
 
+    # Cross-model disagreers (§11.3 opt 4): datapoints two models split on are
+    # confusers even at instability 0, so add any not already flipped.
+    cm_path = out_dir / 'cross_model.json'
+    cross_idx = set(runner.read_json(cm_path).get('disagreeing_indices', [])) if cm_path.exists() else set()
+    cross_only = [e for e in per_row if e.get('source_index') in cross_idx and e.get('source_index') not in flipped_idx]
+
+    confusers = [(e, 'instability') for e in flipped] + [(e, 'cross_model') for e in cross_only]
     items = [
-        _display_item(i + 1, e, False, template, verdict_space, inputs_by_idx.get(e.get('source_index'), {}))
-        for i, e in enumerate(flipped)
+        _display_item(i + 1, e, False, template, verdict_space, inputs_by_idx.get(e.get('source_index'), {}), reason)
+        for i, (e, reason) in enumerate(confusers)
     ]
 
     low_pool = [e for e in per_row if _is_low_instability(e)]
@@ -215,7 +270,8 @@ def main(
         sampled_low = rng.sample(low_pool, min(low_n, len(low_pool)))
         start = len(items)
         items.extend(
-            _display_item(start + i + 1, e, True, template, verdict_space, inputs_by_idx.get(e.get('source_index'), {}))
+            _display_item(start + i + 1, e, True, template, verdict_space,
+                          inputs_by_idx.get(e.get('source_index'), {}), 'low_flip')
             for i, e in enumerate(sampled_low)
         )
 
@@ -227,21 +283,25 @@ def main(
             'verdict_space': verdict_space,  # the judge's own verdict space (per type)
             'eval_prompt': template,  # shown in the UI for context on how variables are used
             'n_flipped_items': len(flipped),
+            'n_cross_model': len(cross_only),
             'n_low_flip_sample': len(sampled_low),
             'n_items': len(items),
         },
         'items': items,
     }
+    queue['meta']['grey_zone_projection'] = _project_grey_zone(queue, cfg)
     runner.write_json(out_dir / 'queue.json', queue)
     logger.info(
         f'✓ Wrote {out_dir / "queue.json"}: {len(flipped)} flipped + '
-        f'{len(sampled_low)} low-flip sanity items = {len(items)} to annotate'
+        f'{len(cross_only)} cross-model + {len(sampled_low)} low-flip sanity items = {len(items)} to annotate'
     )
-    if not flipped:
+    _log_projection(queue['meta']['grey_zone_projection'], len(items))
+    if not flipped and not cross_only:
         logger.warning(
-            '⚠ No flipped datapoints. The judge was unanimous everywhere at this '
-            'temperature — the flip queue is empty. Raise temperature or rely on '
-            'the low-flip sanity sample (design §8).'
+            '⚠ No confusers. The judge was unanimous everywhere at this temperature '
+            'and no cross-model disagreements were found — the flip queue is empty. '
+            'Raise temperature, seed data (dataset/synthetic), add a second model, or '
+            'rely on the low-flip sanity sample (design §8 / §11).'
         )
     print(out_dir)
     return str(out_dir)

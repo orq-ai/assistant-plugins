@@ -51,6 +51,43 @@ def test_assemble_writes_payload(tmp_path):
     assert payload['confusers'][0]['source_index'] == 7
 
 
+def _big_queue(n: int, chars: int = 2000) -> dict:
+    vs = {'type': 'boolean', 'labels': [False, True]}
+    return {
+        'meta': {'verdict_space': vs, 'eval_prompt': 'Judge: {{output}}', 'n_items': n},
+        'items': [{
+            'rank': i + 1, 'source_index': i, 'low_flip_sample': False,
+            'query': 'q', 'output': 'rendered',
+            'variables': [{'name': 'output', 'value': 'z' * chars}],
+            'messages': None, 'verdict_space': vs,
+            'ambiguity': {'instability': 0.9, 'band': 'unreliable', 'n_repeats': 5},
+            'judge_votes': {'n_true': 3, 'n_false': 2, 'representative_explanation': 'r'},
+        } for i in range(n)],
+    }
+
+
+def test_assemble_clamps_to_max_tokens_flag(tmp_path):
+    _write(tmp_path / 'queue.json', _big_queue(20))
+
+    grey_zone_cli.assemble(run_dir=str(tmp_path), config=_CONFIG, max_chars=2000, max_tokens=2000)
+
+    payload = json.loads((tmp_path / 'grey_zone_payload.json').read_text(encoding='utf-8'))
+    assert payload['n_confusers'] < 20
+    assert payload['budget']['n_dropped_by_budget'] > 0
+    assert payload['budget']['budget_tokens'] == 2000
+
+
+def test_assemble_takes_the_budget_from_config_by_default(tmp_path):
+    # config.toml ships grey_zone_max_tokens; the CLI must read it rather than
+    # falling back to "unbounded" the way v1 did with the missing keys.
+    _write(tmp_path / 'queue.json', _big_queue(2))
+
+    grey_zone_cli.assemble(run_dir=str(tmp_path), config=_CONFIG)
+
+    payload = json.loads((tmp_path / 'grey_zone_payload.json').read_text(encoding='utf-8'))
+    assert payload['budget']['budget_tokens'] == 60000
+
+
 def test_apply_writes_aggregated_md(tmp_path):
     _write(tmp_path / 'grey_zone_policy.json', {
         'output_type': 'boolean',

@@ -219,6 +219,34 @@ def build_create_body(
     return body
 
 
+def build_create_dataset_body(
+    display_name: str, *, path: str | None = None, description: str | None = None
+) -> dict[str, Any]:
+    """`POST /v2/datasets` body for an empty dataset (RES-980 §11.5, save-back).
+
+    `display_name` is orq's shown name (mirrors the evaluator create shape;
+    confirm the exact field against the live API). `path`'s first segment names
+    the owning project, as with evaluators. Pure so the shape is unit-testable.
+    """
+    body: dict[str, Any] = {'display_name': display_name}
+    if path is not None:
+        body['path'] = path
+    if description is not None:
+        body['description'] = description
+    return body
+
+
+def build_create_datapoints_body(datapoints: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`POST /v2/datasets/{id}/datapoints` bulk body — a top-level JSON **array**.
+
+    Not `{"datapoints": [...]}`: the wrapped object is rejected with
+    `400 invalid_request_body` ("expected array, received object"), which silently
+    broke the dataset save-back path. Returns a copy so the caller's list can't be
+    mutated into the request afterwards.
+    """
+    return list(datapoints)
+
+
 @dataclass
 class EvaluatorConfig:
     """The audited evaluator's config, normalised for downstream steps."""
@@ -486,6 +514,77 @@ class OrqClient:
             # response drift doesn't crash with a bare KeyError mid-write.
             raise RuntimeError(f'create evaluator returned no id; response shape: {data!r}')
         return CreateResult(id=new_id, key=data.get('key', key), raw=data)
+
+    # ── Datasets (RES-980 §11) ────────────────────────────────────────────────
+    async def _paginate_get(
+        self, path: str, *, limit: int, page_size: int, keys: tuple[str, ...]
+    ) -> list[dict[str, Any]]:
+        """GET `path` with page/limit params, accumulating up to `limit` items.
+        Mirrors `query_traces` pagination (stop on `has_more: False` or short page)."""
+        out: list[dict[str, Any]] = []
+        page = 1
+        while len(out) < limit:
+            want = min(page_size, limit - len(out))
+            resp = await self._client.get(path, params={'limit': want, 'page': page})
+            if resp.status_code >= 400:
+                logger.error(f'✗ GET {path} failed [{resp.status_code}]: {resp.text}')
+                resp.raise_for_status()
+            payload = resp.json()
+            batch = _envelope_list(payload, *keys)
+            if not batch:
+                break
+            out.extend(batch)
+            if payload.get('has_more') is False or len(batch) < want:
+                break
+            page += 1
+        return out[:limit]
+
+    async def list_datasets(self, limit: int = 200, page_size: int = 100) -> list[dict[str, Any]]:
+        """GET /v2/datasets — the workspace's datasets (keyed on `_id`)."""
+        return await self._paginate_get(
+            '/v2/datasets', limit=limit, page_size=page_size, keys=('data', 'datasets', 'items')
+        )
+
+    async def get_dataset(self, dataset_id: str) -> dict[str, Any]:
+        """GET /v2/datasets/{id}."""
+        resp = await self._client.get(f'/v2/datasets/{dataset_id}')
+        if resp.status_code >= 400:
+            logger.error(f'✗ get_dataset failed [{resp.status_code}]: {resp.text}')
+            resp.raise_for_status()
+        return _envelope_dict(resp.json()) or {}
+
+    async def list_datapoints(self, dataset_id: str, limit: int = 200, page_size: int = 100) -> list[dict[str, Any]]:
+        """GET /v2/datasets/{id}/datapoints — datapoints (each keyed on `id`)."""
+        return await self._paginate_get(
+            f'/v2/datasets/{dataset_id}/datapoints', limit=limit, page_size=page_size,
+            keys=('data', 'datapoints', 'items'),
+        )
+
+    async def create_dataset(
+        self, display_name: str, *, path: str | None = None, description: str | None = None
+    ) -> CreateResult:
+        """POST /v2/datasets — create an empty dataset (save-back target)."""
+        body = build_create_dataset_body(display_name, path=path, description=description)
+        resp = await self._client.post('/v2/datasets', json=body)
+        if resp.status_code >= 400:
+            logger.error(f'✗ create_dataset failed [{resp.status_code}]: {resp.text}')
+            resp.raise_for_status()
+        data = _envelope_dict(resp.json()) or {}
+        new_id = data.get('_id') or data.get('id')
+        if not new_id:
+            raise RuntimeError(f'create dataset returned no id; response shape: {data!r}')
+        return CreateResult(id=new_id, key=data.get('display_name', display_name), raw=data)
+
+    async def create_datapoints(
+        self, dataset_id: str, datapoints: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """POST /v2/datasets/{id}/datapoints — bulk-append datapoints."""
+        body = build_create_datapoints_body(datapoints)
+        resp = await self._client.post(f'/v2/datasets/{dataset_id}/datapoints', json=body)
+        if resp.status_code >= 400:
+            logger.error(f'✗ create_datapoints failed [{resp.status_code}]: {resp.text}')
+            resp.raise_for_status()
+        return _envelope_list(resp.json(), 'data', 'datapoints', 'items')
 
     async def create_boolean_evaluator(
         self,

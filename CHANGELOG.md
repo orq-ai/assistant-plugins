@@ -5,17 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.1] - 2026-08-14
+
+### Added
+- `orq-evaluator-alignment`: `testcases/rag-groundedness/` — a live end-to-end test case for the skill. One orq dataset of 24 RAG-groundedness datapoints (8 stable anchors, 12 grey-zone cases across 4 engineered ambiguities, 4 consistently-wrong traps) plus four judge evaluators covering every verdict type, a provisioning/teardown script, an answer key with pass criteria, and `score_run.py` to grade a finished run. Unlike `tests/`, it exercises the real API and answers what unit tests cannot: does the skill find the ambiguity that is there, and does it admit what it cannot see. Running it on `gemini-2.5-flash` reproduces the documented blind spot on demand — Gwet AC1 0.961 and mean instability 0.031 on a judge that is wrong on 5 of 24, including two verbatim-restatement anchors.
+
+### Fixed
+- `orq-evaluator-alignment`: `create_datapoints` sent the wrong request body. `POST /v2/datasets/{id}/datapoints` takes a top-level JSON array, but `build_create_datapoints_body` wrapped the rows as `{"datapoints": [...]}`, which the API rejects with `400 invalid_request_body` ("expected array, received object"). This broke dataset save-back (`seed_inputs.py save`) entirely. Verified against the live API.
+- `orq-evaluator-alignment`: `seed.unresolved_variables` did not mirror `judge.make_replacements` despite its docstring saying so. It had no branch for the `reference | expected | expected_output` leaves, so an evaluator declaring `{{log.reference}}` rendered correctly at judge time while **every** one of its dataset rows was silently skipped at pull time.
+
 ## [2.4.0] - 2026-08-14
 
 ### Added
 - `orq-evaluator-alignment`: multi-type judge alignment. The measure → annotate → rewrite → retest loop now covers all four verdict spaces — boolean (flip-rate), categorical (label entropy), numeric (score spread) and string (exact-match entropy) — on one shared 0..1 instability scale. String is detect + annotate only (no rewrite/retest). The annotation UI, agreement gate, recommend/aggregate stages and the created evaluator all carry the source's verdict space through.
 - `orq-evaluator-alignment`: grey-zone assessment stage (RES-980) — cluster the most-unstable "confuser" datapoints, drive a policy-driven Q&A, and render the resolved policy as the free-text guidance the existing rewrite step already consumes.
+- `orq-evaluator-alignment`: a context budget for the grey-zone payload, so evaluators with very large judged inputs (transcripts, RAG contexts, documents) cluster honestly. Each confuser's input is now windowed head+tail with a per-`{{variable}}` fair share — a long `{{query}}` can no longer starve `{{output}}` — and carries explicit elision accounting (`input_chars_shown` of `input_chars_original`) that the conductor is required to disclose before open-coding. `assemble` clamps the payload to the longest prefix fitting `grey_zone_max_tokens` (default 60k) and reports what it dropped; `build_queue` projects the same number at the point the user picks how many examples to review, so the budget rides on that existing decision instead of adding a gate. New `--max_tokens` flag and `grey_zone_top_k` / `grey_zone_max_chars` / `grey_zone_max_tokens` config keys.
 
 ### Changed
 - `orq-evaluator-alignment`: run-directory artifacts (`aggregated.md`, `new_prompt.md`, and every JSON/JSONL) are written atomically (temp-then-replace) so an interrupted step can no longer truncate an existing artifact. `aggregate.py` and the grey-zone `apply` step now warn instead of silently clobbering when both write `aggregated.md`.
 - `orq-evaluator-alignment`: judge model-slug resolution de-duplicates a display alias shared by two providers (first routable `refId` wins, with a warning) so alias→refId normalisation can't non-deterministically re-introduce the wrong-provider 403.
 
 ### Fixed
+- `orq-evaluator-alignment`: the grey-zone payload no longer silently misrepresents a large judged input. It previously concatenated every `{{variable}}` and cut the result head-first at 600 chars, so for a long conversation plus a short answer the conductor saw only conversation preamble — the answer the judge actually scored was elided entirely, with nothing but a trailing ellipsis to show for it. The `grey_zone_top_k` / `grey_zone_max_chars` keys the skill documented and read were also absent from `config.toml`, leaving the payload effectively uncapped.
 - `orq-evaluator-alignment`: categorical and numeric instability now clamp to `[0, 1]` — a judge that emits labels/scores outside the declared contract can no longer push the score past 1.0 and skew downstream banding.
 - `orq-evaluator-alignment`: creating an aligned copy of a numeric evaluator preserves its scale whether the source stores `output_type` as `number` or `numeric` (the latter previously dropped the scale silently). `build_queue --count 0` now means "no flipped items" (low-flip sample only) instead of being folded into "all". `retest` fails with a clean message on a string evaluator instead of a raw `ValueError`.
 

@@ -21,7 +21,10 @@ exist in any artifact. The payload surfaces the one representative rationale.
 
 from __future__ import annotations
 
+import json
 from typing import Any
+
+from lib.cost import CHARS_PER_TOKEN
 
 
 def _verdict_split(output_type: str, votes: dict[str, Any]) -> dict[str, Any]:
@@ -38,35 +41,138 @@ def _verdict_split(output_type: str, votes: dict[str, Any]) -> dict[str, Any]:
     raise ValueError(f'unsupported output_type {output_type!r} for verdict split')
 
 
-def _truncate(text: str, max_chars: int) -> str:
-    """Cut `text` to `max_chars`, flagging the cut with a trailing ellipsis so the
-    conductor can tell a value was elided (payload size is bounded on purpose, §8)."""
-    if len(text) <= max_chars:
-        return text
-    return text[:max_chars] + '…'
+# Fraction of a value's budget spent on its head; the rest goes to its tail (§12.5).
+# Head-only truncation loses the final assistant turn, which is usually the part the
+# judge actually scored — so an over-budget value is shown from both ends.
+_HEAD_FRACTION = 0.6
 
 
-def _compact_input(item: dict[str, Any], max_chars: int) -> str:
-    """The judged input, compactly. Prefer the inverted `{{variable}}` bindings
-    (what the judge actually scored) over the whole rendered prompt; fall back to
-    the raw `output` when template inversion failed (`variables` is None)."""
+def _window(text: str, budget: int) -> tuple[str, int]:
+    """Cut `text` to `budget` chars keeping a head AND a tail (§12.5).
+
+    Returns ``(rendered, shown_chars)``. `shown_chars` counts *source* characters
+    actually shown — not the elision marker — so the caller can report honestly how
+    much of the original the conductor saw.
+    """
+    if budget <= 0:
+        return '', 0
+    if len(text) <= budget:
+        return text, len(text)
+    head_n = max(1, int(budget * _HEAD_FRACTION))
+    tail_n = max(0, budget - head_n)
+    elided = len(text) - head_n - tail_n
+    tail = text[len(text) - tail_n:] if tail_n else ''
+    return f'{text[:head_n]}…[{elided} chars elided]…{tail}', head_n + tail_n
+
+
+def _fair_shares(lengths: list[int], budget: int) -> list[int]:
+    """Split `budget` chars across values of the given `lengths` (§12.5).
+
+    Each value starts at an equal share; values under their share release the
+    remainder, split evenly among the values that are over. Without this a long
+    `{{query}}` consumes the whole budget and starves `{{output}}` — the thing the
+    judge actually scored — to nothing.
+    """
+    n = len(lengths)
+    if n == 0:
+        return []
+    base = max(1, budget // n)
+    over = [length for length in lengths if length > base]
+    spare = sum(base - length for length in lengths if length <= base)
+    bonus = (spare // len(over)) if over else 0
+    return [base + bonus if length > base else base for length in lengths]
+
+
+def _compact_input(item: dict[str, Any], max_chars: int) -> tuple[str, dict[str, Any]]:
+    """The judged input, compactly, plus what it cost to get there (§12.5).
+
+    Prefers the inverted `{{variable}}` bindings (what the judge actually scored)
+    over the whole rendered prompt; falls back to the raw `output` when template
+    inversion failed (`variables` is None). The budget governs variable *values*;
+    the short `name: ` prefixes are not charged against it.
+
+    Returns ``(rendered, stats)`` where stats carries the elision accounting the
+    conductor is required to disclose (§12.8).
+    """
     variables = item.get('variables')
     if variables:
-        rendered = '\n'.join(f'{v.get("name")}: {v.get("value")}' for v in variables)
+        names = [str(v.get('name')) for v in variables]
+        values = [str(v.get('value') or '') for v in variables]
     else:
-        rendered = item.get('output') or item.get('query') or ''
-    return _truncate(rendered, max_chars)
+        names = []
+        values = [str(item.get('output') or item.get('query') or '')]
+
+    shares = _fair_shares([len(v) for v in values], max_chars)
+    parts: list[str] = []
+    shown_total = 0
+    for i, value in enumerate(values):
+        rendered, shown = _window(value, shares[i])
+        shown_total += shown
+        parts.append(f'{names[i]}: {rendered}' if names else rendered)
+
+    original = sum(len(v) for v in values)
+    return '\n'.join(parts), {
+        'input_chars_original': original,
+        'input_chars_shown': shown_total,
+        'input_truncated': shown_total < original,
+    }
+
+
+def estimate_tokens(obj: Any) -> int:
+    """Rough token count of `obj` as the conductor will actually read it (§12.6).
+
+    Serialized JSON bytes over the ~4 chars/token convention shared with
+    `lib/cost.py` — JSON is the honest unit because the JSON file is what gets
+    read. Order-of-magnitude, never presented as precise.
+    """
+    return max(1, round(len(json.dumps(obj, ensure_ascii=False)) / CHARS_PER_TOKEN))
+
+
+# Stand-in for the `budget` block while sizing the envelope, so the block's own
+# cost is not understated when deciding how many confusers fit.
+_BUDGET_PLACEHOLDER = {
+    'estimated_tokens': 000000, 'budget_tokens': 000000, 'within_budget': True,
+    'budget_top_k': 000000, 'n_dropped_by_budget': 000000, 'n_truncated': 000000,
+    'total_chars_elided': 000000,
+}
+
+
+def _fitting_prefix(confusers: list[dict[str, Any]], envelope: dict[str, Any], max_tokens: int) -> int:
+    """How many leading confusers fit under `max_tokens` (§12.6).
+
+    A prefix, never a subset: `queue.json` is most-unstable-first, so dropping from
+    the middle would discard the highest-signal points. Returns at least 1 when any
+    confuser exists — reporting "over budget" beats handing the conductor an empty
+    item list it would read as "no confusers found".
+    """
+    if not confusers:
+        return 0
+    total = estimate_tokens(envelope)
+    for i, confuser in enumerate(confusers):
+        total += estimate_tokens(confuser)
+        if total > max_tokens:
+            return max(1, i)
+    return len(confusers)
 
 
 def assemble_payload(
-    queue: dict[str, Any], *, top_k: int | None = None, max_chars: int = 600
+    queue: dict[str, Any],
+    *,
+    top_k: int | None = None,
+    max_chars: int = 600,
+    max_tokens: int | None = None,
 ) -> dict[str, Any]:
     """`queue.json` dict → compact confuser payload for the conductor's context.
 
-    Bounded on purpose (§8): `top_k` caps how many confusers enter context (queue
-    items are already most-unstable-first), and `max_chars` truncates each judged
-    input. The verdict split + band + one representative rationale is what the
-    conductor open-codes into grey zones.
+    Bounded on purpose (§8, §12): `top_k` caps how many confusers enter context
+    (queue items are already most-unstable-first), `max_chars` fair-shares a
+    windowing budget across each confuser's judged input, and `max_tokens` clamps
+    the assembled payload to the fitting prefix. The verdict split + band + one
+    representative rationale is what the conductor open-codes into grey zones.
+
+    The returned `budget` block is what the conductor is required to disclose
+    (§12.8): what entered context, what the budget dropped, and how much of each
+    input was actually seen.
     """
     verdict_space = queue.get('meta', {}).get('verdict_space', {})
     output_type = (verdict_space.get('type') or 'boolean').strip().lower()
@@ -79,23 +185,59 @@ def assemble_payload(
     for item in items:
         ambiguity = item.get('ambiguity', {})
         votes = item.get('judge_votes', {})
-        confusers.append(
-            {
-                'source_index': item.get('source_index'),
-                'band': ambiguity.get('band'),
-                'instability': ambiguity.get('instability'),
-                'low_flip_sample': item.get('low_flip_sample', False),
-                'input': _compact_input(item, max_chars),
-                'verdict_split': _verdict_split(output_type, votes),
-                'representative_reasoning': _truncate(votes.get('representative_explanation') or '', max_chars),
-            }
-        )
+        compact_input, input_stats = _compact_input(item, max_chars)
+        reasoning_raw = votes.get('representative_explanation') or ''
+        reasoning, reasoning_shown = _window(reasoning_raw, max_chars)
+        confuser = {
+            'source_index': item.get('source_index'),
+            'band': ambiguity.get('band'),
+            'instability': ambiguity.get('instability'),
+            'low_flip_sample': item.get('low_flip_sample', False),
+            'input': compact_input,
+            'verdict_split': _verdict_split(output_type, votes),
+            'representative_reasoning': reasoning,
+            'reasoning_chars_original': len(reasoning_raw),
+            'reasoning_chars_shown': reasoning_shown,
+            'reasoning_truncated': reasoning_shown < len(reasoning_raw),
+        }
+        confuser.update(input_stats)
+        confusers.append(confuser)
 
-    return {
-        'verdict_space': verdict_space,
-        'n_confusers': len(confusers),
-        'confusers': confusers,
+    n_total = len(confusers)
+    envelope = {
+        'verdict_space': verdict_space, 'n_confusers': n_total,
+        'confusers': [], 'budget': _BUDGET_PLACEHOLDER,
     }
+    if max_tokens is not None and max_tokens > 0:
+        keep = _fitting_prefix(confusers, envelope, max_tokens)
+    else:
+        keep = n_total
+    kept = confusers[:keep]
+
+    payload = {
+        'verdict_space': verdict_space,
+        'n_confusers': len(kept),
+        'confusers': kept,
+    }
+    estimated = estimate_tokens({**payload, 'budget': _BUDGET_PLACEHOLDER})
+    payload['budget'] = {
+        'estimated_tokens': estimated,
+        'budget_tokens': max_tokens,
+        'within_budget': max_tokens is None or estimated <= max_tokens,
+        # The top_k that would have produced this payload — what a human would pass
+        # to reproduce it, or raise past deliberately.
+        'budget_top_k': keep if keep < n_total else None,
+        'n_dropped_by_budget': n_total - len(kept),
+        'n_truncated': sum(
+            1 for c in kept if c['input_truncated'] or c['reasoning_truncated']
+        ),
+        'total_chars_elided': sum(
+            (c['input_chars_original'] - c['input_chars_shown'])
+            + (c['reasoning_chars_original'] - c['reasoning_chars_shown'])
+            for c in kept
+        ),
+    }
+    return payload
 
 
 # ── grey_zone_policy.json contract ────────────────────────────────────────────
