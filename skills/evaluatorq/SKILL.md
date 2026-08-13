@@ -9,7 +9,6 @@ description: >
   agents head-to-head (use orq-compare-agents) or when running
   orq.ai-native experiments only (use orq-run-experiment).
 allowed-tools: Bash(eq:*), Bash(pip:*), Bash(python:*), Bash(npx:*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities
-disallowed-tools: mcp__orq-workspace__delete_skill, mcp__orq-workspace__delete_dataset, mcp__orq-workspace__delete_datapoints, mcp__orq-workspace__delete_entity
 ---
 
 # Evaluatorq

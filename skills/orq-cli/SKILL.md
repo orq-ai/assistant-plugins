@@ -10,7 +10,6 @@ description: >
   orq-invoke-deployment) or for guided evaluation workflows (use
   orq-run-experiment).
 allowed-tools: Bash(orq:*), Bash(jq:*), Bash(curl:*), Bash(npm:*), Read, Write, Edit, Grep, Glob, WebFetch, AskUserQuestion, mcp__orq-workspace__search_docs, mcp__orq-workspace__search_entities
-disallowed-tools: mcp__orq-workspace__delete_skill, mcp__orq-workspace__delete_dataset, mcp__orq-workspace__delete_datapoints, mcp__orq-workspace__delete_entity
 ---
 
 # orq CLI

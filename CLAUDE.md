@@ -35,6 +35,14 @@ Exception: removing shipped content that was never the canonical surface (e.g. s
 - `mcp.json`, `.claude-plugin/.mcp.json`, `.claude-plugin/skills` are symlinks. Do not replace with copies; every tracked symlink must resolve inside the repo root (CI enforces).
 - New skill = add to: `skills/<name>/SKILL.md`, `agents/AGENTS.md` (path list + `<available_skills>` block), `README.md` skills table, `tests/skills.md` (smoke tests + Critical Files), and `skills-lock.json` (see below).
 
+## SKILL.md frontmatter is a closed field set
+
+Only `name`, `description`, `license`, `compatibility`, `metadata`, `allowed-tools` are permitted — that is the [Agent Skills](https://agentskills.io/specification) field set, and `validate-skills.mjs` enforces it. Do **not** add a field a harness happens to read: Agent Plugins §7.1 requires a conformant client to *skip the whole skill* if it fails the Agent Skills spec, so one extra frontmatter line silently costs the skill everywhere. This is not theoretical — `disallowed-tools` shipped in 2.2.3 and made 14 of 15 skills skippable until 2.3.0 removed it. Harness-specific data belongs in `metadata` (a string→string map), which the spec reserves for exactly that. Cross-check with the reference validator when in doubt:
+
+```bash
+uvx --from "git+https://github.com/agentskills/agentskills.git#subdirectory=skills-ref" skills-ref validate skills/<name>
+```
+
 ## skills-lock.json
 
 Lock file for the [`vercel-labs/skills`](https://github.com/vercel-labs/skills) CLI (`npx skills`) — the tool people use to install this suite into Claude Code, Cursor, Codex, Copilot, Gemini, etc. It is **not** an npm/Claude-Code-core standard; only `npx skills` reads it.

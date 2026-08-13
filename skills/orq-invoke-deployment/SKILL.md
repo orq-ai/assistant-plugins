@@ -7,7 +7,6 @@ description: >
   Do NOT use for creating or editing deployments/agents (use orq-optimize-prompt
   or orq-build-agent). Do NOT use for running evaluations (use orq-run-experiment).
 allowed-tools: Bash(curl:*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__list_models, mcp__orq-workspace__list_traces
-disallowed-tools: mcp__orq-workspace__delete_skill, mcp__orq-workspace__delete_dataset, mcp__orq-workspace__delete_datapoints, mcp__orq-workspace__delete_entity
 ---
 
 # Invoke Deployment

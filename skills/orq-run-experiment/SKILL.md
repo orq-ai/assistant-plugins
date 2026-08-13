@@ -7,7 +7,6 @@ description: >
   end-to-end. Do NOT use without a dataset and evaluators. Do NOT use for
   cross-framework comparisons with external agents (use orq-compare-agents).
 allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, mcp__orq-workspace__list_experiment_runs, mcp__orq-workspace__get_experiment_run, mcp__orq-workspace__search_entities, mcp__orq-workspace__list_datapoints, mcp__orq-workspace__search_docs
-disallowed-tools: mcp__orq-workspace__delete_skill, mcp__orq-workspace__delete_dataset, mcp__orq-workspace__delete_datapoints, mcp__orq-workspace__delete_entity
 ---
 
 # Run Experiment

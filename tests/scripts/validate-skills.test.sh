@@ -128,6 +128,26 @@ d=$(build_fixture unparseable-manifest)
 echo "{ nope" > "$d/plugin.json"
 expect_fail "root manifest is not JSON" "$d" "invalid JSON"
 
+# --- 3. Agent Skills conformance ---
+# The closed field set is the one that bit us: `disallowed-tools` sat in 14 of
+# 15 skills and made every one of them skippable under Agent Plugins §7.1,
+# while every check in this repo passed.
+d=$(build_fixture unknown-frontmatter-field)
+sed -i.bak 's/^description: /disallowed-tools: Bash\ndescription: /' "$d/skills/example-skill/SKILL.md"
+rm -f "$d/skills/example-skill/SKILL.md.bak"
+node "$validator" "$d" --fix >/dev/null 2>&1 || true   # --fix exits non-zero on the very error under test
+expect_fail "unknown frontmatter field" "$d" "unknown frontmatter field 'disallowed-tools'"
+
+d=$(build_fixture long-description)
+python3 - "$d/skills/example-skill/SKILL.md" <<'PY'
+import sys
+p = sys.argv[1]
+t = open(p).read().replace("description: Fixture skill", "description: " + "x" * 1100 + " ")
+open(p, "w").write(t)
+PY
+node "$validator" "$d" --fix >/dev/null 2>&1 || true   # --fix exits non-zero on the very error under test
+expect_fail "description over 1024 chars" "$d" "description 1[0-9][0-9][0-9] chars"
+
 # --- 5. no stray tracked skills ---
 d=$(build_fixture stray-skill)
 mkdir -p "$d/.agents/skills/leftover"

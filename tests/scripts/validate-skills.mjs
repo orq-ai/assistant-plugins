@@ -5,8 +5,11 @@
 //   2. the four plugin manifests agree on one version, and the root
 //      plugin.json is a usable object (its Agent Plugins 1.0.0 field rules
 //      are ajv's job — see the vendored schema in tests/schemas/)
-//   3. SKILL.md frontmatter is loadable and consistent with its directory,
-//      including full length of folded (>-style) descriptions
+//   3. SKILL.md frontmatter is loadable, consistent with its directory, and
+//      conforms to the Agent Skills spec — closed field set plus the name,
+//      description and compatibility constraints, measured over the full
+//      length of folded (>-style) values. Agent Plugins §7.1 lets a client
+//      skip a skill that fails this, so it is not cosmetic.
 //   4. content-pattern lint on public files
 //   5. no tracked SKILL.md outside skills/
 //   6. spec §4.1 — every tracked symlink resolves inside the plugin root
@@ -153,7 +156,19 @@ const rootManifest = manifestEntries.get("plugin.json") ?? null;
 if (rootManifest !== null && (typeof rootManifest !== "object" || Array.isArray(rootManifest)))
   err(`plugin.json: top level must be a JSON object, got ${Array.isArray(rootManifest) ? "array" : typeof rootManifest}`);
 
-// ---------- 3. frontmatter consistency ----------
+// ---------- 3. frontmatter consistency + Agent Skills conformance ----------
+// Agent Plugins §7.1 requires every skill to conform to the Agent Skills
+// specification, and a client MUST skip one that doesn't. The frontmatter
+// field set there is closed, so an extra field is not a harmless annotation —
+// it costs the skill. This mirrors ALLOWED_FIELDS in `skills-ref`, the
+// reference validator the spec links to, which reports an extra field as an
+// error rather than a warning. Keep the two in sync if the spec adds a field.
+const SKILL_FIELDS = new Set(["name", "description", "license", "compatibility",
+  "metadata", "allowed-tools"]);
+// 1-64 chars, lowercase alphanumeric and hyphens, no leading/trailing hyphen,
+// no consecutive hyphens. Distinct from the plugin name pattern in §5.5 of
+// Agent Plugins, which also permits periods.
+const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 for (const name of skillDirs) {
   const path = join(root, "skills", name, "SKILL.md");
   let text;
@@ -161,10 +176,17 @@ for (const name of skillDirs) {
   catch { err(`skills/${name}: missing SKILL.md`); continue; }
   const fm = readFrontmatter(text);
   if (!fm) { err(`skills/${name}: SKILL.md has no frontmatter block`); continue; }
+  for (const key of Object.keys(fm))
+    if (!SKILL_FIELDS.has(key))
+      err(`skills/${name}: unknown frontmatter field '${key}' — the Agent Skills field set is closed, so a conformant client skips this skill entirely (Agent Plugins §7.1)`);
   if (fm.name !== name) err(`skills/${name}: frontmatter name '${fm.name}' != directory name`);
+  else if (!SKILL_NAME_RE.test(name) || name.length > 64)
+    err(`skills/${name}: name violates the Agent Skills constraints (1-64 chars, lowercase alphanumeric and single hyphens)`);
   const desc = (fm.description ?? "").trim();
   if (!desc) err(`skills/${name}: missing or empty description`);
   else if (desc.length > 1024) err(`skills/${name}: description ${desc.length} chars (limit 1024)`);
+  const compat = (fm.compatibility ?? "").trim();
+  if (compat.length > 500) err(`skills/${name}: compatibility ${compat.length} chars (limit 500)`);
   const lineCount = text.split("\n").length;
   if (lineCount > 500)
     warn(`skills/${name}: SKILL.md is ${lineCount} lines — consider moving content to resources/`);

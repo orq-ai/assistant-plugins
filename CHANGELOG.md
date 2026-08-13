@@ -13,7 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `tests/scripts/validate-skills.test.sh` covers every invariant the validator enforces, not just the stale lock hash: each case breaks one thing in a clean fixture and asserts both a non-zero exit and the message naming the check. A git-backed fixture means the tracked-file checks (§4.1 containment, stray skills, one plugin root) are exercised too — previously they were verified only by hand during review, which is how two of them shipped passing while not checking.
 
+### Removed
+- `disallowed-tools` from all 14 skills that carried it. It is not an Agent Skills frontmatter field — the field set there is closed (`name`, `description`, `license`, `compatibility`, `metadata`, `allowed-tools`) — and Agent Plugins §7.1 requires a client to skip a skill that does not conform to that spec. `skills-ref`, the reference validator the spec links to, reported all 14 as errors, so this release would otherwise have advertised a portable plugin from which a conformant client loads one skill out of fifteen. **This loosens the tool restrictions added in 2.2.3:** `delete_*` orq tools were removed from the pool while those skills were active, and are now merely un-pre-approved, so they prompt instead of being unavailable. No skill's body calls them. Restoring the guarantee needs a mechanism the Agent Skills spec actually has.
+
 ### Fixed
+- CI validates every skill against the Agent Skills spec, not just against this repo's own conventions: closed frontmatter field set, `name` pattern and length, `description` and `compatibility` limits. The suite passed all 15 skills while 14 of them were non-conformant, because it only ever checked what this repo had thought to check.
 - A `git ls-files` failure no longer skips the tracked-file checks in silence. The skip exists for a non-git tree (a test fixture); when `.git` is present and git fails anyway — a corrupt index, `detected dubious ownership` under a containerised runner — the run now fails and quotes git, instead of reporting success for three checks that never ran.
 
 ### Changed
