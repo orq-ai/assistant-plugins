@@ -139,6 +139,7 @@ def build_create_body(
     categorical_labels: list[Any] | None = None,
     scale: list[Any] | None = None,
     guardrail_value: bool = True,
+    guardrail_values: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble the `POST /v2/evaluators` request body for a given verdict type.
 
@@ -185,8 +186,17 @@ def build_create_body(
             )
         body['categorical_labels'] = rich
         body['categories'] = [item['value'] for item in rich]
+        # orq's categorical guardrail requires a `values` array (the labels that
+        # "pass" the guardrail). Preserve the source's set when provided; else
+        # default to the full label set so the request is valid.
+        gr_values = (
+            [str(v) for v in guardrail_values]
+            if guardrail_values
+            else [item['value'] for item in rich]
+        )
         body['guardrail_config'] = {
             'type': 'categorical',
+            'values': gr_values,
             'enabled': True,
             'alert_on_failure': False,
         }
@@ -423,6 +433,7 @@ class OrqClient:
         categorical_labels: list[Any] | None = None,
         scale: list[Any] | None = None,
         guardrail_value: bool = True,
+        guardrail_values: list[Any] | None = None,
     ) -> CreateResult:
         """Create a single-judge LLM-as-judge evaluator of any verdict type.
 
@@ -444,6 +455,7 @@ class OrqClient:
             categorical_labels=categorical_labels,
             scale=scale,
             guardrail_value=guardrail_value,
+            guardrail_values=guardrail_values,
         )
         resp = await self._client.post('/v2/evaluators', json=body)
         if resp.status_code >= 400:

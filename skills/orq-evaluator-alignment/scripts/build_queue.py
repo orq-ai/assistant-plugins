@@ -111,19 +111,25 @@ def _verdict_space(output_type: str, labels: list[str], scale: tuple[float, floa
 
 
 def _display_item(
-    rank: int, e: dict[str, Any], low_flip: bool, template: str, verdict_space: dict[str, Any]
+    rank: int, e: dict[str, Any], low_flip: bool, template: str, verdict_space: dict[str, Any],
+    src: dict[str, Any],
 ) -> dict[str, Any]:
+    # The judged input (query/output/messages) comes from `src` — the stability.json
+    # row for this datapoint — not from the metrics entry `e`, which no longer
+    # carries it (metrics.json stays lean so the conductor's report read can't slurp
+    # every input; see metrics.py).
+    output = src.get('output', '')
     return {
         'rank': rank,
         'source_index': e.get('source_index'),
         'low_flip_sample': low_flip,
-        'query': e.get('query', ''),
-        'output': e.get('output', ''),
+        'query': src.get('query', ''),
+        'output': output,
         # Variables recovered from the rendered prompt so the UI can show the
         # actual judged inputs instead of the entire judge prompt. None when the
         # template could not be inverted; the UI falls back to raw `output`.
-        'variables': _invert_template(template, e.get('output', '')),
-        'messages': e.get('messages'),
+        'variables': _invert_template(template, output),
+        'messages': src.get('messages'),
         # Self-contained verdict space (§5.6): the Part 1 → Part 2 boundary.
         'verdict_space': verdict_space,
         'ambiguity': {
@@ -169,6 +175,11 @@ def main(
 
     metrics = runner.read_json(out_dir / 'metrics.json')
     per_row = metrics.get('per_row', [])
+    # The judged input lives in stability.json (metrics.json is kept lean); index it
+    # by source_index so each queue item can carry its actual input.
+    stab_path = out_dir / 'stability.json'
+    stability = runner.read_json(stab_path) if stab_path.exists() else {}
+    inputs_by_idx = {r.get('source_index'): r for r in stability.get('rows', [])}
     low_n = cfg.get('low_flip_sample_size', 5) if low_flip_sample_size is None else int(low_flip_sample_size)
     seed = int(cfg.get('seed', 42))
 
@@ -188,7 +199,10 @@ def main(
     if count and count > 0:
         flipped = flipped[:count]
 
-    items = [_display_item(i + 1, e, False, template, verdict_space) for i, e in enumerate(flipped)]
+    items = [
+        _display_item(i + 1, e, False, template, verdict_space, inputs_by_idx.get(e.get('source_index'), {}))
+        for i, e in enumerate(flipped)
+    ]
 
     low_pool = [e for e in per_row if _is_low_instability(e)]
     sampled_low: list[dict[str, Any]] = []
@@ -197,7 +211,8 @@ def main(
         sampled_low = rng.sample(low_pool, min(low_n, len(low_pool)))
         start = len(items)
         items.extend(
-            _display_item(start + i + 1, e, True, template, verdict_space) for i, e in enumerate(sampled_low)
+            _display_item(start + i + 1, e, True, template, verdict_space, inputs_by_idx.get(e.get('source_index'), {}))
+            for i, e in enumerate(sampled_low)
         )
 
     queue = {

@@ -75,6 +75,13 @@ async def _create(evaluator: dict[str, Any], prompt: str, key: str, path: str) -
     # source declared one — build_create_body never invents a scale). The
     # original evaluator is only read, never mutated.
     output_type = evaluator.get('output_type', 'boolean')
+    # Preserve the source's categorical guardrail "pass" set (orq requires a
+    # `values` array on a categorical guardrail_config).
+    guardrail_values = (
+        evaluator.get('raw', {}).get('guardrail_config', {}).get('values')
+        if output_type == 'categorical'
+        else None
+    )
     async with OrqClient() as client:
         result = await client.create_evaluator(
             key=key,
@@ -85,6 +92,7 @@ async def _create(evaluator: dict[str, Any], prompt: str, key: str, path: str) -
             output_type=output_type,
             categorical_labels=_source_labels(evaluator) if output_type == 'categorical' else None,
             scale=evaluator.get('scale') if output_type == 'number' else None,
+            guardrail_values=guardrail_values,
         )
     return {'id': result.id, 'key': result.key, 'raw': result.raw}
 

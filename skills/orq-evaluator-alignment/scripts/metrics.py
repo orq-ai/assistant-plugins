@@ -118,11 +118,14 @@ def _per_row(
     for row in rows:
         clean = _clean_verdicts(row.get('repetitions', []), output_type)
         n_clean = len(clean)
+        # NB: the judged input (query/output/messages) is deliberately NOT copied
+        # here — it lives canonically in stability.json. Duplicating it into
+        # metrics.json would dump every rendered judge prompt into the conductor's
+        # context when it reads the instability report, defeating the bounded
+        # grey-zone payload. build_queue / recommend read the input from
+        # stability.json by source_index instead.
         entry: dict[str, Any] = {
             'source_index': row.get('source_index'),
-            'query': row.get('query', ''),
-            'output': row.get('output', ''),
-            'messages': row.get('messages'),
             'representative_explanation': row.get('representative_explanation'),
             'n_successful_repeats': n_clean,
             'n_failed': int(row.get('repetitions_failed') or 0),

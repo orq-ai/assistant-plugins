@@ -156,36 +156,74 @@ heavier agreement stats — 1-Flip Consistency, Gwet AC1, Fleiss κ — are comp
 too and surfaced on request.) This is the evidence the user needs to choose an
 annotation count.
 
-### 5. Ask how many to annotate  ⟵ GATE
-*After* they have seen the instability report, ask how many top-ambiguous datapoints
-they want to label (an informed choice, not a fixed number). Mention the
-low-flip sanity sample. Then:
+### 5. Choose how many examples to review together  ⟵ GATE
+*After* they have seen the instability report, ask **in plain language** how many of
+the examples the judge was **most inconsistent on** they want to look at together —
+e.g. *"How many of the examples where the judge kept changing its mind should we
+review together? (a number, or 'all')"*. Avoid the internal jargon ("confuser
+queue", "top-ambiguous", "grey-zone"); it's an informed choice, not a fixed number.
+Briefly note you can also mix in a few examples the judge was *fully consistent* on,
+as a spot-check that it isn't consistently wrong. Then:
 ```
 uv run scripts/build_queue.py --run_dir <run_dir> --count <N>
 ```
 
-### 6. Annotate
+### 6. Grey-zone assessment (default) — cluster, then ask in chat
+The default feedback path (RES-980). Instead of labelling every confuser one by
+one, cluster them by *why* they are hard and ask a few behavioural questions that
+each resolve a whole cluster.
+
+1. **Assemble** the bounded confuser payload and read it into context:
+   ```
+   uv run scripts/grey_zone.py assemble --run_dir <run_dir>
+   ```
+   `grey_zone_payload.json` gives each confuser's verdict split, band, one
+   representative rationale, and the (truncated) judged input. *(Per-repetition
+   rationales are not available — evaluatorq's jury layer collapses them to one;
+   a documented v1 limit.)*
+2. **Open-code into grey zones.** Group the confusers by the pattern that makes
+   them hard under the current rubric (e.g. "sarcasm treated inconsistently",
+   "quoted third-party abuse", "severity threshold unclear"). Part 1 found *which*
+   points are unstable; here you find the *why*.
+3. **Ask 1–5 questions**, one per grey zone  ⟵ GATE, phrased to generalise
+   (resolve the cluster, not one instance), specialised by type:
+   - boolean → which side of the line ("Does borderline sarcasm aimed at a group count as abuse?")
+   - categorical → the boundary between two labels ("When is a message `spam` vs `promotional`?")
+   - numeric → a threshold/anchor ("Above what score is toxicity 'severe'?")
+
+   Ask in chat, one at a time. Answers are short policy statements, not per-point labels.
+4. **Write `grey_zone_policy.json`** from the answers. Per grey zone record
+   `{id, question, answer, rule, member_source_indices}`; then apply the rules to
+   derive a per-point label `{source_index, value, [tolerance], grey_zone_id}` —
+   boolean `true/false`; categorical one **declared** label; numeric a
+   `target_score` **plus a `tolerance` band** (exact match is unrealistic on a
+   continuous scale). **Preserve the verdict space**: never invent a label or move
+   the scale.
+5. **Render the guidance** the rewrite consumes:
+   ```
+   uv run scripts/grey_zone.py apply --run_dir <run_dir>
+   ```
+   Validates the policy and writes `aggregated.md`. Proceed to step 7.
+
+**Fallback — the interactive annotation UI.** When the confusers do not cluster,
+or the user would rather eyeball points, use the scoring UI instead of the chat
+Q&A (it stays **fully interactive**, not read-only):
 ```
 uv run scripts/serve_annotation.py --run_dir <run_dir>
 ```
-Tell the user to open the printed URL and **score each item with its type-native
-input** — boolean → Pass/Fail; categorical → one button per declared label;
-numeric → a number on the evaluator's scale; string → a free-text box — plus an
-optional one-line "why"
-(the cheapest lever for a good rewrite). Labels auto-save to `annotations.json`
-as typed values; they can stop and resume. Wait for them to say they are done.
-
-### 7. Recommend → aggregate
+Per-type widgets — boolean Pass/Fail · one button per declared label · a number on
+the scale · a free-text box — plus an optional one-line "why"; labels auto-save to
+`annotations.json`, resume-able. Then produce the guidance the same way the boolean
+V1 did:
 ```
 uv run scripts/recommend.py --run_dir <run_dir>
 uv run scripts/aggregate.py --run_dir <run_dir>
 ```
-Compares each human label to the judge's central verdict, **type-aware** (boolean
-flips / categorical confusion-pairs / numeric signed-errors), then `aggregated.md`
-groups them into changes-to-make and strengths-to-preserve. Show the user the
-aggregated changes; they may edit `aggregated.md` before the rewrite.
+Either path ends with an `aggregated.md`; the rewrite (step 7) and retest (step 8)
+read the grey-zone policy first and fall back to `annotations.json`. *(String
+judges are annotate-only — no recommend/rewrite/create yet.)*
 
-### 8. Propose → approve → create  ⟵ GATE
+### 7. Propose → approve → create  ⟵ GATE
 ```
 uv run scripts/rewrite_eval.py --run_dir <run_dir>
 uv run scripts/create_eval.py --run_dir <run_dir>          # presents the diff
@@ -203,13 +241,16 @@ uv run scripts/create_eval.py --run_dir <run_dir> --approve
 numeric) with `source_evaluator_id` lineage; the original is never touched. If the
 user rejects, stop — nothing is created.
 
-### 9. Optional retest — confirm repeats first  ⟵ GATE
+### 8. Optional retest — confirm repeats first  ⟵ GATE
 Re-judges the scored datapoints with the NEW evaluator and writes
-`retest_metrics.json`. **Success needs both**: instability **drops** on the
-confusers, AND the new evaluator's verdicts **agree with the human labels**
-(boolean TPR/TNR · categorical accuracy · numeric MAE / within-tolerance). A drop
-alone is gameable by a consistently-wrong-but-stable judge — agreement keeps it
-honest.
+`retest_metrics.json`. It reads the per-point labels from `grey_zone_policy.json`
+first (the grey-zone default) and falls back to `annotations.json` (the UI path).
+**Success needs both**: instability **drops** on the confusers, AND the new
+evaluator's verdicts **agree with the policy labels** (boolean TPR/TNR ·
+categorical accuracy · numeric within-tolerance, using the policy's tolerance band
+when it pins one). A drop alone is gameable by a consistently-wrong-but-stable
+judge — a rewrite that stabilises but **disagrees** with the policy is reported as
+such and is **not** auto-approved; agreement keeps it honest.
 
 **Confirm the repeat count with the user first** (default from `config.toml`; use
 at least the stability N so the new verdict is as trustworthy as the run it is
@@ -250,7 +291,9 @@ resolve to the config value shown; overriding a flag beats `config.toml`.
 | `stability.py` | `--num_samples` (cfg -1), `--n_repeats` (cfg 8), `--max_concurrency` (cfg 8), `--temperature` (cfg 1), `--metrics` (True; `--no-metrics` to skip) |
 | `metrics.py` | — (run_dir/config only) |
 | `build_queue.py` | `--count` (-1 = all), `--low_flip_sample_size` (cfg 5) |
-| `serve_annotation.py` | `--port` (8765) |
+| `grey_zone.py assemble` | `--top_k` (cfg `grey_zone_top_k`; all), `--max_chars` (cfg `grey_zone_max_chars`; 600) |
+| `grey_zone.py apply` | — (run_dir/config only) |
+| `serve_annotation.py` | `--port` (8765) — the interactive UI fallback |
 | `recommend.py` | — |
 | `aggregate.py` | — |
 | `rewrite_eval.py` | `--max_attempts` (3) |
@@ -261,10 +304,13 @@ resolve to the config value shown; overriding a flag beats `config.toml`.
 Every artifact lives in `runs/<key>_<ts>_<model>_<N>dp/`: `evaluator.json` (with
 `output_type` + `categorical_labels`/`scale`), `traces.jsonl`, `stability.json`,
 `metrics.json`, `queue.json` (each confuser carries its `verdict_space`),
-`annotations.json` (typed values), `recommendations.json`, `aggregated.md` +
-`aggregated.json`, `new_prompt.md`, `rewrite_status.json`, `approval.json`,
-`new_evaluator.json`, `retest_metrics.json`. Any step is re-runnable in isolation
-against an existing run directory.
+`grey_zone_payload.json` (the conductor's bounded confuser payload),
+`grey_zone_policy.json` (grey zones + questions + answers + per-point policy
+labels — the default feedback artifact), `annotations.json` (typed values — the UI
+fallback), `recommendations.json`, `aggregated.md` + `aggregated.json`,
+`new_prompt.md`, `rewrite_status.json`, `approval.json`, `new_evaluator.json`,
+`retest_metrics.json`. Any step is re-runnable in isolation against an existing
+run directory.
 
 ## Companion Skills
 

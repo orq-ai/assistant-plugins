@@ -638,3 +638,138 @@ def test_pipeline_numeric_no_scale_is_unmeasurable(tmp_path, monkeypatch):
     mx = json.loads((d / 'metrics.json').read_text(encoding='utf-8'))
     assert mx['per_row']  # rows exist
     assert all(e['instability'] is None and e['band'] == 'unmeasurable' for e in mx['per_row'])
+
+
+# --- RES-980: grey-zone feedback loop (assemble → policy → apply → rewrite → retest) ---
+
+
+def test_grey_zone_feedback_categorical(tmp_path, monkeypatch):
+    """The grey-zone path drives the EXISTING rewrite: build_queue → assemble the
+    conductor payload → (conductor writes grey_zone_policy.json) → apply →
+    rewrite_eval, with the categorical verdict space preserved."""
+    import build_queue
+    import grey_zone as gz  # scripts/grey_zone.py (the CLI)
+    import rewrite_eval
+    import stability
+
+    d = _make_run(tmp_path, monkeypatch, 'evaluator_categorical.json')
+    # A realistic categorical rubric names its labels, so the identity-stub rewrite
+    # can preserve them (the fake backend echoes the judge prompt verbatim).
+    ev = json.loads((d / 'evaluator.json').read_text(encoding='utf-8'))
+    ev['prompt'] = ('Classify the message as one of: safe, abuse, spam. Explanation '
+                    'before value.\n<input>{{log.input}}</input>\n<output>{{log.output}}</output>')
+    (d / 'evaluator.json').write_text(json.dumps(ev), encoding='utf-8')
+
+    stability.main(run_dir=str(d), config=FAKE_CONFIG)
+    build_queue.main(run_dir=str(d), config=FAKE_CONFIG, count=-1)
+
+    # Assemble the bounded confuser payload the conductor open-codes.
+    gz.assemble(run_dir=str(d), config=FAKE_CONFIG)
+    payload = json.loads((d / 'grey_zone_payload.json').read_text(encoding='utf-8'))
+    assert payload['n_confusers'] >= 1
+    confuser = payload['confusers'][0]
+    assert confuser['verdict_split'].get('counts')  # categorical detail carried
+
+    # Conductor writes the policy from the (simulated) Q&A: resolve the confuser to `abuse`.
+    rule = 'A sarcastic put-down aimed at a person is `abuse`, not `safe`.'
+    policy = {
+        'output_type': 'categorical',
+        'verdict_space': payload['verdict_space'],
+        'grey_zones': [{
+            'id': 'gz1', 'question': 'Is a sarcastic put-down abuse?',
+            'answer': 'Yes — targeted sarcasm counts as abuse.', 'rule': rule,
+            'member_source_indices': [confuser['source_index']],
+        }],
+        'labels': [{'source_index': confuser['source_index'], 'value': 'abuse', 'grey_zone_id': 'gz1'}],
+    }
+    (d / 'grey_zone_policy.json').write_text(json.dumps(policy), encoding='utf-8')
+
+    # apply → aggregated.md; rewrite_eval consumes it unchanged, preserving the labels.
+    gz.apply(run_dir=str(d), config=FAKE_CONFIG)
+    assert rule in (d / 'aggregated.md').read_text(encoding='utf-8')
+
+    rewrite_eval.main(run_dir=str(d), config=FAKE_CONFIG)
+    status = json.loads((d / 'rewrite_status.json').read_text(encoding='utf-8'))
+    assert status['output_type'] == 'categorical'
+    assert status['verdict_space_ok'] is True  # all K labels survived the rewrite
+
+
+def test_retest_prefers_grey_zone_policy_over_annotations(tmp_path, monkeypatch):
+    """End-to-end proof that retest scores agreement against the grey-zone policy
+    labels, not the UI-fallback annotations, when both are present."""
+    import retest
+    import stability
+
+    d = _make_run(tmp_path, monkeypatch, 'evaluator_categorical.json')
+    stability.main(run_dir=str(d), config=FAKE_CONFIG)  # original metrics.json + stability.json
+
+    # A created evaluator to retest (same prompt/model, fresh id).
+    ev = json.loads((d / 'evaluator.json').read_text(encoding='utf-8'))
+    new_eval = dict(ev)
+    new_eval['id'] = 'new-eval-123'
+    new_eval['judge_model'] = ev.get('judge_model') or 'fake/model'
+    new_eval['source_evaluator_id'] = ev.get('id')
+    (d / 'new_evaluator.json').write_text(json.dumps(new_eval), encoding='utf-8')
+
+    # Policy says the confuser (row 0) is `abuse`; a CONFLICTING annotations.json says
+    # `safe`. The fake judge majority on row 0 is `abuse`, so agreement is 1.0 only if
+    # retest read the policy — 0.0 if it read the annotations.
+    (d / 'grey_zone_policy.json').write_text(json.dumps({
+        'output_type': 'categorical',
+        'verdict_space': {'type': 'categorical', 'labels': ['safe', 'abuse', 'spam'], 'k': 3},
+        'grey_zones': [],
+        'labels': [{'source_index': 0, 'value': 'abuse', 'grey_zone_id': None}],
+    }), encoding='utf-8')
+    (d / 'annotations.json').write_text(json.dumps({'0': {'value': 'safe', 'reason': ''}}), encoding='utf-8')
+
+    retest.main(run_dir=str(d), config=FAKE_CONFIG)
+    rm = json.loads((d / 'retest_metrics.json').read_text(encoding='utf-8'))
+    assert rm['metadata']['output_type'] == 'categorical'
+    assert rm['agreement']['n'] == 1
+    assert rm['agreement']['accuracy'] == 1.0  # policy label used, not the annotation
+
+
+# --- context-bloat fix: metrics.json must not carry raw inputs into the conductor ---
+
+
+def test_metrics_json_omits_raw_inputs_from_per_row(run_dir):
+    """The conductor reads metrics.json at the instability step; it must NOT carry
+    the per-datapoint query/output/messages (which would dump every judged input
+    into context, defeating the bounded grey-zone payload). They live only in
+    stability.json (the canonical copy)."""
+    import stability
+
+    stability.main(run_dir=str(run_dir), config=FAKE_CONFIG)
+    mx = json.loads((run_dir / 'metrics.json').read_text(encoding='utf-8'))
+    assert mx['per_row']
+    for e in mx['per_row']:
+        assert 'output' not in e and 'query' not in e and 'messages' not in e
+    # the input text is still available in stability.json
+    stab = json.loads((run_dir / 'stability.json').read_text(encoding='utf-8'))
+    assert any(r.get('output') for r in stab['rows'])
+
+
+def test_build_queue_sources_inputs_from_stability(run_dir):
+    """Even though metrics.json dropped the inputs, the queue items still carry the
+    judged input (sourced from stability.json) so the UI + grey-zone payload work."""
+    import build_queue
+    import stability
+
+    stability.main(run_dir=str(run_dir), config=FAKE_CONFIG)
+    build_queue.main(run_dir=str(run_dir), config=FAKE_CONFIG, count=-1)
+    q = json.loads((run_dir / 'queue.json').read_text(encoding='utf-8'))
+    assert any(it['output'] for it in q['items'])       # judged input text still present
+    assert all('output' in it and 'query' in it for it in q['items'])
+
+
+def test_recommend_rows_by_index_enriches_from_stability():
+    """The pure reroute seam: metric rows keyed by source_index, enriched with the
+    judged input from stability.json (metric fields preserved)."""
+    import recommend
+
+    metrics = {'per_row': [{'source_index': 0, 'instability': 0.6, 'flip_rate': 0.4}]}
+    stab = {'rows': [{'source_index': 0, 'query': 'q0', 'output': 'o0', 'messages': None}]}
+    rows = recommend._rows_by_index(metrics, stab)
+    assert rows[0]['query'] == 'q0'
+    assert rows[0]['output'] == 'o0'
+    assert rows[0]['instability'] == 0.6  # metric fields preserved through the merge

@@ -44,7 +44,7 @@ from dotenv import load_dotenv
 from loguru import logger
 
 import _bootstrap  # noqa: F401
-from lib import runner
+from lib import grey_zone, runner
 
 load_dotenv()
 
@@ -103,23 +103,68 @@ def _build_retest_dir(out_dir: Path) -> Path:
     return retest_dir
 
 
-def _human_pairs(out_dir: Path, retest_dir: Path) -> tuple[list[tuple[Any, Any]], str]:
+def _load_labels(out_dir: Path) -> tuple[dict[str, Any], str, dict[str, Any] | None]:
+    """Load the human labels, grey-zone policy first (RES-980 default), then the
+    UI-fallback annotations. Returns `(labels, source, policy)`:
+
+    - `grey_zone_policy.json` present → its per-point policy labels (validated),
+      source `'grey_zone_policy'`, and the raw policy (so the numeric tolerance
+      band can be read from it).
+    - else `annotations.json` (the interactive UI fallback) → source
+      `'annotations'`, policy `None`.
+
+    Both yield `{str(source_index): {'value': ..., 'tolerance'?: ...}}` so the
+    pairing loop is identical.
+    """
+    gz_path = out_dir / 'grey_zone_policy.json'
+    if gz_path.exists():
+        policy = runner.read_json(gz_path)
+        grey_zone.validate_policy(policy)
+        return grey_zone.policy_labels(policy), 'grey_zone_policy', policy
+    ann_path = out_dir / 'annotations.json'
+    if ann_path.exists():
+        return runner.read_json(ann_path), 'annotations', None
+    raise SystemExit(
+        f'No human labels in {out_dir}: need grey_zone_policy.json (grey-zone flow) '
+        'or annotations.json (UI fallback). Run the grey-zone stage or serve_annotation.py first.'
+    )
+
+
+def _resolve_numeric_tol(cli_tol: float | None, cfg: dict[str, Any], policy: dict[str, Any] | None) -> float:
+    """Numeric within-tolerance band, in priority order: explicit `--tol` → a
+    *uniform* per-point band from the grey-zone policy → config default.
+
+    Per-point *varying* bands are a deliberate v1 deferral (§6, numeric-calibration
+    is the flagged high-risk surface); when the policy pins one band for every
+    point we honour it, otherwise we fall back to the single configured tolerance.
+    """
+    if cli_tol is not None:
+        return float(cli_tol)
+    if policy is not None:
+        bands = {lbl.get('tolerance') for lbl in policy.get('labels', []) if lbl.get('tolerance') is not None}
+        if len(bands) == 1:
+            return float(next(iter(bands)))
+    return float(cfg.get('numeric_tol', _DEFAULT_NUMERIC_TOL))
+
+
+def _human_pairs(out_dir: Path, retest_dir: Path) -> tuple[list[tuple[Any, Any]], str, dict[str, Any] | None]:
     """Zip each human label to the NEW evaluator's majority verdict on that
-    confuser, by `source_index`. Returns `(pairs, output_type)`.
+    confuser, by `source_index`. Returns `(pairs, output_type, policy)`.
 
     The human `value` is ground truth; the judge side is the jury's `aggregate_value`
     from the retest stability run (the majority bool/str/float per type). Rows with
     no usable judge verdict (None) or no human label are skipped — they cannot
-    inform agreement.
+    inform agreement. `policy` is the grey-zone policy (or None on the annotations
+    fallback) so the caller can resolve a policy-pinned numeric tolerance.
     """
-    annotations = runner.read_json(out_dir / 'annotations.json')
+    labels, _source, policy = _load_labels(out_dir)
     stability = runner.read_json(retest_dir / 'stability.json')
     ev = runner.read_json(retest_dir / 'evaluator.json')
     output_type = (ev.get('output_type') or 'boolean').strip().lower()
 
     judge_by_idx = {r['source_index']: r.get('aggregate_value') for r in stability.get('rows', [])}
     pairs: list[tuple[Any, Any]] = []
-    for key, ann in annotations.items():
+    for key, ann in labels.items():
         if not isinstance(ann, dict) or 'value' not in ann or ann.get('value') is None:
             continue
         try:
@@ -130,7 +175,7 @@ def _human_pairs(out_dir: Path, retest_dir: Path) -> tuple[list[tuple[Any, Any]]
         if judge_value is None:
             continue
         pairs.append((ann['value'], judge_value))
-    return pairs, output_type
+    return pairs, output_type, policy
 
 
 def _evaluate_agreement(
@@ -215,8 +260,8 @@ def main(
         instability_dropped = retest_mean < original_mean
 
     # 3b) Signal (b): the new evaluator agrees with the human labels.
-    resolved_tol = float(tol if tol is not None else cfg.get('numeric_tol', _DEFAULT_NUMERIC_TOL))
-    pairs, output_type = _human_pairs(out_dir, retest_dir)
+    pairs, output_type, policy = _human_pairs(out_dir, retest_dir)
+    resolved_tol = _resolve_numeric_tol(tol, cfg, policy)
     if not pairs:
         raise SystemExit(
             'No (human, judge) pairs to score agreement — need labelled annotations '

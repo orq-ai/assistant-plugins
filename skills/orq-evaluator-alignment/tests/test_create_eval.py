@@ -92,6 +92,29 @@ def test_categorical_body_includes_labels_rich_shape():
     assert 'scale' not in body
 
 
+def test_categorical_guardrail_includes_values_defaulting_to_labels():
+    # orq's categorical guardrail_config requires a `values` array (the labels that
+    # "pass" the guardrail). With no source set supplied, default to the full label
+    # set so POST /v2/evaluators does not 400 (ZodError: values expected array,
+    # received undefined).
+    body = build(
+        key='c', path='p', prompt='x', model='m', description=None,
+        output_type='categorical', categorical_labels=['safe', 'abuse', 'spam'],
+    )
+    assert body['guardrail_config']['values'] == ['safe', 'abuse', 'spam']
+
+
+def test_categorical_guardrail_preserves_source_values():
+    # When the source evaluator declared which labels "pass", preserve that set
+    # rather than defaulting to all labels (keeps the original guardrail semantics).
+    body = build(
+        key='c', path='p', prompt='x', model='m', description=None,
+        output_type='categorical', categorical_labels=['Safe', 'Neutral', 'Unsafe'],
+        guardrail_values=['Safe', 'Neutral'],
+    )
+    assert body['guardrail_config']['values'] == ['Safe', 'Neutral']
+
+
 def test_categorical_preserves_rich_labels_when_given_dicts():
     # If the source already carries {value, description}, keep the descriptions.
     body = build(

@@ -310,16 +310,36 @@ def _low_flip_flag(annotation: dict[str, Any], row: dict[str, Any]) -> bool:
     )
 
 
+def _rows_by_index(metrics: dict[str, Any], stability: dict[str, Any]) -> dict[Any, dict[str, Any]]:
+    """Index metrics `per_row` by source_index, enriched with the judged input
+    (query/output/messages) from stability.json. metrics.json no longer carries the
+    input itself (kept lean so the conductor's report read can't slurp every
+    datapoint); stability.json is the canonical copy. Metric fields are preserved."""
+    inputs = {r.get('source_index'): r for r in stability.get('rows', [])}
+    merged: dict[Any, dict[str, Any]] = {}
+    for r in metrics.get('per_row', []):
+        idx = r.get('source_index')
+        src = inputs.get(idx, {})
+        merged[idx] = {
+            **r,
+            'query': src.get('query', ''),
+            'output': src.get('output', ''),
+            'messages': src.get('messages'),
+        }
+    return merged
+
+
 async def _run(out_dir: Path, cfg: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     evaluator = runner.read_json(out_dir / 'evaluator.json')
     metrics = runner.read_json(out_dir / 'metrics.json')
+    stability = runner.read_json(out_dir / 'stability.json')
     annotations = runner.read_json(out_dir / 'annotations.json')
 
     output_type = (evaluator.get('output_type') or metrics.get('metadata', {}).get('output_type') or 'boolean').strip().lower()
     labels = evaluator.get('categorical_labels') or []
     tolerance = float(cfg.get('numeric_tolerance', _DEFAULT_NUMERIC_TOLERANCE))
 
-    rows_by_idx = {r.get('source_index'): r for r in metrics.get('per_row', [])}
+    rows_by_idx = _rows_by_index(metrics, stability)
     labeled = _labeled_annotations(annotations)
     if not labeled:
         raise RuntimeError('No labeled annotations in annotations.json — run the annotation step first.')
