@@ -14,11 +14,45 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import _bootstrap  # noqa: F401,E402
 
-from fetch_traces import _dedup_rows, _judged_input_key  # noqa: E402
+from fetch_traces import _dedup_rows, _judged_input_key, _resolve_judge_model  # noqa: E402
 
 
 def _q(row):
     return row['q']
+
+
+# --- _resolve_judge_model: the trace-observed model must be normalised to a
+# routable refId before it is pinned, else the display alias (openai/gpt-oss-120b)
+# reaches the router on the wrong provider path and 403s (RES-978 slug bug). ---
+
+
+def test_resolve_judge_model_normalizes_observed_alias_to_refid(tmp_path):
+    # Spans record the display alias; the registry map routes it to the refId.
+    evaluator = {'id': 'e', 'judge_model_id': 'ce490df4-uuid', 'judge_model': 'ce490df4-uuid'}
+    rows = [{'judge_model': 'openai/gpt-oss-120b'}] * 5
+    model_map = {'openai/gpt-oss-120b': 'groq/openai/gpt-oss-120b'}
+    out = _resolve_judge_model(tmp_path, evaluator, rows, model_map=model_map)
+    assert out == 'groq/openai/gpt-oss-120b'
+    assert evaluator['judge_model'] == 'groq/openai/gpt-oss-120b'
+    # the raw observed distribution is preserved honestly, un-normalised
+    assert evaluator['judge_models_observed'] == {'openai/gpt-oss-120b': 5}
+
+
+def test_resolve_judge_model_unknown_observed_falls_back_to_raw(tmp_path):
+    # A malformed/absent slug not in the registry map (e.g. a misconfigured
+    # production judge) is kept as-is rather than dropped — surfaced, not hidden.
+    evaluator = {'id': 'e', 'judge_model_id': 'uuid', 'judge_model': 'uuid'}
+    rows = [{'judge_model': 'openai/groq/gpt-oss-120b'}] * 3
+    out = _resolve_judge_model(tmp_path, evaluator, rows, model_map={'x': 'y'})
+    assert out == 'openai/groq/gpt-oss-120b'
+
+
+def test_resolve_judge_model_without_map_keeps_observed(tmp_path):
+    # Back-compat: no map supplied → behave as before (pin the observed value).
+    evaluator = {'id': 'e', 'judge_model_id': 'uuid', 'judge_model': 'uuid'}
+    rows = [{'judge_model': 'openai/gpt-4o-mini'}] * 2
+    out = _resolve_judge_model(tmp_path, evaluator, rows)
+    assert out == 'openai/gpt-4o-mini'
 
 
 # --- _dedup_rows: first-wins, order-preserving, exact match ---

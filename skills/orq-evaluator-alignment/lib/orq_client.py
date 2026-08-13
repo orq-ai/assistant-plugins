@@ -303,6 +303,32 @@ class OrqClient:
                 return _routable_slug(m)
         return None
 
+    async def model_slug_map(self) -> dict[str, str]:
+        """Map every registry `model_id` (display alias) to its routable slug.
+
+        `GET /v2/models` once, return ``{model_id: refId-or-fallback}`` via
+        ``_routable_slug``. The model string recorded on a judge span is the
+        display alias the judge was *called* with (e.g. ``openai/gpt-oss-120b``),
+        which addresses the wrong provider path and 403s; this map lets step 2
+        (``fetch_traces._resolve_judge_model``) normalise that alias to the
+        provider-qualified ``refId`` (``groq/openai/gpt-oss-120b``) before pinning
+        it — the same guarantee ``resolve_model_slug`` gives step 1. Returns ``{}``
+        (never raises) when the call fails, so the caller falls back to the raw
+        observed slug rather than aborting the run.
+        """
+        resp = await self._client.get('/v2/models')
+        if resp.status_code >= 400:
+            logger.warning(f'GET /v2/models [{resp.status_code}]; cannot normalise judge slugs')
+            return {}
+        out: dict[str, str] = {}
+        for m in _envelope_list(resp.json(), 'data', 'models', 'items'):
+            if isinstance(m, dict):
+                model_id = m.get('model_id')
+                slug = _routable_slug(m)
+                if model_id and slug:
+                    out[model_id] = slug
+        return out
+
     # ── Step 2 ───────────────────────────────────────────────────────────────
     async def query_traces(
         self,

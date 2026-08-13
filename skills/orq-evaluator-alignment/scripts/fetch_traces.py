@@ -836,7 +836,14 @@ def main(
     runner.write_jsonl(out_dir / 'traces.jsonl', rows)
     logger.info(f'✓ Wrote {len(rows)} datapoints to {out_dir / "traces.jsonl"}')
 
-    model = _resolve_judge_model(out_dir, evaluator, rows)
+    # Fetch the registry once so the trace-observed model (a display alias) is
+    # normalised to its routable refId before pinning — else it 403s (RES-978).
+    async def _slug_map() -> dict[str, str]:
+        async with OrqClient() as client:
+            return await client.model_slug_map()
+
+    model_map = asyncio.run(_slug_map())
+    model = _resolve_judge_model(out_dir, evaluator, rows, model_map=model_map)
 
     # Now that the judge model and datapoint count are known, embed them in the
     # run dir name so the folder is self-describing (`<key>_<ts>_<model>_<N>dp`).
@@ -847,7 +854,12 @@ def main(
     return str(out_dir)
 
 
-def _resolve_judge_model(out_dir: Any, evaluator: dict[str, Any], rows: list[dict[str, Any]]) -> str | None:
+def _resolve_judge_model(
+    out_dir: Any,
+    evaluator: dict[str, Any],
+    rows: list[dict[str, Any]],
+    model_map: dict[str, str] | None = None,
+) -> str | None:
     """Resolve the evaluator's judge model from the traces and pin it.
 
     `evaluator.json` arrives from step 1 with only the opaque config model id
@@ -856,7 +868,20 @@ def _resolve_judge_model(out_dir: Any, evaluator: dict[str, Any], rows: list[dic
     stability run reconstructs with. The full distribution is written too, so a
     judge whose model changed across the scanned window is visible rather than
     silently collapsed.
+
+    The model recorded on a span is the string the judge was *called* with —
+    a display alias (``openai/gpt-oss-120b``), not the routable provider-qualified
+    slug. Pinning that alias sends the stability run down the wrong provider path
+    and 403s (RES-978 slug bug). ``model_map`` (``{model_id: refId}`` from
+    ``/v2/models``) normalises the observed alias to its routable ``refId`` before
+    pinning — the same fix ``_routable_slug`` applies in step 1. A model absent
+    from the map (a malformed/deprecated slug on a misconfigured production judge)
+    is kept as-is and flagged, never silently dropped. The raw observed
+    distribution is recorded un-normalised for honesty.
     """
+    def _routable(slug: str) -> str:
+        return (model_map or {}).get(slug, slug)
+
     observed = Counter(r['judge_model'] for r in rows if r.get('judge_model'))
     if not observed:
         # Traces didn't record a model. That's fine IF step 1 already resolved a
@@ -873,7 +898,16 @@ def _resolve_judge_model(out_dir: Any, evaluator: dict[str, Any], rows: list[dic
         )
         return None
 
-    resolved, _ = observed.most_common(1)[0]
+    observed_slug, _ = observed.most_common(1)[0]
+    resolved = _routable(observed_slug)
+    if resolved != observed_slug:
+        logger.info(f'✓ Normalised judge slug {observed_slug!r} → routable {resolved!r}')
+    elif model_map and observed_slug not in model_map:
+        logger.warning(
+            f'⚠ Judge slug {observed_slug!r} is not in the /v2/models registry — pinning it '
+            'as-is. If the stability run 403s/404s, the production judge is on a deprecated or '
+            'mis-ordered slug; rerun fetch_evaluator.py with --judge_model <routable-slug>.'
+        )
     evaluator['judge_model'] = resolved
     evaluator['judge_models_observed'] = dict(observed)
     runner.write_json(out_dir / 'evaluator.json', evaluator)
