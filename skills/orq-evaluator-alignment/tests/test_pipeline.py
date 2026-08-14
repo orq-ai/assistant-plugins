@@ -707,9 +707,14 @@ def test_grey_zone_feedback_categorical(tmp_path, monkeypatch):
     assert status['verdict_space_ok'] is True  # all K labels survived the rewrite
 
 
-def test_retest_prefers_grey_zone_policy_over_annotations(tmp_path, monkeypatch):
-    """End-to-end proof that retest scores agreement against the grey-zone policy
-    labels, not the UI-fallback annotations, when both are present."""
+def test_retest_scores_against_the_newer_label_artifact(tmp_path, monkeypatch):
+    """End-to-end proof that retest scores agreement against the label artifact the
+    user finished last — the grey-zone policy here, with a stale annotations.json
+    alongside it. The reverse order (grey zone abandoned, UI used instead) is the
+    documented fallback and is covered in test_retest.py."""
+    import os
+    import time
+
     import retest
     import stability
 
@@ -727,13 +732,17 @@ def test_retest_prefers_grey_zone_policy_over_annotations(tmp_path, monkeypatch)
     # Policy says the confuser (row 0) is `abuse`; a CONFLICTING annotations.json says
     # `safe`. The fake judge majority on row 0 is `abuse`, so agreement is 1.0 only if
     # retest read the policy — 0.0 if it read the annotations.
+    (d / 'annotations.json').write_text(json.dumps({'0': {'value': 'safe', 'reason': ''}}), encoding='utf-8')
     (d / 'grey_zone_policy.json').write_text(json.dumps({
         'output_type': 'categorical',
         'verdict_space': {'type': 'categorical', 'labels': ['safe', 'abuse', 'spam'], 'k': 3},
         'grey_zones': [],
         'labels': [{'source_index': 0, 'value': 'abuse', 'grey_zone_id': None}],
     }), encoding='utf-8')
-    (d / 'annotations.json').write_text(json.dumps({'0': {'value': 'safe', 'reason': ''}}), encoding='utf-8')
+    # The policy is what the user finished last. Stamped explicitly: both files are
+    # written in the same second here, and mtime resolution would decide it otherwise.
+    later = time.time() + 10
+    os.utime(d / 'grey_zone_policy.json', (later, later))
 
     retest.main(run_dir=str(d), config=FAKE_CONFIG)
     rm = json.loads((d / 'retest_metrics.json').read_text(encoding='utf-8'))
