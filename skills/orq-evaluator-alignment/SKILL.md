@@ -148,6 +148,9 @@ isn't enough to tell signal from noise"* — then offer the choice:
    ```
    Widen `trace_start_date`/`trace_end_date` in `config.toml` too if the judge is
    older than that. The evaluator is already saved, so this only re-pulls traces.
+   **Only safe before anything is labelled** — it rewrites `traces.jsonl` wholesale,
+   and every label is keyed by position in that file. After step 6, re-run
+   stability → metrics → build_queue and redo the labels.
 2. **Use a dataset already in orq.**
    ```
    uv run scripts/dataset_inputs.py list --config config.toml        # pick one
@@ -299,6 +302,14 @@ and ask a few questions that each settle a whole group at once.
      split example, where seeing both sides would help most, arrives with nothing to
      read. Don't quote the tie-break notice as if it were reasoning; say it's absent
      and reason from the input.
+   - **`n_dropped_cross_model` > 0** — the queue lists second-model disagreers
+     *after* the instability ranking, so the token budget drops those first. On a
+     judge that rarely wavers they were the whole reason there was anything to look
+     at. Raise `--max_tokens` and re-run rather than open-code without them.
+
+   Each confuser also carries `reason`: `instability` (the judge disagreed with
+   itself) or `cross_model` (it held steady and a second model disagreed). They are
+   different kinds of hard — don't describe one as the other.
 
    This matters because a conclusion drawn from 1% of a transcript is confidently
    wrong in a way nothing downstream catches. Flag any group whose examples were
@@ -319,16 +330,39 @@ and ask a few questions that each settle a whole group at once.
    concrete. What you want back is a short rule, not a verdict on each example.
 4. **Write `grey_zone_policy.json`** from their answers. Per group record
    `{id, question, answer, rule, member_source_indices}`; then apply each rule to its
-   examples to derive `{source_index, value, [tolerance], grey_zone_id}` — `true/false`
-   for yes/no; one **already-declared** label for categories; for scores a target
-   **plus a `tolerance` band** (asking for an exact number back is unrealistic).
-   **Never invent a new label or move the scale** — the rewritten judge has to answer
-   in the same terms as the old one, or nothing is comparable.
+   examples to derive `{source_index, value, [tolerance], grey_zone_id, label_source}`
+   — `true/false` for yes/no; one **already-declared** label for categories; for
+   scores a target **plus a `tolerance` band** (asking for an exact number back is
+   unrealistic). Carry the evaluator's `verdict_space` into the file; `apply` checks
+   every value against it and refuses a label the judge cannot emit. **Never invent a
+   new label or move the scale** — the rewritten judge has to answer in the same
+   terms as the old one, or nothing is comparable.
+
+   **Then read the derived labels back.**  ⟵ GATE
+   You applied their rule; they didn't label these points. Those labels are what
+   step 8 grades the new judge against, so show them the result in one short pass —
+   *"applying that, I'd mark these three as pass and this one as fail; anything you'd
+   flip?"* — and set `label_source: "human_confirmed"` on the ones they confirm,
+   `"derived"` on the rest (the default). It's one message, and without it the whole
+   validation is one model checking its own reading of the rule.
 5. **Turn the answers into guidance** for the rewrite:
    ```
    uv run scripts/grey_zone.py apply --run_dir <run_dir>
    ```
    Checks the policy and writes `aggregated.md`. Go to step 7.
+6. **Look at the steady ones too, briefly.** You promised this at step 5 and it is
+   the only check on the blind spot the whole method has. One extra pass, held
+   separately from the grey zones:
+   ```
+   uv run scripts/grey_zone.py assemble --run_dir <run_dir> --include_low_flip
+   ```
+   Read the `low_flip_sample: true` rows and ask the user whether the judge got them
+   right — no grouping, no rules, just *"it was completely sure about these; do you
+   agree?"* If any is wrong, say so plainly: the judge is confidently wrong
+   somewhere, and nothing in the instability ranking will ever find that. **Re-run
+   `assemble` without the flag afterwards** so `grey_zone_payload.json` goes back to
+   being the grey-zone view. Don't fold these into the policy — they aren't grey
+   zones, and step 8 re-judges them separately with `--with_low_flip`.
 
 **If the examples don't group cleanly**, or the user would rather just look at them
 one by one, open the scoring UI instead of doing the chat Q&A:
@@ -337,14 +371,20 @@ uv run scripts/serve_annotation.py --run_dir <run_dir>
 ```
 They get the right control for the judge's type — Pass/Fail, one button per label, a
 number on the scale, or a text box — plus an optional one-line "why". It saves as
-they go and can be resumed. Then:
+they go and can be resumed. Then, **for boolean / categorical / numeric judges only**:
 ```
 uv run scripts/recommend.py --run_dir <run_dir>
 uv run scripts/aggregate.py --run_dir <run_dir>
 ```
-Both routes end at `aggregated.md`; steps 7 and 8 read the grey-zone policy first and
-fall back to `annotations.json`. *(Free-text judges can be scored here but not yet
-rewritten.)*
+**Stop here for a free-text (string) judge.** It can be measured and annotated but
+not rewritten, and `recommend.py` refuses it rather than spending one model call per
+annotation on guidance that `rewrite_eval` will then reject. Report the annotations
+back to the user and end the session.
+
+Both routes end at `aggregated.md`; steps 7 and 8 read whichever of
+`grey_zone_policy.json` / `annotations.json` is **newer**, so if you switch to the UI
+after starting the grey-zone route, the labels you just collected are the ones used.
+Delete the abandoned artifact to keep it unambiguous.
 
 ### 7. Show the proposed rewrite, then create it only if they say yes  ⟵ GATE
 
@@ -399,6 +439,29 @@ said they should be. Steadiness alone is worthless — a judge that's wrong the 
 way every time scores perfectly on it. If it got steadier but disagrees with the
 user, report exactly that; don't call it a win.
 
+**Agreement comes with a `before`.** The original run already judged these same
+rows, so `retest_metrics.json` carries what the *old* judge scored against the same
+labels, for free. Quote both. A new score of 0.78 that passes the 0.7 bar is a
+regression if the old judge was at 0.85, and the pass/fail flag alone won't show it.
+
+**Say what the numbers can't be.** `retest_metrics.json` carries a `caveats` list;
+read it out rather than summarising it away. There are three, and they all point the
+same way — the result is softer than it looks:
+- these rows were chosen for being the *most* unstable, so re-measuring them drifts
+  toward the middle on its own. `--baseline_rerun` re-runs the **old** judge over the
+  same rows in the same pass, which is the only version of gate (a) that isolates the
+  rewrite. It costs the same again — offer it, don't assume it;
+- the same examples produced the rewrite guidance *and* the labels that score it.
+  There's no holdout, so the agreement number is an upper bound;
+- any label the user didn't confirm at step 6 is your reading of their rule, not
+  their verdict. `metadata.label_provenance` counts them.
+
+**Check what happened outside the grey zone.** `--with_low_flip` re-judges the
+stable spot-check rows too and reports how many changed verdict. Nobody labelled
+those, so a change isn't automatically wrong — but a rewrite that settles the grey
+zone by unsettling everything else is the classic failure here, and this is the only
+place it shows up.
+
 **It re-judges only the examples you settled answers for** — those are the only ones
 agreement can score, so re-running the rest would cost money for verdicts nothing
 reads. The before/after instability comparison is recomputed over that same subset,
@@ -406,13 +469,22 @@ so the drop isn't an artifact of which rows were picked. Quote the cost accordin
 **labelled examples × repeats**, not the whole dataset. (`--all_rows` re-judges
 everything, if they want a run-wide re-measure.)
 
-**Ask how many repeats first** (default in `config.toml`; use at least the number
-from step 3, so the comparison is like-for-like):
+Repeats and temperature **default to whatever the step-3 run actually used**, read
+back from `metrics.json`, so the comparison is like-for-like without anyone having to
+remember. Overriding to a *lower* repeat count marks the comparison not comparable
+(fewer samples under-estimate instability, which reads as a win), and gate (a) fails
+rather than claiming one.
 ```
-uv run scripts/retest.py --run_dir <run_dir> --n_repeats <N>
+uv run scripts/retest.py --run_dir <run_dir>
+uv run scripts/retest.py --run_dir <run_dir> --baseline_rerun --with_low_flip
 ```
 (`--tol` is how close a score has to be to count as agreeing, default 0.5 on the raw
-scale; `--num_samples` caps it further, for a smoke test.)
+scale; `--num_samples` caps the rows, for a smoke test — it narrows both sides of the
+comparison, so the before/after stays over the same rows.)
+
+**Quote the cost before running it**, there's no estimator for this step: it's
+`labelled rows × repeats` judge calls, doubled with `--baseline_rerun`, plus
+`low_flip_sample_size × repeats` with `--with_low_flip`.
 
 ## Final summary
 Tell them, in plain terms:
@@ -421,8 +493,15 @@ Tell them, in plain terms:
   step 8 (steadier, and agreeing with them);
 - **what this did not check.** Everything here was measured on examples the judge was
   *unsure* about. A judge that is confidently wrong never wobbles, so it never showed
-  up. Say this even when the numbers are good — especially then. Point at the stable
-  spot-check examples as the cheap partial check, and suggest re-running periodically.
+  up. Say this even when the numbers are good — especially then. Say what the stable
+  spot-check examples showed (step 6.6) and whether the retest re-judged them, and
+  suggest re-running periodically.
+- **why the improvement number is an upper bound.** The same examples produced the
+  guidance for the rewrite and the labels that scored it, with no holdout; the rows
+  were picked for maximum instability, so some of the drop is regression to the mean
+  unless `--baseline_rerun` was used; and any label the user didn't confirm is your
+  application of their rule. `retest_metrics.json` `caveats` lists whichever of these
+  apply — none of them is optional to mention.
 - if any examples came from step 1a options 2–4, say that too: they test what the
   rubric says, not what production actually sends.
 
@@ -473,7 +552,7 @@ resolve to the config value shown; overriding a flag beats `config.toml`.
 | `aggregate.py` | — |
 | `rewrite_eval.py` | `--max_attempts` (3) |
 | `create_eval.py` | `--approve` (False), `--edits <file>` (None), `--force` (False; bypass create-side guards, e.g. non-routable judge slug) |
-| `retest.py` | `--n_repeats` (cfg, use ≥ stability N), `--num_samples` (further cap, for a smoke test), `--tol` (0.5, numeric within-tolerance band), `--all_rows` (False — by default only the **labelled** rows are re-judged) |
+| `retest.py` | `--n_repeats` / `--temperature` (default: whatever the step-3 run used), `--num_samples` (cap rows, smoke test — narrows both sides of the comparison), `--tol` (0.5, numeric within-tolerance band), `--all_rows` (False — by default only the **labelled** rows are re-judged), `--with_low_flip` (False — also re-judge the stable spot-check rows as a regression check), `--baseline_rerun` (False — re-run the OLD judge over the same rows for a true A/B; doubles the cost) |
 
 ## Run directory contract
 Every artifact lives in `runs/<key>_<ts>_<model>_<N>dp/`: `evaluator.json` (with
@@ -483,11 +562,22 @@ Every artifact lives in `runs/<key>_<ts>_<model>_<N>dp/`: `evaluator.json` (with
 (conductor-authored seed, §11) + `cross_model.json` (second-model disagreers) when
 a starved run was seeded, `grey_zone_payload.json` (the conductor's bounded confuser payload),
 `grey_zone_policy.json` (grey zones + questions + answers + per-point policy
-labels — the default feedback artifact), `annotations.json` (typed values — the UI
-fallback), `recommendations.json`, `aggregated.md` + `aggregated.json`,
-`new_prompt.md`, `rewrite_status.json`, `approval.json`, `new_evaluator.json`,
-`retest_metrics.json`. Any step is re-runnable in isolation against an existing
-run directory.
+labels with their `label_source` — the default feedback artifact),
+`annotations.json` (typed values — the UI fallback), `recommendations.json`,
+`aggregated.md` + `aggregated.json`, `new_prompt.md`, `rewrite_status.json`,
+`approval.json`, `new_evaluator.json`, `retest_metrics.json`, and the retest's own
+sub-runs `retest/` (+ `retest_baseline/` with `--baseline_rerun`), each holding the
+filtered `traces.jsonl` and the `index_map.json` that pairs its positional
+`source_index` back to the parent's. Any step is re-runnable in isolation against an
+existing run directory.
+
+**`source_index` is a position in `traces.jsonl`, and that file is the run's spine.**
+`stability.json` and `queue.json` record a `traces_fingerprint` of it; `fetch_traces`
+**rewrites** the file (`dataset_inputs` and `seed_inputs` only append), so widening
+the trace window after labelling renumbers every row underneath the labels. The
+grey-zone assemble warns on a mismatch and the retest refuses outright. If you need
+more data after labelling, re-run stability → metrics → build_queue and redo the
+labels rather than pairing them against a file that moved.
 
 ## Companion Skills
 

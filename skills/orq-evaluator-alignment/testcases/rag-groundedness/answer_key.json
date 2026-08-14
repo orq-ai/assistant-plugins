@@ -134,8 +134,10 @@
       "unstable_cases": {
         "T3": 0.75, "G2a": 0.5, "G2c": 0.5, "G3c": 0.5, "G4b": 0.5, "G4a": 0.25
       },
-      "stable_but_wrong_cases": ["A2", "A3", "G1a", "G1b", "G3c"],
-      "agreement_with_reference_policy": "18/24 by majority verdict"
+      "stable_but_wrong_cases": ["A2", "A3", "G1a", "G1b"],
+      "unstable_and_wrong_cases": ["G3c"],
+      "agreement_with_reference_policy": "18/24 by majority verdict",
+      "note": "G3c is wrong here AND unstable (0.5), so it is not a blind-spot case on this judge — the ranking surfaces it. It sits in unstable_and_wrong_cases rather than stable_but_wrong_cases, which would have claimed it both ways at once."
     },
     "google/gemini-2.5-flash": {
       "use_for": "The blind-spot variant. Near-perfectly self-consistent AND wrong — use it to check that the conductor reports the consistently-wrong caveat instead of declaring victory.",
@@ -143,6 +145,7 @@
       "bands": { "stable": 23, "noisy": 0, "unreliable": 1 },
       "unstable_cases": { "G3c": 0.75 },
       "stable_but_wrong_cases": ["A2", "A3", "G1a", "G1b"],
+      "unstable_and_wrong_cases": ["G3c"],
       "agreement_with_reference_policy": "19/24 by majority verdict",
       "note": "Consistency stats say this judge is excellent — 1-Flip Consistency 0.978, Fleiss kappa 0.947, Gwet AC1 0.961 — while it fails two verbatim-restatement anchors 8/8. Its rationales are self-contradictory, e.g. on A3: 'The job title mentioned in the answer (on-call engineer) does not match the job title in the context (on-call engineer).' A flat profile here is the CORRECT result, and should send the conductor to the SKILL.md step-4a recovery menu."
     },
@@ -174,7 +177,8 @@
     {
       "id": "PC3",
       "claim": "The documented blind spot is real and is reported.",
-      "check": "The six stable-wrong cases (T1, T2, T4, G1a, G1b, plus anchors A2/A3) show instability at or near 0 and do NOT appear in the queue with reason='instability'. They can only reach the human via reason='low_flip' (the low_flip_sample_size draw), and the conductor's final summary must state the consistently-wrong caveat. This is the criterion nothing else in the repo verifies, and the flash (non-lite) run is the sharpest version of it."
+      "check": "The MEASURED stable-wrong cases — A2, A3, G1a, G1b on both judges — show instability at or near 0 and do NOT appear in the queue with reason='instability'. They can only reach the human via reason='low_flip' (the low_flip_sample_size draw), and the conductor's final summary must state the consistently-wrong caveat. This is the criterion nothing else in the repo verifies, and the flash (non-lite) run is the sharpest version of it.",
+      "note": "T1, T2 and T4 are DESIGNED to be stably wrong (see their predicted_judge_failure) but were not among the wrong verdicts on either 2026-08-13 run: flash-lite scored 18/24 and flash 19/24, and those misses are accounted for by the four anchors/GZ1 cases plus G3c. Do not assert them as measured blind-spot cases without re-measuring — an earlier draft of this criterion said 'six' and then named seven ids, which is how the discrepancy went unnoticed."
     },
     {
       "id": "PC4",
@@ -184,7 +188,7 @@
     {
       "id": "PC5",
       "claim": "The retest improves alignment, not just stability.",
-      "check": "retest_metrics.json shows instability down on the confusers AND agreement with the policy labels (boolean TPR/TNR, categorical accuracy, numeric within-tolerance at tol=0.5). A stability drop with flat or worse agreement is a FAIL, not a pass."
+      "check": "retest_metrics.json shows instability down on the confusers AND agreement with the policy labels (boolean TPR/TNR, categorical accuracy, numeric within-tolerance at tol=0.5). A stability drop with flat or worse agreement is a FAIL, not a pass. `agreement.before` must also be present and must be worse than the new score — a 'pass' that is below what the original judge already scored on the same labels is a regression, not an improvement. Run it with --baseline_rerun for the version of gate (a) that is not partly regression to the mean, and check that `caveats` is read out to the user rather than dropped."
     },
     {
       "id": "PC7",

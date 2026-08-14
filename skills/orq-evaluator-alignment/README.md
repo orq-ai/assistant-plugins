@@ -34,6 +34,13 @@ as late and as narrowly as possible:
    verdict space, and the retest has to clear *two* bars — the judge got steadier
    **and** it now agrees with the user. Steadiness alone is worthless; a judge
    that is wrong the same way every time scores perfectly on it.
+4. **Say what the result cannot be.** Agreement is reported against what the
+   *original* judge scored on the same labels, and `retest_metrics.json` carries a
+   `caveats` list the conductor reads out: the retested rows were chosen for
+   maximum instability (so some of the drop is regression to the mean unless
+   `--baseline_rerun` re-runs the old judge over them), the same examples produced
+   the rewrite guidance and the labels scoring it, and any label the user did not
+   confirm is the conductor's application of their rule.
 
 ## Pipeline at a glance
 
@@ -75,14 +82,15 @@ uv run scripts/stability.py        --run_dir $RUN --num_samples 2      # smoke
 uv run scripts/stability.py        --run_dir $RUN              # full run (+metrics)
 uv run scripts/build_queue.py      --run_dir $RUN --count 25
 uv run scripts/grey_zone.py assemble --run_dir $RUN            # read the payload into context
-#   … conductor asks the user its questions, writes grey_zone_policy.json …
-uv run scripts/grey_zone.py apply  --run_dir $RUN              # answers -> per-point labels
-uv run scripts/recommend.py        --run_dir $RUN
-uv run scripts/aggregate.py        --run_dir $RUN
+#   … conductor asks the user its questions, reads the derived labels back,
+#   writes grey_zone_policy.json …
+uv run scripts/grey_zone.py apply  --run_dir $RUN              # answers -> aggregated.md
+#   … fallback route only, when the examples don't group: serve_annotation.py,
+#   then recommend.py + aggregate.py, which write the same aggregated.md …
 uv run scripts/rewrite_eval.py     --run_dir $RUN
 uv run scripts/create_eval.py      --run_dir $RUN              # presents the diff
 uv run scripts/create_eval.py      --run_dir $RUN --approve    # after human OK
-uv run scripts/retest.py           --run_dir $RUN --n_repeats 8   # optional: did it move?
+uv run scripts/retest.py           --run_dir $RUN              # optional: did it move?
 ```
 
 `config.toml` holds all defaults (repetitions, temperature, backend, sample

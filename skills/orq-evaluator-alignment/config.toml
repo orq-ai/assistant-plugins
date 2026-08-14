@@ -6,14 +6,14 @@
 # orq evaluator id (24-hex). Set on the CLI with `--evaluator_id <id>` or here.
 evaluator_id = ""
 
-# ── Step 2: trace retrieval (v3oql + v3spans) ────────────────────────────────
+# ── Step 1 (cont.): trace retrieval (v3oql + v3spans) ───────────────────────
 # Epoch-ms window for the v3oql query. 0 = unbounded on that side.
 trace_start_date = 0
 trace_end_date = 0
 # Max traces to pull (paginated by the client). Caps the candidate pool.
 trace_limit = 200
 
-# ── Step 4: stability run (evaluatorq, repetitions=N) ────────────────────────
+# ── Step 3: stability run (evaluatorq, repetitions=N) ────────────────────────
 # Repeated judge invocations per datapoint. The whole flip analysis rests on
 # this; >= 5 is the floor for a stable per-row flip-rate, 8 is the default.
 n_repeats = 8
@@ -31,11 +31,14 @@ temperature = 1
 # as the baseline run. Empty -> derived from the evaluator key.
 experiment_path = ""
 
-# The retest's repeat count is `n_repeats` above (override per run with
-# `retest.py --n_repeats N`); use at least the number the stability run used, so
-# the before/after comparison is like-for-like.
+# The step-8 retest defaults to the repeat count and temperature the ORIGINAL
+# stability run actually used (read back from metrics.json), not to the values
+# here — instability is estimated from N samples at a temperature, so retesting
+# at different ones compares two different measurements. `retest.py --n_repeats N`
+# / `--temperature T` override; a LOWER N than the original marks the comparison
+# not comparable rather than letting the sample size read as an improvement.
 
-# ── Step 6: annotation queue ─────────────────────────────────────────────────
+# ── Step 5: confuser queue ───────────────────────────────────────────────────
 # Random sample of LOW-flip items to annotate alongside the high-flip queue, as
 # a sanity check against the consistently-wrong blind spot (design §1, §8).
 # 0 = pure flip-ranking, no sanity sample.
@@ -43,7 +46,7 @@ low_flip_sample_size = 5
 # Deterministic seed for the low-flip sample draw.
 seed = 42
 
-# ── Step 6/7: grey-zone payload context budget (design §12) ──────────────────
+# ── Step 6: grey-zone payload context budget (design §12) ────────────────────
 # How many (most-unstable-first) confusers may enter the conductor's context.
 # -1 = all, matching the num_samples/count sentinel elsewhere; 0 = none. The token
 # budget below does the real capping — a fixed K is the wrong knob because item
@@ -59,13 +62,13 @@ grey_zone_max_chars = 600
 # evaluator.json, and the multi-turn grey-zone Q&A that follows.
 grey_zone_max_tokens = 60000
 
-# ── Step 8/9: recommendation + rewrite backend ───────────────────────────────
-# Which model writes the recommendation (step 8) and the rewritten prompt (step 9).
+# ── Step 6/7: recommendation + rewrite backend ───────────────────────────────
+# Which model writes the recommendation (step 6 fallback) and the rewritten prompt (step 7).
 #   "orq_router"      — DEFAULT. Any workspace model over the orq router, using the
 #                       ORQ_API_KEY this skill already needs. No second account, no
 #                       CLI. The model must be reachable on your workspace — a model
 #                       can be listed and still 403 for want of a provider key, so
-#                       step 9 checks with one tiny call before spending anything.
+#                       step 7 checks with one tiny call before spending anything.
 #   "claude_subagent" — shell out to `claude -p ... --output-format json`. Needs the
 #                       `claude` CLI installed and logged in; use it if you'd rather
 #                       spend Claude credits than workspace credits.
@@ -81,7 +84,7 @@ backend = "orq_router"
 backend_model = ""
 # orq deployment key when backend = "orq_deployment".
 backend_deployment_key = ""
-# Bounded parallelism for per-annotation meta-prompt calls (step 8).
+# Bounded parallelism for per-annotation meta-prompt calls (step 6 fallback).
 recommend_concurrency = 4
 
 # ── Output ───────────────────────────────────────────────────────────────────

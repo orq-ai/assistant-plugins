@@ -157,7 +157,10 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: when the trace scan comes up short it offers the recovery options **at that point**, not several steps later
 - Verify: groups the unstable examples and asks a few questions, rather than presenting every row for individual labelling (the annotation UI is the fallback, not the default)
 - Verify: describes judge behaviour in plain terms ("it gave a different answer 6 times out of 8"), not the statistics or the internal vocabulary (confuser, grey zone, conductor)
+- Verify: reads the per-point labels it derived from the user's rule back to them before the rewrite, rather than treating its own application of the rule as their verdict
+- Verify: reviews the stable spot-check rows with the user (`assemble --include_low_flip`) instead of only promising to
 - Verify: only creates the new evaluator after human approval (never auto-creates)
+- Verify: quotes the retest against what the **original** judge scored on the same labels, and reads out the `caveats` (selection effect, no holdout, derived labels) rather than reporting the drop alone
 - Verify: the final summary states the consistently-wrong blind spot even when the numbers are good
 - Verify: any `judge_model` slug it writes uses the routable `refId` from `GET /v2/models`, never the shorter display alias (which can route to the wrong provider and 403)
 
