@@ -21,6 +21,8 @@ Deliberately stdlib-only: `lib/judge` imports evaluatorq at module scope, and
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 # Suffix → row field. Evaluators name their variables differently
@@ -103,3 +105,44 @@ def stringify_messages(messages: Any) -> str:
                 lines.append(str(m))
         return '\n'.join(lines)
     return str(messages)
+
+
+def judged_input_key(row: dict[str, Any]) -> str:
+    """Stable identity of one datapoint: the content the judge actually scores.
+
+    Keys off the fields `lib.judge.make_replacements` feeds the judge
+    (query / output / reference / messages), NOT trace/span provenance — so the
+    same input captured on two different traces is one datapoint. Serialised to a
+    stable JSON string so an unhashable value (a `messages` list) still keys.
+
+    Lives here rather than in `fetch_traces` because two callers now need it: the
+    scanner's exact-match dedup, and `traces_fingerprint` below.
+    """
+    return json.dumps(
+        [row.get('query', ''), row.get('output', ''), row.get('reference', ''), row.get('messages')],
+        sort_keys=True,
+        ensure_ascii=False,
+        default=str,
+    )
+
+
+def traces_fingerprint(rows: list[dict[str, Any]]) -> str:
+    """Content fingerprint of a `traces.jsonl` row list — `'<n>:<sha256[:16]>'`.
+
+    `source_index` is a row's *position* in `traces.jsonl`, and that is what every
+    human label is keyed by. `fetch_traces` rewrites the file wholesale (dedup
+    included), so re-fetching after labelling renumbers every row underneath the
+    labels: retest then pairs a label to a different datapoint and reports a clean
+    agreement score for a comparison that never happened. Only a *total* miss
+    raises today; partial overlap is silent.
+
+    So the artifacts that depend on the ordering (`stability.json`, `queue.json`)
+    record this fingerprint, and the consumers refuse when it no longer matches the
+    file in front of them. Order-sensitive on purpose: a reordering is exactly the
+    failure being guarded against.
+    """
+    digest = hashlib.sha256()
+    for row in rows:
+        digest.update(judged_input_key(row).encode('utf-8'))
+        digest.update(b'\x1e')
+    return f'{len(rows)}:{digest.hexdigest()[:16]}'

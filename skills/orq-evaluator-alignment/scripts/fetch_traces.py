@@ -53,7 +53,7 @@ from loguru import logger
 
 import _bootstrap  # noqa: F401
 from lib import runner
-from lib.content import field_for_variable, message_text
+from lib.content import field_for_variable, judged_input_key, message_text
 from lib.orq_client import OrqClient
 
 load_dotenv()
@@ -725,20 +725,10 @@ def _guard_hollow(
     )
 
 
-def _judged_input_key(row: dict[str, Any]) -> str:
-    """Exact-match dedup key: the content the judge actually scores.
-
-    Keys off the fields ``lib.judge.make_replacements`` feeds the judge
-    (query / output / reference / messages), NOT trace/span provenance — so the
-    same input captured on two different traces is one datapoint. Serialised to a
-    stable JSON string so an unhashable value (a ``messages`` list) still keys.
-    """
-    return json.dumps(
-        [row.get('query', ''), row.get('output', ''), row.get('reference', ''), row.get('messages')],
-        sort_keys=True,
-        ensure_ascii=False,
-        default=str,
-    )
+# The dedup key is `lib.content.judged_input_key` — the same row-identity function
+# the fingerprint guard keys off. Kept in one place so the two can never disagree
+# about what "the same datapoint" means (the §5 no-mirrors rule).
+_judged_input_key = judged_input_key
 
 
 def _dedup_rows(

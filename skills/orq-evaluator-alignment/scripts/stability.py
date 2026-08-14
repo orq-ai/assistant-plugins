@@ -36,6 +36,7 @@ from loguru import logger
 
 import _bootstrap  # noqa: F401
 from lib import runner
+from lib.content import traces_fingerprint
 from lib.judge import JudgeSpec, make_judge_client, make_replacements, run_jury_for_row
 
 load_dotenv()
@@ -191,6 +192,11 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
             'output_type': output_type,
             'n_repeats': n_repeats,
             'temperature': temperature,
+            # Identity of the traces.jsonl these source_index values point into, so
+            # a later consumer can tell that the file was rewritten underneath them
+            # (lib.content.traces_fingerprint). Over the FULL file, not the judged
+            # subset — source_index is a position in the file.
+            'traces_fingerprint': traces_fingerprint(rows),
             'num_rows': len(records),
             'experiment_path': experiment_path,
             'timestamp': runner.utc_timestamp(),

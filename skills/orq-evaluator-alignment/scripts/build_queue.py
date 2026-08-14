@@ -37,6 +37,7 @@ from loguru import logger
 import _bootstrap  # noqa: F401
 from lib import grey_zone as gzlib
 from lib import runner
+from lib.content import traces_fingerprint
 
 # Matches an orq prompt placeholder, e.g. `{{ log.output }}`. Names can carry
 # dots (`log.output`) and surrounding whitespace; we keep the trimmed name.
@@ -157,6 +158,21 @@ def _display_item(
             'representative_explanation': e.get('representative_explanation'),
         },
     }
+
+
+def _traces_fingerprint(out_dir, metrics: dict[str, Any]) -> str | None:
+    """Identity of the traces.jsonl this queue's `source_index` values point into.
+
+    Preferred from the stability/metrics metadata — the file as it was when the run
+    was judged. Recomputed only for older run dirs that predate the field, and None
+    when there is no traces.jsonl to read (the queue is still the artifact that
+    matters; a missing fingerprint just means the downstream guard can't fire).
+    """
+    recorded = metrics.get('metadata', {}).get('traces_fingerprint')
+    if recorded:
+        return recorded
+    traces_path = out_dir / 'traces.jsonl'
+    return traces_fingerprint(runner.read_jsonl(traces_path)) if traces_path.exists() else None
 
 
 def _project_grey_zone(queue: dict[str, Any], cfg: dict) -> dict[str, Any] | None:
@@ -291,6 +307,10 @@ def main(
             'evaluator_id': metrics.get('metadata', {}).get('evaluator_id'),
             'evaluator_key': metrics.get('metadata', {}).get('evaluator_key'),
             'judge_model': metrics.get('metadata', {}).get('judge_model'),
+            # Identity of the traces.jsonl these source_index values index into.
+            # Preferred from the metrics/stability metadata (the file as it was when
+            # the run was judged); recomputed only for older run dirs that predate it.
+            'traces_fingerprint': _traces_fingerprint(out_dir, metrics),
             'verdict_space': verdict_space,  # the judge's own verdict space (per type)
             'eval_prompt': template,  # shown in the UI for context on how variables are used
             'n_flipped_items': len(flipped),
