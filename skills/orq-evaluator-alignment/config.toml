@@ -82,8 +82,23 @@ backend = "orq_router"
 # this must be the provider-qualified `refId` from GET /v2/models
 # (e.g. "deepseek/deepseek-v4-pro"), not the shorter display alias.
 backend_model = ""
+# Endpoint for the chosen backend. LEAVE BLANK for the hosted default. Set it for a
+# self-hosted or proxied orq, or an Anthropic-compatible gateway. Resolution is
+#   --backend_base_url  ->  this key  ->  env var  ->  built-in default
+# and the env var depends on the backend:
+#   orq_router      ORQ_BASE_URL       (default https://my.orq.ai; /v3/router is appended)
+#   orq_deployment  ORQ_API_BASE_URL   (default https://api.orq.ai)
+#   anthropic_api   ANTHROPIC_BASE_URL (default https://api.anthropic.com)
+# ORQ_API_BASE_URL also moves every control-plane call (evaluators, traces,
+# projects, datasets, create), so a self-hosted orq needs that one variable.
+backend_base_url = ""
 # orq deployment key when backend = "orq_deployment".
 backend_deployment_key = ""
+# API KEYS ARE NOT CONFIGURED HERE. They come from the environment or a .env file:
+# ORQ_API_KEY for the orq backends, ANTHROPIC_API_KEY for anthropic_api, and the
+# `claude` CLI's own login for claude_subagent. There is deliberately no
+# --backend_api_key flag — a key passed on the command line lands in shell history
+# and in every `ps` listing on the machine.
 # Bounded parallelism for per-annotation meta-prompt calls (step 6 fallback).
 recommend_concurrency = 4
 

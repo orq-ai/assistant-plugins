@@ -102,13 +102,30 @@ flag.
 `config.backend` selects the model that writes the recommendation (step 6) and
 the rewritten prompt (step 7):
 
-| `backend` | What it uses | Credentials |
-|---|---|---|
-| `orq_router` **(default)** | any workspace model over `/v3/router`; blank `backend_model` → `deepseek/deepseek-v4-pro` | `ORQ_API_KEY` — already required |
-| `claude_subagent` | `claude -p ... --output-format json` | the `claude` CLI, installed **and logged in** |
-| `anthropic_api` | Anthropic Messages API | `ANTHROPIC_API_KEY` |
-| `orq_deployment` | an existing orq deployment | `ORQ_API_KEY` + `backend_deployment_key` |
-| `fake` | canned completions | none (tests) |
+| `backend` | What it uses | API key (env only) | Endpoint env var (default) |
+|---|---|---|---|
+| `orq_router` **(default)** | any workspace model over `/v3/router`; blank `backend_model` → `deepseek/deepseek-v4-pro` | `ORQ_API_KEY` — already required | `ORQ_BASE_URL` (`https://my.orq.ai`) |
+| `claude_subagent` | `claude -p ... --output-format json` | the `claude` CLI, installed **and logged in** | — |
+| `anthropic_api` | Anthropic Messages API | `ANTHROPIC_API_KEY` | `ANTHROPIC_BASE_URL` (`https://api.anthropic.com`) |
+| `orq_deployment` | an existing orq deployment | `ORQ_API_KEY` + `backend_deployment_key` | `ORQ_API_BASE_URL` (`https://api.orq.ai`) |
+| `fake` | canned completions | none (tests) | — |
+
+Backend, model and endpoint each resolve **flag → `config.toml` → env var →
+built-in default**, so nothing here needs a code edit:
+
+```bash
+uv run scripts/rewrite_eval.py --run_dir $RUN \
+  --backend orq_router --backend_model groq/openai/gpt-oss-120b \
+  --backend_base_url https://orq.internal.example.com
+uv run scripts/rewrite_eval.py -- --help    # all three, with their fallbacks
+```
+
+For a self-hosted orq, `ORQ_API_BASE_URL` also moves every control-plane call
+(evaluators, traces, projects, datasets, create), so that variable plus
+`ORQ_BASE_URL` for the router covers the whole skill. **API keys are
+environment-only** — from the environment or a `.env`, never a flag, since a key
+on the command line lands in shell history and in `ps`. The step-7 preflight
+prints the resolved backend, model and endpoint before anything is spent.
 
 `orq_router` is the default because the rewrite is a text transform, not an
 agentic task, and the previous default silently assumed a second tool was

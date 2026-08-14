@@ -23,7 +23,17 @@ from typing import Any
 import httpx
 from loguru import logger
 
+#: The orq API host every control-plane call goes to (evaluators, traces, projects,
+#: datasets, create). Overridable with `ORQ_API_BASE_URL` — the same variable the
+#: `orq_deployment` backend and the router price lookup read, so a self-hosted or
+#: proxied orq is one setting rather than one per call site. Resolved at call time,
+#: not import time, so a `.env` loaded by the script still applies.
 DEFAULT_BASE_URL = 'https://api.orq.ai'
+
+
+def default_base_url() -> str:
+    """The API host to use: `ORQ_API_BASE_URL` if set, else the hosted default."""
+    return os.environ.get('ORQ_API_BASE_URL', DEFAULT_BASE_URL).rstrip('/') or DEFAULT_BASE_URL
 
 # Matches `{{ var.path }}` template tokens in a judge prompt. The captured group
 # is the trimmed variable path (e.g. `log.input`, `query`, `output`).
@@ -278,14 +288,18 @@ class OrqClient:
     def __init__(
         self,
         api_key: str | None = None,
-        base_url: str = DEFAULT_BASE_URL,
+        base_url: str | None = None,
         timeout: float = 120.0,
     ) -> None:
         key = api_key or os.getenv('ORQ_API_KEY')
         if not key:
-            raise RuntimeError('ORQ_API_KEY is not set (env or constructor arg).')
+            raise RuntimeError(
+                'ORQ_API_KEY is not set. Put it in the environment or a .env file '
+                '(every script loads one); it is never taken as a CLI flag.'
+            )
+        self.base_url = base_url or default_base_url()
         self._client = httpx.AsyncClient(
-            base_url=base_url,
+            base_url=self.base_url,
             timeout=timeout,
             # Verification stays on everywhere except Windows (OpenSSL Applink
             # crash — see module docstring). The API key rides these requests.

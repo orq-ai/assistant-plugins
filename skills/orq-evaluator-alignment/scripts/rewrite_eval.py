@@ -61,7 +61,12 @@ from loguru import logger
 
 import _bootstrap  # noqa: F401
 from lib import runner
-from lib.model_backend import BackendUnavailable, describe_backend, get_backend
+from lib.model_backend import (
+    BackendUnavailable,
+    apply_backend_overrides,
+    describe_backend,
+    get_backend,
+)
 from lib.orq_client import extract_template_variables
 
 load_dotenv()
@@ -405,9 +410,36 @@ def main(
     run_dir: str | None = None,
     config: str = 'config.toml',
     max_attempts: int = 3,
+    backend: str | None = None,
+    backend_model: str | None = None,
+    backend_base_url: str | None = None,
 ) -> str:
-    """Run the meta prompt to propose a rewritten judge prompt (no orq object created)."""
+    """Run the meta prompt to propose a rewritten judge prompt (no orq object created).
+
+    Args:
+        run_dir: Run directory (defaults to most recent).
+        config: TOML config path.
+        max_attempts: Rewrite attempts before giving up on the preservation guard.
+        backend: Which model writes the rewrite, overriding config `backend`. One of
+            orq_router (default), claude_subagent, anthropic_api, orq_deployment,
+            fake.
+        backend_model: Model id for that backend, overriding config `backend_model`.
+            For orq_router it must be the provider-qualified `refId` from
+            GET /v2/models (e.g. `deepseek/deepseek-v4-pro`), not the display alias.
+        backend_base_url: Endpoint for that backend, overriding config
+            `backend_base_url`. Use for a self-hosted or proxied orq / an
+            Anthropic-compatible gateway. Falls back to ORQ_BASE_URL (orq_router),
+            ORQ_API_BASE_URL (orq_deployment) or ANTHROPIC_BASE_URL (anthropic_api),
+            then the hosted default.
+
+    API keys are read from the environment or a .env file only — ORQ_API_KEY for the
+    orq backends, ANTHROPIC_API_KEY for anthropic_api — never from a flag, which
+    would leave the credential in shell history and in `ps`.
+    """
     cfg = runner.load_config(config)
+    cfg = apply_backend_overrides(
+        cfg, backend=backend, backend_model=backend_model, backend_base_url=backend_base_url
+    )
     out_dir = runner.resolve_run_dir(run_dir) if run_dir else runner.latest_run_dir(cfg.get('runs_dir', 'runs'))
     if out_dir is None:
         raise SystemExit('No run directory. Run aggregate.py first.')

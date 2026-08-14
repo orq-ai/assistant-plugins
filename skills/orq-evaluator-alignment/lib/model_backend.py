@@ -26,6 +26,23 @@ user's workspace: a model listed in `/v2/models` can still 403 for want of a
 provider key. `preflight()` exists to turn that into a sentence the user can act
 on, at the gate, rather than a stack trace mid-rewrite.
 
+### Endpoint, model and credential — where each one comes from
+
+Every backend resolves its three inputs the same way, most specific first:
+
+    CLI flag  ->  config.toml  ->  environment variable  ->  built-in default
+
+so a self-hosted or proxied deployment is a flag away and never needs a code edit.
+`recommend.py` and `rewrite_eval.py` both take `--backend`, `--backend_model` and
+`--backend_base_url`; `BACKEND_ENV` below is the authoritative table of which env
+vars each backend reads, and `describe_backend` prints the resolved triple so the
+step-7 gate names the endpoint it is about to spend money on.
+
+**The API key is deliberately env-only.** A `--backend_api_key` flag would put a
+live credential in shell history and in every `ps` listing on the machine, so keys
+stay in the environment (or a `.env`, which every script loads) and the errors name
+the variable they wanted.
+
 ### The nested-variable hazard (orq_deployment only)
 
 The meta-prompt embeds the audited *judge prompt* as the value of
@@ -95,9 +112,15 @@ class OrqRouterBackend:
     same reason.
     """
 
-    def __init__(self, model: str, *, max_tokens: int = 8192, timeout_s: float = 180.0) -> None:
+    def __init__(
+        self, model: str, *, base_url: str | None = None,
+        max_tokens: int = 8192, timeout_s: float = 180.0,
+    ) -> None:
         if not model:
-            raise RuntimeError("backend='orq_router' needs a model (config `backend_model`).")
+            raise RuntimeError(
+                "backend='orq_router' needs a model — pass --backend_model, or set "
+                '`backend_model` in config.toml.'
+            )
         self.model = model
         self.max_tokens = max_tokens
         self.timeout_s = timeout_s
@@ -107,7 +130,8 @@ class OrqRouterBackend:
         if not api_key:
             raise BackendUnavailable(
                 "backend='orq_router' needs ORQ_API_KEY — the same key the trace and "
-                'evaluator steps already use. Set it, or switch to another backend.'
+                'evaluator steps already use. Set it in the environment or a .env file '
+                '(keys are never taken as CLI flags), or switch to another backend.'
             )
         try:
             from openai import AsyncOpenAI
@@ -115,12 +139,14 @@ class OrqRouterBackend:
             raise RuntimeError("backend='orq_router' needs the `openai` package.") from exc
         import httpx
 
-        host = os.environ.get('ORQ_BASE_URL', 'https://my.orq.ai').rstrip('/')
+        # config/--backend_base_url -> ORQ_BASE_URL -> the hosted default.
+        host = (base_url or resolve_base_url('orq_router') or 'https://my.orq.ai').rstrip('/')
+        self.base_url = f'{host}/v3/router'
         # verify=False on Windows only: the conda OpenSSL aborts the process on some
         # cert chains. Same workaround, and same reasoning, as `judge.make_judge_client`.
         self._client = AsyncOpenAI(
             api_key=api_key,
-            base_url=f'{host}/v3/router',
+            base_url=self.base_url,
             http_client=httpx.AsyncClient(verify=_tls_verify(), timeout=timeout_s),  # noqa: S501
         )
 
@@ -215,7 +241,7 @@ async def _fetch_router_prices(model: str) -> tuple[float, float] | None:
         import httpx
 
         api_key = os.environ.get('ORQ_API_KEY')
-        host = os.environ.get('ORQ_API_BASE_URL', 'https://api.orq.ai').rstrip('/')
+        host = resolve_base_url('orq_deployment') or 'https://api.orq.ai'
         async with httpx.AsyncClient(
             base_url=host, headers={'Authorization': f'Bearer {api_key}'},
             verify=_tls_verify(), timeout=30,  # noqa: S501
@@ -302,14 +328,21 @@ class ClaudeSubagentBackend:
 
 # ── anthropic_api ────────────────────────────────────────────────────────────
 class AnthropicBackend:
-    def __init__(self, model: str = 'claude-opus-4-8', max_tokens: int = 4096) -> None:
+    def __init__(
+        self, model: str = 'claude-opus-4-8', max_tokens: int = 4096,
+        *, base_url: str | None = None,
+    ) -> None:
         self.model = model
         self.max_tokens = max_tokens
         try:
             from anthropic import AsyncAnthropic
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("backend='anthropic_api' needs the `anthropic` package.") from exc
-        self._client = AsyncAnthropic()
+        # config/--backend_base_url -> ANTHROPIC_BASE_URL (the SDK's own variable,
+        # which it already honours) -> the SDK default. Passing it explicitly means
+        # an Anthropic-compatible gateway is a flag rather than an env-only setting.
+        self.base_url = base_url or resolve_base_url('anthropic_api')
+        self._client = AsyncAnthropic(base_url=self.base_url) if self.base_url else AsyncAnthropic()
 
     async def complete(
         self,
@@ -342,15 +375,25 @@ class AnthropicBackend:
 class OrqDeploymentBackend:
     """Invoke a workspace deployment, self-referencing nested template tokens."""
 
-    def __init__(self, deployment_key: str) -> None:
+    def __init__(self, deployment_key: str, *, base_url: str | None = None) -> None:
         if not deployment_key:
-            raise RuntimeError("backend='orq_deployment' needs backend_deployment_key.")
+            raise RuntimeError(
+                "backend='orq_deployment' needs a deployment key — set "
+                '`backend_deployment_key` in config.toml.'
+            )
         self.deployment_key = deployment_key
         try:
             from orq_ai_sdk import Orq
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("backend='orq_deployment' needs the `orq-ai-sdk` package.") from exc
-        self._orq = Orq(api_key=os.environ['ORQ_API_KEY'])
+        api_key = os.environ.get('ORQ_API_KEY')
+        if not api_key:
+            raise BackendUnavailable(
+                "backend='orq_deployment' needs ORQ_API_KEY in the environment or a .env file."
+            )
+        # config/--backend_base_url -> ORQ_API_BASE_URL -> the hosted default.
+        self.base_url = base_url or resolve_base_url('orq_deployment')
+        self._orq = Orq(api_key=api_key, server_url=self.base_url) if self.base_url else Orq(api_key=api_key)
 
     async def complete(
         self,
@@ -424,31 +467,112 @@ _DEFAULT_MODELS = {
 
 DEFAULT_BACKEND = 'orq_router'
 
+# Per-backend endpoint default and the env vars it reads. The authoritative table:
+# `describe_backend`, the docs and the "what did you want from me" errors all read
+# it, so there is one place to look and one place to change.
+BACKEND_ENV: dict[str, dict[str, str | None]] = {
+    'orq_router': {
+        'base_url_env': 'ORQ_BASE_URL', 'base_url_default': 'https://my.orq.ai',
+        'api_key_env': 'ORQ_API_KEY',
+    },
+    'orq_deployment': {
+        'base_url_env': 'ORQ_API_BASE_URL', 'base_url_default': 'https://api.orq.ai',
+        'api_key_env': 'ORQ_API_KEY',
+    },
+    'anthropic_api': {
+        'base_url_env': 'ANTHROPIC_BASE_URL', 'base_url_default': 'https://api.anthropic.com',
+        'api_key_env': 'ANTHROPIC_API_KEY',
+    },
+    'claude_subagent': {
+        'base_url_env': None, 'base_url_default': None,
+        'api_key_env': 'the `claude` CLI login',
+    },
+    'fake': {'base_url_env': None, 'base_url_default': None, 'api_key_env': None},
+}
+
+
+def resolve_base_url(name: str, config: dict[str, Any] | None = None) -> str | None:
+    """The endpoint a backend will actually call: config -> env -> built-in default.
+
+    `config['backend_base_url']` is set by `--backend_base_url` or config.toml, so a
+    self-hosted or proxied orq (or an Anthropic-compatible gateway) needs no code
+    change. None for backends that have no endpoint of their own.
+    """
+    spec = BACKEND_ENV.get(name, {})
+    explicit = (config or {}).get('backend_base_url')
+    if explicit:
+        return str(explicit).rstrip('/')
+    env_name = spec.get('base_url_env')
+    default = spec.get('base_url_default')
+    if not env_name:
+        return None
+    return os.environ.get(env_name, default or '').rstrip('/') or None
+
+
+def apply_backend_overrides(
+    config: dict[str, Any],
+    *,
+    backend: str | None = None,
+    backend_model: str | None = None,
+    backend_base_url: str | None = None,
+    backend_deployment_key: str | None = None,
+) -> dict[str, Any]:
+    """Fold a script's `--backend*` flags onto a loaded config, flags winning.
+
+    A copy, never a mutation: the config dict is read by other stages in the same
+    process (the retest imports stability's main), and a flag meant for one call
+    silently changing another's endpoint is the kind of bug that only shows up on
+    someone else's workspace.
+    """
+    merged = dict(config)
+    for key, value in (
+        ('backend', backend),
+        ('backend_model', backend_model),
+        ('backend_base_url', backend_base_url),
+        ('backend_deployment_key', backend_deployment_key),
+    ):
+        if value is not None:
+            merged[key] = value
+    return merged
+
 
 def get_backend(config: dict[str, Any]) -> Backend:
     """Construct the backend named by `config['backend']`."""
     name = config.get('backend') or DEFAULT_BACKEND
     model = config.get('backend_model') or _DEFAULT_MODELS.get(name, '')
+    base_url = resolve_base_url(name, config)
     if name == 'orq_router':
-        return OrqRouterBackend(model=model)
+        return OrqRouterBackend(model=model, base_url=base_url)
     if name == 'claude_subagent':
         return ClaudeSubagentBackend(model=model)
     if name == 'anthropic_api':
-        return AnthropicBackend(model=model)
+        return AnthropicBackend(model=model, base_url=base_url)
     if name == 'orq_deployment':
-        return OrqDeploymentBackend(deployment_key=config.get('backend_deployment_key', ''))
+        return OrqDeploymentBackend(
+            deployment_key=config.get('backend_deployment_key', ''), base_url=base_url
+        )
     if name == 'fake':
         return FakeBackend()
     raise ValueError(f'Unknown backend {name!r} (config.backend).')
 
 
 def describe_backend(config: dict[str, Any]) -> str:
-    """One line naming the backend + model actually in play, for the step-9 gate."""
+    """One line naming the backend, model and endpoint in play, for the step-7 gate.
+
+    The endpoint is included whenever it is not the built-in default, because
+    "which host am I about to send the judge's rubric to" is exactly the thing a
+    user running against a self-hosted or proxied orq needs confirmed before
+    approving a paid step.
+    """
     name = config.get('backend') or DEFAULT_BACKEND
+    base_url = resolve_base_url(name, config)
+    spec = BACKEND_ENV.get(name, {})
+    suffix = f' via {base_url}' if base_url and base_url != spec.get('base_url_default') else ''
     if name == 'orq_deployment':
-        return f'orq_deployment (deployment {config.get("backend_deployment_key") or "<unset>"!r})'
+        key = config.get('backend_deployment_key') or '<unset>'
+        return f'orq_deployment (deployment {key!r}){suffix}'
     model = config.get('backend_model') or _DEFAULT_MODELS.get(name, '')
-    return f'{name} ({model})' if model else name
+    return (f'{name} ({model})' if model else name) + suffix
 
 
 def _self_reference_tokens(text: str) -> dict[str, str]:
