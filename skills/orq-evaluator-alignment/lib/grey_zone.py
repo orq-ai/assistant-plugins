@@ -22,6 +22,7 @@ exist in any artifact. The payload surfaces the one representative rationale.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from lib.content import stringify_messages
@@ -49,18 +50,28 @@ _HEAD_FRACTION = 0.6
 
 
 def _window(text: str, budget: int) -> tuple[str, int]:
-    """Cut `text` to `budget` chars keeping a head AND a tail (§12.5).
+    """Cut `text` so the RENDERED result fits `budget` chars, head AND tail (§12.5).
 
     Returns ``(rendered, shown_chars)``. `shown_chars` counts *source* characters
     actually shown — not the elision marker — so the caller can report honestly how
     much of the original the conductor saw.
+
+    The marker counts against the budget: it used to be added on top, so a `600`
+    char budget spread over three variables rendered ~1000 characters and the
+    ceiling the caller thought it had set was not the one it got.
     """
     if budget <= 0:
         return '', 0
     if len(text) <= budget:
         return text, len(text)
-    head_n = max(1, int(budget * _HEAD_FRACTION))
-    tail_n = max(0, budget - head_n)
+    # Upper bound on the marker (the real elided count is <= len(text), so its
+    # rendering is never longer than this). Reserving the bound rather than
+    # solving the fixed point keeps this exact in the direction that matters:
+    # rendered length never exceeds `budget`.
+    marker_max = len(f'…[{len(text)} chars elided]…')
+    content = max(1, budget - marker_max)
+    head_n = max(1, int(content * _HEAD_FRACTION))
+    tail_n = max(0, content - head_n)
     elided = len(text) - head_n - tail_n
     tail = text[len(text) - tail_n:] if tail_n else ''
     return f'{text[:head_n]}…[{elided} chars elided]…{tail}', head_n + tail_n
@@ -77,7 +88,12 @@ def _fair_shares(lengths: list[int], budget: int) -> list[int]:
     n = len(lengths)
     if n == 0:
         return []
-    base = max(1, budget // n)
+    if budget < n:
+        # `max(1, ...)` here used to hand out n chars against a budget of fewer
+        # than n. A budget too small to give every value a character is a budget
+        # of zero, not a licence to overspend.
+        return [0] * n
+    base = budget // n
     over = [length for length in lengths if length > base]
     spare = sum(base - length for length in lengths if length <= base)
     bonus = (spare // len(over)) if over else 0
@@ -136,7 +152,11 @@ def _compact_input(item: dict[str, Any], max_chars: int) -> tuple[str, dict[str,
         if not values:
             names, values = ['(empty)'], ['']
 
-    shares = _fair_shares([len(v) for v in values], max_chars)
+    # The `name: ` prefixes and the newlines between them are part of what the
+    # conductor reads, so they come out of the budget before it is shared. Without
+    # this the rendered block overshoots `max_chars` by the label overhead.
+    overhead = sum(len(n) + 2 for n in names) + max(0, len(names) - 1)
+    shares = _fair_shares([len(v) for v in values], max(0, max_chars - overhead))
     parts: list[str] = []
     shown_total = 0
     for i, value in enumerate(values):
@@ -158,12 +178,24 @@ def _compact_input(item: dict[str, Any], max_chars: int) -> tuple[str, dict[str,
 
 
 # Rationale stand-ins emitted by the jury layer when it has nothing real to report.
-# Matched case-insensitively as substrings; these are notices *about* the vote, not
-# reasoning *from* the judge, and presenting them as the latter misleads the reader.
-_PLACEHOLDER_RATIONALES = (
-    'tied without a decisive tie-break',
-    'no explanation',
-    'not available',
+# These are notices *about* the vote, not reasoning *from* the judge, and presenting
+# them as the latter misleads the reader.
+#
+# Split by how distinctive the wording is, because a blanket substring test threw
+# real reasoning away: `_is_real_rationale('the tool was not available at inference
+# time, so the claim is ungrounded')` returned False, and the conductor was then told
+# there was nothing to read when there was.
+#
+# `_PLACEHOLDER_PHRASES` are jury jargon that no judge writes by accident, so they
+# match wherever they appear. `_PLACEHOLDER_EXACT` are ordinary English, so they only
+# count when they are the WHOLE rationale.
+_PLACEHOLDER_PHRASES = (
+    re.compile(r'tied without a decisive tie-break', re.IGNORECASE),
+)
+_PLACEHOLDER_EXACT = (
+    re.compile(r'^\(?\s*no explanation(\s+(?:was\s+)?(?:provided|available|given))?\s*[.!]?\)?$', re.IGNORECASE),
+    re.compile(r'^\(?\s*(?:explanation\s+)?not available\s*[.!]?\)?$', re.IGNORECASE),
+    re.compile(r'^\(?\s*(?:none|n/a)\s*[.!]?\)?$', re.IGNORECASE),
 )
 
 
@@ -172,8 +204,9 @@ def _is_real_rationale(text: str) -> bool:
     stripped = (text or '').strip()
     if not stripped:
         return False
-    low = stripped.lower()
-    return not any(marker in low for marker in _PLACEHOLDER_RATIONALES)
+    if any(marker.search(stripped) for marker in _PLACEHOLDER_PHRASES):
+        return False
+    return not any(marker.match(stripped) for marker in _PLACEHOLDER_EXACT)
 
 
 def estimate_tokens(obj: Any) -> int:
@@ -192,7 +225,7 @@ _BUDGET_PLACEHOLDER = {
     'estimated_tokens': 000000, 'budget_tokens': 000000, 'within_budget': True,
     'budget_top_k': 000000, 'n_dropped_by_budget': 000000, 'n_truncated': 000000,
     'total_chars_elided': 000000, 'n_low_flip_excluded': 000000, 'n_confusers': 000000,
-    'n_fallback_input': 000000, 'n_no_rationale': 000000,
+    'n_fallback_input': 000000, 'n_no_rationale': 000000, 'n_dropped_cross_model': 000000,
 }
 
 
@@ -265,6 +298,13 @@ def assemble_payload(
             'band': ambiguity.get('band'),
             'instability': ambiguity.get('instability'),
             'low_flip_sample': item.get('low_flip_sample', False),
+            # Why this example is here: 'instability' (the judge disagreed with
+            # itself) or 'cross_model' (a second model disagreed with it while it
+            # stayed steady). They are different kinds of hard and the conductor
+            # should not describe one as the other. Cross-model rows also sit after
+            # the instability-ranked ones, so they are the first the token clamp
+            # drops — hence `n_dropped_cross_model` in the budget block.
+            'reason': item.get('reason', 'instability'),
             'input': compact_input,
             'verdict_split': _verdict_split(output_type, votes),
             'representative_reasoning': reasoning,
@@ -310,6 +350,12 @@ def assemble_payload(
         # to reproduce it, or raise past deliberately.
         'budget_top_k': keep if keep < n_total else None,
         'n_dropped_by_budget': n_total - len(kept),
+        # Of those, how many were cross-model disagreers. The queue appends them
+        # after the instability ranking, so a tight budget eats them first — and on
+        # a judge that never wavers they are the entire signal.
+        'n_dropped_cross_model': sum(
+            1 for c in confusers[len(kept):] if c.get('reason') == 'cross_model'
+        ),
         # Stable spot-check rows held out of the open-coding payload. Reported so the
         # count the conductor states matches what the user asked for at step 5.
         'n_low_flip_excluded': n_low_flip_excluded,
@@ -338,18 +384,61 @@ def assemble_payload(
 # Shape:
 #   {output_type, verdict_space,
 #    grey_zones: [{id, question, answer, rule, member_source_indices}],
-#    labels:     [{source_index, value, tolerance?, grey_zone_id}]}
+#    labels:     [{source_index, value, tolerance?, grey_zone_id, label_source?}]}
 # It replaces annotations.json while honouring the same downstream contract:
 # `policy_labels` feeds retest, `policy_to_guidance` feeds rewrite_eval (§7).
 
 _NUMERIC_TYPES = frozenset({'number', 'numeric'})
 
+# Who actually decided a point's label. The human answers a *rule* question; the
+# conductor then applies that rule to derive each point's value — so by default the
+# ground truth the retest scores against is model-derived, not human-given. That is
+# a real gap in the evidence and it is recorded rather than assumed away: the
+# conductor reads the derived labels back and marks the ones the human confirmed.
+LABEL_SOURCES = frozenset({'derived', 'human_confirmed'})
+_DEFAULT_LABEL_SOURCE = 'derived'
+
+
+def _check_value_in_space(value: Any, output_type: str, verdict_space: dict[str, Any], label: Any) -> None:
+    """Raise if `value` is not something the judge can actually emit.
+
+    SKILL.md §6.4 tells the conductor never to invent a label or move the scale;
+    nothing enforced it. An invented categorical label passed validation, entered
+    the rewrite guidance, and then scored 0 accuracy at step 8 — which reads as a
+    judge failure rather than as the policy error it is.
+    """
+    if output_type == 'boolean':
+        if not isinstance(value, bool):
+            raise ValueError(
+                f'boolean grey_zone_policy label must be true or false, got {value!r}: {label!r}'
+            )
+        return
+    if output_type == 'categorical':
+        declared = list(verdict_space.get('labels') or [])
+        if declared and value not in declared:
+            raise ValueError(
+                f'grey_zone_policy label {value!r} is not one of the evaluator\'s declared labels '
+                f'({", ".join(map(str, declared))}) — the rewritten judge answers in the same terms '
+                f'as the old one, so a new label makes nothing comparable: {label!r}'
+            )
+        return
+    if output_type in _NUMERIC_TYPES:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f'numeric grey_zone_policy label must be a number, got {value!r}: {label!r}')
+        scale = verdict_space.get('scale')
+        if isinstance(scale, (list, tuple)) and len(scale) == 2 and not (scale[0] <= value <= scale[1]):
+            raise ValueError(
+                f'grey_zone_policy label {value} is outside the evaluator\'s scale '
+                f'[{scale[0]}, {scale[1]}] — the rewrite may not move the scale: {label!r}'
+            )
+
 
 def validate_policy(policy: dict[str, Any]) -> None:
     """Raise ``ValueError`` naming the first thing wrong with a grey_zone_policy.
 
-    Fail loud so a malformed policy never silently drops a point's label or lets a
-    numeric label through without its tolerance band (§3.5). Returns None on success.
+    Fail loud so a malformed policy never silently drops a point's label, lets a
+    numeric label through without its tolerance band (§3.5), or carries a value the
+    judge's verdict space does not contain. Returns None on success.
     """
     output_type = (policy.get('output_type') or '').strip().lower()
     if not output_type:
@@ -359,15 +448,51 @@ def validate_policy(policy: dict[str, Any]) -> None:
     if not isinstance(labels, list):
         raise ValueError('grey_zone_policy.labels must be a list of per-point labels')
 
+    verdict_space = policy.get('verdict_space') or {}
+    zone_ids = {gz.get('id') for gz in policy.get('grey_zones', []) if isinstance(gz, dict)}
+
     for label in labels:
         if 'source_index' not in label:
             raise ValueError(f'grey_zone_policy label is missing source_index: {label!r}')
         if 'value' not in label or label['value'] is None:
             raise ValueError(f'grey_zone_policy label is missing value: {label!r}')
-        if output_type in _NUMERIC_TYPES and 'tolerance' not in label:
+        if output_type in _NUMERIC_TYPES:
+            if 'tolerance' not in label:
+                raise ValueError(
+                    f'numeric grey_zone_policy label needs a tolerance band (target_score ± tolerance): {label!r}'
+                )
+            tolerance = label['tolerance']
+            if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)) or tolerance < 0:
+                raise ValueError(
+                    f'numeric grey_zone_policy tolerance must be a non-negative number: {label!r}'
+                )
+        _check_value_in_space(label['value'], output_type, verdict_space, label)
+        source = label.get('label_source', _DEFAULT_LABEL_SOURCE)
+        if source not in LABEL_SOURCES:
             raise ValueError(
-                f'numeric grey_zone_policy label needs a tolerance band (target_score ± tolerance): {label!r}'
+                f'grey_zone_policy label_source must be one of {sorted(LABEL_SOURCES)}, got {source!r}: {label!r}'
             )
+        zone = label.get('grey_zone_id')
+        if zone is not None and zone_ids and zone not in zone_ids:
+            raise ValueError(
+                f'grey_zone_policy label references grey_zone_id {zone!r}, which no grey zone declares: {label!r}'
+            )
+
+
+def label_provenance(policy: dict[str, Any]) -> dict[str, int]:
+    """How many per-point labels the human confirmed vs the conductor derived.
+
+    Reported by retest so the agreement number states what it was scored against:
+    a rewrite validated entirely against labels the same model derived from its own
+    reading of the rule is a weaker claim than one a human signed off on, and the
+    number alone cannot tell them apart.
+    """
+    counts = {source: 0 for source in sorted(LABEL_SOURCES)}
+    for label in policy.get('labels', []):
+        counts[label.get('label_source', _DEFAULT_LABEL_SOURCE)] = (
+            counts.get(label.get('label_source', _DEFAULT_LABEL_SOURCE), 0) + 1
+        )
+    return counts
 
 
 def policy_labels(policy: dict[str, Any]) -> dict[str, dict[str, Any]]:

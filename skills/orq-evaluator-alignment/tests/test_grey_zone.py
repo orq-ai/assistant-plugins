@@ -116,9 +116,11 @@ def test_assemble_payload_truncates_long_input():
                  variables=[{'name': 'log.output', 'value': long_val}])
     queue = {'meta': {'verdict_space': vs}, 'items': [item]}
     (confuser,) = grey_zone.assemble_payload(queue, max_chars=200)['confusers']
-    # The budget bounds SOURCE characters shown (§12.5); the elision marker and the
-    # short `name: ` prefix are overhead on top, not charged against it.
+    # The budget bounds the RENDERED block (§12.5): the elision marker and the
+    # `name: ` prefix are charged against it, so the conductor's ceiling is the one
+    # the caller set rather than that plus whatever the formatting cost.
     assert confuser['input_chars_shown'] <= 200
+    assert len(confuser['input']) <= 200
     assert 'chars elided' in confuser['input']
 
 
@@ -211,7 +213,23 @@ def test_clamp_keeps_the_most_unstable_prefix():
 def test_budget_block_totals_the_elision():
     payload = grey_zone.assemble_payload(_many_confusers(3, chars=5000), max_chars=200)
     assert payload['budget']['n_truncated'] == 3
-    assert payload['budget']['total_chars_elided'] == 3 * (5000 - 200)
+    # Every elided character is accounted for: shown + elided == original, per row.
+    accounted = sum(
+        (c['input_chars_original'] - c['input_chars_shown'])
+        + (c['reasoning_chars_original'] - c['reasoning_chars_shown'])
+        for c in payload['confusers']
+    )
+    assert payload['budget']['total_chars_elided'] == accounted
+    assert accounted >= 3 * (5000 - 200)  # at least the raw overshoot; markers cost more
+
+
+def test_rendered_input_respects_max_chars():
+    # The elision marker and the `name: ` labels used to be added ON TOP of the
+    # budget, so a 200-char ceiling rendered ~4x that and the caller's cap was
+    # not the cap it got.
+    payload = grey_zone.assemble_payload(_structured_row_queue(), max_chars=200)
+    for confuser in payload['confusers']:
+        assert len(confuser['input']) <= 200
 
 
 def test_keeps_one_confuser_even_when_it_alone_exceeds_the_budget():
@@ -514,3 +532,143 @@ def test_empty_reasoning_is_unavailable():
     payload = grey_zone.assemble_payload(q, max_chars=10_000)
 
     assert payload['confusers'][0]['reasoning_available'] is False
+
+
+# --- the policy may not carry a verdict the judge cannot emit ---
+
+
+def _policy(output_type, verdict_space, labels, grey_zones=None):
+    return {
+        'output_type': output_type,
+        'verdict_space': verdict_space,
+        'grey_zones': grey_zones if grey_zones is not None else [],
+        'labels': labels,
+    }
+
+
+def test_invented_categorical_label_is_rejected():
+    # SKILL.md says never invent a label; nothing enforced it. An invented label
+    # sailed through, entered the rewrite guidance, then scored 0 accuracy at step 8
+    # — which reads as a judge failure rather than the policy error it is.
+    policy = _policy(
+        'categorical', {'type': 'categorical', 'labels': ['safe', 'abuse'], 'k': 2},
+        [{'source_index': 0, 'value': 'borderline'}],
+    )
+    with pytest.raises(ValueError, match='not one of the evaluator'):
+        grey_zone.validate_policy(policy)
+
+
+def test_declared_categorical_label_passes():
+    grey_zone.validate_policy(_policy(
+        'categorical', {'type': 'categorical', 'labels': ['safe', 'abuse'], 'k': 2},
+        [{'source_index': 0, 'value': 'abuse'}],
+    ))
+
+
+def test_numeric_label_outside_the_scale_is_rejected():
+    policy = _policy(
+        'number', {'type': 'number', 'scale': [1, 5]},
+        [{'source_index': 0, 'value': 9, 'tolerance': 0.5}],
+    )
+    with pytest.raises(ValueError, match='outside the evaluator'):
+        grey_zone.validate_policy(policy)
+
+
+def test_numeric_tolerance_must_be_a_non_negative_number():
+    policy = _policy(
+        'number', {'type': 'number', 'scale': [1, 5]},
+        [{'source_index': 0, 'value': 3, 'tolerance': -1}],
+    )
+    with pytest.raises(ValueError, match='non-negative'):
+        grey_zone.validate_policy(policy)
+
+
+def test_boolean_label_must_be_a_bool():
+    policy = _policy(
+        'boolean', {'type': 'boolean', 'labels': [False, True]},
+        [{'source_index': 0, 'value': 'yes'}],
+    )
+    with pytest.raises(ValueError, match='must be true or false'):
+        grey_zone.validate_policy(policy)
+
+
+def test_label_referencing_an_undeclared_grey_zone_is_rejected():
+    policy = _policy(
+        'boolean', {'type': 'boolean', 'labels': [False, True]},
+        [{'source_index': 0, 'value': True, 'grey_zone_id': 'gz9'}],
+        grey_zones=[{'id': 'gz1', 'question': 'q', 'answer': 'a', 'rule': 'r',
+                     'member_source_indices': [0]}],
+    )
+    with pytest.raises(ValueError, match='no grey zone declares'):
+        grey_zone.validate_policy(policy)
+
+
+# --- label provenance: who actually decided each point ---
+
+
+def test_label_source_defaults_to_derived():
+    policy = _policy(
+        'boolean', {'type': 'boolean', 'labels': [False, True]},
+        [{'source_index': 0, 'value': True}, {'source_index': 1, 'value': False}],
+    )
+    grey_zone.validate_policy(policy)
+    assert grey_zone.label_provenance(policy) == {'derived': 2, 'human_confirmed': 0}
+
+
+def test_label_provenance_counts_confirmed_labels():
+    policy = _policy(
+        'boolean', {'type': 'boolean', 'labels': [False, True]},
+        [
+            {'source_index': 0, 'value': True, 'label_source': 'human_confirmed'},
+            {'source_index': 1, 'value': False, 'label_source': 'derived'},
+        ],
+    )
+    assert grey_zone.label_provenance(policy) == {'derived': 1, 'human_confirmed': 1}
+
+
+def test_unknown_label_source_is_rejected():
+    policy = _policy(
+        'boolean', {'type': 'boolean', 'labels': [False, True]},
+        [{'source_index': 0, 'value': True, 'label_source': 'vibes'}],
+    )
+    with pytest.raises(ValueError, match='label_source must be one of'):
+        grey_zone.validate_policy(policy)
+
+
+# --- a real rationale that happens to contain a placeholder phrase ---
+
+
+def test_real_reasoning_containing_not_available_is_kept():
+    # The substring test classed this as "no rationale", and the conductor was then
+    # told there was nothing to read when there was.
+    assert grey_zone._is_real_rationale(
+        'the tool was not available at inference time, so the claim is ungrounded'
+    ) is True
+
+
+def test_bare_placeholder_rationales_are_still_caught():
+    assert grey_zone._is_real_rationale('No explanation provided.') is False
+    assert grey_zone._is_real_rationale('(not available)') is False
+    assert grey_zone._is_real_rationale('n/a') is False
+    assert grey_zone._is_real_rationale('') is False
+
+
+# --- cross-model rows are the first the budget drops, so they are counted ---
+
+
+def test_cross_model_reason_rides_into_the_payload():
+    q = _structured_row_queue()
+    q['items'][0]['reason'] = 'cross_model'
+    payload = grey_zone.assemble_payload(q, max_chars=10_000)
+    assert payload['confusers'][0]['reason'] == 'cross_model'
+
+
+def test_dropped_cross_model_rows_are_counted_separately():
+    q = _many_confusers(20)
+    for item in q['items'][10:]:
+        item['reason'] = 'cross_model'
+    payload = grey_zone.assemble_payload(q, max_chars=2000, max_tokens=2000)
+    budget = payload['budget']
+    if budget['n_dropped_by_budget']:
+        assert budget['n_dropped_cross_model'] <= budget['n_dropped_by_budget']
+    assert 'n_dropped_cross_model' in budget

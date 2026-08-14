@@ -336,6 +336,16 @@ async def _run(out_dir: Path, cfg: dict[str, Any]) -> tuple[list[dict[str, Any]]
     annotations = runner.read_json(out_dir / 'annotations.json')
 
     output_type = (evaluator.get('output_type') or metrics.get('metadata', {}).get('output_type') or 'boolean').strip().lower()
+    if output_type == 'string':
+        # String is detect + annotate only: `rewrite_eval` and `create_eval` both
+        # refuse it. Refusing here too means the user finds out BEFORE paying for
+        # one meta-prompt call per annotation — the fail-fast used to sit two steps
+        # downstream, after the money was spent.
+        raise SystemExit(
+            'recommend does not support free-text (string) evaluators — the string type is '
+            'detect + annotate only, so nothing downstream consumes these recommendations. '
+            'Stop the alignment after annotation and report the annotations to the user.'
+        )
     labels = evaluator.get('categorical_labels') or []
     tolerance = float(cfg.get('numeric_tolerance', _DEFAULT_NUMERIC_TOLERANCE))
 

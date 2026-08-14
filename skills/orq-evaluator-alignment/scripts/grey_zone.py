@@ -32,6 +32,7 @@ from loguru import logger
 import _bootstrap  # noqa: F401
 from lib import grey_zone as gzlib
 from lib import runner
+from lib.content import traces_fingerprint
 
 
 def _resolve(run_dir: str | None, cfg: dict) -> object:
@@ -39,6 +40,27 @@ def _resolve(run_dir: str | None, cfg: dict) -> object:
     if out_dir is None:
         raise SystemExit('No run directory. Run build_queue.py first.')
     return out_dir
+
+
+def _warn_on_stale_queue(out_dir, queue: dict) -> None:
+    """Warn when traces.jsonl no longer matches the file the queue was built from.
+
+    `source_index` is a position in traces.jsonl, and `fetch_traces` rewrites that
+    file wholesale — so widening the trace window after building a queue renumbers
+    every row underneath it. The payload would then show one datapoint's verdict
+    split next to another datapoint's input, with nothing downstream able to notice.
+    """
+    recorded = queue.get('meta', {}).get('traces_fingerprint')
+    traces_path = out_dir / 'traces.jsonl'
+    if not recorded or not traces_path.exists():
+        return
+    current = traces_fingerprint(runner.read_jsonl(traces_path))
+    if current != recorded:
+        logger.warning(
+            f'⚠ traces.jsonl has changed since queue.json was built ({recorded} → {current}). '
+            'Every source_index in the queue points at a different row now. Re-run '
+            'stability.py → metrics.py → build_queue.py before open-coding.'
+        )
 
 
 def _log_disclosure(payload: dict) -> None:
@@ -65,6 +87,13 @@ def _log_disclosure(payload: dict) -> None:
         logger.warning(
             f'⚠ {dropped} confuser(s) dropped by the token budget — the payload holds the '
             f'{payload.get("n_confusers")} most unstable. TELL THE USER which ones made the cut.'
+        )
+    dropped_cm = budget.get('n_dropped_cross_model') or 0
+    if dropped_cm:
+        logger.warning(
+            f'⚠ {dropped_cm} of those were cross-model disagreers, which the queue lists after '
+            'the instability ranking and the budget therefore drops first. On a judge that '
+            'rarely wavers they are the signal — raise --max_tokens or lower --max_chars.'
         )
     if not budget.get('within_budget', True):
         logger.warning(
@@ -112,6 +141,7 @@ def assemble(
     out_dir = _resolve(run_dir, cfg)
 
     queue = runner.read_json(out_dir / 'queue.json')
+    _warn_on_stale_queue(out_dir, queue)
     resolved_top_k = top_k if top_k is not None else cfg.get('grey_zone_top_k')
     resolved_max = int(max_chars if max_chars is not None else cfg.get('grey_zone_max_chars', 600))
     resolved_tokens = int(max_tokens if max_tokens is not None else cfg.get('grey_zone_max_tokens', 60000))
@@ -166,6 +196,18 @@ def apply(run_dir: str | None = None, config: str = 'config.toml') -> str:
         f'✓ Wrote {out_dir / "aggregated.md"} from {len(policy.get("grey_zones", []))} grey zone(s) '
         f'/ {len(policy.get("labels", []))} policy label(s). rewrite_eval.py can run next.'
     )
+    provenance = gzlib.label_provenance(policy)
+    derived = provenance.get('derived', 0)
+    if derived:
+        # These same labels are the ground truth the step-8 agreement gate scores
+        # against. Where the conductor derived them, the rewrite is being validated
+        # against one model's reading of the rule rather than against the human.
+        logger.warning(
+            f'⚠ {derived} of {sum(provenance.values())} label(s) were DERIVED by the conductor, '
+            f'not confirmed by the human ({provenance.get("human_confirmed", 0)} confirmed). '
+            'Read them back to the user and mark the confirmed ones '
+            '(`"label_source": "human_confirmed"`) — step 8 scores the rewrite against these.'
+        )
     print(out_dir)
     return str(out_dir)
 
