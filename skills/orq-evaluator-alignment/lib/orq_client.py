@@ -343,6 +343,15 @@ class OrqClient:
         Returns ``None`` when the id isn't in ``GET /v2/projects`` or the call fails —
         the caller then falls back to an unprefixed path (workspace root) rather than
         inventing a project.
+
+        **A project-scoped API key is the usual reason for that None** (probed live
+        2026-08-14): ``GET /v2/projects`` returns only the key's own project, and
+        ``GET /v2/projects/{other}`` answers 403 "Project out of scope for this API
+        key" — while ``GET /v2/evaluators/{id}`` happily reads an evaluator from a
+        project the key cannot see. So an out-of-scope source is *readable* and
+        *unresolvable*, and the copy lands at the workspace root through no fault of
+        the id fields. That is worth saying out loud, because a create into that
+        project would likely 403 anyway.
         """
         if not project_id:
             return None
@@ -359,16 +368,23 @@ class OrqClient:
             )
             return None
         for p in projects:
-            # The evaluator record names its project differently depending on which
-            # normalizer served it (`domain_id` on the current /v2/evaluators shape,
-            # `project_id` elsewhere), and the project record answers to more than
-            # one id field too. Match on any of them rather than pin one spelling
-            # and resolve nothing.
+            # `/v2/projects` names the id `project_id`; the MCP/list surfaces use
+            # `_id` for the same value. Match on any of them rather than pin one
+            # spelling and resolve nothing.
             if isinstance(p, dict) and project_id in {
                 p.get('project_id'), p.get('id'), p.get('_id'), p.get('domain_id')
             }:
                 key = p.get('key') or p.get('name')
                 return str(key) if key else None
+        if len(projects) <= 1:
+            # The tell for a project-scoped key: the list holds only its own project.
+            logger.warning(
+                f'project id {project_id} is not visible to this API key — GET /v2/projects '
+                f'returns {len(projects)} project(s), so the key is scoped to one project and '
+                'the source lives in another. The aligned copy will be created at the '
+                'workspace root; use a workspace-scoped key to co-locate it.'
+            )
+            return None
         logger.warning(
             f'project id {project_id} not found in GET /v2/projects — the aligned copy '
             'will be created at the workspace root.'

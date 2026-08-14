@@ -166,3 +166,31 @@ def test_unresolvable_project_falls_back_to_the_workspace_root(stub_client):
     stub_client({})
     ev = {'id': '01ABC', 'raw': {'domain_id': 'missing'}}
     assert asyncio.run(create_eval._resolve_path(ev, 'k')) == 'k'
+
+
+def test_resolve_path_accepts_the_detail_endpoint_shape(stub_client):
+    # Probed live 2026-08-14: GET /v2/evaluators/{id} returns domain_id AND
+    # project_id carrying the same value.
+    stub_client({'27775162-a7b6-4ca6-8f75-e3bc9f8dd440': 'prompt-engineering'})
+    ev = {'id': '01ABC', 'raw': {
+        'domain_id': '27775162-a7b6-4ca6-8f75-e3bc9f8dd440',
+        'project_id': '27775162-a7b6-4ca6-8f75-e3bc9f8dd440',
+    }}
+    assert asyncio.run(create_eval._resolve_path(ev, 'k')) == 'prompt-engineering/k'
+
+
+def test_resolve_path_accepts_the_list_endpoint_shape(stub_client):
+    # And GET /v2/evaluators (the list) returns project_id with domain_id NULL —
+    # the inverse — so neither spelling is safe on its own.
+    stub_client({'019dd498-83b4-7000-a154-798f2e531448': 'prompt-learning-vs-dspy'})
+    ev = {'id': '01ABC', 'raw': {
+        'domain_id': None, 'project_id': '019dd498-83b4-7000-a154-798f2e531448',
+    }}
+    assert asyncio.run(create_eval._resolve_path(ev, 'k')) == 'prompt-learning-vs-dspy/k'
+
+
+def test_source_name_uses_key_when_display_name_is_null():
+    # The API-created shape, the inverse of the UI one: key set, display_name null.
+    ev = {'id': '01KSMFB2S38435YJFY3WRQWKP1', 'key': None,
+          'raw': {'display_name': None, 'key': 'constraint-satisfaction-v2-openai-gpt-5-4-mini'}}
+    assert create_eval.source_name(ev) == 'constraint-satisfaction-v2-openai-gpt-5-4-mini'

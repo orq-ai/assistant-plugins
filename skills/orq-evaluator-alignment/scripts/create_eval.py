@@ -72,11 +72,13 @@ def _source_labels(evaluator: dict[str, Any]) -> list[Any]:
 def source_name(evaluator: dict[str, Any]) -> str:
     """The source evaluator's human-readable name, for naming the aligned copy.
 
-    Tried in order, because no single field is reliably populated:
-      1. ``key`` — set on older evaluators, but `GET /v2/evaluators/{id}` returns it
-         empty for ones created through the current UI;
-      2. ``raw.display_name`` — what orq actually shows in the evaluator list, and
-         the only name those newer records carry;
+    Tried in order, because no single field is reliably populated — and the two
+    populated fields are each other's inverse depending on how the evaluator was
+    created (both shapes probed live 2026-08-14):
+      1. ``key`` — empty on evaluators created through the current UI, but the ONLY
+         name on ones created over the API (those come back `display_name: null`);
+      2. ``raw.display_name`` — what orq shows in the evaluator list, and the only
+         name a UI-created record carries;
       3. ``raw.key`` — the same field off the untouched API record;
       4. the evaluator id — last resort, and the reason an un-named source used to
          produce keys like ``01kzxt86ac82d1fvzw3s8wfv83-aligned-<ts>``.
@@ -107,15 +109,16 @@ async def _resolve_path(evaluator: dict[str, Any], new_key: str) -> str:
     segment names the project. Resolving one into the other puts the copy in the
     project the source lives in instead of a new folder named after its id.
 
-    **Which field names it depends on the normalizer.** `GET /v2/evaluators/{id}`
-    runs through `normalizeEvalToInternalEvaluator`, an explicit field allowlist
-    that emits `domain_id` and never `project_id` — so reading `project_id` alone
-    resolved nothing and every aligned copy landed at the workspace root, which is
-    the failure this function exists to prevent. Both spellings are read, in the
-    order the current API actually returns them.
+    **Which field names it depends on the endpoint** (probed live 2026-08-14):
+    `GET /v2/evaluators/{id}` returns `domain_id` **and** `project_id` carrying the
+    same value, while `GET /v2/evaluators` (the list) returns `project_id` with
+    `domain_id: null`. Neither spelling is safe alone, so both are read.
 
-    Falls back to a bare key (workspace root) when the project can't be resolved,
-    which is the best available answer rather than a guessed folder.
+    Falls back to a bare key (workspace root) when the project can't be resolved.
+    The common reason is scope, not a missing field: a project-scoped API key sees
+    only its own project on `GET /v2/projects` (and 403s on any other project by
+    id), so an evaluator living elsewhere in the workspace can never be resolved to
+    a key. `resolve_project_key` says which case it hit.
     """
     raw = evaluator.get('raw', {})
     project_id = raw.get('domain_id') or raw.get('project_id') or ''
