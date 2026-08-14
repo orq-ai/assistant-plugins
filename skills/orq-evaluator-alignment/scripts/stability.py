@@ -45,20 +45,28 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
     evaluator = runner.read_json(out_dir / 'evaluator.json')
     rows = runner.read_jsonl(out_dir / 'traces.jsonl')
 
+    # Pair every row with its index in traces.jsonl BEFORE filtering. `source_index`
+    # is the row's identity across artifacts — annotations.json keys off it, and a
+    # rerun under a different --include_degraded would otherwise renumber the rows
+    # and land last run's labels on different datapoints.
+    n_fetched = len(rows)
+    indexed = list(enumerate(rows))
+
     # Drop degraded/hollow rows before sampling. fetch_traces marks a row
     # ``degraded`` when its span detail couldn't be recovered (empty query/output);
     # re-judging an empty output wastes calls and pollutes the flip metrics with a
     # trivially-stable verdict. Kept only when the operator opts in.
+    dropped_degraded = 0
     if not bool(overrides.get('include_degraded')):
-        kept = [r for r in rows if not r.get('degraded')]
-        dropped = len(rows) - len(kept)
-        if dropped:
+        kept = [(i, r) for i, r in indexed if not r.get('degraded')]
+        dropped_degraded = len(indexed) - len(kept)
+        if dropped_degraded:
             logger.warning(
-                f'⚠ skipping {dropped}/{len(rows)} degraded/hollow datapoints '
+                f'⚠ skipping {dropped_degraded}/{len(indexed)} degraded/hollow datapoints '
                 f'(empty output, cannot be meaningfully re-judged). '
                 f'Pass --include_degraded to keep them.'
             )
-        rows = kept
+        indexed = kept
 
     n_repeats = int(overrides.get('n_repeats') or cfg.get('n_repeats', 5))
     num_samples = overrides.get('num_samples')
@@ -69,8 +77,19 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
     temperature = None if temp_cfg is None else float(temp_cfg)
 
     if num_samples is not None:
-        rows = rows[:num_samples]
-    if not rows:
+        indexed = indexed[:num_samples]
+    if not indexed:
+        # The remedy differs: an empty file means step 2 never ran (or wrote
+        # nothing), whereas rows filtered away by the degraded skip means the file
+        # is fine and every datapoint was hollow — pointing that operator back at
+        # fetch_traces.py sends them to re-fetch data they already have.
+        if dropped_degraded:
+            raise RuntimeError(
+                f'No datapoints left to judge: all {dropped_degraded}/{n_fetched} rows in '
+                'traces.jsonl are degraded/hollow and were skipped. The extraction is the '
+                'problem, not the fetch — inspect hollow_debug.json / the traces.jsonl rows, '
+                'or pass --include_degraded to judge them as-is.'
+            )
         raise RuntimeError('No datapoints in traces.jsonl — run fetch_traces.py first.')
 
     prompt_template = evaluator['prompt']
@@ -85,11 +104,12 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
     sem = asyncio.Semaphore(max_concurrency)
     client = make_judge_client()
     logger.info(
-        f'Stability: {len(rows)} rows × {n_repeats} repeats = {len(rows) * n_repeats} '
+        f'Stability: {len(indexed)} rows × {n_repeats} repeats = {len(indexed) * n_repeats} '
         f'judge calls (judge={judge_model}, temp={temperature}, concurrency={max_concurrency})'
     )
 
     async def _one(idx: int, row: dict[str, Any]) -> dict[str, Any]:
+        """`idx` is the row's position in traces.jsonl, not in the filtered list."""
         spec = JudgeSpec(
             prompt_template=prompt_template,
             replacements=make_replacements(variables, row),
@@ -134,7 +154,7 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
             'elapsed_s': time.monotonic() - t0,
         }
 
-    tasks = [asyncio.create_task(_one(i, r)) for i, r in enumerate(rows)]
+    tasks = [asyncio.create_task(_one(i, r)) for i, r in indexed]
     records: list[dict[str, Any]] = []
     done = 0
     for fut in asyncio.as_completed(tasks):

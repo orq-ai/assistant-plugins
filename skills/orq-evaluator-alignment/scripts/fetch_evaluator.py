@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from typing import Any
 
 import fire
 from dotenv import load_dotenv
@@ -197,18 +198,34 @@ def main(
                 '  • 0 traces matched → widen the scan window:\n'
                 f'      uv run scripts/fetch_traces.py --run_dir {out_dir} --trace_limit 2000\n'
                 '  • hollow from a span-shape gap → inspect hollow_debug.json in the run dir to see '
-                'where the content lives, then fix the extractor (do NOT --force; it persists empty rows).\n'
+                'where the content lives, then fix the extractor (--force does not override it).\n'
                 '  • hollow from auth/rate-limit → check ORQ_API_KEY scope, then retry '
                 '(--force keeps the light-span rows).'
             )
-        except Exception:  # noqa: BLE001
+            _exit_incomplete(out_dir, exc)
+        except Exception as exc:  # noqa: BLE001
             logger.exception(
                 '✗ Trace fetch failed (the evaluator is still saved). Retry with:\n'
                 f'    uv run scripts/fetch_traces.py --run_dir {out_dir}'
             )
+            _exit_incomplete(out_dir, exc)
 
     print(out_dir)
     return str(out_dir)
+
+
+def _exit_incomplete(out_dir: Any, exc: BaseException) -> None:
+    """Print the run dir, then exit non-zero because there is no traces.jsonl.
+
+    The chained trace fetch is best-effort — evaluator.json is already on disk and
+    the run is resumable — but "best-effort" must not read as success: swallowing
+    the failure and returning normally exited 0 with no datapoints, so a script or
+    conductor stepping straight to stability.py saw a green step 1 and then failed
+    on a missing file. The run dir still goes to stdout first so the operator (and
+    the retry command above) keeps it.
+    """
+    print(out_dir)
+    raise SystemExit(f'✗ Step 1 incomplete: evaluator saved to {out_dir}, but no datapoints: {exc}')
 
 
 if __name__ == '__main__':

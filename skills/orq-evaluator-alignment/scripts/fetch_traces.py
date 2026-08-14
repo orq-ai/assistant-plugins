@@ -52,6 +52,7 @@ from loguru import logger
 
 import _bootstrap  # noqa: F401
 from lib import runner
+from lib.content import field_for_variable, message_text
 from lib.orq_client import OrqClient
 
 load_dotenv()
@@ -97,34 +98,58 @@ def _evaluation_matches(span: dict[str, Any], evaluator_id: str, evaluator_key: 
 _JUDGE_SPAN_TYPES = {'span.chat_completion', 'span.responses', 'span.llm'}
 
 
-def _message_text(m: Any) -> str:
-    """Flatten one message's text across the shapes orq emits.
+def _span_id(span: dict[str, Any]) -> Any:
+    """This span's id under either of the two keys orq's two views use."""
+    return span.get('span_id') or span.get('_id')
 
-    - Chat Completions: a flat ``content`` string.
-    - Responses API: text nests under ``parts[].content`` (or ``parts[].text``).
-    - Multimodal chat: ``content`` is itself a list of parts.
-    Returns '' for a message with no recoverable text.
+
+def _is_root_span(span: dict[str, Any]) -> bool:
+    """True for the trace-level span carrying the structured content under
+    evaluation (``_structured_io``'s source). One predicate, because
+    ``_content_source_span_ids`` must blame exactly the spans that are read."""
+    return span.get('type') == 'trace' or ((span.get('attributes') or {}).get('type')) == 'workflow_run'
+
+
+def _parent_of(span: dict[str, Any]) -> Any:
+    """The span's parent id, normalised across the fields orq actually populates.
+
+    ``parent_span_id`` alone is NOT enough, and the difference is not cosmetic:
+    on a Responses-API trace the judge span (``span.responses``) arrives with
+    ``parent_span_id`` absent and the real link on ``parent_id`` (OTel-bridged
+    spans also carry it at ``attributes.orq.bridge.parent_span_id``) — see
+    ``tests/fixtures/responses_api_trace.json``. Scoping on ``parent_span_id``
+    alone therefore finds *no* child on exactly the span shape this scanner was
+    fixed to support, silently falling back to "any judge span in the trace" and
+    reading another evaluator call's prompt, model and content.
     """
-    if not isinstance(m, dict):
-        return ''
-    content = m.get('content')
-    if isinstance(content, str) and content:
-        return content
-    chunks: list[str] = []
-    containers = [m.get('parts')]
-    if isinstance(content, list):
-        containers.append(content)
-    for container in containers:
-        if not isinstance(container, list):
-            continue
-        for p in container:
-            if isinstance(p, str):
-                chunks.append(p)
-            elif isinstance(p, dict):
-                t = p.get('content') or p.get('text')
-                if isinstance(t, str) and t:
-                    chunks.append(t)
-    return '\n\n'.join(chunks)
+    return (
+        span.get('parent_span_id')
+        or span.get('parent_id')
+        or (((span.get('attributes') or {}).get('orq') or {}).get('bridge') or {}).get('parent_span_id')
+    )
+
+
+def _judge_spans(spans: list[dict[str, Any]], eval_span: dict[str, Any]) -> list[dict[str, Any]]:
+    """The judge LLM-call spans belonging to THIS eval span, best-effort.
+
+    One scoper for all three readers (`_judge_io`, `_judge_model`,
+    `_content_source_span_ids`) so they cannot disagree about which span a row's
+    content came from.
+
+    Children first (via `_parent_of`). With no child we fall back to the trace's
+    judge spans **only when there is exactly one** — then "unscoped" and "this
+    eval span's" are the same span. With several unparented candidates we return
+    none: a trace with two evaluator calls would otherwise hand every row the
+    first judge span's prompt, model and content, and the row is non-empty so
+    nothing downstream catches it. Ambiguous is not the same as unscoped, and
+    `_judge_io`/`_judge_model` still fall back to the eval span's own gen_ai.
+    """
+    esid = _span_id(eval_span)
+    chats = [s for s in spans if isinstance(s, dict) and s.get('type') in _JUDGE_SPAN_TYPES]
+    children = [s for s in chats if esid is not None and _parent_of(s) == esid]
+    if children:
+        return children
+    return chats if len(chats) == 1 else []
 
 
 def _judge_io(spans: list[dict[str, Any]], eval_span: dict[str, Any]) -> tuple[str, Any]:
@@ -135,20 +160,17 @@ def _judge_io(spans: list[dict[str, Any]], eval_span: dict[str, Any]) -> tuple[s
     messages``). We keep those messages verbatim and do NOT parse delimiters out
     of the prompt: evaluators wrap their template variables differently (some use
     ``<output>`` tags, some don't), so tag-stripping is not portable. The judge
-    span is the evaluator span's child (``parent_span_id``); we fall back to any
-    judge span in the trace, then to the eval span's own gen_ai input.
+    span is scoped by ``_judge_spans``; we then fall back to the eval span's own
+    gen_ai input.
     """
-    esid = eval_span.get('span_id') or eval_span.get('_id')
-    chats = [s for s in spans if isinstance(s, dict) and s.get('type') in _JUDGE_SPAN_TYPES]
-    chosen = [s for s in chats if s.get('parent_span_id') == esid] or chats
     # Newer orq schema records the judge's LLM call ON the evaluator span itself
     # (no separate child span), so fall back to the eval span's own gen_ai input.
     # Without this, evaluators that don't emit a child judge span yield empty
     # query/output — hollow datapoints behind a green pipeline.
-    for s in [*chosen, eval_span]:
+    for s in [*_judge_spans(spans, eval_span), eval_span]:
         msgs = (((s.get('attributes') or {}).get('gen_ai') or {}).get('input') or {}).get('messages')
         if msgs:
-            rendered = '\n\n'.join(_message_text(m) for m in msgs)
+            rendered = '\n\n'.join(message_text(m) for m in msgs)
             if rendered.strip():
                 return rendered, msgs
     return '', None
@@ -169,24 +191,20 @@ def _content_source_span_ids(spans: list[dict[str, Any]], eval_span: dict[str, A
     operator chasing an extractor bug that is not there. Intersecting this set
     with ``downgraded_spans`` closes that gap.
 
-    The judge scoping mirrors ``_judge_io`` deliberately: a trace with two
-    evaluator calls has two judge spans, and borrowing the *other* eval span's
-    429'd judge span into this set would misfile this row as ``detail_fetch``
-    (and, because the debug sample is only captured on ``empty_extraction``,
-    leave the real shape gap invisible). Only spans ``_judge_io`` would actually
-    read for this eval span count.
+    The judge scoping goes through ``_judge_spans``, the same helper ``_judge_io``
+    reads with: a trace with two evaluator calls has two judge spans, and
+    borrowing the *other* eval span's 429'd judge span into this set would misfile
+    this row as ``detail_fetch`` (and, because the debug sample is only captured
+    on ``empty_extraction``, leave the real shape gap invisible). Only spans
+    ``_judge_io`` would actually read for this eval span count.
     """
     ids: set[str] = set()
-    esid = eval_span.get('span_id') or eval_span.get('_id')
+    esid = _span_id(eval_span)
     if esid:
         ids.add(esid)
 
-    # Judge spans, scoped to this eval span's children first (matching _judge_io);
-    # fall back to every judge span only when this eval span has no child of its own.
-    chats = [s for s in spans if isinstance(s, dict) and s.get('type') in _JUDGE_SPAN_TYPES]
-    chosen = [s for s in chats if s.get('parent_span_id') == esid] or chats
-    for s in chosen:
-        sid = s.get('span_id') or s.get('_id')
+    for s in _judge_spans(spans, eval_span):
+        sid = _span_id(s)
         if sid:
             ids.add(sid)
 
@@ -194,9 +212,9 @@ def _content_source_span_ids(spans: list[dict[str, Any]], eval_span: dict[str, A
     for s in spans:
         if not isinstance(s, dict):
             continue
-        is_root = s.get('type') == 'trace' or ((s.get('attributes') or {}).get('type')) == 'workflow_run'
+        is_root = _is_root_span(s)
         if is_root:
-            sid = s.get('span_id') or s.get('_id')
+            sid = _span_id(s)
             if sid:
                 ids.add(sid)
     return ids
@@ -259,10 +277,7 @@ def _structured_io(spans: list[dict[str, Any]]) -> dict[str, Any] | None:
     so the caller falls back to the template-stencil recovery.
     """
     for s in spans:
-        if not isinstance(s, dict):
-            continue
-        is_root = s.get('type') == 'trace' or ((s.get('attributes') or {}).get('type')) == 'workflow_run'
-        if not is_root:
+        if not isinstance(s, dict) or not _is_root_span(s):
             continue
         gi = (((s.get('attributes') or {}).get('gen_ai') or {}).get('input'))
         if not isinstance(gi, dict):
@@ -270,16 +285,22 @@ def _structured_io(spans: list[dict[str, Any]]) -> dict[str, Any] | None:
         output = str(gi.get('output') or '')
         query = str(gi.get('query') or gi.get('input') or '')
         reference = str(gi.get('reference') or '')
-        # Gate on the content-under-evaluation only. `reference` is ground-truth
+        # The same root span also carries the conversation history under
+        # `messages` (list of {role, content}); an evaluator whose template has a
+        # {{messages}}/{{history}} variable needs it, or make_replacements renders
+        # it blank and the stability run re-judges with no conversation.
+        messages = gi.get('messages')
+        # Gate on the content-under-evaluation. `reference` is ground-truth
         # metadata (and a boolean coerces to a truthy 'True'), so a root carrying
         # only `reference` is effectively hollow — returning it here would win over
-        # the judge-span fallback and yield an empty-output row.
-        if output or query:
-            # The same root span also carries the conversation history under
-            # `messages` (list of {role, content}); an evaluator whose template
-            # has a {{messages}}/{{history}} variable needs it, or make_replacements
-            # renders it blank and the stability run re-judges with no conversation.
-            return {'query': query, 'output': output, 'reference': reference, 'messages': gi.get('messages')}
+        # the judge-span fallback and yield an empty-output row. `messages` DOES
+        # count: a conversation-only evaluator has no query/output at all, and
+        # requiring one would leave that row to the stencil path (which cannot
+        # recover a conversation) and then to the hollow guard. The caller still
+        # runs the judge-span path when query/output are both empty, so a normal
+        # evaluator whose root records only the conversation keeps its output.
+        if output or query or messages:
+            return {'query': query, 'output': output, 'reference': reference, 'messages': messages}
     return None
 
 
@@ -320,18 +341,77 @@ def _recover_variables(template: str, rendered: str) -> dict[str, str]:
 
 
 def _assign_io(recovered: dict[str, str]) -> dict[str, Any]:
-    """Map recovered ``{{var}}`` values onto the row's query/output/messages fields
-    using the same suffix rules as ``lib.judge.make_replacements``."""
-    fields: dict[str, Any] = {'query': '', 'output': '', 'messages': None}
+    """Map recovered ``{{var}}`` values onto the row's fields.
+
+    Uses ``lib.content.field_for_variable`` — literally the table
+    ``lib.judge.make_replacements`` renders back with, so recovery and rendering
+    cannot disagree. That matters for ``reference``: a template like
+    ``Compare {{log.output}} with {{log.expected_output}}`` recovers both, and a
+    mapper that knew only query/output/messages would drop the expected value on
+    the floor and re-judge against a blank reference.
+    """
+    fields: dict[str, Any] = {'query': '', 'output': '', 'reference': '', 'messages': None}
     for var, val in recovered.items():
-        leaf = var.split('.')[-1].strip().lower()
-        if leaf in {'input', 'query', 'prompt'}:
-            fields['query'] = val
-        elif leaf in {'output', 'response', 'completion', 'answer'}:
-            fields['output'] = val
-        elif leaf in {'messages', 'history', 'conversation'}:
-            fields['messages'] = val
+        field = field_for_variable(var)
+        if field is not None:
+            fields[field] = val
     return fields
+
+
+def _extract_io(
+    spans: list[dict[str, Any]], eval_span: dict[str, Any], template: str
+) -> dict[str, Any]:
+    """The row's content under evaluation: ``{query, output, reference, messages}``.
+
+    THE extraction precedence, in one place so the scan loop and the tests
+    exercise the same ordering (a test that re-implements it passes even when
+    ``_fetch`` regresses to writing empty rows):
+
+    1. **Structured root span** — the clean ``gen_ai.input`` orq records on the
+       trace-level span. Robust across judge API shapes, so it wins whenever it
+       carries query/output.
+    2. **Template-stencil recovery off the judge span** — the judge span stores
+       its prompt *post*-substitution, so we reverse the substitution using the
+       evaluator template as a stencil. Storing the rendered prompt instead would
+       make step 4 re-nest the whole judge prompt inside itself.
+    3. **Raw rendered prompt** — only when the stencil doesn't line up; logged.
+
+    A root that carries *only* a conversation (no query/output) does not short
+    circuit 2: its `messages`/`reference` ride along with whatever the judge span
+    yields, so a conversation-only evaluator keeps its conversation and a normal
+    one keeps its output.
+    """
+    structured = _structured_io(spans) or {}
+    if structured.get('query') or structured.get('output'):
+        return {
+            'query': structured['query'],
+            'output': structured['output'],
+            'reference': structured['reference'],
+            'messages': structured['messages'],
+        }
+
+    rendered, judge_messages = _judge_io(spans, eval_span)
+    # An empty rendered prompt has nothing to reverse: a single-variable stencil
+    # matches '' with empty prefix/suffix and would "recover" the variable as ''.
+    recovered = _recover_variables(template, rendered) if rendered else {}
+    if recovered:
+        io = _assign_io(recovered)
+    else:
+        if rendered:
+            logger.warning(
+                f'⚠ could not recover template variables for span {_span_id(eval_span)}; '
+                'storing raw rendered judge input'
+            )
+        io = {'query': '', 'output': rendered, 'reference': '', 'messages': judge_messages}
+    # The structured root is the better source for the fields the stencil can't
+    # produce: a conversation is not recoverable from a rendered prompt, and
+    # `reference` is ground truth the judge span never echoes back.
+    return {
+        'query': io['query'],
+        'output': io['output'],
+        'reference': io['reference'] or structured.get('reference', ''),
+        'messages': io['messages'] or structured.get('messages'),
+    }
 
 
 def _judge_model(spans: list[dict[str, Any]], eval_span: dict[str, Any]) -> str:
@@ -344,16 +424,13 @@ def _judge_model(spans: list[dict[str, Any]], eval_span: dict[str, Any]) -> str:
     span whose ``attributes.gen_ai.request.model`` carries the real id (e.g.
     ``anthropic.claude-3-5-sonnet-20241022-v2:0``). Because it is read per
     datapoint, an evaluator whose judge model changed over time is reported
-    honestly rather than collapsed to one config value. Mirrors ``_judge_io``'s
-    judge-span selection (children of the eval span, else any judge span in the
-    trace), covering both Chat Completions and Responses API shapes.
+    honestly rather than collapsed to one config value. Shares ``_judge_spans``
+    with ``_judge_io`` so the model is read off the same span as the prompt,
+    covering both Chat Completions and Responses API shapes.
     """
-    esid = eval_span.get('span_id') or eval_span.get('_id')
-    chats = [s for s in spans if isinstance(s, dict) and s.get('type') in _JUDGE_SPAN_TYPES]
-    chosen = [s for s in chats if s.get('parent_span_id') == esid] or chats
     # As in _judge_io, the newer schema keeps the LLM call on the eval span
     # itself; also accept gen_ai.response.model as a fallback to request.model.
-    for s in [*chosen, eval_span]:
+    for s in [*_judge_spans(spans, eval_span), eval_span]:
         gen_ai = ((s.get('attributes') or {}).get('gen_ai') or {})
         model = (gen_ai.get('request') or {}).get('model') or (gen_ai.get('response') or {}).get('model')
         if model:
@@ -451,7 +528,7 @@ async def _fetch(
                     return
                 full: list[dict[str, Any]] = []
                 for s in spans:
-                    sid = s.get('span_id') or s.get('_id')
+                    sid = _span_id(s)
                     detail = await client.get_span(trace_id, sid) if sid else None
                     if sid and detail is None:
                         downgraded_spans.add(sid)
@@ -462,34 +539,10 @@ async def _fetch(
                 if not matches:
                     continue
                 ev = matches[0]
-                span_id = span.get('span_id') or span.get('_id')
-                # Prefer the clean, structured content orq records on the
-                # trace-level span (gen_ai.input = {input, output, query,
-                # reference}) — robust across judge API shapes. Fall back to the
-                # template-stencil recovery from the (post-substitution) judge span
-                # when the structured input is absent.
-                structured = _structured_io(full)
-                if structured is not None:
-                    query, output_val, msgs = structured['query'], structured['output'], structured['messages']
-                    reference = structured['reference']
-                else:
-                    rendered, messages = _judge_io(full, span)
-                    # The judge span stores the prompt post-substitution. Recover the
-                    # original variable values via the template stencil so the row
-                    # holds the *content under evaluation*, not the whole rendered
-                    # judge prompt (which step 4 would otherwise re-nest inside itself
-                    # and the annotation UI would show verbatim).
-                    recovered = _recover_variables(template, rendered)
-                    if recovered:
-                        io = _assign_io(recovered)
-                        query, output_val, msgs = io['query'], io['output'], io['messages']
-                    else:
-                        logger.warning(
-                            f'⚠ could not recover template variables for span '
-                            f'{span.get("span_id") or span.get("_id")}; storing raw rendered judge input'
-                        )
-                        query, output_val, msgs = '', rendered, messages
-                    reference = ''
+                span_id = _span_id(span)
+                io = _extract_io(full, span, template)
+                query, output_val = io['query'], io['output']
+                reference, msgs = io['reference'], io['messages']
                 # Two distinct hollow modes, tracked separately (see
                 # _classify_degrade) so the guard can tell a span-detail fetch
                 # failure (auth/rate-limit) apart from an unrecognised span shape.
@@ -551,9 +604,6 @@ def _hollow_debug(sample: dict[str, Any]) -> dict[str, Any]:
     the shape of each span's gen_ai.input/output, so a shape gap is obvious."""
     spans = sample.get('spans') or []
 
-    def _sid(s: dict[str, Any]) -> Any:
-        return s.get('span_id') or s.get('_id')
-
     def _gen_ai(s: dict[str, Any], field: str) -> Any:
         return ((s.get('attributes') or {}).get('gen_ai') or {}).get(field)
 
@@ -565,14 +615,24 @@ def _hollow_debug(sample: dict[str, Any]) -> dict[str, Any]:
             f'(one of {sorted(_JUDGE_SPAN_TYPES)}) and from the root trace span '
             "gen_ai.input.{output,query}. Compare against where the text actually sits below."
         ),
+        # `parent` is the NORMALISED link (_parent_of), with the raw fields beside
+        # it: on a Responses-API trace `parent_span_id` is absent and the real
+        # link sits on `parent_id`, so printing only the raw field makes the tree
+        # look unparented in the very dump meant to explain the shape.
         'span_inventory': [
-            {'type': s.get('type'), 'span_id': _sid(s), 'parent_span_id': s.get('parent_span_id')}
+            {
+                'type': s.get('type'),
+                'span_id': _span_id(s),
+                'parent': _parent_of(s),
+                'parent_span_id': s.get('parent_span_id'),
+                'parent_id': s.get('parent_id'),
+            }
             for s in spans
         ],
         'spans': [
             {
                 'type': s.get('type'),
-                'span_id': _sid(s),
+                'span_id': _span_id(s),
                 'gen_ai.input': _shape(_gen_ai(s, 'input')),
                 'gen_ai.output': _shape(_gen_ai(s, 'output')),
             }
@@ -589,9 +649,16 @@ def _should_abort_hollow(
     Single source of truth for the abort threshold, shared by ``main`` (which
     dumps the offending span shape first) and ``_guard_hollow`` (which raises).
     They previously computed this separately and were free to drift.
+
+    ``force`` discounts only the ``detail_fetch`` rows. It is documented as the
+    auth/rate-limit override — persisting light-span rows the operator knows are
+    a transient blip — and the ``empty_extraction`` message explicitly tells them
+    NOT to force a shape gap, since forcing writes empty rows that then read as
+    perfectly stable datapoints. Letting it suppress that abort too made the flag
+    contradict its own error text.
     """
-    n_degraded = n_detail + n_empty
-    if force or not n_rows or not n_degraded:
+    n_degraded = n_empty if force else n_detail + n_empty
+    if not n_rows or not n_degraded:
         return False
     return n_degraded / n_rows > abort_ratio
 
@@ -607,11 +674,16 @@ def _guard_hollow(
     """Abort when too many datapoints are hollow — with a diagnosis, not a guess.
 
     Two failure modes, told apart by ``degrade_reason``:
-    - ``detail_fetch``: the span-detail GET failed (a run-wide 401/403/429), so
-      the row fell back to the light span. Remedy: fix auth/rate-limit, retry.
-    - ``empty_extraction``: the span was fetched fine but neither extraction path
+    - ``detail_fetch``: the span-detail GET did not return usable content, so the
+      row fell back to the light span. ``orq_client.get_span`` returns None for
+      any HTTP error, a non-JSON body or a non-dict payload, so this covers a 5xx
+      or a malformed response as well as the common 401/403/429 — the message
+      names auth and rate limits first because they dominate, not exclusively.
+      Remedy: check the status, fix, retry.
+    - ``empty_extraction``: the span was fetched fine but no extraction path
       found content — the scanner doesn't understand this evaluator's span shape.
-      Remedy: fix the extractor; ``--force`` would only persist empty rows.
+      Remedy: fix the extractor; ``--force`` does not override this one, because
+      forcing it writes empty rows that then read as perfectly stable datapoints.
 
     Reporting the breakdown (and pointing at ``hollow_debug.json`` for the shape
     case) is what turns a green-pipeline mystery into an obvious fix.
@@ -634,19 +706,21 @@ def _guard_hollow(
             f'SUCCEEDED for all of them (0 auth/rate-limit failures). This is an extraction/shape '
             f'gap, not an auth problem: the judge runs as a span type or content shape this scanner '
             f'does not parse (e.g. a Responses-API span.responses with text under parts[].content).'
-            f'{dump} Fix the extractor — --force would only persist empty rows.'
+            f'{dump} Fix the extractor — --force does NOT override this abort, because forcing it '
+            f'writes empty rows that then read as perfectly stable datapoints.'
         )
     if n_empty == 0:
         raise SystemExit(
             f'✗ {n_detail}/{n_rows} datapoints ({ratio:.0%}) lost their span detail to span-detail '
-            f'endpoint failures (a run-wide 401/403/429). Check ORQ_API_KEY scope and rate limits, '
-            f'then retry. Pass --force to persist the light-span rows anyway.'
+            f'endpoint failures (usually a run-wide 401/403/429; any HTTP error or unparseable body '
+            f'lands here). Check the endpoint status and ORQ_API_KEY scope and rate limits, then '
+            f'retry. Pass --force to persist the light-span rows anyway.'
         )
     raise SystemExit(
         f'✗ {n_degraded}/{n_rows} datapoints ({ratio:.0%}) are hollow: {n_detail} from span-detail '
-        f'failures (auth/rate-limit — check ORQ_API_KEY scope) and {n_empty} from empty extraction '
-        f'(a span-shape gap the scanner does not parse).{dump} Address the dominant cause; --force '
-        f'persists them as-is.'
+        f'failures (usually auth/rate-limit — check ORQ_API_KEY scope) and {n_empty} from empty '
+        f'extraction (a span-shape gap the scanner does not parse).{dump} Address the dominant '
+        f'cause; --force discounts only the span-detail half, never the shape gap.'
     )
 
 
@@ -668,7 +742,9 @@ def main(
             (e.g. ``--trace_limit 2000``).
         force: Persist the datapoints even when a large fraction lost their
             judge-span detail (hollow rows). Off by default so a run-wide
-            auth/rate-limit failure aborts instead of writing garbage.
+            auth/rate-limit failure aborts instead of writing garbage. It covers
+            the span-detail half ONLY — an extraction/shape gap still aborts,
+            since forcing that writes empty rows that look perfectly stable.
     """
     cfg = runner.load_config(config)
     if trace_limit is not None:

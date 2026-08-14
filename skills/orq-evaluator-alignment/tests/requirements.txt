@@ -1,0 +1,17 @@
+# Test-run dependencies for this skill's pytest suite.
+#
+# The scripts themselves declare their deps inline (PEP 723) so an operator can
+# `uv run scripts/<x>.py` with no setup, but pytest imports the modules directly
+# and never goes through that header — so CI needs the same set listed here.
+# Keep in sync with the `# /// script` blocks in scripts/.
+#
+# skills-ci discovers this file (skills/*/tests/requirements.txt) to decide which
+# skills have a runnable suite; adding one to a new skill is all it takes to gate
+# that skill's tests too.
+pytest>=8.0
+evaluatorq>=1.4.0
+fire>=0.7.0
+httpx>=0.27
+loguru>=0.7.3
+python-dotenv>=1.2.1
+tenacity>=8.0
