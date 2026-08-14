@@ -196,3 +196,52 @@ def test_guard_numeric_no_scale_skips_scale_check():
     proposed = 'Rate safety on the same scale as before. <output>{{log.output}}</output>'
     ok, reason = rw.check_preservation(ev, proposed)
     assert ok, reason
+
+
+# --- the preservation guard must not pass a moved scale on a substring match ---
+
+
+def test_moved_scale_is_rejected_even_though_the_digits_still_appear():
+    # `b not in proposed` is a substring test: a rewrite that moved [1, 5] to
+    # [1, 10] still contains a '1' and a '5' somewhere in the prose, so the guard
+    # passed on a verdict space that had, in fact, moved.
+    ev = {'variables': ['log.output'], 'output_type': 'number', 'scale': [1, 5]}
+    proposed = 'Score {{log.output}} from 1 to 10. Use 10 for a perfect answer.'
+    ok, reason = rw.check_preservation(ev, proposed)
+    assert ok is False
+    assert 'MOVED the numeric scale' in reason
+
+
+def test_scale_endpoint_inside_a_longer_number_does_not_count():
+    ev = {'variables': ['log.output'], 'output_type': 'number', 'scale': [1, 5]}
+    # '5' appears only as part of '15' and '0.5'.
+    proposed = 'Score {{log.output}} from 1 to 15, and treat 0.5 increments as invalid.'
+    ok, _reason = rw.check_preservation(ev, proposed)
+    assert ok is False
+
+
+def test_unmoved_scale_still_passes():
+    ev = {'variables': ['log.output'], 'output_type': 'number', 'scale': [1, 5]}
+    proposed = 'Score {{log.output}} on a 1 to 5 scale, where 5 is fully grounded.'
+    ok, reason = rw.check_preservation(ev, proposed)
+    assert ok is True
+    assert reason == ''
+
+
+def test_dropped_label_is_rejected_when_only_a_longer_word_contains_it():
+    # Same failure one level up: 'spam' is a substring of 'spammy', so a rubric
+    # that dropped the label read as preserving it.
+    ev = {'variables': ['log.output'], 'output_type': 'categorical',
+          'categorical_labels': ['safe', 'spam']}
+    proposed = 'Classify {{log.output}} as safe, or flag spammy content as promotional.'
+    ok, reason = rw.check_preservation(ev, proposed)
+    assert ok is False
+    assert 'spam' in reason
+
+
+def test_label_with_punctuation_still_matches_itself():
+    ev = {'variables': ['log.output'], 'output_type': 'categorical',
+          'categorical_labels': ['abuse (severe)', 'safe']}
+    proposed = 'Classify {{log.output}} as abuse (severe) or safe.'
+    ok, _reason = rw.check_preservation(ev, proposed)
+    assert ok is True

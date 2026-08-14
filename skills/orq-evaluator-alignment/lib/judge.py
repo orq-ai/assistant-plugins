@@ -141,7 +141,9 @@ def build_response_format(output_type: str, labels: Sequence[str] | None = None)
 # judge prompt's literal free-text contract ("explanation, value"), emitting
 # plain text that ends in True/False. We accept both.
 _BOOL_TOKEN = re.compile(r'\b(true|false)\b', re.IGNORECASE)
-_VALUE_LABEL = re.compile(r'(?:^|\n)\s*(?:value|verdict|answer)\s*[:=]\s*', re.IGNORECASE)
+_VALUE_LABEL = re.compile(
+    r'(?:^|\n)\s*(?:value|verdict|answer|score|rating)\s*[:=]\s*', re.IGNORECASE
+)
 
 
 def _clean_explanation(text: str, *spans: tuple[int, int]) -> str:
@@ -283,13 +285,50 @@ def parse_categorical(raw: str, labels: Sequence[str]) -> ParsedVerdict:
     return ParsedVerdict(_WRONG_OUTPUT_TYPE, None, explanation or candidate)
 
 
+# Phrases that name the *scale* rather than the verdict: "on a scale of 1 to 5",
+# "4 out of 5", "3/5". Scrubbed before the verdict is read so a scale endpoint can
+# never be mistaken for the score.
+_SCALE_MENTION = re.compile(
+    r'(?:\bout\s+of\b|\bof\b|\bto\b|/)\s*[-+]?\d+(?:[.,]\d+)?', re.IGNORECASE
+)
+
+
+def _verdict_number_token(text: str) -> tuple[str | None, str]:
+    """The numeric token a free-text judge emitted as its verdict.
+
+    Reads the verdict the way `parse_categorical` does — `_freetext_candidate`,
+    i.e. after the last `Value:`/`Score:` label or on the last non-empty line —
+    rather than taking the first number anywhere in the completion.
+    `'On a scale of 1 to 5, I give this a 4'` used to parse as **1.0** with status
+    `ok`: inside the declared scale, so nothing downstream re-checked it, and the
+    wrong score entered `mean`, `stdev` and the instability band.
+
+    Scale mentions are scrubbed first, then the remaining token is the verdict.
+    Returns ``(token, reason)``; on failure `token` is None and `reason` says why.
+    A verdict line still carrying two different numbers after scrubbing is
+    **ambiguous** and surfaced as off-contract — guessing between them is exactly
+    how a wrong score gets scored silently.
+    """
+    for source in (_freetext_candidate(text), text):
+        if not source:
+            continue
+        tokens = _NUM_TOKEN.findall(_SCALE_MENTION.sub(' ', source)) or _NUM_TOKEN.findall(source)
+        if not tokens:
+            continue
+        if len({t.replace(',', '.') for t in tokens}) > 1:
+            return None, f'ambiguous free-text number ({", ".join(tokens)}): {source[:160]}'
+        return tokens[-1], ''
+    return None, ''
+
+
 def parse_numeric(raw: str, scale: tuple[float, float] | None = None) -> ParsedVerdict:
-    """Canonicalize a numeric completion: first numeric token, `,`/`.` normalized.
+    """Canonicalize a numeric completion: the verdict token, `,`/`.` normalized.
 
     A single `,` with no `.` is a decimal separator (`3,4` → `3.4`); this does NOT
     disambiguate thousands separators (`3,400`), which bounded eval scores never
-    take (§4a, documented limit). Not a number → `wrong_output_type`; when a scale
-    is set, a value outside `[scale_min, scale_max]` is off-contract too.
+    take (§4a, documented limit). Not a number, or an ambiguous free-text verdict
+    line → `wrong_output_type`; when a scale is set, a value outside
+    `[scale_min, scale_max]` is off-contract too.
     """
     text = _strip_code_fences((raw or '').strip()).strip()
     obj = _loads_obj(text)
@@ -298,10 +337,9 @@ def parse_numeric(raw: str, scale: tuple[float, float] | None = None) -> ParsedV
         number = float(obj['value'])
         explanation = str(obj.get('explanation', '') or '')
     else:
-        match = _NUM_TOKEN.search(text)
-        if match is None:
-            return ParsedVerdict(_WRONG_OUTPUT_TYPE, None, text[:200])
-        token = match.group(0)
+        token, reason = _verdict_number_token(text)
+        if token is None:
+            return ParsedVerdict(_WRONG_OUTPUT_TYPE, None, (reason or text)[:200])
         if token.count(',') == 1 and '.' not in token:
             token = token.replace(',', '.')
         try:

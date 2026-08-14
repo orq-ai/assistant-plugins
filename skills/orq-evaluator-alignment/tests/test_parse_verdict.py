@@ -183,3 +183,62 @@ def test_numeric_out_of_range_is_wrong_output_type():
     # A number outside the declared scale is off-contract, not a scored verdict.
     p = parse_numeric('12', scale=(1.0, 10.0))
     assert p.status == 'wrong_output_type'
+
+
+# --- numeric free-text: the verdict, not the first number in the sentence ---
+
+
+def test_numeric_freetext_reads_the_verdict_not_the_scale_mention():
+    # The P0: `_NUM_TOKEN.search` returned the FIRST number, so this scored 1.0 —
+    # inside the declared scale, status ok, and nothing downstream re-checks it.
+    # The wrong score then entered mean, stdev and the instability band.
+    p = parse_numeric('On a scale of 1 to 5, I give this a 4', (1, 5))
+    assert p.status == 'ok'
+    assert p.value == 4.0
+
+
+def test_numeric_freetext_handles_out_of_n_phrasing():
+    p = parse_numeric('I give this a 4 out of 5', (1, 5))
+    assert p.value == 4.0
+
+
+def test_numeric_freetext_handles_slash_phrasing():
+    p = parse_numeric('Rating: 3/5', (1, 5))
+    assert p.value == 3.0
+
+
+def test_numeric_freetext_reads_the_labelled_verdict_line():
+    raw = 'The answer cites 2 of the 3 required sources.\nScore: 4'
+    assert parse_numeric(raw, (1, 5)).value == 4.0
+
+
+def test_numeric_freetext_takes_the_last_line_verdict():
+    raw = 'Reasoning about several things.\n5'
+    assert parse_numeric(raw, (1, 5)).value == 5.0
+
+
+def test_numeric_json_value_still_wins():
+    p = parse_numeric('{"explanation": "on a scale of 1 to 5", "value": 2}', (1, 5))
+    assert p.value == 2.0
+
+
+def test_numeric_decimal_comma_still_normalises():
+    assert parse_numeric('3,4', (1, 5)).value == 3.4
+
+
+def test_ambiguous_freetext_number_is_surfaced_not_guessed():
+    # Two different candidates on the verdict line and no way to tell which is the
+    # score. Off-contract is a SIGNAL the human sees; a coin-flip is a wrong score
+    # nothing catches.
+    p = parse_numeric('The answer covers 2 points and misses 3', (1, 5))
+    assert p.status == 'wrong_output_type'
+    assert p.value is None
+
+
+def test_numeric_with_no_number_at_all_is_still_off_contract():
+    p = parse_numeric('I cannot score this.', (1, 5))
+    assert p.status == 'wrong_output_type'
+
+
+def test_numeric_out_of_scale_is_still_off_contract():
+    assert parse_numeric('Score: 9', (1, 5)).status == 'wrong_output_type'

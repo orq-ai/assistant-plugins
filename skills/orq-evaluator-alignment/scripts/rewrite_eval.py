@@ -51,6 +51,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from typing import Any
 
@@ -228,6 +229,26 @@ def render_meta_prompt(instructions: str, prompt: str, context: dict[str, str]) 
 
 
 # ── preservation guard ────────────────────────────────────────────────────────
+def _mentions_number(text: str, number: str) -> bool:
+    """Whether `number` appears in `text` as a number, not inside a longer one.
+
+    A plain `in` test passes `1` on a rubric that only ever says `10`, and passes
+    `5` on one that says `0.5` — so a rewrite that moved the scale from `[1, 5]`
+    to `[1, 10]` cleared the guard while both endpoints were, in fact, gone.
+    """
+    return re.search(rf'(?<![\d.]){re.escape(number)}(?![\d.])', text) is not None
+
+
+def _mentions_token(text: str, token: str) -> bool:
+    """Whether `token` appears in `text` on its own word boundaries.
+
+    Same failure as `_mentions_number`, one level up: `spam not in proposed` is
+    False for a rubric that only mentions `spammy`, so a dropped label reads as
+    preserved. Case-sensitive on purpose — the declared spelling is the contract.
+    """
+    return re.search(rf'(?<!\w){re.escape(token)}(?!\w)', text) is not None
+
+
 def check_preservation(evaluator: dict[str, Any], proposed: str) -> tuple[bool, str]:
     """Check a proposed rewrite preserves BOTH the variable set and verdict space.
 
@@ -245,7 +266,7 @@ def check_preservation(evaluator: dict[str, Any], proposed: str) -> tuple[bool, 
     output_type = (evaluator.get('output_type') or '').strip().lower()
     if output_type == 'categorical':
         labels = list(evaluator.get('categorical_labels') or [])
-        dropped = [lbl for lbl in labels if lbl not in proposed]
+        dropped = [lbl for lbl in labels if not _mentions_token(proposed, lbl)]
         if dropped:
             named = ', '.join('`' + lbl + '`' for lbl in dropped)
             return False, (
@@ -255,7 +276,10 @@ def check_preservation(evaluator: dict[str, Any], proposed: str) -> tuple[bool, 
     elif output_type in _NUMERIC_TYPES:
         scale = evaluator.get('scale')
         if scale and len(scale) == 2:
-            missing = [b for b in (_fmt_num(scale[0]), _fmt_num(scale[1])) if b not in proposed]
+            missing = [
+                b for b in (_fmt_num(scale[0]), _fmt_num(scale[1]))
+                if not _mentions_number(proposed, b)
+            ]
             if missing:
                 return False, (
                     f'The rewrite MOVED the numeric scale: endpoint(s) {", ".join(missing)} no '
