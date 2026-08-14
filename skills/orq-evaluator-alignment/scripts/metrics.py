@@ -283,7 +283,10 @@ def main(run_dir: str | None = None, config: str = 'config.toml') -> str:
             'mean_instability': mean_inst,
             'bands': dict(bands),
             'n_unstable': n_unstable,
-            'n_flipped': n_unstable,  # boolean-compat alias (run_experiment reads flips)
+            # Pre-multi-type alias for `n_unstable`, kept because metrics.json is
+            # a published artifact an operator's own scripts may read. Nothing in
+            # the skill consumes it now that the boolean-only retest is gone.
+            'n_flipped': n_unstable,
             'total_wrong_output_type': total_wrong,
             'total_failed': total_failed,
             # Boolean-only heavy stats — surfaced on request, not in the report.

@@ -27,16 +27,13 @@ max_concurrency = 8
 # measurement default; 0 collapses variance and hides flips. Note: GPT-5-family
 # judges (e.g. gpt-5-mini) only accept temperature=1 and 400 on any other value.
 temperature = 1
-# Stable evaluatorq experiment path so the step-10 retest lands on the SAME
-# experiment as the baseline run. Empty -> derived from the evaluator key.
+# Stable evaluatorq experiment path so the retest lands on the SAME experiment
+# as the baseline run. Empty -> derived from the evaluator key.
 experiment_path = ""
 
-# ── Step 9: retest repeats (variance-aware) ──────────────────────────────────
-# Default/floor repeats for the rewritten-judge retest. The conductor confirms
-# the final N with the user; the suggestion floors at max(retest_repeats,
-# stability n_repeats) and adds more for rows that flipped a lot, capped below.
-retest_repeats = 5
-retest_repeats_cap = 15
+# The retest's repeat count is `n_repeats` above (override per run with
+# `retest.py --n_repeats N`); use at least the number the stability run used, so
+# the before/after comparison is like-for-like.
 
 # ── Step 6: annotation queue ─────────────────────────────────────────────────
 # Random sample of LOW-flip items to annotate alongside the high-flip queue, as
