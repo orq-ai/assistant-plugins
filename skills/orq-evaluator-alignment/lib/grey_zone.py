@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from lib.content import stringify_messages
 from lib.cost import CHARS_PER_TOKEN
 
 
@@ -121,7 +122,17 @@ def _compact_input(item: dict[str, Any], max_chars: int) -> tuple[str, dict[str,
             if raw in (None, '', [], {}):
                 continue
             names.append(label)
-            values.append(raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False))
+            if isinstance(raw, str):
+                values.append(raw)
+            elif label == 'messages':
+                # Render the conversation the way the judge is about to see it
+                # (lib.content.stringify_messages, parts-aware). A raw json.dumps
+                # spends the char budget on structural noise and, on a
+                # Responses-API row, buries the text under parts[] — the
+                # conductor would be reading a different artifact than the judge.
+                values.append(stringify_messages(raw))
+            else:
+                values.append(json.dumps(raw, ensure_ascii=False))
         if not values:
             names, values = ['(empty)'], ['']
 

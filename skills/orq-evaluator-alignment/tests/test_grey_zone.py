@@ -461,6 +461,24 @@ def test_fallback_includes_messages_when_present():
     assert payload['confusers'][0]['input_fields'] == ['query', 'output', 'messages']
 
 
+def test_conversation_renders_as_the_judge_sees_it_not_as_json():
+    # A Responses-API conversation nests its text under parts[].content. Dumping
+    # the raw JSON puts the text behind structural noise the char budget then pays
+    # for, and shows the conductor a different artifact than the judge is given —
+    # so the payload renders it through the same helper the judge renders with.
+    q = _structured_row_queue(
+        messages=[
+            {'role': 'user', 'parts': [{'type': 'text', 'content': 'where is my order'}]},
+            {'role': 'assistant', 'content': 'it shipped'},
+        ]
+    )
+    rendered = grey_zone.assemble_payload(q, max_chars=10_000)['confusers'][0]['input']
+
+    assert 'user: where is my order' in rendered
+    assert 'assistant: it shipped' in rendered
+    assert '"parts"' not in rendered  # not the raw JSON dump
+
+
 def test_empty_row_does_not_crash_the_payload():
     q = _structured_row_queue(query='', output='', variables=None)
     payload = grey_zone.assemble_payload(q, max_chars=10_000)

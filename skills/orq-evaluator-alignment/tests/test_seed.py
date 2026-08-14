@@ -111,3 +111,29 @@ def test_rows_from_datapoints_maps_tags_and_skips_unusable():
     assert rows[0]['synthetic'] is True
     assert rows[0]['rationale'] == 'edge'
     assert skipped == [{'index': 1, 'missing': ['log.output']}]
+
+
+def test_every_judge_fillable_leaf_is_resolvable_by_seed():
+    # The anti-drift test. seed.py used to keep its own copy of the suffix rules
+    # and "mirror" lib.judge by hand; the copy lost the reference family, which
+    # silently skipped every row of an evaluator declaring {{log.reference}}.
+    # Both sides now read lib.content.field_for_variable, so this asserts the
+    # property that failure violated: every leaf the judge can fill, seed accepts.
+    from lib.content import _FIELD_BY_LEAF
+
+    row = {'query': 'q', 'output': 'o', 'messages': [{'role': 'user', 'content': 'hi'}], 'reference': 'r'}
+    variables = [f'log.{leaf}' for leaf in _FIELD_BY_LEAF]
+
+    assert seed.unresolved_variables(row, variables) == []
+    # And a leaf outside the table is still reported, not silently accepted.
+    assert seed.unresolved_variables(row, ['log.rubric']) == ['log.rubric']
+
+
+def test_map_datapoint_fills_reference_from_an_inputs_key_too():
+    # `expected_output` is the canonical ground-truth field, but the shared table
+    # also maps {{...expected_output}} / {{...reference}} appearing under `inputs`
+    # — that route must not be blanked by an absent top-level expected_output.
+    row = seed.map_datapoint({'inputs': {'log.output': 'o', 'log.reference': 'gold'}})
+
+    assert row['reference'] == 'gold'
+    assert seed.unresolved_variables(row, ['log.output', 'log.reference']) == []

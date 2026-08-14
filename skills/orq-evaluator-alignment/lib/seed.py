@@ -8,25 +8,20 @@ synthetic datapoints. Both arrive in orq's datapoint shape
 resolves/validates the evaluator's `{{variables}}` against a datapoint's fields.
 
 No I/O and no evaluatorq/orq imports — safe to import directly on Windows. The
-suffix rules mirror `fetch_traces._assign_io` / `lib.judge.make_replacements` so
-a seeded row renders through the judge exactly like a real trace.
+suffix rules come from `lib.content.field_for_variable`, the single table the
+trace scanner reverses with and the judge renders with, so a seeded row renders
+through the judge exactly like a real trace. This module used to keep its own
+copy and "mirror" it by hand; the copy drifted (it had no branch for the
+`reference | expected | expected_output` leaves, which silently skipped *every*
+row of an evaluator declaring `{{log.reference}}`), which is why there is now
+one table and no mirrors.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-# Which `{{variable}}` leaf names map onto which trace-row field. Mirrors
-# fetch_traces._assign_io — keep in sync so seeded rows judge like real traces.
-_QUERY_LEAVES = frozenset({'input', 'query', 'prompt'})
-_OUTPUT_LEAVES = frozenset({'output', 'response', 'completion', 'answer'})
-_MESSAGE_LEAVES = frozenset({'messages', 'history', 'conversation'})
-_REFERENCE_LEAVES = frozenset({'reference', 'expected', 'expected_output'})
-
-
-def _leaf(name: str) -> str:
-    """The trailing dotted segment of a variable name, normalised (`log.input` → `input`)."""
-    return name.split('.')[-1].strip().lower()
+from lib.content import field_for_variable
 
 
 def map_datapoint(datapoint: dict[str, Any]) -> dict[str, Any]:
@@ -34,16 +29,16 @@ def map_datapoint(datapoint: dict[str, Any]) -> dict[str, Any]:
     `{query, output, messages, reference}` via the shared suffix rules."""
     row: dict[str, Any] = {'query': '', 'output': '', 'messages': None, 'reference': ''}
     for name, value in (datapoint.get('inputs') or {}).items():
-        leaf = _leaf(name)
-        if leaf in _QUERY_LEAVES:
-            row['query'] = value
-        elif leaf in _OUTPUT_LEAVES:
-            row['output'] = value
-        elif leaf in _MESSAGE_LEAVES:
-            row['messages'] = value
+        field = field_for_variable(name)
+        if field is not None:
+            row[field] = value
     if row['messages'] is None and datapoint.get('messages') is not None:
         row['messages'] = datapoint['messages']
-    row['reference'] = datapoint.get('expected_output') or ''
+    # The datapoint's own `expected_output` is the canonical ground truth, but it
+    # must not blank a reference an `inputs` key already supplied — the leaf table
+    # maps `{{...expected_output}}` too, so both routes can carry it.
+    if datapoint.get('expected_output') or not row['reference']:
+        row['reference'] = datapoint.get('expected_output') or row['reference'] or ''
     return row
 
 
@@ -54,23 +49,20 @@ def unresolved_variables(row: dict[str, Any], variables: list[str]) -> list[str]
     `make_replacements`). Empty list ⇒ the row is usable as-is; anything returned
     is what the conductor must map by hand (§11.4) before the row is judged.
 
-    The reference family must stay in step with `judge.make_replacements`: it fills
-    `reference | expected | expected_output` from `row['reference']`, so omitting
-    them here would skip every row of an evaluator declaring `{{log.reference}}`
-    even though the judge renders it fine."""
+    Fillability is decided by the same `field_for_variable` table the judge renders
+    with, so this cannot fall out of step with it again — the reference family
+    (`reference | expected | expected_output`) had no branch here while the judge
+    filled it fine, which silently skipped every row of an evaluator declaring
+    `{{log.reference}}`."""
     missing: list[str] = []
     for var in variables:
-        leaf = _leaf(var)
-        if leaf in _QUERY_LEAVES:
-            ok = bool(row.get('query'))
-        elif leaf in _OUTPUT_LEAVES:
-            ok = bool(row.get('output'))
-        elif leaf in _MESSAGE_LEAVES:
-            ok = row.get('messages') is not None
-        elif leaf in _REFERENCE_LEAVES:
-            ok = bool(row.get('reference'))
-        else:
+        field = field_for_variable(var)
+        if field is None:
             ok = False  # unknown leaf — a standard datapoint can't fill it
+        elif field == 'messages':
+            ok = row.get('messages') is not None
+        else:
+            ok = bool(row.get(field))
         if not ok:
             missing.append(var)
     return missing
@@ -83,11 +75,10 @@ def row_to_datapoint(row: dict[str, Any], variables: list[str]) -> dict[str, Any
     `expected_output` ride along when present."""
     inputs: dict[str, Any] = {}
     for var in variables:
-        leaf = _leaf(var)
-        if leaf in _QUERY_LEAVES:
-            inputs[var] = row.get('query', '')
-        elif leaf in _OUTPUT_LEAVES:
-            inputs[var] = row.get('output', '')
+        # Only query/output go in `inputs`; `messages` and `expected_output` are
+        # top-level datapoint fields in orq's shape, added below.
+        if field_for_variable(var) in ('query', 'output'):
+            inputs[var] = row.get(field_for_variable(var), '')
     datapoint: dict[str, Any] = {'inputs': inputs, 'expected_output': row.get('reference') or ''}
     if row.get('messages') is not None:
         datapoint['messages'] = row['messages']
