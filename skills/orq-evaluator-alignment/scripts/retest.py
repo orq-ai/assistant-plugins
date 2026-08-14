@@ -87,20 +87,45 @@ def _new_evaluator_config(new_eval: dict[str, Any], source_eval: dict[str, Any])
     }
 
 
-def _build_retest_dir(out_dir: Path) -> Path:
-    """Materialize `retest/` under the parent run dir: new evaluator.json + the
-    original confusers as traces.jsonl. Idempotent — overwrites on rerun."""
+def _build_retest_dir(
+    out_dir: Path, labelled_indices: set[int] | None
+) -> tuple[Path, dict[int, int]]:
+    """Materialize `retest/`: the new evaluator.json + the rows to re-judge.
+
+    By default only the **labelled** rows are re-judged. The old behaviour copied
+    all of `traces.jsonl` despite this docstring claiming otherwise, so a 24-row run
+    with 8 labels re-judged 24 × N — triple the quoted cost — while agreement still
+    scored only the 8. Nothing used the other 16 verdicts.
+
+    `source_index` is the row's *position* in `traces.jsonl`, so filtering renumbers
+    it. Returns `(retest_dir, index_map)` mapping the new position back to the
+    original index, which is what the human labels are keyed by.
+
+    Pass `labelled_indices=None` to re-judge everything (`--all_rows`).
+    """
     new_eval = runner.read_json(out_dir / 'new_evaluator.json')
     source_eval = runner.read_json(out_dir / 'evaluator.json')
-    confusers = runner.read_jsonl(out_dir / 'traces.jsonl')
-    if not confusers:
-        raise SystemExit(f'No confusers in {out_dir / "traces.jsonl"} — nothing to retest.')
+    rows = runner.read_jsonl(out_dir / 'traces.jsonl')
+    if not rows:
+        raise SystemExit(f'No datapoints in {out_dir / "traces.jsonl"} — nothing to retest.')
+
+    if labelled_indices is None:
+        selected = list(enumerate(rows))
+    else:
+        selected = [(i, r) for i, r in enumerate(rows) if i in labelled_indices]
+        if not selected:
+            raise SystemExit(
+                'None of the labelled rows are present in traces.jsonl — cannot retest. '
+                '(Were the labels written against a different run directory?)'
+            )
+    index_map = {new_i: original_i for new_i, (original_i, _row) in enumerate(selected)}
 
     retest_dir = out_dir / 'retest'
     retest_dir.mkdir(parents=True, exist_ok=True)
     runner.write_json(retest_dir / 'evaluator.json', _new_evaluator_config(new_eval, source_eval))
-    runner.write_jsonl(retest_dir / 'traces.jsonl', confusers)
-    return retest_dir
+    runner.write_jsonl(retest_dir / 'traces.jsonl', [row for _i, row in selected])
+    runner.write_json(retest_dir / 'index_map.json', {str(k): v for k, v in index_map.items()})
+    return retest_dir, index_map
 
 
 def _load_labels(out_dir: Path) -> tuple[dict[str, Any], str, dict[str, Any] | None]:
@@ -147,7 +172,26 @@ def _resolve_numeric_tol(cli_tol: float | None, cfg: dict[str, Any], policy: dic
     return float(cfg.get('numeric_tol', _DEFAULT_NUMERIC_TOL))
 
 
-def _human_pairs(out_dir: Path, retest_dir: Path) -> tuple[list[tuple[Any, Any]], str, dict[str, Any] | None]:
+def _mean_instability_over(metrics: dict[str, Any], scope: set[int]) -> float | None:
+    """Mean instability across just the rows in `scope`, from a metrics.json.
+
+    Falls back to the run-wide `scores.mean_instability` when the per-row detail
+    isn't there, and returns None if neither is available — a missing number is
+    reported as missing, never as a zero drop.
+    """
+    per_row = metrics.get('per_row') or []
+    values = [
+        r['instability'] for r in per_row
+        if r.get('source_index') in scope and isinstance(r.get('instability'), (int, float))
+    ]
+    if values:
+        return sum(values) / len(values)
+    return metrics.get('scores', {}).get('mean_instability')
+
+
+def _human_pairs(
+    out_dir: Path, retest_dir: Path, index_map: dict[int, int]
+) -> tuple[list[tuple[Any, Any]], str, dict[str, Any] | None]:
     """Zip each human label to the NEW evaluator's majority verdict on that
     confuser, by `source_index`. Returns `(pairs, output_type, policy)`.
 
@@ -156,13 +200,20 @@ def _human_pairs(out_dir: Path, retest_dir: Path) -> tuple[list[tuple[Any, Any]]
     no usable judge verdict (None) or no human label are skipped — they cannot
     inform agreement. `policy` is the grey-zone policy (or None on the annotations
     fallback) so the caller can resolve a policy-pinned numeric tolerance.
+
+    `index_map` translates the retest run's positional `source_index` back to the
+    original index the labels are keyed by — the retest set is a filtered subset, so
+    the two numbering schemes differ.
     """
     labels, _source, policy = _load_labels(out_dir)
     stability = runner.read_json(retest_dir / 'stability.json')
     ev = runner.read_json(retest_dir / 'evaluator.json')
     output_type = (ev.get('output_type') or 'boolean').strip().lower()
 
-    judge_by_idx = {r['source_index']: r.get('aggregate_value') for r in stability.get('rows', [])}
+    judge_by_idx = {
+        index_map.get(r['source_index'], r['source_index']): r.get('aggregate_value')
+        for r in stability.get('rows', [])
+    }
     pairs: list[tuple[Any, Any]] = []
     for key, ann in labels.items():
         if not isinstance(ann, dict) or 'value' not in ann or ann.get('value') is None:
@@ -209,6 +260,7 @@ def main(
     num_samples: int | None = None,
     n_repeats: int | None = None,
     tol: float | None = None,
+    all_rows: bool = False,
 ) -> str:
     """Retest the new evaluator over the confusers and score both signals.
 
@@ -217,7 +269,11 @@ def main(
             new_evaluator.json, evaluator.json, traces.jsonl, annotations.json,
             and metrics.json (the original instability).
         config: TOML config path.
-        num_samples: Cap confusers re-judged (smoke testing).
+        num_samples: Cap rows re-judged (smoke testing), applied on top of the
+            labelled-row scoping.
+        all_rows: Re-judge every row in traces.jsonl, not just the labelled ones.
+            Costs proportionally more and adds no agreement signal; use it only
+            to re-measure run-wide instability with the new evaluator.
         n_repeats: Override repeats for the retest stability run.
         tol: Numeric within-tolerance tolerance (raw scale). Default 0.5.
     """
@@ -232,10 +288,29 @@ def main(
             'evaluator (create_eval.py --approve) before retesting.'
         )
     original_metrics = runner.read_json(out_dir / 'metrics.json')
-    original_mean = original_metrics.get('scores', {}).get('mean_instability')
 
-    # 1) Materialize the retest sub-run against the NEW evaluator + the confusers.
-    retest_dir = _build_retest_dir(out_dir)
+    # 1) Materialize the retest sub-run against the NEW evaluator. Scope it to the
+    #    rows that carry a human label: those are the only ones agreement can score,
+    #    and re-judging the rest costs money for a number nothing reads.
+    labels, _label_source, _policy = _load_labels(out_dir)
+    labelled_indices: set[int] | None = None
+    if not all_rows:
+        labelled_indices = {
+            int(k) for k, v in labels.items()
+            if isinstance(v, dict) and v.get('value') is not None and str(k).lstrip('-').isdigit()
+        }
+    retest_dir, index_map = _build_retest_dir(out_dir, labelled_indices)
+
+    # Compare like with like: the original mean is recomputed over exactly the rows
+    # being re-judged. Comparing a subset's new mean against the full run's old mean
+    # would make the drop an artifact of which rows were selected.
+    scope = set(index_map.values())
+    original_mean = _mean_instability_over(original_metrics, scope)
+    logger.info(
+        f'  Retesting {len(scope)} labelled row(s)'
+        + ('' if all_rows else f' of {len(runner.read_jsonl(out_dir / "traces.jsonl"))} in the run')
+        + f'; {n_repeats or cfg.get("n_repeats", 8)} repeats each.'
+    )
 
     # 2) Re-run the EXISTING stability + metrics mains over it (imported, unmodified).
     #    Heavy import guarded inside the function to keep this module import-safe.
@@ -260,7 +335,7 @@ def main(
         instability_dropped = retest_mean < original_mean
 
     # 3b) Signal (b): the new evaluator agrees with the human labels.
-    pairs, output_type, policy = _human_pairs(out_dir, retest_dir)
+    pairs, output_type, policy = _human_pairs(out_dir, retest_dir, index_map)
     if output_type == 'string':
         # String is detect + annotate only (no rewrite/retest); agreement() has no
         # string branch, so reaching here would raise a raw ValueError inside
@@ -292,6 +367,8 @@ def main(
             'source_evaluator_id': original_metrics.get('metadata', {}).get('evaluator_id'),
             'new_evaluator_id': runner.read_json(out_dir / 'new_evaluator.json')['id'],
             'n_pairs': len(pairs),
+            'n_rows_retested': len(index_map),
+            'scoped_to_labelled': not all_rows,
             'timestamp': runner.utc_timestamp(),
         },
         'instability': {

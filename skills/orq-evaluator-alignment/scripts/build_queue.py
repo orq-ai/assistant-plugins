@@ -176,6 +176,8 @@ def _project_grey_zone(queue: dict[str, Any], cfg: dict) -> dict[str, Any] | Non
             max_chars=int(cfg.get('grey_zone_max_chars', 600)),
             max_tokens=int(cfg.get('grey_zone_max_tokens', 60000)),
         )
+        # The budget block carries `n_confusers` itself: the queue holds the low-flip
+        # spot-check rows too, so `len(items)` is not what step 6 will show.
         return payload['budget']
     except Exception:  # noqa: BLE001 — never cost the user their queue over a courtesy
         logger.warning('⚠ Could not project the grey-zone context budget; the queue is unaffected.')
@@ -191,11 +193,20 @@ def _log_projection(projection: dict[str, Any] | None, n_items: int) -> None:
         f'  Grey-zone context projection: ~{projection["estimated_tokens"]} tokens of '
         f'{projection["budget_tokens"]}.'
     )
+    n_confusers = projection.get('n_confusers', n_items)
     dropped = projection.get('n_dropped_by_budget') or 0
+    excluded = projection.get('n_low_flip_excluded') or 0
+    if excluded:
+        # State this rather than let the queue total imply it: the user picked a count
+        # of *unstable* examples, and the queue is that count plus the stable ones.
+        logger.info(
+            f'  {n_confusers} example(s) to review together at step 6; the {excluded} '
+            'stable spot-check row(s) stay out of that discussion.'
+        )
     if dropped:
         logger.warning(
-            f'⚠ {n_items - dropped} of {n_items} will enter context at step 6 (the most '
-            f'unstable); {dropped} exceed the token budget. Tell the user before clustering.'
+            f'⚠ {n_confusers} of {n_confusers + dropped} will enter context at step 6 (the '
+            f'most unstable); {dropped} exceed the token budget. Tell the user before clustering.'
         )
 
 

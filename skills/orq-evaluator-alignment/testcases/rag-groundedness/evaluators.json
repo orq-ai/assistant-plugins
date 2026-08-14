@@ -4,7 +4,7 @@
     "the same four places, which is what makes the test case work: it leaves the",
     "judge no rule for (1) answers entailed only by inference, (2) true-but-",
     "unsupported additions, (3) numeric/quantifier paraphrase, and (4) explicitly",
-    "hedged speculation. Those four gaps are grey zones GZ-1..GZ-4 in answer_key.json.",
+    "hedged speculation. Those four gaps are grey zones GZ1..GZ4 in answer_key.json.",
     "Do NOT 'improve' these prompts — a crisp rubric drives instability to ~0, the",
     "run starves at SKILL.md step 4a, and the test proves nothing."
   ],

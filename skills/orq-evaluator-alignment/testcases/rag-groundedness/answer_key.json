@@ -20,21 +20,21 @@
   ],
 
   "reference_policy": {
-    "GZ-1": {
+    "GZ1": {
       "name": "Inference gap",
       "why_hard": "The answer is not stated verbatim in the context but follows from it by one deduction step (syllogism, arithmetic, or transitivity). The rubric never says whether deduction counts as grounding.",
       "question_to_ask": "If the answer follows from the context by one obvious deduction rather than being stated outright, is it grounded?",
       "rule": "An answer entailed by the context through a single, explicit deduction step is GROUNDED. Every premise of the deduction must itself appear in the context.",
       "members": ["G1a", "G1b", "G1c"]
     },
-    "GZ-2": {
+    "GZ2": {
       "name": "True-but-unsupported addition",
       "why_hard": "The answer correctly answers from the context and then appends a real-world-true fact that is absent from it. The rubric never says whether truth or support decides.",
       "question_to_ask": "If an answer is correct from the context but adds an extra fact that is true in the world yet absent from the context, is it still grounded?",
       "rule": "Groundedness is about support, not truth. An answer that adds any factual claim absent from the context is NOT fully grounded, even when the addition is correct.",
       "members": ["G2a", "G2b", "G2c"]
     },
-    "GZ-3": {
+    "GZ3": {
       "name": "Numeric and quantifier paraphrase",
       "why_hard": "The answer restates a figure from the context in looser language. The rubric gives no precision tolerance.",
       "question_to_ask": "How exactly must a number be restated? Is 'nearly 30 points' grounded when the context says 28, and is 'most' grounded when the context says 3 of 5?",
@@ -42,7 +42,7 @@
       "members": ["G3a", "G3b", "G3c"],
       "note": "This rule deliberately splits its own cluster: G3a/G3b pass, G3c fails. A cluster whose members all get the same label can be resolved by a blanket label rather than an actual rule, which would not test the rewrite."
     },
-    "GZ-4": {
+    "GZ4": {
       "name": "Flagged speculation",
       "why_hard": "The answer explicitly says the context does not cover the question, then supplies an answer anyway from priors. The rubric never says whether hedging rescues an unsupported claim.",
       "question_to_ask": "If the answer openly flags that the context does not cover something and then speculates, does the flag make it grounded?",
@@ -71,21 +71,21 @@
     { "id": "A7",  "class": "anchor_fail", "cluster": null, "expected": { "boolean": false, "categorical": "ungrounded",         "number": 1 }, "note": "'NimbusAuth' is fabricated; context says SAML and OIDC." },
     { "id": "A8",  "class": "anchor_fail", "cluster": null, "expected": { "boolean": false, "categorical": "ungrounded",         "number": 1 }, "note": "'Indefinitely on every plan' contradicts 13 months / 30 days." },
 
-    { "id": "G1a",  "class": "grey", "cluster": "GZ-1", "expected": { "boolean": true,  "categorical": "grounded",           "number": 4 }, "note": "Syllogism: Tier-2 -> 24h, Acme is Tier-2." },
-    { "id": "G1b",  "class": "grey", "cluster": "GZ-1", "expected": { "boolean": true,  "categorical": "grounded",           "number": 4 }, "note": "Arithmetic: 02:00 + ~3h < 06:00." },
-    { "id": "G1c", "class": "grey", "cluster": "GZ-1", "expected": { "boolean": true,  "categorical": "grounded",           "number": 4 }, "note": "Transitivity across two context sentences." },
+    { "id": "G1a",  "class": "grey", "cluster": "GZ1", "expected": { "boolean": true,  "categorical": "grounded",           "number": 4 }, "note": "Syllogism: Tier-2 -> 24h, Acme is Tier-2." },
+    { "id": "G1b",  "class": "grey", "cluster": "GZ1", "expected": { "boolean": true,  "categorical": "grounded",           "number": 4 }, "note": "Arithmetic: 02:00 + ~3h < 06:00." },
+    { "id": "G1c", "class": "grey", "cluster": "GZ1", "expected": { "boolean": true,  "categorical": "grounded",           "number": 4 }, "note": "Transitivity across two context sentences." },
 
-    { "id": "G2a", "class": "grey", "cluster": "GZ-2", "expected": { "boolean": false, "categorical": "partially_grounded", "number": 3 }, "note": "GDPR is supported; the 2018 date and 4% fine are not." },
-    { "id": "G2b", "class": "grey", "cluster": "GZ-2", "expected": { "boolean": false, "categorical": "partially_grounded", "number": 3 }, "note": "PostgreSQL 15 is supported; MERGE / logical replication are not." },
-    { "id": "G2c", "class": "grey", "cluster": "GZ-2", "expected": { "boolean": false, "categorical": "partially_grounded", "number": 3 }, "note": "Stripe is supported; the PCI DSS certification is not." },
+    { "id": "G2a", "class": "grey", "cluster": "GZ2", "expected": { "boolean": false, "categorical": "partially_grounded", "number": 3 }, "note": "GDPR is supported; the 2018 date and 4% fine are not." },
+    { "id": "G2b", "class": "grey", "cluster": "GZ2", "expected": { "boolean": false, "categorical": "partially_grounded", "number": 3 }, "note": "PostgreSQL 15 is supported; MERGE / logical replication are not." },
+    { "id": "G2c", "class": "grey", "cluster": "GZ2", "expected": { "boolean": false, "categorical": "partially_grounded", "number": 3 }, "note": "Stripe is supported; the PCI DSS certification is not." },
 
-    { "id": "G3a", "class": "grey", "cluster": "GZ-3", "expected": { "boolean": true,  "categorical": "grounded",           "number": 4 }, "note": "28 points restated as 'nearly 30' — 7% relative error, in tolerance." },
-    { "id": "G3b", "class": "grey", "cluster": "GZ-3", "expected": { "boolean": true,  "categorical": "grounded",           "number": 4 }, "note": "1240/410 = 3.02x restated as 'roughly three times' — in tolerance." },
-    { "id": "G3c", "class": "grey", "cluster": "GZ-3", "expected": { "boolean": false, "categorical": "partially_grounded", "number": 3 }, "note": "Question asked 'how many'; 'most' drops the exact count 3 of 5." },
+    { "id": "G3a", "class": "grey", "cluster": "GZ3", "expected": { "boolean": true,  "categorical": "grounded",           "number": 4 }, "note": "28 points restated as 'nearly 30' — 7% relative error, in tolerance." },
+    { "id": "G3b", "class": "grey", "cluster": "GZ3", "expected": { "boolean": true,  "categorical": "grounded",           "number": 4 }, "note": "1240/410 = 3.02x restated as 'roughly three times' — in tolerance." },
+    { "id": "G3c", "class": "grey", "cluster": "GZ3", "expected": { "boolean": false, "categorical": "partially_grounded", "number": 3 }, "note": "Question asked 'how many'; 'most' drops the exact count 3 of 5." },
 
-    { "id": "G4a", "class": "grey", "cluster": "GZ-4", "expected": { "boolean": false, "categorical": "ungrounded",         "number": 2 }, "note": "'Likely 60 rpm' is invented; the hedge does not create support." },
-    { "id": "G4b", "class": "grey", "cluster": "GZ-4", "expected": { "boolean": false, "categorical": "ungrounded",         "number": 2 }, "note": "'Usually encrypted at rest' is a prior, not context." },
-    { "id": "G4c", "class": "grey", "cluster": "GZ-4", "expected": { "boolean": false, "categorical": "ungrounded",         "number": 2 }, "note": "'Probably Q4' is invented from a six-month convention not in context." },
+    { "id": "G4a", "class": "grey", "cluster": "GZ4", "expected": { "boolean": false, "categorical": "ungrounded",         "number": 2 }, "note": "'Likely 60 rpm' is invented; the hedge does not create support." },
+    { "id": "G4b", "class": "grey", "cluster": "GZ4", "expected": { "boolean": false, "categorical": "ungrounded",         "number": 2 }, "note": "'Usually encrypted at rest' is a prior, not context." },
+    { "id": "G4c", "class": "grey", "cluster": "GZ4", "expected": { "boolean": false, "categorical": "ungrounded",         "number": 2 }, "note": "'Probably Q4' is invented from a six-month convention not in context." },
 
     {
       "id": "T1", "class": "trap", "cluster": null,
@@ -106,7 +106,7 @@
       "expected": { "boolean": true, "categorical": "grounded", "number": 5 },
       "trap_mechanism": "Correct refusal. The context genuinely lacks the answer and the assistant says exactly that, asserting nothing. Judges conflate 'no support found in context' with 'answer is ungrounded'.",
       "predicted_judge_failure": "stably ungrounded",
-      "note": "Truth: grounded — the answer makes no unsupported claim. Contrast with GZ-4, where the flag is followed by an assertion."
+      "note": "Truth: grounded — the answer makes no unsupported claim. Contrast with GZ4, where the flag is followed by an assertion."
     },
     {
       "id": "T4", "class": "trap", "cluster": null,
@@ -147,9 +147,9 @@
       "note": "Consistency stats say this judge is excellent — 1-Flip Consistency 0.978, Fleiss kappa 0.947, Gwet AC1 0.961 — while it fails two verbatim-restatement anchors 8/8. Its rationales are self-contradictory, e.g. on A3: 'The job title mentioned in the answer (on-call engineer) does not match the job title in the context (on-call engineer).' A flat profile here is the CORRECT result, and should send the conductor to the SKILL.md step-4a recovery menu."
     },
     "empirical_correction_to_the_design": [
-      "GZ-1 (inference gap) does NOT destabilise either judge. Both decide it stably,",
+      "GZ1 (inference gap) does NOT destabilise either judge. Both decide it stably,",
       "and both get G1a and G1b stably wrong while getting G1c stably right — an",
-      "incoherent split held with full confidence. So GZ-1 behaves as a fifth and",
+      "incoherent split held with full confidence. So GZ1 behaves as a fifth and",
       "sixth TRAP rather than a confuser cluster. Do not treat its absence from the",
       "confuser queue as a skill failure; treat its absence from the FINAL SUMMARY's",
       "blind-spot caveat as one.",
@@ -162,37 +162,37 @@
 
   "pass_criteria": [
     {
-      "id": "PC-1",
+      "id": "PC1",
       "claim": "Instability ranking surfaces the engineered ambiguity, not noise.",
       "check": "Run with gemini-2.5-flash-lite. In queue.json, entries with reason='instability' are majority grey-zone cases (G*), and no anchor (A*) outranks a grey case. Baseline: 5 of the 6 unstable rows are grey, the sixth is trap T3, and all 8 anchors sit at instability 0."
     },
     {
-      "id": "PC-2",
+      "id": "PC2",
       "claim": "Open-coding recovers the grey zones that actually surfaced.",
-      "check": "grey_zone_policy.json reconstructs GZ-2, GZ-3 and GZ-4 from the confusers (GZ-1 will not be present — see measured_baseline). Merging GZ-2 and GZ-4 into one 'unsupported claim' zone is an acceptable near-miss; lumping the numeric-paraphrase case G3c in with them is not, since it needs a tolerance rule rather than a yes/no."
+      "check": "grey_zone_policy.json reconstructs GZ2, GZ3 and GZ4 from the confusers (GZ1 will not be present — see measured_baseline). Merging GZ2 and GZ4 into one 'unsupported claim' zone is an acceptable near-miss; lumping the numeric-paraphrase case G3c in with them is not, since it needs a tolerance rule rather than a yes/no."
     },
     {
-      "id": "PC-3",
+      "id": "PC3",
       "claim": "The documented blind spot is real and is reported.",
       "check": "The six stable-wrong cases (T1, T2, T4, G1a, G1b, plus anchors A2/A3) show instability at or near 0 and do NOT appear in the queue with reason='instability'. They can only reach the human via reason='low_flip' (the low_flip_sample_size draw), and the conductor's final summary must state the consistently-wrong caveat. This is the criterion nothing else in the repo verifies, and the flash (non-lite) run is the sharpest version of it."
     },
     {
-      "id": "PC-4",
+      "id": "PC4",
       "claim": "The rewrite encodes rules, and preserves the verdict space.",
       "check": "new_prompt.md addresses all four ambiguities; rewrite_status.json shows the preservation gate passing — {{log.input}}/{{log.output}} intact, all 3 categorical labels intact, the 1-5 scale unmoved."
     },
     {
-      "id": "PC-5",
+      "id": "PC5",
       "claim": "The retest improves alignment, not just stability.",
       "check": "retest_metrics.json shows instability down on the confusers AND agreement with the policy labels (boolean TPR/TNR, categorical accuracy, numeric within-tolerance at tol=0.5). A stability drop with flat or worse agreement is a FAIL, not a pass."
     },
     {
-      "id": "PC-7",
+      "id": "PC7",
       "claim": "A starved run routes to the recovery menu instead of pushing on.",
       "check": "This dataset reaches the skill only through SKILL.md step 4a option 2, because a freshly created evaluator has no production traces — step 1's scan returns 0 candidates by construction. The conductor must offer the menu and wait, not silently proceed. Running with gemini-2.5-flash then triggers the menu a second time via the flat-profile branch."
     },
     {
-      "id": "PC-6",
+      "id": "PC6",
       "claim": "The string judge stops where it is documented to stop.",
       "check": "The string evaluator completes stability, metrics, build_queue and the free-text annotation widget, and create_eval.py fails fast on output_type='string' rather than producing something."
     }

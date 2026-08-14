@@ -2,14 +2,29 @@
 (step 9) stages.
 
 One interface — `await complete(prompt, *, system=None, ...)` returning
-`{text, cost_usd}` — with four implementations selected by config:
+`{text, cost_usd}` — with five implementations selected by config:
 
+- `orq_router`       **the default.** Any model in the workspace's router registry,
+  reached over the OpenAI-compatible `/v3/router` endpoint with `ORQ_API_KEY` —
+  the same credential and route the judge itself uses, so no second vendor account
+  is involved. Cost is priced from the registry's own per-1K rates.
 - `claude_subagent`  shell out to `claude -p ... --output-format json` (per-call
   cost is read straight off the CLI's `total_cost_usd`); independent processes,
-  so step 8 parallelism is just a bounded pool of these.
+  so step 8 parallelism is just a bounded pool of these. Needs the `claude` CLI on
+  PATH, which a user running this skill from a non-Claude harness won't have.
 - `orq_deployment`   invoke a workspace deployment via the orq SDK.
 - `anthropic_api`    direct Anthropic Messages API.
 - `fake`             deterministic canned completions for tests — no `claude -p`.
+
+### Why `orq_router` is the default
+
+The rewrite is a text transform, not an agentic task, so it does not need a coding
+agent — and `claude_subagent` quietly assumed one was installed *and* logged in.
+Routing through orq means the only credential in play is the one the skill already
+requires. The cost is that the chosen model must actually be reachable on the
+user's workspace: a model listed in `/v2/models` can still 403 for want of a
+provider key. `preflight()` exists to turn that into a sentence the user can act
+on, at the gate, rather than a stack trace mid-rewrite.
 
 ### The nested-variable hazard (orq_deployment only)
 
@@ -51,6 +66,14 @@ class CompletionResult:
     cost_usd: float
 
 
+class BackendUnavailable(RuntimeError):
+    """The backend is configured but cannot be used — with a human-readable why.
+
+    Raised by `preflight()` so step 9's gate can offer the user a choice (different
+    model, or the Claude subagent) instead of surfacing a provider stack trace.
+    """
+
+
 class Backend(Protocol):
     async def complete(
         self,
@@ -59,6 +82,158 @@ class Backend(Protocol):
         system: str | None = None,
         variables: dict[str, Any] | None = None,
     ) -> CompletionResult: ...
+
+
+# ── orq_router (default) ─────────────────────────────────────────────────────
+class OrqRouterBackend:
+    """Any workspace model, over the OpenAI-compatible orq router.
+
+    A *string* backend like `claude_subagent` / `anthropic_api`: it concatenates
+    text and never templates it, so the embedded judge prompt's own `{{query}}` /
+    `{{output}}` tokens survive verbatim. (The nested-variable hazard is specific to
+    `orq_deployment`, which renders its inputs.) `variables` is ignored here for the
+    same reason.
+    """
+
+    def __init__(self, model: str, *, max_tokens: int = 8192, timeout_s: float = 180.0) -> None:
+        if not model:
+            raise RuntimeError("backend='orq_router' needs a model (config `backend_model`).")
+        self.model = model
+        self.max_tokens = max_tokens
+        self.timeout_s = timeout_s
+        self._prices: tuple[float, float] | None = None
+        self._prices_loaded = False
+        api_key = os.environ.get('ORQ_API_KEY')
+        if not api_key:
+            raise BackendUnavailable(
+                "backend='orq_router' needs ORQ_API_KEY — the same key the trace and "
+                'evaluator steps already use. Set it, or switch to another backend.'
+            )
+        try:
+            from openai import AsyncOpenAI
+        except ImportError as exc:  # pragma: no cover
+            raise RuntimeError("backend='orq_router' needs the `openai` package.") from exc
+        import httpx
+
+        host = os.environ.get('ORQ_BASE_URL', 'https://my.orq.ai').rstrip('/')
+        # verify=False on Windows only: the conda OpenSSL aborts the process on some
+        # cert chains. Same workaround, and same reasoning, as `judge.make_judge_client`.
+        self._client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=f'{host}/v3/router',
+            http_client=httpx.AsyncClient(verify=_tls_verify(), timeout=timeout_s),  # noqa: S501
+        )
+
+    async def preflight(self) -> None:
+        """One minimal call, so an unusable model fails at the gate with a reason.
+
+        A model can appear in `GET /v2/models` with `enabled: true` and still refuse
+        at call time — that field means "listed in the registry", not "this workspace
+        has a provider key for it". The only reliable check is to actually call it,
+        which is why this sends a 1-token completion rather than reading a flag.
+        """
+        try:
+            await self._client.chat.completions.create(
+                model=self.model,
+                messages=[{'role': 'user', 'content': 'ok'}],
+                max_tokens=1,
+            )
+        except Exception as exc:  # noqa: BLE001 — translated, not swallowed
+            raise BackendUnavailable(_router_failure_reason(self.model, exc)) from exc
+
+    async def complete(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        variables: dict[str, Any] | None = None,
+    ) -> CompletionResult:
+        messages: list[dict[str, Any]] = []
+        if system:
+            messages.append({'role': 'system', 'content': system})
+        messages.append({'role': 'user', 'content': prompt})
+        try:
+            resp = await self._client.chat.completions.create(
+                model=self.model, messages=messages, max_tokens=self.max_tokens,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise BackendUnavailable(_router_failure_reason(self.model, exc)) from exc
+        text = (resp.choices[0].message.content or '') if resp.choices else ''
+        return CompletionResult(text=text, cost_usd=await self._cost(resp))
+
+    async def _cost(self, resp: Any) -> float:
+        """Price the call from the registry's own per-1K rates (best effort → 0.0).
+
+        Fetched once and cached. Reporting 0.0 on a lookup failure is deliberate:
+        the run must not fail over a cost annotation, and a wrong number would be
+        worse than a missing one.
+        """
+        usage = getattr(resp, 'usage', None)
+        if usage is None:
+            return 0.0
+        if not self._prices_loaded:
+            self._prices_loaded = True
+            self._prices = await _fetch_router_prices(self.model)
+        if self._prices is None:
+            return 0.0
+        pin, pout = self._prices
+        return (getattr(usage, 'prompt_tokens', 0) / 1000) * pin + (
+            getattr(usage, 'completion_tokens', 0) / 1000
+        ) * pout
+
+
+def _tls_verify() -> bool:
+    """Off on Windows only (conda OpenSSL Applink abort). Mirrors `orq_client.tls_verify`."""
+    import sys
+
+    return sys.platform != 'win32'
+
+
+def _router_failure_reason(model: str, exc: Exception) -> str:
+    """Turn a router exception into something the user can act on at the gate."""
+    status = getattr(exc, 'status_code', None) or getattr(getattr(exc, 'response', None), 'status_code', None)
+    if status in (401, 403):
+        return (
+            f"'{model}' is not available on this workspace (HTTP {status}). Usually this "
+            'means no provider key is configured for it — enable the model in orq under '
+            'Settings → Models, pick a different model, or use the Claude subagent backend.'
+        )
+    if status == 404:
+        return (
+            f"'{model}' was not found by the router (HTTP 404). Check the slug: it must be "
+            "the provider-qualified id (e.g. 'deepseek/deepseek-v4-pro'), which is the "
+            "`refId` in GET /v2/models — not the shorter display alias."
+        )
+    if status == 429:
+        return f"'{model}' is rate-limited right now (HTTP 429). Retry, or pick another model."
+    return f'{model}: {type(exc).__name__}: {exc}'
+
+
+async def _fetch_router_prices(model: str) -> tuple[float, float] | None:
+    """(input, output) USD per 1K tokens for `model`, from GET /v2/models."""
+    try:
+        import httpx
+
+        api_key = os.environ.get('ORQ_API_KEY')
+        host = os.environ.get('ORQ_API_BASE_URL', 'https://api.orq.ai').rstrip('/')
+        async with httpx.AsyncClient(
+            base_url=host, headers={'Authorization': f'Bearer {api_key}'},
+            verify=_tls_verify(), timeout=30,  # noqa: S501
+        ) as client:
+            resp = await client.get('/v2/models', params={'limit': 1000})
+            if resp.status_code >= 400:
+                return None
+            payload = resp.json()
+            items = payload if isinstance(payload, list) else payload.get('data') or []
+        for m in items:
+            if isinstance(m, dict) and m.get('refId') == model:
+                pin, pout = m.get('input_cost'), m.get('output_cost')
+                if pin is None or pout is None:
+                    return None
+                return (float(pin), float(pout))
+    except Exception:  # noqa: BLE001 — cost is a courtesy, never a failure mode
+        return None
+    return None
 
 
 # ── claude_subagent ──────────────────────────────────────────────────────────
@@ -237,10 +412,25 @@ class FakeBackend:
         )
 
 
+# Each backend's own default model, used when `backend_model` is blank. Keeping
+# `backend_model` optional means switching `backend` alone is a valid edit — the old
+# single-default arrangement silently handed a Claude model id to the router (and
+# vice versa) whenever someone changed one key without the other.
+_DEFAULT_MODELS = {
+    'orq_router': 'deepseek/deepseek-v4-pro',
+    'claude_subagent': 'claude-opus-4-8',
+    'anthropic_api': 'claude-opus-4-8',
+}
+
+DEFAULT_BACKEND = 'orq_router'
+
+
 def get_backend(config: dict[str, Any]) -> Backend:
     """Construct the backend named by `config['backend']`."""
-    name = config.get('backend', 'claude_subagent')
-    model = config.get('backend_model', 'claude-opus-4-8')
+    name = config.get('backend') or DEFAULT_BACKEND
+    model = config.get('backend_model') or _DEFAULT_MODELS.get(name, '')
+    if name == 'orq_router':
+        return OrqRouterBackend(model=model)
     if name == 'claude_subagent':
         return ClaudeSubagentBackend(model=model)
     if name == 'anthropic_api':
@@ -250,6 +440,15 @@ def get_backend(config: dict[str, Any]) -> Backend:
     if name == 'fake':
         return FakeBackend()
     raise ValueError(f'Unknown backend {name!r} (config.backend).')
+
+
+def describe_backend(config: dict[str, Any]) -> str:
+    """One line naming the backend + model actually in play, for the step-9 gate."""
+    name = config.get('backend') or DEFAULT_BACKEND
+    if name == 'orq_deployment':
+        return f'orq_deployment (deployment {config.get("backend_deployment_key") or "<unset>"!r})'
+    model = config.get('backend_model') or _DEFAULT_MODELS.get(name, '')
+    return f'{name} ({model})' if model else name
 
 
 def _self_reference_tokens(text: str) -> dict[str, str]:

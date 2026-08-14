@@ -311,3 +311,188 @@ def test_policy_to_guidance_carries_rule_and_answer():
     md = grey_zone.policy_to_guidance(_boolean_policy())
     assert 'Treat sarcasm aimed at a protected group as abuse.' in md
     assert 'Yes — sarcasm targeting a protected group is abuse.' in md
+
+
+# --- low-flip spot-check rows are NOT confusers to open-code ---
+
+
+def _mixed_queue(n_flipped: int = 3, n_low_flip: int = 5) -> dict:
+    """A queue shaped like build_queue's real output: the count the user chose,
+    plus the `low_flip_sample_size` stable spot-check rows appended after it."""
+    verdict_space = {'type': 'boolean', 'labels': [False, True]}
+
+    def _item(idx: int, *, low_flip: bool) -> dict:
+        return {
+            'rank': idx,
+            'source_index': idx,
+            'low_flip_sample': low_flip,
+            'reason': 'low_flip' if low_flip else 'instability',
+            'query': f'q{idx}',
+            'output': f'rendered prompt {idx}',
+            'variables': [{'name': 'log.output', 'value': f'out{idx}'}],
+            'messages': None,
+            'verdict_space': verdict_space,
+            'ambiguity': {
+                'instability': 0.0 if low_flip else 0.9,
+                'band': 'stable' if low_flip else 'unreliable',
+                'flip_rate': 0.0 if low_flip else 0.8,
+                'mode_value': True, 'mode_rate': 1.0, 'n_repeats': 5,
+            },
+            'judge_votes': {'n_true': 5 if low_flip else 3, 'n_false': 0 if low_flip else 2,
+                            'counts': None, 'mean': None, 'stdev': None,
+                            'representative_explanation': f'why {idx}'},
+        }
+
+    items = [_item(i, low_flip=False) for i in range(n_flipped)]
+    items += [_item(100 + i, low_flip=True) for i in range(n_low_flip)]
+    return {'meta': {'verdict_space': verdict_space, 'eval_prompt': 'Judge: {{output}}',
+                     'n_items': len(items)}, 'items': items}
+
+
+def test_low_flip_rows_are_excluded_by_default():
+    # The bug this pins: asking to review 3 examples put 3 + low_flip_sample_size
+    # (5) into the conductor's context, silently overriding the step-5 count.
+    payload = grey_zone.assemble_payload(_mixed_queue(n_flipped=3, n_low_flip=5))
+
+    assert payload['n_confusers'] == 3
+    assert all(not c['low_flip_sample'] for c in payload['confusers'])
+    assert payload['budget']['n_low_flip_excluded'] == 5
+
+
+def test_include_low_flip_opt_in_restores_them():
+    payload = grey_zone.assemble_payload(
+        _mixed_queue(n_flipped=3, n_low_flip=5), include_low_flip=True
+    )
+
+    assert payload['n_confusers'] == 8
+    assert payload['budget']['n_low_flip_excluded'] == 0
+
+
+def test_top_k_applies_after_the_low_flip_filter():
+    # top_k must cap *confusers*, not queue rows — otherwise a queue whose first
+    # rows are stable would spend the budget on rows with no grey zone in them.
+    payload = grey_zone.assemble_payload(_mixed_queue(n_flipped=3, n_low_flip=5), top_k=2)
+
+    assert payload['n_confusers'] == 2
+    assert [c['source_index'] for c in payload['confusers']] == [0, 1]
+
+
+def test_all_low_flip_queue_yields_an_empty_payload():
+    # A judge that never wavered has nothing to open-code; say so with an empty
+    # payload rather than handing over five stable rows as if they were confusers.
+    payload = grey_zone.assemble_payload(_mixed_queue(n_flipped=0, n_low_flip=5))
+
+    assert payload['n_confusers'] == 0
+    assert payload['confusers'] == []
+    assert payload['budget']['n_low_flip_excluded'] == 5
+
+
+# --- the fallback must not silently drop half the judged input ---
+
+
+def _structured_row_queue(**overrides) -> dict:
+    """A confuser captured in the structured Responses-API shape: `output` is the
+    assistant's ANSWER, not the rendered judge prompt, so template inversion fails
+    and `variables` is None. The context to judge against lives in `query`."""
+    verdict_space = {'type': 'boolean', 'labels': [False, True]}
+    item = {
+        'rank': 1,
+        'source_index': 9,
+        'low_flip_sample': False,
+        'query': 'CONTEXT: Acme is a Tier-2 customer. Tier-2 gets 24h support.\nQUESTION: Does Acme get 24h support?',
+        'output': 'Yes, Acme gets 24-hour support.',
+        'variables': None,          # inversion failed
+        'messages': None,
+        'verdict_space': verdict_space,
+        'ambiguity': {'instability': 1.0, 'band': 'unreliable', 'flip_rate': 1.0,
+                      'mode_value': True, 'mode_rate': 0.5, 'n_repeats': 8},
+        'judge_votes': {'n_true': 4, 'n_false': 4, 'counts': None, 'mean': None,
+                        'stdev': None, 'representative_explanation': 'borderline'},
+    }
+    item.update(overrides)
+    return {'meta': {'verdict_space': verdict_space, 'eval_prompt': 'Judge: {{log.output}}',
+                     'n_items': 1}, 'items': [item]}
+
+
+def test_fallback_includes_the_context_not_just_the_answer():
+    # The bug: the fallback was `output or query`, so a groundedness judge's
+    # context — the only thing you can check groundedness against — never arrived.
+    payload = grey_zone.assemble_payload(_structured_row_queue(), max_chars=10_000)
+
+    (confuser,) = payload['confusers']
+    assert 'Tier-2 gets 24h support' in confuser['input']   # the context
+    assert 'Yes, Acme gets 24-hour support.' in confuser['input']  # the answer
+    assert confuser['input_fields'] == ['query', 'output']
+
+
+def test_fallback_is_flagged_as_such():
+    # No elision count can reveal a field that was never collected, so the payload
+    # says where the input came from and the budget block counts it.
+    payload = grey_zone.assemble_payload(_structured_row_queue(), max_chars=10_000)
+
+    assert payload['confusers'][0]['input_source'] == 'fallback'
+    assert payload['budget']['n_fallback_input'] == 1
+
+
+def test_inverted_variables_are_not_flagged_as_fallback():
+    payload = grey_zone.assemble_payload(_boolean_queue(), max_chars=10_000)
+
+    assert payload['confusers'][0]['input_source'] == 'variables'
+    assert payload['budget']['n_fallback_input'] == 0
+
+
+def test_fallback_char_accounting_covers_every_field():
+    # Previously `input_chars_original` was the answer's length alone, so the
+    # budget block reported "nothing elided" while most of the input was absent.
+    q = _structured_row_queue()
+    item = q['items'][0]
+    expected = len(item['query']) + len(item['output'])
+
+    payload = grey_zone.assemble_payload(q, max_chars=10_000)
+
+    assert payload['confusers'][0]['input_chars_original'] == expected
+
+
+def test_fallback_includes_messages_when_present():
+    q = _structured_row_queue(messages=[{'role': 'user', 'content': 'earlier turn'}])
+    payload = grey_zone.assemble_payload(q, max_chars=10_000)
+
+    assert 'earlier turn' in payload['confusers'][0]['input']
+    assert payload['confusers'][0]['input_fields'] == ['query', 'output', 'messages']
+
+
+def test_empty_row_does_not_crash_the_payload():
+    q = _structured_row_queue(query='', output='', variables=None)
+    payload = grey_zone.assemble_payload(q, max_chars=10_000)
+
+    assert payload['n_confusers'] == 1
+    assert payload['confusers'][0]['input_chars_original'] == 0
+
+
+# --- a tie arrives with no rationale; say so rather than quote the placeholder ---
+
+
+def test_tie_break_notice_is_not_treated_as_reasoning():
+    q = _structured_row_queue()
+    q['items'][0]['judge_votes']['representative_explanation'] = (
+        'Judge repetitions tied without a decisive tie-break.'
+    )
+    payload = grey_zone.assemble_payload(q, max_chars=10_000)
+
+    assert payload['confusers'][0]['reasoning_available'] is False
+    assert payload['budget']['n_no_rationale'] == 1
+
+
+def test_real_reasoning_is_available():
+    payload = grey_zone.assemble_payload(_structured_row_queue(), max_chars=10_000)
+
+    assert payload['confusers'][0]['reasoning_available'] is True
+    assert payload['budget']['n_no_rationale'] == 0
+
+
+def test_empty_reasoning_is_unavailable():
+    q = _structured_row_queue()
+    q['items'][0]['judge_votes']['representative_explanation'] = '   '
+    payload = grey_zone.assemble_payload(q, max_chars=10_000)
+
+    assert payload['confusers'][0]['reasoning_available'] is False

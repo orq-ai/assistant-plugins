@@ -69,13 +69,51 @@ def _source_labels(evaluator: dict[str, Any]) -> list[Any]:
     return flat if isinstance(flat, list) else []
 
 
-def _aligned_display_name(evaluator: dict[str, Any]) -> str | None:
-    """The aligned copy's name: the source's `display_name` (or `key`) with an
-    ` (aligned)` marker so it's recognisable *and* distinct from the original in
-    the orq evaluator list. None when the source has neither — orq then falls back
-    to the key on its own."""
-    source_name = evaluator.get('raw', {}).get('display_name') or evaluator.get('key')
-    return f'{source_name} (aligned)' if source_name else None
+def source_name(evaluator: dict[str, Any]) -> str:
+    """The source evaluator's human-readable name, for naming the aligned copy.
+
+    Tried in order, because no single field is reliably populated:
+      1. ``key`` — set on older evaluators, but `GET /v2/evaluators/{id}` returns it
+         empty for ones created through the current UI;
+      2. ``raw.display_name`` — what orq actually shows in the evaluator list, and
+         the only name those newer records carry;
+      3. ``raw.key`` — the same field off the untouched API record;
+      4. the evaluator id — last resort, and the reason an un-named source used to
+         produce keys like ``01kzxt86ac82d1fvzw3s8wfv83-aligned-<ts>``.
+    """
+    raw = evaluator.get('raw', {})
+    for candidate in (evaluator.get('key'), raw.get('display_name'), raw.get('key')):
+        if candidate and str(candidate).strip():
+            return str(candidate).strip()
+    return evaluator['id']
+
+
+def aligned_key(evaluator: dict[str, Any], timestamp: str) -> str:
+    """The aligned copy's key: `<source-name>-aligned-<ts>`.
+
+    orq overwrites the `display_name` we send with the key, so the key *is* the name
+    the user reads in the evaluator list — it has to mirror the source's name rather
+    than its opaque id. The timestamp keeps repeat alignment runs on one evaluator
+    from colliding, and ties each copy back to the run that produced it.
+    """
+    return f'{runner.slugify(source_name(evaluator))}-aligned-{timestamp}'
+
+
+async def _resolve_path(evaluator: dict[str, Any], new_key: str) -> str:
+    """Where the aligned copy is created: the source's project, same as the source.
+
+    The evaluator record carries no `path`, so the source's own folder can't be read
+    back directly — but it does carry `project_id`, and a create `path`'s first
+    segment names the project. Resolving one into the other puts the copy in the
+    project the source lives in instead of a new folder named after its id.
+
+    Falls back to a bare key (workspace root) when the project can't be resolved,
+    which is the best available answer rather than a guessed folder.
+    """
+    project_id = evaluator.get('raw', {}).get('project_id') or ''
+    async with OrqClient() as client:
+        project_key = await client.resolve_project_key(project_id)
+    return f'{project_key}/{new_key}' if project_key else new_key
 
 
 async def _create(evaluator: dict[str, Any], prompt: str, key: str, path: str) -> dict[str, Any]:
@@ -91,9 +129,13 @@ async def _create(evaluator: dict[str, Any], prompt: str, key: str, path: str) -
         if output_type == 'categorical'
         else None
     )
-    # Reuse the source evaluator's human-readable name (with an ` (aligned)` marker)
-    # so the copy shows a recognisable name in orq instead of its `-aligned-<ts>` key.
-    display_name = _aligned_display_name(evaluator)
+    # Send a readable name too, but do NOT rely on it: orq overwrites `display_name`
+    # with the `key` on create (verified against the live API — a copy created with
+    # display_name='… (aligned)' reads back with the key as its display_name). The
+    # key is therefore the name the user sees, which is why `aligned_key` mirrors the
+    # source's name. This stays in the body so the copy is still labelled correctly
+    # if that behaviour changes.
+    display_name = f'{source_name(evaluator)} (aligned)'
     async with OrqClient() as client:
         result = await client.create_evaluator(
             key=key,
@@ -177,12 +219,11 @@ def main(
     }
     runner.write_json(out_dir / 'approval.json', approval)
 
-    source_key = evaluator.get('key') or runner.slugify(evaluator['id'])
-    new_key = f'{source_key}-aligned-{runner.utc_timestamp()}'
-    # Co-locate the aligned evaluator with its source: reuse the source's own
-    # path, whose first segment names the owning project, so the copy lands in
-    # the same project. Falls back to a bare key when the source has no path.
-    path = evaluator.get('raw', {}).get('path') or source_key
+    new_key = aligned_key(evaluator, approval['timestamp'])
+    # Co-locate the aligned evaluator with its source by resolving the source's
+    # project_id back into the project key that heads a create `path`.
+    path = asyncio.run(_resolve_path(evaluator, new_key))
+    logger.info(f'  creating {new_key!r} at path {path!r}')
     created = asyncio.run(_create(evaluator, new_prompt, new_key, path))
 
     new_eval = {

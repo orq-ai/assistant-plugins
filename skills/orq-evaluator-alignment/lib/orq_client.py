@@ -325,6 +325,38 @@ class OrqClient:
             raw=data,
         )
 
+    async def resolve_project_key(self, project_id: str) -> str | None:
+        """Map an evaluator's ``project_id`` to the project **key** that names it.
+
+        Needed because an evaluator record carries no ``path`` of its own — neither
+        ``GET /v2/evaluators/{id}`` nor the list endpoint returns one, only
+        ``project_id``. But ``POST /v2/evaluators`` locates the new evaluator by
+        ``path``, whose *first segment is the project key*. So co-locating an aligned
+        copy with its source means resolving that id back into a key here.
+
+        Returns ``None`` when the id isn't in ``GET /v2/projects`` or the call fails —
+        the caller then falls back to an unprefixed path (workspace root) rather than
+        inventing a project.
+        """
+        if not project_id:
+            return None
+        resp = await self._client.get('/v2/projects', params={'limit': 200})
+        if resp.status_code >= 400:
+            logger.warning(
+                f'GET /v2/projects [{resp.status_code}]; cannot resolve the source project — '
+                'the aligned copy will be created at the workspace root.'
+            )
+            return None
+        for p in _envelope_list(resp.json(), 'data', 'projects', 'items'):
+            if isinstance(p, dict) and p.get('project_id') == project_id:
+                key = p.get('key') or p.get('name')
+                return str(key) if key else None
+        logger.warning(
+            f'project_id {project_id} not found in GET /v2/projects — the aligned copy '
+            'will be created at the workspace root.'
+        )
+        return None
+
     async def resolve_model_slug(self, model_id: str) -> str | None:
         """Map an evaluator's opaque model config id to a routable slug.
 

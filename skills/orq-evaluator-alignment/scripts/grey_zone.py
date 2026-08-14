@@ -53,6 +53,13 @@ def _log_disclosure(payload: dict) -> None:
         f'  Context budget: ~{budget.get("estimated_tokens")} tokens of '
         f'{budget.get("budget_tokens")}.'
     )
+    excluded = budget.get('n_low_flip_excluded') or 0
+    if excluded:
+        logger.info(
+            f'  {excluded} stable spot-check row(s) held out — this payload is the '
+            f'{payload.get("n_confusers")} example(s) the judge was inconsistent on. '
+            'Pass --include_low_flip to bring them in.'
+        )
     dropped = budget.get('n_dropped_by_budget') or 0
     if dropped:
         logger.warning(
@@ -85,6 +92,7 @@ def assemble(
     top_k: int | None = None,
     max_chars: int | None = None,
     max_tokens: int | None = None,
+    include_low_flip: bool = False,
 ) -> str:
     """queue.json → grey_zone_payload.json (the conductor's bounded confuser payload).
 
@@ -93,6 +101,9 @@ def assemble(
     input budget, fair-shared across the evaluator's `{{variables}}` (default config
     `grey_zone_max_chars` → 600). `max_tokens` clamps the whole payload to the
     longest prefix that fits (default config `grey_zone_max_tokens` → 60000).
+    `include_low_flip` adds the stable spot-check rows the queue also carries; off by
+    default, so the payload holds the number of unstable examples the user asked for
+    rather than that number plus `low_flip_sample_size`.
 
     Never blocks: over-budget clamps and reports rather than stopping, because the
     coverage decision already happened at the step-5 count (design §12.3).
@@ -106,7 +117,11 @@ def assemble(
     resolved_tokens = int(max_tokens if max_tokens is not None else cfg.get('grey_zone_max_tokens', 60000))
 
     payload = gzlib.assemble_payload(
-        queue, top_k=resolved_top_k, max_chars=resolved_max, max_tokens=resolved_tokens
+        queue,
+        top_k=resolved_top_k,
+        max_chars=resolved_max,
+        max_tokens=resolved_tokens,
+        include_low_flip=include_low_flip,
     )
     runner.write_json(out_dir / 'grey_zone_payload.json', payload)
     logger.info(

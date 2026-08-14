@@ -85,23 +85,9 @@ def test_display_name_omitted_when_none():
     assert 'display_name' not in body
 
 
-def test_aligned_display_name_appends_suffix():
-    import create_eval
-
-    name = create_eval._aligned_display_name({'raw': {'display_name': 'Harmful or Illegal content'}})
-    assert name == 'Harmful or Illegal content (aligned)'
-
-
-def test_aligned_display_name_falls_back_to_key():
-    import create_eval
-
-    assert create_eval._aligned_display_name({'key': 'safety-eval', 'raw': {}}) == 'safety-eval (aligned)'
-
-
-def test_aligned_display_name_none_when_no_name():
-    import create_eval
-
-    assert create_eval._aligned_display_name({'raw': {}}) is None
+# Naming and placement of the aligned copy live in tests/test_aligned_naming.py —
+# `source_name`, `aligned_key`, and `_resolve_path`. orq overwrites the
+# `display_name` we send with the `key`, so the key is what the user reads.
 
 
 # --- categorical: labels sent in orq's rich [{value, description}] shape ---

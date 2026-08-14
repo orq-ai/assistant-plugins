@@ -13,8 +13,8 @@ Joins `stability.json` back onto `answer_key.json` on the ANSWER TEXT, because
 Reports, per case: the judge's verdict tally, its instability, and whether the
 majority verdict matches the reference policy. Then the two checks that matter:
 
-  PC-1  do the grey-zone cases outrank the anchors on instability?
-  PC-3  which cases are STABLE AND WRONG — the blind spot instability cannot see?
+  PC1  do the grey-zone cases outrank the anchors on instability?
+  PC3  which cases are STABLE AND WRONG — the blind spot instability cannot see?
 
 Failed repetitions come back as null and are excluded from the majority, not
 counted as a verdict.
@@ -101,7 +101,7 @@ def main(run_dir: str, tol: float = 0.5) -> None:
     agree = sum(r['agrees'] for r in rows)
     print(f'agreement with reference policy: {agree}/{len(rows)}')
 
-    # PC-1 — instability must rank the engineered ambiguity above the anchors.
+    # PC1 — instability must rank the engineered ambiguity above the anchors.
     unstable = [r for r in rows if (r['instability'] or 0) > 0]
     grey_unstable = [r for r in unstable if r['class'] == 'grey']
     anchor_unstable = [r for r in unstable if r['class'].startswith('anchor')]
@@ -116,7 +116,7 @@ def main(run_dir: str, tol: float = 0.5) -> None:
     else:
         print('     Flat profile — this is the SKILL.md step-4a starved-run branch.')
 
-    # PC-3 — the blind spot: confidently wrong, therefore invisible to ranking.
+    # PC3 — the blind spot: confidently wrong, therefore invisible to ranking.
     blind = [r for r in rows if not r['agrees'] and (r['instability'] or 0) == 0]
     print(f'\nPC-3 stable-but-wrong (invisible to instability ranking): {len(blind)}')
     for r in blind:

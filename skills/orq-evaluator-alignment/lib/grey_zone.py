@@ -86,21 +86,44 @@ def _fair_shares(lengths: list[int], budget: int) -> list[int]:
 def _compact_input(item: dict[str, Any], max_chars: int) -> tuple[str, dict[str, Any]]:
     """The judged input, compactly, plus what it cost to get there (§12.5).
 
-    Prefers the inverted `{{variable}}` bindings (what the judge actually scored)
-    over the whole rendered prompt; falls back to the raw `output` when template
-    inversion failed (`variables` is None). The budget governs variable *values*;
-    the short `name: ` prefixes are not charged against it.
+    Prefers the inverted `{{variable}}` bindings — what the judge actually scored.
+    When inversion failed (`variables` is None) it falls back to the row's captured
+    fields, and **that fallback must carry every field it has, not just `output`**.
+
+    The old fallback was `output or query`, which silently dropped half the judged
+    input on any row captured in the structured Responses-API shape: `output` there
+    is the assistant's answer, not the rendered judge prompt, so a groundedness
+    judge's context and question — the only things you can check groundedness
+    *against* — never reached the conductor. Worse, the char accounting was computed
+    over that single field, so the budget block truthfully reported "0 elided" while
+    most of the input was missing. Elision accounting can only see what the budget
+    dropped; it cannot see a field that was never collected. Hence `input_source`:
+    a fallback render is flagged so the conductor caveats it instead of trusting it.
 
     Returns ``(rendered, stats)`` where stats carries the elision accounting the
     conductor is required to disclose (§12.8).
     """
     variables = item.get('variables')
     if variables:
+        source = 'variables'
         names = [str(v.get('name')) for v in variables]
         values = [str(v.get('value') or '') for v in variables]
     else:
-        names = []
-        values = [str(item.get('output') or item.get('query') or '')]
+        source = 'fallback'
+        names, values = [], []
+        # Every captured field, labelled, most-context-first. `messages` is included
+        # because an evaluator with a {{conversation}} variable is judged on it.
+        for label, raw in (
+            ('query', item.get('query')),
+            ('output', item.get('output')),
+            ('messages', item.get('messages')),
+        ):
+            if raw in (None, '', [], {}):
+                continue
+            names.append(label)
+            values.append(raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False))
+        if not values:
+            names, values = ['(empty)'], ['']
 
     shares = _fair_shares([len(v) for v in values], max_chars)
     parts: list[str] = []
@@ -108,14 +131,38 @@ def _compact_input(item: dict[str, Any], max_chars: int) -> tuple[str, dict[str,
     for i, value in enumerate(values):
         rendered, shown = _window(value, shares[i])
         shown_total += shown
-        parts.append(f'{names[i]}: {rendered}' if names else rendered)
+        parts.append(f'{names[i]}: {rendered}')
 
     original = sum(len(v) for v in values)
     return '\n'.join(parts), {
         'input_chars_original': original,
         'input_chars_shown': shown_total,
         'input_truncated': shown_total < original,
+        # 'variables' = the exact bindings the judge saw. 'fallback' = reassembled
+        # from the row's captured fields because the template could not be inverted;
+        # it may be missing something the judge had. MUST be disclosed (§12.8).
+        'input_source': source,
+        'input_fields': list(names),
     }
+
+
+# Rationale stand-ins emitted by the jury layer when it has nothing real to report.
+# Matched case-insensitively as substrings; these are notices *about* the vote, not
+# reasoning *from* the judge, and presenting them as the latter misleads the reader.
+_PLACEHOLDER_RATIONALES = (
+    'tied without a decisive tie-break',
+    'no explanation',
+    'not available',
+)
+
+
+def _is_real_rationale(text: str) -> bool:
+    """Whether `text` is actual judge reasoning rather than a jury-layer notice."""
+    stripped = (text or '').strip()
+    if not stripped:
+        return False
+    low = stripped.lower()
+    return not any(marker in low for marker in _PLACEHOLDER_RATIONALES)
 
 
 def estimate_tokens(obj: Any) -> int:
@@ -133,7 +180,8 @@ def estimate_tokens(obj: Any) -> int:
 _BUDGET_PLACEHOLDER = {
     'estimated_tokens': 000000, 'budget_tokens': 000000, 'within_budget': True,
     'budget_top_k': 000000, 'n_dropped_by_budget': 000000, 'n_truncated': 000000,
-    'total_chars_elided': 000000,
+    'total_chars_elided': 000000, 'n_low_flip_excluded': 000000, 'n_confusers': 000000,
+    'n_fallback_input': 000000, 'n_no_rationale': 000000,
 }
 
 
@@ -161,6 +209,7 @@ def assemble_payload(
     top_k: int | None = None,
     max_chars: int = 600,
     max_tokens: int | None = None,
+    include_low_flip: bool = False,
 ) -> dict[str, Any]:
     """`queue.json` dict → compact confuser payload for the conductor's context.
 
@@ -170,6 +219,13 @@ def assemble_payload(
     the assembled payload to the fitting prefix. The verdict split + band + one
     representative rationale is what the conductor open-codes into grey zones.
 
+    `include_low_flip` is False because the queue is not all confusers: `build_queue`
+    appends `low_flip_sample_size` (default 5) *stable* rows as a spot-check against
+    the consistently-wrong blind spot. Those rows are a control group for annotation,
+    not material to open-code — a judge that never wavered on them has no grey zone to
+    find. Including them made "review 3 examples with me" put 3 + 5 = 8 into context,
+    silently overriding the count the user chose at step 5.
+
     The returned `budget` block is what the conductor is required to disclose
     (§12.8): what entered context, what the budget dropped, and how much of each
     input was actually seen.
@@ -178,6 +234,11 @@ def assemble_payload(
     output_type = (verdict_space.get('type') or 'boolean').strip().lower()
 
     items = queue.get('items', [])
+    n_low_flip_excluded = 0
+    if not include_low_flip:
+        kept_items = [i for i in items if not i.get('low_flip_sample', False)]
+        n_low_flip_excluded = len(items) - len(kept_items)
+        items = kept_items
     if top_k is not None and top_k >= 0:
         items = items[:top_k]
 
@@ -199,6 +260,13 @@ def assemble_payload(
             'reasoning_chars_original': len(reasoning_raw),
             'reasoning_chars_shown': reasoning_shown,
             'reasoning_truncated': reasoning_shown < len(reasoning_raw),
+            # False when the jury returned no real rationale — most often on an exact
+            # tie, where it emits a tie-break notice instead. That is the perverse
+            # case: the most evenly-split confuser, the one where seeing both sides
+            # would help most, is the one that arrives with nothing to read. Flagged
+            # so the conductor says so rather than quoting the placeholder as if it
+            # were the judge's reasoning.
+            'reasoning_available': _is_real_rationale(reasoning_raw),
         }
         confuser.update(input_stats)
         confusers.append(confuser)
@@ -223,11 +291,23 @@ def assemble_payload(
     payload['budget'] = {
         'estimated_tokens': estimated,
         'budget_tokens': max_tokens,
+        # Mirrored into the budget block so build_queue's step-5 projection can
+        # report the count without reassembling — the two must never disagree.
+        'n_confusers': len(kept),
         'within_budget': max_tokens is None or estimated <= max_tokens,
         # The top_k that would have produced this payload — what a human would pass
         # to reproduce it, or raise past deliberately.
         'budget_top_k': keep if keep < n_total else None,
         'n_dropped_by_budget': n_total - len(kept),
+        # Stable spot-check rows held out of the open-coding payload. Reported so the
+        # count the conductor states matches what the user asked for at step 5.
+        'n_low_flip_excluded': n_low_flip_excluded,
+        # Rows whose input was reassembled from captured fields because the judge
+        # template could not be inverted. These may be missing something the judge
+        # saw, and no elision count can reveal that — so it is counted separately.
+        'n_fallback_input': sum(1 for c in kept if c.get('input_source') == 'fallback'),
+        # Confusers arriving with no usable judge rationale (usually exact ties).
+        'n_no_rationale': sum(1 for c in kept if not c.get('reasoning_available')),
         'n_truncated': sum(
             1 for c in kept if c['input_truncated'] or c['reasoning_truncated']
         ),

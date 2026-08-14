@@ -60,7 +60,7 @@ from loguru import logger
 
 import _bootstrap  # noqa: F401
 from lib import runner
-from lib.model_backend import get_backend
+from lib.model_backend import BackendUnavailable, describe_backend, get_backend
 from lib.orq_client import extract_template_variables
 
 load_dotenv()
@@ -294,6 +294,19 @@ async def _rewrite(out_dir: Path, cfg: dict[str, Any], max_attempts: int) -> dic
     system = _fill_system(context)
 
     backend = get_backend(cfg)
+    # Fail here, with a reason, rather than partway through a paid run: an
+    # `orq_router` model can be listed in the registry and still refuse for want
+    # of a provider key on this workspace.
+    preflight = getattr(backend, 'preflight', None)
+    if preflight is not None:
+        try:
+            await preflight()
+        except BackendUnavailable as exc:
+            raise SystemExit(
+                f'Cannot use {describe_backend(cfg)}: {exc}\n'
+                '  Pick another model with `backend_model` in config.toml, or set\n'
+                '  `backend = "claude_subagent"` to use the Claude CLI instead.'
+            ) from exc
     attempts: list[dict[str, Any]] = []
     current_instructions = instructions
     proposed = judge_prompt

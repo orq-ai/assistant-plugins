@@ -18,7 +18,7 @@ the ambiguity that is actually there, and does it admit what it cannot see?*
 | `evaluators.json` | The four judge rubrics, all deliberately underspecified. |
 | `create_testcase.py` | Provisions and tears down the dataset + evaluators. |
 | `answer_key.json` | **Spoiler.** Reference policy, per-case truth, measured baseline, pass criteria. |
-| `score_run.py` | Joins a finished run back onto the answer key and reports PC-1 / PC-3. |
+| `score_run.py` | Joins a finished run back onto the answer key and reports PC1 / PC3. |
 | `created.json` | Written by `create_testcase.py`; the exact ids to tear down. |
 
 ## Setup
@@ -79,8 +79,8 @@ in `<run_dir>/evaluator.json` (SKILL.md step 2), or pass `--judge_model` at step
 ## What the datapoints are for
 
 **12 grey-zone cases**, four clusters of three, each a distinct reason the rubric fails
-to decide: an answer entailed only by inference (GZ-1), a true-but-unsupported addition
-(GZ-2), a loose numeric paraphrase (GZ-3), and openly flagged speculation (GZ-4). These
+to decide: an answer entailed only by inference (GZ1), a true-but-unsupported addition
+(GZ2), a loose numeric paraphrase (GZ3), and openly flagged speculation (GZ4). These
 are what step 6's open-coding is supposed to rediscover.
 
 **8 anchors** — four verbatim restatements, four flat contradictions. They give the
@@ -109,9 +109,9 @@ and stops has failed the test, however good its numbers look.
 
 Measured, not assumed — see `answer_key.json → measured_baseline`.
 
-- **GZ-1 does not destabilise either judge.** Both decide it confidently, and both get
+- **GZ1 does not destabilise either judge.** Both decide it confidently, and both get
   the syllogism and the arithmetic case wrong while getting the transitivity case right
-  — an incoherent split held with full confidence. GZ-1 behaves as two extra traps, not
+  — an incoherent split held with full confidence. GZ1 behaves as two extra traps, not
   as a confuser cluster. Its absence from the confuser queue is expected; its absence
   from the final summary's blind-spot caveat is a failure.
 - **Anchors A2 and A3 are stably wrong on both judges** despite being verbatim
@@ -120,16 +120,21 @@ Measured, not assumed — see `answer_key.json → measured_baseline`.
 
 ## Bugs this test case found in the skill
 
-Both are real and neither is fixed here.
+Both were real and both are now fixed (see CHANGELOG 2.4.1); they are recorded here
+because they are the return on building this test case, and because a regression in
+either is invisible to `tests/`.
 
-1. **`lib/orq_client.py:239` — `build_create_datapoints_body` sends the wrong shape.**
-   It wraps rows as `{"datapoints": [...]}`; `POST /v2/datasets/{id}/datapoints` wants a
-   bare array and returns `400 invalid_request_body` ("expected array, received object").
-   This breaks `seed_inputs.py save`, the dataset save-back path.
-2. **`lib/seed.py:49` — `unresolved_variables` does not mirror `make_replacements`.**
-   Its docstring claims it does. `judge.make_replacements` (judge.py:368) resolves
-   `reference | expected | expected_output`; `unresolved_variables` has no branch for
-   them, so an evaluator declaring `{{log.reference}}` renders fine at judge time but has
-   **100% of its dataset rows silently skipped** at pull time. Neither function handles
-   `context`, which is why this test case folds the retrieved context into the input
-   variable rather than declaring one.
+1. **`build_create_datapoints_body` sent the wrong shape.** It wrapped rows as
+   `{"datapoints": [...]}`; `POST /v2/datasets/{id}/datapoints` wants a bare array and
+   rejects the object with `400 invalid_request_body` ("expected array, received
+   object"). This broke `seed_inputs.py save`, the dataset save-back path, entirely.
+   Fixed — the builder now returns the list unchanged.
+2. **`seed.unresolved_variables` did not mirror `judge.make_replacements`.** Its
+   docstring claimed it did. `make_replacements` resolves
+   `reference | expected | expected_output`; `unresolved_variables` had no branch for
+   them, so an evaluator declaring `{{log.reference}}` rendered fine at judge time while
+   **100% of its dataset rows were silently skipped** at pull time. Fixed — the
+   reference family is handled, and the two functions are now documented as a pair.
+
+Still open: neither function handles `context`, which is why this test case folds the
+retrieved context into the input variable rather than declaring one.

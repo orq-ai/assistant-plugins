@@ -63,14 +63,25 @@ grey_zone_max_chars = 600
 grey_zone_max_tokens = 60000
 
 # ── Step 8/9: recommendation + rewrite backend ───────────────────────────────
-# Model backend for the meta-prompt (step 8) and PO2 rewrite (step 9). One of:
-#   "claude_subagent" — shell out to `claude -p ... --output-format json`
-#   "orq_deployment"  — orq deployment / evaluatorq.invoke (workspace model)
-#   "anthropic_api"   — direct Anthropic Messages API
+# Which model writes the recommendation (step 8) and the rewritten prompt (step 9).
+#   "orq_router"      — DEFAULT. Any workspace model over the orq router, using the
+#                       ORQ_API_KEY this skill already needs. No second account, no
+#                       CLI. The model must be reachable on your workspace — a model
+#                       can be listed and still 403 for want of a provider key, so
+#                       step 9 checks with one tiny call before spending anything.
+#   "claude_subagent" — shell out to `claude -p ... --output-format json`. Needs the
+#                       `claude` CLI installed and logged in; use it if you'd rather
+#                       spend Claude credits than workspace credits.
+#   "orq_deployment"  — an existing orq deployment (see backend_deployment_key)
+#   "anthropic_api"   — direct Anthropic Messages API (needs ANTHROPIC_API_KEY)
 #   "fake"            — deterministic canned completions (tests only)
-backend = "claude_subagent"
-# Model id for the chosen backend (claude_subagent / anthropic_api).
-backend_model = "claude-opus-4-8"
+backend = "orq_router"
+# Model for the chosen backend. LEAVE BLANK to take that backend's own default
+# (orq_router → deepseek/deepseek-v4-pro, claude_subagent/anthropic_api →
+# claude-opus-4-8), so switching `backend` alone is a valid edit. For orq_router
+# this must be the provider-qualified `refId` from GET /v2/models
+# (e.g. "deepseek/deepseek-v4-pro"), not the shorter display alias.
+backend_model = ""
 # orq deployment key when backend = "orq_deployment".
 backend_deployment_key = ""
 # Bounded parallelism for per-annotation meta-prompt calls (step 8).
