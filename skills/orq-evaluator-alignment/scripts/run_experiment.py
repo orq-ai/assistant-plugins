@@ -130,7 +130,11 @@ async def _retest(out_dir: Path, cfg: dict[str, Any], repeats: int, temperature:
     if (out_dir / 'new_evaluator.json').exists():
         new_prompt = runner.read_json(out_dir / 'new_evaluator.json')['prompt']
     elif new_prompt_path.exists():
-        new_prompt = new_prompt_path.read_text(encoding='utf-8').strip()
+        # utf-8-sig, like every other read of a human-editable artifact
+        # (create_eval.py, lib/runner): new_prompt.md is meant to be hand-edited
+        # before the retest, and a Windows editor's BOM would otherwise ride into
+        # the judge prompt as a leading invisible character.
+        new_prompt = new_prompt_path.read_text(encoding='utf-8-sig').strip()
     else:
         raise RuntimeError('No new_prompt.md / new_evaluator.json — run rewrite_eval.py first.')
 

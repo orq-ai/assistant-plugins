@@ -27,6 +27,7 @@ from evaluatorq.common.jury import Prediction, VerdictKind, run_jury
 from evaluatorq.common.llm_call import execute_chat_completion
 from evaluatorq.common.llm_client import resolve_llm_client
 
+from lib.content import field_for_variable, stringify_messages
 from lib.orq_client import tls_verify
 
 # Mirror of orq's boolean `explanation_and_value` contract. orq puts the whole
@@ -145,26 +146,22 @@ def make_replacements(variables: list[str], row: dict[str, Any]) -> dict[str, An
 
     Evaluators name their variables differently (`log.input`/`log.output`,
     `query`/`output`, `input`/`response`, ...). We match by suffix so the same
-    code serves any single-judge boolean evaluator: anything ending in `input`
-    or `query` takes the latest user prompt; `output`/`response` takes the
-    assistant output; `messages` takes the serialised prior turns. Variables we
-    can't map are left out — evaluatorq's `render_template` keeps an unmatched
-    `{{var}}` literal rather than blanking it, so nothing silently vanishes.
+    code serves any single-judge boolean evaluator, via the one suffix table in
+    `lib.content` that the trace scanner also reverses with — a second copy here
+    is how a value gets recovered into a field this renderer never reads back.
+    Variables we can't map are left out — evaluatorq's `render_template` keeps an
+    unmatched `{{var}}` literal rather than blanking it, so nothing silently
+    vanishes.
     """
-    query = row.get('query', '') or ''
-    output = row.get('output', '') or ''
-    messages = row.get('messages')
     repl: dict[str, Any] = {}
     for var in variables:
-        leaf = var.split('.')[-1].strip().lower()
-        if leaf in {'input', 'query', 'prompt'}:
-            repl[var] = query
-        elif leaf in {'output', 'response', 'completion', 'answer'}:
-            repl[var] = output
-        elif leaf in {'messages', 'history', 'conversation'}:
-            repl[var] = messages if isinstance(messages, str) else _stringify(messages)
-        elif leaf in {'reference', 'expected', 'expected_output'}:
-            repl[var] = row.get('reference', '') or ''
+        field = field_for_variable(var)
+        if field is None:
+            continue
+        if field == 'messages':
+            repl[var] = stringify_messages(row.get('messages'))
+        else:
+            repl[var] = row.get(field, '') or ''
     return repl
 
 
@@ -200,20 +197,6 @@ def _is_transient(exc: BaseException) -> bool:
         return False
     msg = str(exc).lower()
     return any(marker in msg for marker in _TRANSIENT_MARKERS)
-
-
-def _stringify(messages: Any) -> str:
-    if not messages:
-        return ''
-    if isinstance(messages, list):
-        lines = []
-        for m in messages:
-            if isinstance(m, dict):
-                lines.append(f'{m.get("role", "?")}: {m.get("content", "")}')
-            else:
-                lines.append(str(m))
-        return '\n'.join(lines)
-    return str(messages)
 
 
 def build_judge_fn(

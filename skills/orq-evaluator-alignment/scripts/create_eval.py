@@ -90,8 +90,15 @@ def main(
 
     evaluator = runner.read_json(out_dir / 'evaluator.json')
     status = runner.read_json(out_dir / 'rewrite_status.json')
-    new_prompt = (Path(edits).read_text(encoding='utf-8') if edits else (out_dir / 'new_prompt.md').read_text(encoding='utf-8')).strip()
-    aggregated = (out_dir / 'aggregated.md').read_text(encoding='utf-8')
+    # utf-8-sig on these human-editable artifacts: a Windows editor can save
+    # new_prompt.md / aggregated.md / an --edits file with a leading BOM, which
+    # would otherwise be prepended to the prompt's first line and silently
+    # corrupt the created evaluator. -sig strips it; no-op when absent.
+    new_prompt = (
+        Path(edits).read_text(encoding='utf-8-sig') if edits
+        else (out_dir / 'new_prompt.md').read_text(encoding='utf-8-sig')
+    ).strip()
+    aggregated = (out_dir / 'aggregated.md').read_text(encoding='utf-8-sig')
 
     # Presentation (always shown).
     logger.info('── Aggregated recommendations ──')
@@ -125,6 +132,9 @@ def main(
 
     source_key = evaluator.get('key') or runner.slugify(evaluator['id'])
     new_key = f'{source_key}-aligned-{runner.utc_timestamp()}'
+    # Co-locate the aligned evaluator with its source: reuse the source's own
+    # path, whose first segment names the owning project, so the copy lands in
+    # the same project. Falls back to a bare key when the source has no path.
     path = evaluator.get('raw', {}).get('path') or source_key
     created = asyncio.run(_create(evaluator, new_prompt, new_key, path))
 

@@ -40,6 +40,35 @@ jobs:
           fi
           echo "title ok"
 
+  skill-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Run each skill's pytest suite
+        # Until now nothing in CI ran these: the suites existed and were green
+        # only on whoever last ran them locally. A skill opts in by shipping
+        # tests/requirements.txt (its scripts declare deps inline via PEP 723,
+        # which pytest never reads because it imports the modules directly).
+        # `--no-project` keeps each suite in its own ephemeral env, so one
+        # skill's deps can't mask a missing dep in another's.
+        run: |
+          set -euo pipefail
+          found=0
+          for req in skills/*/tests/requirements.txt; do
+            [ -e "$req" ] || continue
+            skill=$(dirname "$(dirname "$req")")
+            found=1
+            echo "::group::pytest $skill"
+            (cd "$skill" && uv run --no-project --with-requirements tests/requirements.txt \
+              python -m pytest tests/ -q)
+            echo "::endgroup::"
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no skills/*/tests/requirements.txt found — the test job would pass vacuously"
+            exit 1
+          fi
+
   version-bump-gate:
     runs-on: ubuntu-latest
     steps:
