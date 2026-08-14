@@ -151,10 +151,15 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 ## `orq-evaluator-alignment`
 
 - Ask: "Align my evaluator — it disagrees with my labels"
-- Verify: asks for the evaluator ID if not given, confirms it is a binary Pass/Fail judge
-- Verify: runs the stability / flip-rate step and builds a human annotation queue before rewriting
+- Verify: asks whether they have a judge in orq at all before asking for an ID; hands off to `orq-build-evaluator` if they don't
+- Verify: accepts boolean, categorical, numeric and string judges (not just Pass/Fail), and fails fast on any other output type
+- Verify: runs the repeated-judging step and reports one 0..1 instability score before proposing any rewrite
+- Verify: when the trace scan comes up short it offers the recovery options **at that point**, not several steps later
+- Verify: groups the unstable examples and asks a few questions, rather than presenting every row for individual labelling (the annotation UI is the fallback, not the default)
+- Verify: describes judge behaviour in plain terms ("it gave a different answer 6 times out of 8"), not the statistics or the internal vocabulary (confuser, grey zone, conductor)
 - Verify: only creates the new evaluator after human approval (never auto-creates)
-- Verify: any `judge_model` slug it writes uses the plain `<provider>/<model>` form (e.g. `anthropic/claude-haiku-4-5`), never a `<provider>/openai/<model>` double-prefix (that 404s on the router)
+- Verify: the final summary states the consistently-wrong blind spot even when the numbers are good
+- Verify: any `judge_model` slug it writes uses the routable `refId` from `GET /v2/models`, never the shorter display alias (which can route to the wrong provider and 403)
 
 ## `orq-generate-synthetic-dataset`
 
@@ -427,7 +432,13 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-build-evaluator/SKILL.md`
 - `skills/orq-evaluator-alignment/SKILL.md`
 - `skills/orq-evaluator-alignment/config.toml`
+- `skills/orq-evaluator-alignment/lib/content.py`
+- `skills/orq-evaluator-alignment/lib/instability.py`
+- `skills/orq-evaluator-alignment/lib/grey_zone.py`
+- `skills/orq-evaluator-alignment/scripts/fetch_traces.py`
 - `skills/orq-evaluator-alignment/scripts/stability.py`
+- `skills/orq-evaluator-alignment/scripts/grey_zone.py`
+- `skills/orq-evaluator-alignment/scripts/retest.py`
 - `skills/orq-generate-synthetic-dataset/SKILL.md`
 - `skills/orq-optimize-prompt/SKILL.md`
 - `skills/orq-analyze-trace-failures/SKILL.md`

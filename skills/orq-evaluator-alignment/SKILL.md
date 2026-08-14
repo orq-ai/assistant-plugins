@@ -3,18 +3,17 @@ name: orq-evaluator-alignment
 description: >-
   Align, calibrate, or improve an existing LLM-as-a-judge (orq evaluator) so its
   verdicts match human judgment — boolean, categorical, numeric, or free-form
-  string judges (string: detect + annotate only, no rewrite/create yet). Use
-  when the user wants to "align my evaluator", "improve my eval", "annotate an
-  evaluator", "find ambiguous cases", or "build an annotation queue" — i.e. they
-  have an LLM judge that disagrees with human labels or is inconsistent. Measures
-  judge self-consistency as one 0..1 instability score (boolean flip-rate,
-  categorical label entropy, numeric score spread, or string exact-match entropy)
-  via repeated runs, surfaces
-  the most unstable datapoints for human annotation, rewrites the judge prompt
-  from the labels, and creates the new evaluator only after the human approves. If
-  the evaluator ID isn't given, ask for it after triggering. Do NOT use to build
-  an evaluator from scratch (use orq-build-evaluator) or to fix failures with
-  prompt tweaks (use orq-optimize-prompt).
+  string judges (string: detect + annotate only, no rewrite/create yet). Use when
+  the user wants to "align my evaluator", "improve my eval", "my judge keeps
+  changing its mind", "find ambiguous cases", or "annotate an evaluator" — i.e.
+  they have an LLM judge that disagrees with human labels or is inconsistent.
+  Measures judge self-consistency as one 0..1 instability score via repeated runs,
+  groups the least reliable examples by what makes them hard and asks a few
+  questions instead of making the user label every row, rewrites the judge prompt
+  from those answers, and creates the new evaluator only after the human approves.
+  If the evaluator ID isn't given, ask for it after triggering. Do NOT use to
+  build an evaluator from scratch (use orq-build-evaluator) or to fix failures
+  with prompt tweaks (use orq-optimize-prompt).
 allowed-tools: Read, Write, Edit, Grep, Glob, Bash(uv run:*), AskUserQuestion
 ---
 
