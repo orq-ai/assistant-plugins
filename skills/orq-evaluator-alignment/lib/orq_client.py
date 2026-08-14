@@ -206,11 +206,17 @@ def build_create_body(
             'alert_on_failure': False,
         }
     elif output_type == 'number':
-        # No scale field is invented: the record carries none of its own, so we
-        # forward one only when the source actually declared it (fixtures pass
-        # [min, max]). A numeric evaluator never carries a label set.
+        # Nothing type-specific goes in the body. `scale` is accepted by this
+        # function's signature (callers hold it, and it belongs in the run record)
+        # but is deliberately NOT sent: the evaluator schema has no scale field and
+        # the API drops it, so writing it here only made the request look like it
+        # carried a guarantee it never had. A numeric judge's scale lives in its
+        # rubric text — which is exactly what `check_preservation` gates on.
         if scale:
-            body['scale'] = scale
+            logger.debug(
+                f'numeric scale {scale} not sent: /v2/evaluators has no scale field. '
+                'The scale is preserved in the rubric text instead.'
+            )
     else:
         raise ValueError(
             f'Unsupported output_type {output_type!r}: expected one of '
@@ -340,19 +346,31 @@ class OrqClient:
         """
         if not project_id:
             return None
-        resp = await self._client.get('/v2/projects', params={'limit': 200})
-        if resp.status_code >= 400:
+        try:
+            # Paged: a workspace with more projects than one page held used to
+            # resolve to None on everything past the first page, silently.
+            projects = await self._paginate_get(
+                '/v2/projects', limit=1000, page_size=100, keys=('data', 'projects', 'items')
+            )
+        except Exception as exc:  # noqa: BLE001 — a failed lookup must not block the create
             logger.warning(
-                f'GET /v2/projects [{resp.status_code}]; cannot resolve the source project — '
+                f'GET /v2/projects failed ({exc}); cannot resolve the source project — '
                 'the aligned copy will be created at the workspace root.'
             )
             return None
-        for p in _envelope_list(resp.json(), 'data', 'projects', 'items'):
-            if isinstance(p, dict) and p.get('project_id') == project_id:
+        for p in projects:
+            # The evaluator record names its project differently depending on which
+            # normalizer served it (`domain_id` on the current /v2/evaluators shape,
+            # `project_id` elsewhere), and the project record answers to more than
+            # one id field too. Match on any of them rather than pin one spelling
+            # and resolve nothing.
+            if isinstance(p, dict) and project_id in {
+                p.get('project_id'), p.get('id'), p.get('_id'), p.get('domain_id')
+            }:
                 key = p.get('key') or p.get('name')
                 return str(key) if key else None
         logger.warning(
-            f'project_id {project_id} not found in GET /v2/projects — the aligned copy '
+            f'project id {project_id} not found in GET /v2/projects — the aligned copy '
             'will be created at the workspace root.'
         )
         return None

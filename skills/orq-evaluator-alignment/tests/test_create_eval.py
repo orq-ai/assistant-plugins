@@ -191,13 +191,16 @@ def test_numeric_body_sets_number_type_no_invented_scale():
     assert 'categorical_labels' not in body
 
 
-def test_numeric_body_passes_scale_when_present():
+def test_numeric_body_never_sends_scale():
+    # The evaluator schema has no scale field and the API drops it, so sending one
+    # only made the request look like it carried a guarantee it never had. A numeric
+    # judge's scale lives in its rubric text, which check_preservation gates on.
     body = build(
         key='n', path='p', prompt='x', model='m', description=None,
         output_type='number', scale=[1, 5],
     )
     assert body['output_type'] == 'number'
-    assert body['scale'] == [1, 5]
+    assert 'scale' not in body
 
 
 def test_numeric_ignores_stray_categorical_labels():

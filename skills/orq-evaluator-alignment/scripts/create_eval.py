@@ -103,14 +103,22 @@ async def _resolve_path(evaluator: dict[str, Any], new_key: str) -> str:
     """Where the aligned copy is created: the source's project, same as the source.
 
     The evaluator record carries no `path`, so the source's own folder can't be read
-    back directly — but it does carry `project_id`, and a create `path`'s first
+    back directly — but it does name its project, and a create `path`'s first
     segment names the project. Resolving one into the other puts the copy in the
     project the source lives in instead of a new folder named after its id.
+
+    **Which field names it depends on the normalizer.** `GET /v2/evaluators/{id}`
+    runs through `normalizeEvalToInternalEvaluator`, an explicit field allowlist
+    that emits `domain_id` and never `project_id` — so reading `project_id` alone
+    resolved nothing and every aligned copy landed at the workspace root, which is
+    the failure this function exists to prevent. Both spellings are read, in the
+    order the current API actually returns them.
 
     Falls back to a bare key (workspace root) when the project can't be resolved,
     which is the best available answer rather than a guessed folder.
     """
-    project_id = evaluator.get('raw', {}).get('project_id') or ''
+    raw = evaluator.get('raw', {})
+    project_id = raw.get('domain_id') or raw.get('project_id') or ''
     async with OrqClient() as client:
         project_key = await client.resolve_project_key(project_id)
     return f'{project_key}/{new_key}' if project_key else new_key

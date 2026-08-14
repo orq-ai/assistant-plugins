@@ -130,3 +130,39 @@ def test_resolve_path_handles_a_record_with_no_project_id(stub_client):
     ev = {'id': '01ABC', 'raw': {}}
 
     assert asyncio.run(create_eval._resolve_path(ev, 'my-eval-aligned-ts')) == 'my-eval-aligned-ts'
+
+
+# --- the project id the record actually carries ---
+
+
+def test_resolve_path_reads_domain_id(stub_client):
+    # GET /v2/evaluators/{id} runs through normalizeEvalToInternalEvaluator, an
+    # explicit field allowlist that emits `domain_id` and never `project_id`. Reading
+    # project_id alone resolved nothing, so every aligned copy landed at the
+    # workspace root — the exact failure this function exists to prevent.
+    stub = stub_client({'proj-123': 'research'})
+    ev = {'id': '01ABC', 'raw': {'domain_id': 'proj-123'}}
+
+    path = asyncio.run(create_eval._resolve_path(ev, 'k-aligned-1'))
+
+    assert path == 'research/k-aligned-1'
+    assert stub.seen == ['proj-123']
+
+
+def test_resolve_path_still_accepts_project_id(stub_client):
+    # Older records / other fetch paths carry the other spelling.
+    stub_client({'proj-9': 'legacy'})
+    ev = {'id': '01ABC', 'raw': {'project_id': 'proj-9'}}
+    assert asyncio.run(create_eval._resolve_path(ev, 'k')) == 'legacy/k'
+
+
+def test_domain_id_wins_when_both_are_present(stub_client):
+    stub_client({'domain-1': 'current', 'proj-1': 'stale'})
+    ev = {'id': '01ABC', 'raw': {'domain_id': 'domain-1', 'project_id': 'proj-1'}}
+    assert asyncio.run(create_eval._resolve_path(ev, 'k')) == 'current/k'
+
+
+def test_unresolvable_project_falls_back_to_the_workspace_root(stub_client):
+    stub_client({})
+    ev = {'id': '01ABC', 'raw': {'domain_id': 'missing'}}
+    assert asyncio.run(create_eval._resolve_path(ev, 'k')) == 'k'
