@@ -43,6 +43,12 @@ Only `name`, `description`, `license`, `compatibility`, `metadata`, `allowed-too
 uvx --from "git+https://github.com/agentskills/agentskills.git#subdirectory=skills-ref" skills-ref validate skills/<name>
 ```
 
+A typo'd field name is the realistic version of this mistake, so the validator reports any unindented frontmatter line it cannot read as a key — `allowed_tools:` is not a harmless annotation, it is `allowed-tools` costing the skill.
+
+**Skill names** additionally must not contain `anthropic` or `claude` as a whole segment. That is Anthropic's naming rule rather than a spec constraint, so `skills-ref` will not tell you; `validate-skills.mjs` does.
+
+**SKILL.md length:** the spec *recommends* under 500 lines and the validator warns above it, deliberately short of an error — several skills here are over it because their procedures don't survive being split across `resources/`, and §7.1 does not make a long skill skippable. Other suites (e.g. `opper-ai/opper-skills`) do treat 500 as a hard limit; that is a real divergence, not an oversight.
+
 ## skills-lock.json
 
 Lock file for the [`vercel-labs/skills`](https://github.com/vercel-labs/skills) CLI (`npx skills`) — the tool people use to install this suite into Claude Code, Cursor, Codex, Copilot, Gemini, etc. It is **not** an npm/Claude-Code-core standard; only `npx skills` reads it.
@@ -53,29 +59,24 @@ Lock file for the [`vercel-labs/skills`](https://github.com/vercel-labs/skills) 
 
 **To install / use the CLI:** Node ≥ 18. No global install needed — `npx skills …` downloads the `skills` package (npm) on demand.
 
-**How `computedHash` is computed** (upstream `computeSkillFolderHash`, deterministic): SHA-256 over every file in the skill folder — walk recursively skipping `.git`/`node_modules`, sort files by `/`-normalized relative path, then for each file `update(relativePath)` then `update(fileContentBytes)`, output hex. Relative path is relative to the skill folder (the folder name itself is not hashed), so editing `SKILL.md` or any resource changes the hash; renaming the folder does not.
+**How `computedHash` is computed** (after upstream `computeSkillFolderHash`, deterministic): SHA-256 over every **tracked** file in the skill folder, read from the **git index** — sort by `/`-normalized relative path, then for each file `update(relativePath)` then `update(blobBytes)`, output hex. Relative path is relative to the skill folder (the folder name itself is not hashed), so editing `SKILL.md` or any resource changes the hash; renaming the folder does not.
+
+Reading the index rather than the disk is a deliberate divergence from upstream, and the reason the hashes are reproducible at all:
+
+- **Line endings.** Under `core.autocrlf=true` the checkout is CRLF while the blobs are LF. Hashing the disk made all 15 skills report stale on Windows — the validator could not pass there — and `--fix` wrote CRLF hashes that CI then rejected. (`.gitattributes` now pins the working tree to LF as well, so the two agree.)
+- **Ignored artifacts.** The disk walk picked up `.pytest_cache/`, `__pycache__/` and `runs/`, so running a skill's own pytest suite changed its hash. This is what forced the hand-corrected hash in `23406d3`.
+- **Cost of the divergence.** `npx skills add <local path>` still hashes the folder on disk, so installing from a dirty or CRLF checkout sees a different hash than the lock records. That costs one needless reinstall and nothing else — the hash is a skip-cache key, never an integrity check. Installing from GitHub, which is how consumers get this repo, matches exactly.
 
 **How to update after changing skills:**
 - **Added a skill** → add an entry. **Removed** → delete its entry (`npx skills remove` does *not* clean the lock — do it by hand). **Edited/renamed** → recompute that skill's `computedHash`.
-- Regenerate all entries deterministically with Node (no install):
+- Regenerate every entry with the validator, which is the only implementation of the algorithm — there is deliberately no second copy here to drift out of sync with it:
 
 ```bash
-node --input-type=module -e '
-import { createHash } from "node:crypto";
-import { readdir, readFile, writeFile } from "node:fs/promises";
-import { join, relative } from "node:path";
-const walk = async (d, b, a=[]) => { for (const e of await readdir(d,{withFileTypes:true})) {
-  if (e.name===".git"||e.name==="node_modules") continue; const f=join(d,e.name);
-  e.isDirectory() ? await walk(f,b,a) : a.push({p:relative(b,f).split("\\").join("/"),f}); } return a; };
-const hash = async dir => { const fs=(await walk(dir,dir)).sort((x,y)=>x.p.localeCompare(y.p));
-  const h=createHash("sha256"); for (const x of fs){ h.update(x.p); h.update(await readFile(x.f)); } return h.digest("hex"); };
-const dirs=(await readdir("skills",{withFileTypes:true})).filter(e=>e.isDirectory()).map(e=>e.name).sort((a,b)=>a.localeCompare(b));
-const skills={}; for (const n of dirs) skills[n]={source:"orq-ai/assistant-plugins",sourceType:"github",computedHash:await hash(join("skills",n))};
-await writeFile("skills-lock.json", JSON.stringify({version:1,skills},null,2)+"\n");
-console.log("locked", dirs.length, "skills");'
+git add skills/                                  # hashes come from the index
+node tests/scripts/validate-skills.mjs --fix
 ```
 
-> Hashes are computed from on-disk bytes, so line-ending differences change them — generate on LF (macOS/Linux), not Windows with `core.autocrlf=true`.
+> `--fix` hashes **staged** content. An unstaged edit is not reflected; the validator warns when it finds one.
 
 ## Sub-plugin versioning
 

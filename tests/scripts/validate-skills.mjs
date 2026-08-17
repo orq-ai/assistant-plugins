@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Repo-invariant checks for the skills suite, in one pass:
 //   1. skills-lock.json <-> skills/ directories, both directions, with hash freshness
-//      (recomputes every computedHash and fails on drift)
+//      (recomputes every computedHash from the git index and fails on drift)
 //   2. the four plugin manifests agree on one version, and the root
 //      plugin.json is a usable object (its Agent Plugins 1.0.0 field rules
 //      are ajv's job — see the vendored schema in tests/schemas/)
@@ -47,6 +47,32 @@ const readJson = (path) => {
   return parsed;
 };
 
+// ---------- git probe ----------
+// Done once, up front: the lock hashes (section 1) and the tracked-file checks
+// (sections 5-7) both need it, and running `git ls-files` twice could report the
+// same broken checkout twice.
+//
+// -z: without it git C-quotes any path with non-ASCII, quote, backslash or
+// newline bytes, and every check below silently skips that file.
+// A genuinely non-git root (a plain directory, a test fixture) legitimately
+// skips sections 5-7 and hashes the working tree instead. But if .git is there
+// and git still failed, something is wrong with the checkout (a corrupt index,
+// `detected dubious ownership` under a containerised runner) and skipping would
+// drop three sections from a run that then reports success. Fail instead.
+let tracked = [];
+let isCheckout = false;
+try {
+  tracked = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
+    .split("\0").filter(Boolean);
+  isCheckout = true;
+} catch (e) {
+  const reason = String(e.stderr || e.message).trim().split("\n")[0];
+  if (existsSync(join(root, ".git")))   // a worktree's .git is a file, not a dir
+    err(`git ls-files failed in a checkout that has .git — sections 5-7 did not run: ${reason}`);
+  else
+    warn(`not a git checkout (${root}) — skipping the tracked-file checks`);
+}
+
 // ---------- helpers ----------
 const walkFiles = (dir, base = dir, acc = []) => {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -60,32 +86,119 @@ const walkFiles = (dir, base = dir, acc = []) => {
 
 // Mirrors the canonical lock-hash algorithm documented in CLAUDE.md
 // ("How computedHash is computed") — keep the two in sync.
-const folderHash = (dir) => {
+//
+// The bytes come from the git index, not from disk. Hashing the working tree
+// made the lock non-reproducible in two ways, both of which have already cost
+// us a hand-corrected hash (23406d3):
+//   * line endings — under core.autocrlf=true the checkout is CRLF while the
+//     blobs are LF, so every one of the 15 skills reported a stale hash and
+//     the validator could not pass on a Windows machine at all. Worse, --fix
+//     there writes CRLF-derived hashes that CI then rejects.
+//   * gitignored artifacts — the walk picked up .pytest_cache/, __pycache__/
+//     and runs/, so merely running a skill's own pytest suite changed its hash.
+// Index blobs are LF on every platform and contain only tracked files, which is
+// also what a consumer's `npx skills` sees when it fetches this repo from
+// GitHub. It is not byte-identical to upstream computeSkillFolderHash for a
+// *local-path* install off a CRLF checkout; that costs one needless reinstall,
+// because the hash is a skip-cache key and never an integrity check.
+const gitFiles = (dir) =>
+  execFileSync("git", ["ls-files", "-z", "--", dir], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
+    .split("\0").filter(Boolean);
+
+// One `git cat-file --batch` per folder rather than one spawn per file: a skill
+// with a few dozen resources costs seconds on Windows otherwise.
+const gitBlobs = (paths) => {
+  const out = execFileSync("git", ["cat-file", "--batch"], {
+    cwd: root, input: paths.map((p) => `:${p}`).join("\n") + "\n", maxBuffer: 1 << 28,
+  });
+  const blobs = [];
+  let off = 0;
+  for (const p of paths) {
+    const nl = out.indexOf(0x0a, off);
+    if (nl === -1) throw new Error(`git cat-file --batch: truncated response at ${p}`);
+    const header = out.subarray(off, nl).toString("utf8");
+    const m = header.match(/^[0-9a-f]{40,64} blob (\d+)$/);
+    if (!m) throw new Error(`git cat-file --batch: ${p}: ${header}`);
+    const start = nl + 1, size = Number(m[1]);
+    blobs.push(out.subarray(start, start + size));
+    off = start + size + 1;   // git writes a newline after each object
+  }
+  return blobs;
+};
+
+const folderHashDisk = (dir) => {
   const files = walkFiles(dir).sort((a, b) => a.rel.localeCompare(b.rel));
   const h = createHash("sha256");
   for (const f of files) { h.update(f.rel); h.update(readFileSync(f.full)); }
   return h.digest("hex");
 };
 
-// Minimal frontmatter reader: returns { name, description } with folded
-// scalars (">" continuation lines) joined to their full text.
+const folderHash = (dir) => {
+  // Falls back to the working tree only when this isn't a git checkout — the
+  // same policy sections 5-7 use, and what the non-git test fixture relies on.
+  if (!isCheckout) return folderHashDisk(dir);
+  const rel = relative(root, dir).split(sep).join("/");
+  const files = gitFiles(rel).sort((a, b) => a.localeCompare(b));
+  if (files.length === 0) {
+    // An untracked skill folder would otherwise hash as if it were empty, and
+    // --fix would write that hash into the lock for CI to reject.
+    err(`${rel} has no tracked files — \`git add\` it before regenerating the lock`);
+    return "";
+  }
+  const blobs = gitBlobs(files);
+  const h = createHash("sha256");
+  for (let i = 0; i < files.length; i++) {
+    h.update(files[i].slice(rel.length + 1));   // relative to the skill folder
+    h.update(blobs[i]);
+  }
+  return h.digest("hex");
+};
+
+// `name: "foo"` used to keep its quotes and then fail the directory-match check
+// with a message about a name nobody wrote.
+const unquote = (s) =>
+  (s.length > 1 && ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))))
+    ? s.slice(1, -1) : s;
+
+// Minimal frontmatter reader. Returns { fields, unparsed }: scalar values with
+// block scalars (">"/"|", with any chomping indicator) joined to their full
+// text, plus every unindented line it could not read as a key.
+//
+// `unparsed` is the point. The key pattern used to be /^([A-Za-z-]+):/, which
+// made `allowed_tools:` and `model2:` invisible — the closed-field-set check
+// below then passed on frontmatter that a conformant client rejects outright,
+// which is the same failure `disallowed-tools` shipped in 2.2.3. Widening the
+// pattern to identifier-ish keys catches the realistic typos; reporting
+// anything still unreadable catches the rest, so nothing in a frontmatter
+// block can be silently ignored again. Exotic YAML (quoted or non-ASCII keys)
+// lands in `unparsed` rather than being validated as a field — an error either
+// way, and the `skills-ref` cross-check in CLAUDE.md stays the backstop.
 const readFrontmatter = (text) => {
   const lines = text.replace(/^﻿/, "").split(/\r?\n/);
   if (lines[0] !== "---") return null;
-  const out = {};
+  const fields = {};
+  const unparsed = [];
   let key = null;
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
     if (line === "---") break;
-    const m = line.match(/^([A-Za-z-]+):\s*(.*)$/);
+    const m = line.match(/^([A-Za-z_][A-Za-z0-9_.-]*):(?:\s+(.*))?$/);
     if (m) {
       key = m[1];
-      out[key] = m[2] === ">" || m[2] === "|" ? "" : m[2];
+      const raw = (m[2] ?? "").trim();
+      // A block scalar opener carries no value of its own; the indented
+      // continuation lines below supply it. `>-`, `|+`, `>2` all count.
+      fields[key] = /^[>|][-+]?[0-9]*$/.test(raw) ? "" : unquote(raw);
     } else if (key && /^\s+\S/.test(line)) {
-      out[key] = (out[key] ? out[key] + " " : "") + line.trim();
+      // Not unquoted: inside a block scalar the quotes are content, and a line
+      // that happens to open and close with one ("my judge keeps changing its
+      // mind") would otherwise be silently shortened.
+      fields[key] = (fields[key] ? fields[key] + " " : "") + line.trim();
+    } else if (line.trim() !== "" && !line.trimStart().startsWith("#")) {
+      unparsed.push(line);
     }
   }
-  return out;
+  return { fields, unparsed };
 };
 
 // ---------- 1. lock <-> dirs + hash freshness ----------
@@ -104,6 +217,16 @@ if (fixMode) {
   writeFileSync(lockPath, JSON.stringify({ version: 1, skills }, null, 2) + "\n");
   lock.skills = skills;
   console.error(`fixed: skills-lock.json regenerated for ${skillDirs.length} skills`);
+}
+
+// The hashes describe staged content, so an edit that hasn't been `git add`ed
+// is invisible to them. Say so rather than letting a clean run imply the working
+// tree is what got hashed.
+if (isCheckout) {
+  const dirty = execFileSync("git", ["diff", "--name-only", "-z", "--", "skills"],
+    { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).split("\0").filter(Boolean);
+  if (dirty.length)
+    warn(`${dirty.length} unstaged change(s) under skills/ are not reflected in the lock hashes — \`git add\` them first`);
 }
 
 const FIX_HINT = "run `node tests/scripts/validate-skills.mjs --fix` to regenerate";
@@ -169,25 +292,42 @@ const SKILL_FIELDS = new Set(["name", "description", "license", "compatibility",
 // no consecutive hyphens. Distinct from the plugin name pattern in §5.5 of
 // Agent Plugins, which also permits periods.
 const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+// Anthropic's skill naming rules reserve these, so a name carrying one is
+// rejected on publish however well it conforms to the Agent Skills spec.
+// Matched whole-segment, so `orq-claude-bridge` trips and `clauded` doesn't.
+const RESERVED_NAME_RE = /(^|-)(anthropic|claude)(-|$)/i;
 for (const name of skillDirs) {
   const path = join(root, "skills", name, "SKILL.md");
   let text;
   try { text = readFileSync(path, "utf8"); }
   catch { err(`skills/${name}: missing SKILL.md`); continue; }
-  const fm = readFrontmatter(text);
-  if (!fm) { err(`skills/${name}: SKILL.md has no frontmatter block`); continue; }
+  const parsed = readFrontmatter(text);
+  if (!parsed) { err(`skills/${name}: SKILL.md has no frontmatter block`); continue; }
+  const { fields: fm, unparsed } = parsed;
+  for (const line of unparsed)
+    err(`skills/${name}: unreadable frontmatter line '${line.trim()}' — it is neither a key, a comment, nor a continuation, so no check can see it`);
   for (const key of Object.keys(fm))
     if (!SKILL_FIELDS.has(key))
       err(`skills/${name}: unknown frontmatter field '${key}' — the Agent Skills field set is closed, so a conformant client skips this skill entirely (Agent Plugins §7.1)`);
-  if (fm.name !== name) err(`skills/${name}: frontmatter name '${fm.name}' != directory name`);
+  if (!("name" in fm)) err(`skills/${name}: missing required frontmatter field 'name'`);
+  else if (fm.name !== name) err(`skills/${name}: frontmatter name '${fm.name}' != directory name`);
   else if (!SKILL_NAME_RE.test(name) || name.length > 64)
     err(`skills/${name}: name violates the Agent Skills constraints (1-64 chars, lowercase alphanumeric and single hyphens)`);
+  else if (RESERVED_NAME_RE.test(name))
+    err(`skills/${name}: name contains a reserved word (anthropic, claude)`);
   const desc = (fm.description ?? "").trim();
   if (!desc) err(`skills/${name}: missing or empty description`);
   else if (desc.length > 1024) err(`skills/${name}: description ${desc.length} chars (limit 1024)`);
   const compat = (fm.compatibility ?? "").trim();
   if (compat.length > 500) err(`skills/${name}: compatibility ${compat.length} chars (limit 500)`);
-  const lineCount = text.split("\n").length;
+  // A warning, deliberately, where opper-ai/opper-skills makes 500 lines an
+  // error: several skills here are over it on purpose, because their procedures
+  // don't survive being split across resources/. The spec recommends the limit,
+  // it doesn't impose it, and §7.1 doesn't make a long skill skippable — so this
+  // stays advisory. See CLAUDE.md.
+  // Counted the way `wc -l` does, so the number is comparable to the 500 the
+  // spec and other validators quote; splitting alone counts a phantom last line.
+  const lineCount = text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
   if (lineCount > 500)
     warn(`skills/${name}: SKILL.md is ${lineCount} lines — consider moving content to resources/`);
   // A skill with valid frontmatter but no instructions passes every other
@@ -227,25 +367,8 @@ for (const file of lintTargets) {
 // Skill installers walk the whole repo for SKILL.md files, so a tracked copy
 // anywhere outside skills/ ships to every consumer (this caught nine stale
 // pre-rename skills accidentally tracked under .agents/skills/).
-// Skipped rather than fatal when root isn't a git checkout — the other checks
-// still apply to a plain directory (e.g. a test fixture). That skip is only
-// safe for a genuinely non-git root: if .git is there and git still failed,
-// something is wrong with the checkout (a corrupt index, `detected dubious
-// ownership` under a containerised runner) and skipping would drop sections
-// 5-7 from a run that then reports success. Fail instead, and quote git.
-let tracked = [];
-try {
-  // -z: without it git C-quotes any path with non-ASCII, quote, backslash or
-  // newline bytes, and every check below silently skips that file.
-  tracked = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
-    .split("\0").filter(Boolean);
-} catch (e) {
-  const reason = String(e.stderr || e.message).trim().split("\n")[0];
-  if (existsSync(join(root, ".git")))   // a worktree's .git is a file, not a dir
-    err(`git ls-files failed in a checkout that has .git — sections 5-7 did not run: ${reason}`);
-  else
-    warn(`not a git checkout (${root}) — skipping the tracked-file checks`);
-}
+// Skipped rather than fatal when root isn't a git checkout — see the git probe
+// at the top of the file, which is where `tracked` comes from.
 for (const f of tracked) {
   if (!f.endsWith("/SKILL.md")) continue;
   if (!f.startsWith("skills/"))
