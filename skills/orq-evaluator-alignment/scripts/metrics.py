@@ -36,7 +36,7 @@ import fire
 from loguru import logger
 
 import _bootstrap  # noqa: F401
-from lib import instability, runner
+from lib import content, instability, runner
 
 _NUMERIC_TYPES = {'number', 'numeric'}
 
@@ -176,12 +176,17 @@ def _numeric_tol(cfg: dict[str, Any], scale: tuple[float, float] | None) -> floa
     )
 
 
-def _reference_matches(reference: Any, verdict: Any, output_type: str, tol: float) -> bool | None:
+def _reference_matches(
+    reference: Any, verdict: Any, output_type: str, tol: float,
+    categorical_labels: list[str] | None = None,
+) -> bool | None:
     """Whether a judge verdict matches a ground-truth label, type-natively.
 
     Returns None when the label cannot be read into the judge's verdict space —
     excluded from the count and warned about once, never coerced into a False that
-    would read as the judge being wrong.
+    would read as the judge being wrong. For categorical this includes a reference
+    that is not one of the judge's own declared labels: comparing it anyway would
+    score the dataset's vocabulary mismatch as the judge being wrong.
     """
     if verdict is None or reference in (None, ''):
         return None
@@ -189,7 +194,10 @@ def _reference_matches(reference: Any, verdict: Any, output_type: str, tol: floa
         ref, got = _coerce_bool(reference), _coerce_bool(verdict)
         return None if ref is None or got is None else ref == got
     if output_type == 'categorical':
-        return str(reference).strip().lower() == str(verdict).strip().lower()
+        norm_ref = str(reference).strip().lower()
+        if categorical_labels and norm_ref not in {str(label).strip().lower() for label in categorical_labels}:
+            return None
+        return norm_ref == str(verdict).strip().lower()
     if output_type in _NUMERIC_TYPES:
         try:
             return abs(float(reference) - float(verdict)) <= tol
@@ -199,7 +207,9 @@ def _reference_matches(reference: Any, verdict: Any, output_type: str, tol: floa
 
 
 def _correctness(
-    rows: list[dict[str, Any]], per_row: list[dict[str, Any]], output_type: str, tol: float
+    rows: list[dict[str, Any]], per_row: list[dict[str, Any]], output_type: str, tol: float,
+    *, variables: list[str] | None = None, categorical_labels: list[str] | None = None,
+    tol_derivable: bool = True,
 ) -> dict[str, Any] | None:
     """Accuracy against `reference`, overall and **by instability band**.
 
@@ -208,7 +218,27 @@ def _correctness(
     a judge that is 100% stable and 60% correct on those rows is the exact failure
     instability-ranking cannot surface, and here it becomes a headline number
     instead of a caveat.
+
+    Three cases omit accuracy outright rather than compute a number that looks
+    like a measurement and isn't (§1.2, §3.5):
+      - `variables` declares a reference-family variable (`reference`/`expected`/
+        `expected_output`) — `reference` was bound INTO the judge prompt by
+        `lib.judge.make_replacements`, so grading the verdict against it is
+        circular, not a correctness check. Checked first: it invalidates the
+        whole run regardless of `output_type`.
+      - `output_type == 'string'` — `==` is the wrong comparison for free text.
+      - numeric with no derivable tolerance band (`tol_derivable=False`) — a
+        fixed absolute band would be arbitrary with no declared scale to size it.
     """
+    if content.reference_is_judge_input(variables or []):
+        ref_vars = [v for v in (variables or []) if content.field_for_variable(v) == 'reference']
+        return {
+            'n_labelled': 0,
+            'reason_omitted': (
+                f'the evaluator declares a reference-family variable ({", ".join(ref_vars)}), so '
+                '`reference` is input the judge is shown, not ground truth to grade it against'
+            ),
+        }
     if output_type == 'string':
         return {
             'n_labelled': 0,
@@ -217,8 +247,17 @@ def _correctness(
                 'wording), so correctness is scored by reading, at the retest step'
             ),
         }
+    if output_type in _NUMERIC_TYPES and not tol_derivable:
+        return {
+            'n_labelled': 0,
+            'reason_omitted': (
+                'no declared scale and no configured numeric_tol — a fixed absolute band would be '
+                'arbitrary (0.5 is half of a 0-1 scale)'
+            ),
+        }
     verdicts = {r.get('source_index'): r.get('aggregate_value') for r in rows}
     bands = {e['source_index']: e['band'] for e in per_row}
+    band_totals = Counter(e['band'] for e in per_row)
     n_unreadable = 0
     confusion: Counter = Counter()
     by_band: dict[str, dict[str, int]] = {}
@@ -227,7 +266,7 @@ def _correctness(
     labelled_indices: list[int] = []
     for row in rows:
         idx = row.get('source_index')
-        match = _reference_matches(row.get('reference'), verdicts.get(idx), output_type, tol)
+        match = _reference_matches(row.get('reference'), verdicts.get(idx), output_type, tol, categorical_labels)
         if match is None:
             if row.get('reference') not in (None, '') and verdicts.get(idx) is not None:
                 n_unreadable += 1
@@ -243,8 +282,11 @@ def _correctness(
         slot['n_correct'] += int(match)
     if not n_labelled:
         return None
-    for slot in by_band.values():
+    for band_name, slot in by_band.items():
         slot['accuracy'] = slot['n_correct'] / slot['n']
+        # Total rows in this band (labelled or not) — the denominator for how much
+        # of the band the labelled subset actually speaks for (§4.1).
+        slot['n_band_total'] = band_totals.get(band_name, slot['n'])
     return {
         'n_labelled': n_labelled,
         'n_correct': n_correct,
@@ -337,6 +379,11 @@ def _correctness_lines(c: dict[str, Any] | None) -> list[str]:
     instability and 0.6 stable-row accuracy is consistently wrong, which is the
     failure everything else here is blind to — so it gets its own line, not a
     field in a nested dict.
+
+    That line only earns the "measured" claim when the labelled subset actually
+    speaks for the band: `n >= 10` (not a handful of rows) AND labelled coverage
+    `>= 90%` of the band. Below that floor it is a partial view, not a measurement
+    of the blind spot, and is captioned as such (§4.1).
     """
     if not c or not c.get('n_labelled'):
         return []
@@ -346,10 +393,18 @@ def _correctness_lines(c: dict[str, Any] | None) -> list[str]:
     ]
     stable = c.get('by_band', {}).get('stable')
     if stable:
-        lines.append(
+        n_band_total = stable.get('n_band_total', stable['n'])
+        coverage = stable['n'] / n_band_total if n_band_total else 0.0
+        line = (
             f"      on rows the judge was STABLE: {stable['n_correct']}/{stable['n']} "
-            f"({stable['accuracy']:.0%}) ← the consistently-wrong blind spot, measured"
+            f"({stable['accuracy']:.0%}) — {stable['n']} of {n_band_total} stable rows carry a "
+            f"label ({coverage:.0%} coverage)"
         )
+        if stable['n'] >= 10 and coverage >= 0.9:
+            line += ' ← the consistently-wrong blind spot, measured'
+        else:
+            line += ' (partial view — do not conclude "consistent-and-right" from this)'
+        lines.append(line)
     if c.get('wrong_source_indices'):
         lines.append(f"      wrong on: {c['wrong_source_indices'][:10]}")
     return lines
@@ -366,9 +421,20 @@ def _report(
     hist = f"{bands.get('stable', 0)} stable / {bands.get('noisy', 0)} noisy / {bands.get('unreliable', 0)} unreliable"
     if bands.get('unmeasurable'):
         hist += f" / {bands['unmeasurable']} unmeasurable"
+    # String instability is exact-match over canonical text (§4a has no reading
+    # step at this stage) — two paraphrased, equally-correct answers count as a
+    # disagreement, so the number can only overstate instability, never understate
+    # it. Every other type's scale is the real thing being measured.
+    if output_type == 'string':
+        inst_annotation = (
+            '(exact-match over canonical text: paraphrased same-meaning answers count as '
+            'disagreement, so treat this as an upper bound).'
+        )
+    else:
+        inst_annotation = '(0 = judge always agrees with itself, 1 = maximal).'
     lines = [
         f'Instability summary over {n_rows} datapoints ({n_measurable} measurable, type={output_type}):',
-        f'  - mean instability: {_fmt(mean_inst)} (0 = judge always agrees with itself, 1 = maximal).',
+        f'  - mean instability: {_fmt(mean_inst)} {inst_annotation}',
         f'  - bands: {hist}.',
         *_correctness_lines(correctness),
     ]
@@ -423,7 +489,14 @@ def main(run_dir: str | None = None, config: str = 'config.toml') -> str:
     scale = tuple(scale_raw) if isinstance(scale_raw, (list, tuple)) and len(scale_raw) == 2 else None
 
     per_row = _per_row(rows, output_type, k, scale, floor, n_req)
-    correctness = _correctness(rows, per_row, output_type, _numeric_tol(cfg, scale))
+    # A fixed absolute band is only meaningful relative to a declared scale (or an
+    # explicit override) — with neither, "correct within 0.5" is an arbitrary
+    # number dressed up as a measurement (§3.5).
+    tol_derivable = (cfg.get('numeric_tol') not in (None, '')) or scale is not None
+    correctness = _correctness(
+        rows, per_row, output_type, _numeric_tol(cfg, scale),
+        variables=ev.get('variables', []), categorical_labels=labels, tol_derivable=tol_derivable,
+    )
     if correctness and correctness.get('n_unreadable_labels'):
         logger.warning(
             f"⚠ {correctness['n_unreadable_labels']} row(s) carry a ground-truth label this "

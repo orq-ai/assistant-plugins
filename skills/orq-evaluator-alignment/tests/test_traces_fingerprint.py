@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import _bootstrap  # noqa: F401,E402
 
-from lib.content import judged_input_key, traces_fingerprint  # noqa: E402
+from lib.content import judged_input_key, reference_is_judge_input, traces_fingerprint  # noqa: E402
 
 
 def _rows(*queries: str) -> list[dict]:
@@ -63,3 +63,26 @@ def test_judged_input_key_handles_unhashable_messages():
     key = judged_input_key({'query': 'q', 'messages': [{'role': 'user', 'content': 'hi'}]})
     assert isinstance(key, str)
     assert 'hi' in key
+
+
+# ── reference_is_judge_input (RES-978 review §1.2) ────────────────────────────
+# A `{{log.reference}}` variable in an evaluator's prompt means the judge is
+# shown the answer before it answers — `metrics._correctness` must not then
+# grade the verdict against `reference` as if it were independent ground truth.
+
+
+def test_reference_is_judge_input_true_for_reference_leaf():
+    assert reference_is_judge_input(['log.output', 'log.reference']) is True
+
+
+def test_reference_is_judge_input_true_for_expected_and_expected_output_leaves():
+    assert reference_is_judge_input(['expected']) is True
+    assert reference_is_judge_input(['context.expected_output']) is True
+
+
+def test_reference_is_judge_input_false_when_no_reference_family_variable_declared():
+    assert reference_is_judge_input(['log.input', 'log.output']) is False
+
+
+def test_reference_is_judge_input_false_for_empty_variables():
+    assert reference_is_judge_input([]) is False

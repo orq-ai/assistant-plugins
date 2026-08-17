@@ -56,6 +56,20 @@ def field_for_variable(var: str) -> str | None:
     return _FIELD_BY_LEAF.get(var.split('.')[-1].strip().lower())
 
 
+def reference_is_judge_input(variables: list[str]) -> bool:
+    """True iff a declared template variable is bound from the `reference` row field.
+
+    `metrics.py`'s correctness check wants to grade the judge's verdict against
+    `reference` as ground truth. But `lib.judge.make_replacements` binds row
+    fields into the judge prompt through this same `_FIELD_BY_LEAF` table — so an
+    evaluator that declares `{{log.reference}}` (or `{{expected}}` /
+    `{{expected_output}}`) was handed the answer before it answered. Grading that
+    verdict against `reference` afterwards is circular, not a measurement: it
+    reports the judge's ability to read back what it was just shown.
+    """
+    return any(field_for_variable(v) == 'reference' for v in variables)
+
+
 def message_text(m: Any) -> str:
     """Flatten one message's text across the shapes orq emits.
 
