@@ -208,8 +208,7 @@ def _reference_matches(
 
 def _correctness(
     rows: list[dict[str, Any]], per_row: list[dict[str, Any]], output_type: str, tol: float,
-    *, variables: list[str] | None = None, categorical_labels: list[str] | None = None,
-    tol_derivable: bool = True,
+    *, variables: list[str], categorical_labels: list[str], tol_derivable: bool,
 ) -> dict[str, Any] | None:
     """Accuracy against `reference`, overall and **by instability band**.
 
@@ -229,9 +228,16 @@ def _correctness(
       - `output_type == 'string'` — `==` is the wrong comparison for free text.
       - numeric with no derivable tolerance band (`tol_derivable=False`) — a
         fixed absolute band would be arbitrary with no declared scale to size it.
+
+    `variables`/`categorical_labels`/`tol_derivable` are required, not defaulted:
+    a caller that silently omitted `variables=` would silently re-enable the
+    §1.2 circular-grading bug, and one omitting `tol_derivable=False` would
+    re-enable the §3.5 arbitrary-band bug — both with no error and a
+    plausible-looking wrong number. Forcing every call site to state them is the
+    difference between a loud `TypeError` and a quiet wrong answer.
     """
-    if content.reference_is_judge_input(variables or []):
-        ref_vars = [v for v in (variables or []) if content.field_for_variable(v) == 'reference']
+    if content.reference_is_judge_input(variables):
+        ref_vars = [v for v in variables if content.field_for_variable(v) == 'reference']
         return {
             'n_labelled': 0,
             'reason_omitted': (
