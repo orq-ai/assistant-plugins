@@ -242,3 +242,32 @@ def test_numeric_with_no_number_at_all_is_still_off_contract():
 
 def test_numeric_out_of_scale_is_still_off_contract():
     assert parse_numeric('Score: 9', (1, 5)).status == 'wrong_output_type'
+
+
+def test_parse_numeric_accepts_a_quoted_number_in_the_schema():
+    # Models quote numbers routinely. Requiring a bare int/float sent these down
+    # the free-text path, where the explanation's own digits made the verdict line
+    # ambiguous — so a judge that answered correctly in the schema it was handed
+    # was recorded as off-contract.
+    p = parse_numeric('{"value": "4", "explanation": "2 of the 3 claims are supported"}', (1, 5))
+    assert p.status == 'ok'
+    assert p.value == 4.0
+    assert p.explanation == '2 of the 3 claims are supported'
+
+
+def test_parse_numeric_quoted_decimal_comma():
+    assert parse_numeric('{"value": "3,4"}', (1, 5)).value == pytest.approx(3.4)
+
+
+def test_parse_numeric_quoted_non_number_is_off_contract():
+    p = parse_numeric('{"value": "unscorable", "explanation": "no basis"}', (1, 5))
+    assert p.status == 'wrong_output_type'
+
+
+def test_parse_numeric_quoted_number_still_honours_the_scale():
+    assert parse_numeric('{"value": "12"}', (1, 5)).status == 'wrong_output_type'
+
+
+def test_parse_numeric_does_not_read_a_boolean_as_a_score():
+    # True is an int in Python; a boolean verdict is not a score.
+    assert parse_numeric('{"value": true}', (0, 1)).status == 'wrong_output_type'

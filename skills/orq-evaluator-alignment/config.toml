@@ -102,6 +102,29 @@ backend_deployment_key = ""
 # Bounded parallelism for per-annotation meta-prompt calls (step 6 fallback).
 recommend_concurrency = 4
 
+# ── Step 8: retest gates ─────────────────────────────────────────────────────
+# The retest calls a rewrite a success only when BOTH signals hold: instability
+# dropped AND the new verdicts agree with the human labels. These are signal (b)'s
+# bars — the type-native minimum agreement. Raising them makes the retest stricter.
+retest_min_accuracy = 0.7      # boolean + categorical: overall exact-match rate
+retest_min_tpr = 0.7           # boolean only; skipped when no human label is True
+retest_min_tnr = 0.7           # boolean only; skipped when no human label is False
+retest_min_within_tol = 0.7    # numeric: share of points inside the band below
+
+# Numeric agreement band, in the judge's own units: |human − judge| <= this counts
+# as agreement. ONE key, read by the retest gate, the recommend step's disagreement
+# extraction, and the cross-model probe — they are the same distance on the same
+# scale, and two keys meant setting one silently left the other on its default.
+# LEAVE BLANK to derive it from the evaluator's declared scale, which is what you
+# usually want: a fixed 0.5 is half of a 0–1 groundedness scale and 0.5% of a 0–100
+# one, so an absolute band means something different on every judge.
+numeric_tol = ""
+# Fraction of the declared scale range used when numeric_tol is blank. 0.1 is one
+# point on a 1–10 judge. Falls back to an absolute 0.5 when no scale is declared.
+numeric_tol_fraction = 0.1
+# A grey-zone policy may band each point individually (`tolerance` per label); those
+# per-point bands are honoured as-is, and this value covers the points without one.
+
 # ── Output ───────────────────────────────────────────────────────────────────
 # Parent directory for per-run working directories (runs/<key>_<ts>/).
 runs_dir = "runs"

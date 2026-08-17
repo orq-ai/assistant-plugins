@@ -88,6 +88,57 @@ def test_resolve_numeric_tol_cli_override_wins():
     assert retest._resolve_numeric_tol(0.25, {'numeric_tol': 2.0}, policy) == 0.25
 
 
+def test_resolve_numeric_tol_derives_the_default_from_the_scale():
+    # Signal (a) normalizes by the declared range; signal (b) now matches, instead
+    # of applying an absolute 0.5 that means half the scale on one judge and 0.5%
+    # on another.
+    assert retest._resolve_numeric_tol(None, {}, None, [0.0, 1.0]) == pytest.approx(0.1)
+    assert retest._resolve_numeric_tol(None, {}, None, [0.0, 100.0]) == pytest.approx(10.0)
+
+
+def test_resolve_numeric_tol_configured_absolute_beats_the_derived_default():
+    assert retest._resolve_numeric_tol(None, {'numeric_tol': 2.0}, None, [0.0, 1.0]) == 2.0
+
+
+def test_resolve_numeric_tol_ignores_a_blank_config_key():
+    # config.toml ships `numeric_tol = ""` to mean "derive it"; an empty string must
+    # not float() into a crash or a 0.0 band that fails every point.
+    assert retest._resolve_numeric_tol(None, {'numeric_tol': ''}, None, [0.0, 10.0]) == pytest.approx(1.0)
+
+
+def test_resolve_numeric_tol_honours_a_configured_fraction():
+    cfg = {'numeric_tol': '', 'numeric_tol_fraction': 0.25}
+    assert retest._resolve_numeric_tol(None, cfg, None, [0.0, 4.0]) == pytest.approx(1.0)
+
+
+def test_varying_policy_bands_reach_the_metric_instead_of_being_dropped():
+    # validate_policy REQUIRES a tolerance on every numeric label, and the old
+    # resolver kept them only when all of them agreed — so three considered bands
+    # from the human were replaced by one configured default, silently.
+    labels = {
+        '3': {'value': 4.0, 'tolerance': 0.1},
+        '4': {'value': 2.0, 'tolerance': 2.0},
+    }
+    judge = {3: 4.5, 4: 2.5}
+    pairs, tols = retest._pair_with_labels(labels, judge)
+    assert pairs == [(4.0, 4.5), (2.0, 2.5)]
+    assert tols == [0.1, 2.0]
+
+    scores, _ = retest._evaluate_agreement(pairs, 'number', 0.5, 0.7, 0.7, 0.7, 0.7, tols=tols)
+    # Point 3 misses its own tight band, point 4 clears its wide one. Under the
+    # single 0.5 default both would have counted as agreement.
+    assert scores['n_within'] == 1
+    assert scores['tol_source'] == 'per_point'
+
+
+def test_a_point_without_its_own_band_falls_back_to_the_run_wide_one():
+    labels = {'3': {'value': 4.0}, '4': {'value': 2.0, 'tolerance': 0.1}}
+    pairs, tols = retest._pair_with_labels(labels, {3: 4.4, 4: 2.4})
+    assert tols == [None, 0.1]
+    scores, _ = retest._evaluate_agreement(pairs, 'number', 0.5, 0.7, 0.7, 0.7, 0.7, tols=tols)
+    assert scores['n_within'] == 1  # the unbanded point clears 0.5, the banded one does not
+
+
 # --- the retest set is scoped to the labelled rows ---
 
 
@@ -191,33 +242,63 @@ def test_a_run_dir_without_a_fingerprint_is_not_blocked(tmp_path):
 # --- the before/after comparison must cover the same rows ---
 
 
+_ORIGINAL_METRICS = {
+    'scores': {'mean_instability': 0.5},
+    'per_row': [
+        {'source_index': 0, 'instability': 0.9},
+        {'source_index': 1, 'instability': 0.1},
+        {'source_index': 2, 'instability': 0.2},
+    ],
+}
+
+
 def test_original_mean_is_recomputed_over_the_retested_rows():
     # Comparing a 3-row retest mean against the full 24-row original mean would
     # make the "drop" an artifact of which rows were picked.
-    metrics = {
-        'scores': {'mean_instability': 0.5},
-        'per_row': [
-            {'source_index': 0, 'instability': 0.9},
-            {'source_index': 1, 'instability': 0.1},
-            {'source_index': 2, 'instability': 0.2},
-        ],
-    }
-    mean, scoped = retest._mean_instability_over(metrics, {1, 2})
-    assert mean == pytest.approx(0.15)
-    assert scoped is True
+    by_idx = retest._instability_by_index(_ORIGINAL_METRICS)
+    assert retest._mean_over(by_idx, {1, 2}) == pytest.approx(0.15)
 
 
-def test_original_mean_falls_back_to_the_run_wide_score():
-    # The fallback changes the comparison basis, so it reports that it did rather
-    # than presenting a subset-vs-full-run delta as like-for-like.
-    metrics = {'scores': {'mean_instability': 0.42}, 'per_row': []}
-    mean, scoped = retest._mean_instability_over(metrics, {1, 2})
-    assert mean == pytest.approx(0.42)
-    assert scoped is False
+def test_instability_by_index_translates_a_subrun_position():
+    # A sub-run renumbers source_index from 0; the labels are keyed by the original.
+    sub = {'per_row': [{'source_index': 0, 'instability': 0.4}]}
+    assert retest._instability_by_index(sub, {0: 7}) == {7: 0.4}
 
 
-def test_original_mean_is_none_when_nothing_is_available():
-    assert retest._mean_instability_over({'per_row': []}, {1}) == (None, False)
+def test_instability_by_index_omits_unmeasurable_rows():
+    # Absent, not zero: an unmeasurable row must not be averaged in as "perfectly
+    # stable", and the caller needs to see which rows a run could not measure.
+    metrics = {'per_row': [
+        {'source_index': 0, 'instability': None},
+        {'source_index': 1, 'instability': 0.3},
+    ]}
+    assert retest._instability_by_index(metrics) == {1: 0.3}
+
+
+def test_mean_over_is_none_when_nothing_is_available():
+    assert retest._mean_over({}, {1}) is None
+
+
+def test_rows_the_new_judge_cannot_measure_are_outside_the_comparison():
+    # The gaming path gate (a) has to be closed against: the new judge answers
+    # off-contract on the WORST row, that row goes unmeasurable, and averaging each
+    # side over its own measurable set reports a drop that is really a deletion.
+    before = retest._instability_by_index(_ORIGINAL_METRICS)          # {0: .9, 1: .1, 2: .2}
+    after = retest._instability_by_index({'per_row': [                # row 0 lost
+        {'source_index': 0, 'instability': None},
+        {'source_index': 1, 'instability': 0.1},
+        {'source_index': 2, 'instability': 0.2},
+    ]})
+    scope = {0, 1, 2}
+    comparable_rows = {i for i in scope if i in before and i in after}
+    assert comparable_rows == {1, 2}
+    assert len({i for i in scope if i in before} - comparable_rows) == 1
+    # Like-for-like: no drop, because the rows that remain did not move.
+    assert retest._mean_over(before, comparable_rows) == pytest.approx(
+        retest._mean_over(after, comparable_rows)
+    )
+    # Averaging each side over its own measurable set is what would have lied.
+    assert retest._mean_over(after, scope) < retest._mean_over(before, scope)
 
 
 # --- the success gate itself ---

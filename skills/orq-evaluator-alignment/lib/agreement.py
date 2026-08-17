@@ -8,7 +8,8 @@ on the same confusers?
 
   - boolean     → TPR / TNR (+ overall accuracy). Positive class = True.
   - categorical → exact-match accuracy (case/whitespace-normalized).
-  - numeric     → MAE and within-tolerance rate on the raw scale (default tol 0.5).
+  - numeric     → MAE and within-tolerance rate on the raw scale, with the default
+    band derived from the evaluator's DECLARED scale (`default_tolerance`).
 
 Pure by design, mirroring `lib.instability`: no I/O, no judge calls, stdlib only,
 no evaluatorq/orq import — so it stays unit-testable and imports safely on the
@@ -29,6 +30,41 @@ _NUMERIC_TYPES = frozenset({'number', 'numeric'})
 
 _TRUE_TOKENS = frozenset({'true', 'yes', 'pass', '1'})
 _FALSE_TOKENS = frozenset({'false', 'no', 'fail', '0'})
+
+# Default numeric band as a fraction of the DECLARED scale range, and the absolute
+# band used when no scale is declared. 10% of the range is one point on a 1–10
+# judge, which is the shape most rubrics are written to.
+DEFAULT_TOL_FRACTION = 0.1
+FALLBACK_TOL = 0.5
+
+
+def default_tolerance(
+    scale: Sequence[float] | None,
+    *,
+    fraction: float = DEFAULT_TOL_FRACTION,
+    fallback: float = FALLBACK_TOL,
+) -> float:
+    """The numeric agreement band for an evaluator, derived from its scale.
+
+    A fixed absolute band is the wrong default, and in the same way `lib.instability`
+    already argues against: `tol=0.5` is 50% of a 0–1 groundedness scale and 0.5% of
+    a 0–100 one, so signal (b) waved through a rewrite that missed the human by half
+    the scale on one judge and rejected one that was within a point everywhere on the
+    other. Scaling the band by `(max − min)` puts both judges on the same footing,
+    exactly as normalizing the spread does for signal (a).
+
+    Falls back to an absolute `fallback` when no usable scale is declared — the band
+    has to be *something*, and an undeclared scale is the case where there is nothing
+    to derive it from.
+    """
+    if isinstance(scale, (list, tuple)) and len(scale) == 2:
+        try:
+            span = float(scale[1]) - float(scale[0])
+        except (TypeError, ValueError):
+            return float(fallback)
+        if span > 0:
+            return fraction * span
+    return float(fallback)
 
 
 def _coerce_bool(value: Any) -> bool:
@@ -117,22 +153,39 @@ def categorical_agreement(pairs: Sequence[Pair]) -> dict[str, Any]:
     return {'accuracy': n_correct / n, 'n_correct': n_correct, 'n': n}
 
 
-def numeric_agreement(pairs: Sequence[Pair], tol: float = 0.5) -> dict[str, Any]:
+def numeric_agreement(
+    pairs: Sequence[Pair], tol: float = FALLBACK_TOL, tols: Sequence[float | None] | None = None
+) -> dict[str, Any]:
     """Mean absolute error and within-tolerance rate over numeric pairs.
 
     Both computed on the raw scale (no normalization) so `tol` is expressed in the
     judge's own units. A pair counts as within tolerance when `|human − judge| <=
-    tol` (boundary inclusive). Default `tol=0.5` — half a scale point.
+    tol` (boundary inclusive).
+
+    `tols` gives a **per-pair** band, positionally aligned with `pairs`, for the
+    points the human banded individually; `None` at a position falls back to the
+    run-wide `tol`. The grey-zone policy requires a `tolerance` on every numeric
+    label, and honouring only a uniform one meant three different bands from the
+    human were silently replaced by the configured default. `tol_source` says which
+    regime was in play so the retest report can state it.
     """
     _require_pairs(pairs, 'numeric')
+    if tols is not None and len(tols) != len(pairs):
+        raise ValueError(f'tols has {len(tols)} entries for {len(pairs)} pairs')
     abs_errors = [abs(_coerce_float(human) - _coerce_float(judge)) for human, judge in pairs]
+    bands = [
+        float(tol if tols is None or tols[i] is None else tols[i])
+        for i in range(len(abs_errors))
+    ]
     n = len(abs_errors)
-    n_within = sum(1 for e in abs_errors if e <= tol)
+    n_within = sum(1 for e, band in zip(abs_errors, bands) if e <= band)
+    per_point = tols is not None and len(set(bands)) > 1
     return {
         'mae': sum(abs_errors) / n,
         'within_tolerance_rate': n_within / n,
         'n_within': n_within,
         'tol': float(tol),
+        'tol_source': 'per_point' if per_point else 'uniform',
         'n': n,
     }
 
@@ -140,8 +193,9 @@ def numeric_agreement(pairs: Sequence[Pair], tol: float = 0.5) -> dict[str, Any]
 def agreement(output_type: str, pairs: Sequence[Pair], **kw: Any) -> dict[str, Any]:
     """Dispatch `(human, judge)` pairs to the metric for `output_type`.
 
-    boolean / categorical ignore extra kwargs; numeric reads `tol` (default 0.5).
-    Fails loud on an unrecognised `output_type`, mirroring `lib.instability`.
+    boolean / categorical ignore extra kwargs; numeric reads `tol` (the run-wide
+    band) and `tols` (optional per-pair bands). Fails loud on an unrecognised
+    `output_type`, mirroring `lib.instability`.
     """
     t = (output_type or '').strip().lower()
     if t == 'boolean':
@@ -149,5 +203,5 @@ def agreement(output_type: str, pairs: Sequence[Pair], **kw: Any) -> dict[str, A
     if t == 'categorical':
         return categorical_agreement(pairs)
     if t in _NUMERIC_TYPES:
-        return numeric_agreement(pairs, tol=kw.get('tol', 0.5))
+        return numeric_agreement(pairs, tol=kw.get('tol', FALLBACK_TOL), tols=kw.get('tols'))
     raise ValueError(f'unknown output_type {output_type!r} (expected boolean | categorical | number)')

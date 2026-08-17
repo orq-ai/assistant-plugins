@@ -203,3 +203,71 @@ def test_agreement_dispatch_accepts_numeric_alias():
 def test_agreement_dispatch_unknown_type_raises():
     with pytest.raises(ValueError):
         agreement.agreement('freeform', [(1, 1)])
+
+
+# --- the numeric band has to mean the same thing on every scale ---
+
+
+def test_default_tolerance_scales_with_the_declared_range():
+    # The whole point: a fixed 0.5 is half of a 0-1 scale and 0.5% of a 0-100 one,
+    # so the same "tolerance" waved through a rewrite that missed the human by half
+    # the scale on one judge and rejected one that was within a point on the other.
+    assert agreement.default_tolerance([0.0, 1.0]) == pytest.approx(0.1)
+    assert agreement.default_tolerance([1.0, 10.0]) == pytest.approx(0.9)
+    assert agreement.default_tolerance([0.0, 100.0]) == pytest.approx(10.0)
+
+
+def test_default_tolerance_falls_back_when_no_scale_is_declared():
+    # The band has to be something, and an undeclared scale is the one case where
+    # there is nothing to derive it from.
+    assert agreement.default_tolerance(None) == pytest.approx(agreement.FALLBACK_TOL)
+    assert agreement.default_tolerance([5.0]) == pytest.approx(agreement.FALLBACK_TOL)
+    assert agreement.default_tolerance([2.0, 2.0]) == pytest.approx(agreement.FALLBACK_TOL)
+    assert agreement.default_tolerance(['a', 'b']) == pytest.approx(agreement.FALLBACK_TOL)
+
+
+def test_scale_derived_band_reverses_both_bad_verdicts():
+    # A 0-1 judge off by 0.4 on every row used to PASS at within >= 0.7; a 0-100
+    # judge off by 1 used to FAIL. Both now read the way the scale says they should.
+    off_by_40_percent = [(0.5, 0.9), (0.4, 0.8), (0.2, 0.6)]
+    r = agreement.numeric_agreement(off_by_40_percent, tol=agreement.default_tolerance([0, 1]))
+    assert r['within_tolerance_rate'] == pytest.approx(0.0)
+
+    off_by_one_percent = [(50.0, 51.0), (40.0, 41.0), (20.0, 21.0)]
+    r = agreement.numeric_agreement(off_by_one_percent, tol=agreement.default_tolerance([0, 100]))
+    assert r['within_tolerance_rate'] == pytest.approx(1.0)
+
+
+# --- per-point bands, because the policy requires one on every numeric label ---
+
+
+def test_per_point_tolerance_is_used_where_given():
+    pairs = [(3.0, 3.4), (7.0, 7.4)]
+    # Second point was banded tightly by the human; the first takes the run-wide band.
+    r = agreement.numeric_agreement(pairs, tol=0.5, tols=[None, 0.1])
+    assert r['n_within'] == 1
+    assert r['tol_source'] == 'per_point'
+
+
+def test_uniform_per_point_bands_are_not_reported_as_per_point():
+    r = agreement.numeric_agreement([(3.0, 3.1), (7.0, 7.1)], tol=0.5, tols=[0.5, 0.5])
+    assert r['tol_source'] == 'uniform'
+
+
+def test_no_per_point_bands_scores_exactly_as_before():
+    pairs = [(3.0, 3.4), (7.0, 7.9)]
+    assert agreement.numeric_agreement(pairs, tol=0.5) == agreement.numeric_agreement(
+        pairs, tol=0.5, tols=None
+    )
+
+
+def test_misaligned_per_point_bands_raise():
+    # Positional alignment is the contract; a silent zip() would score the wrong
+    # point against the wrong band.
+    with pytest.raises(ValueError):
+        agreement.numeric_agreement([(1.0, 1.0), (2.0, 2.0)], tol=0.5, tols=[0.1])
+
+
+def test_agreement_dispatch_forwards_per_point_bands():
+    r = agreement.agreement('number', [(3.0, 3.4)], tol=0.5, tols=[0.1])
+    assert r['within_tolerance_rate'] == pytest.approx(0.0)

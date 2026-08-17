@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["fire>=0.7.0"]
+# dependencies = ["fire>=0.7.0", "loguru>=0.7.3"]
 # ///
 """Step 7 — serve the per-type annotation UI and persist human labels.
 

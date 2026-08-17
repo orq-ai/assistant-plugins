@@ -112,7 +112,8 @@ def _type_detail(output_type: str, clean: list[Any], k: int | None, scale: tuple
 
 
 def _per_row(
-    rows: list[dict[str, Any]], output_type: str, k: int | None, scale: tuple[float, float] | None, floor: int
+    rows: list[dict[str, Any]], output_type: str, k: int | None, scale: tuple[float, float] | None,
+    floor: int, n_req: int,
 ) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for row in rows:
@@ -139,7 +140,9 @@ def _per_row(
             entry.update({'instability': None, 'band': 'unmeasurable'})
         else:
             try:
-                inst = instability.row_instability(output_type, clean, k=k, scale=scale)
+                inst = instability.row_instability(
+                    output_type, clean, k=k, scale=scale, n_requested=n_req
+                )
             except ValueError:
                 inst = None
             if inst is None:
@@ -200,14 +203,23 @@ def _detail_str(output_type: str, e: dict[str, Any]) -> str:
         return f'{v:.2f}' if isinstance(v, (int, float)) else 'n/a'
 
     if output_type == 'boolean':
-        return f"({e.get('n_true', '?')}T/{e.get('n_false', '?')}F)"
-    if output_type == 'categorical':
-        return f"(counts={e.get('counts')}, k={e.get('k')})"
-    if output_type == 'string':
-        return f"({e.get('n_distinct')} distinct / {e.get('n_successful_repeats', '?')} reps)"
-    if output_type in _NUMERIC_TYPES:
-        return f"(mean={_num(e.get('mean'))}, stdev={_num(e.get('stdev'))} on scale {e.get('scale')})"
-    return ''
+        detail = f"({e.get('n_true', '?')}T/{e.get('n_false', '?')}F)"
+    elif output_type == 'categorical':
+        detail = f"(counts={e.get('counts')}, k={e.get('k')})"
+    elif output_type == 'string':
+        detail = f"({e.get('n_distinct')} distinct / {e.get('n_successful_repeats', '?')} reps)"
+    elif output_type in _NUMERIC_TYPES:
+        detail = f"(mean={_num(e.get('mean'))}, stdev={_num(e.get('stdev'))} on scale {e.get('scale')})"
+    else:
+        detail = ''
+    # Instability is computed over the CLEAN verdicts, so a row can answer
+    # off-contract half the time and still band as `stable` on the rest. The
+    # dataset-level count shows it in aggregate but not on the row where it
+    # happened, which is the row a reader is about to trust.
+    n_wrong = e.get('n_wrong_output_type') or 0
+    if n_wrong:
+        detail += f' [{n_wrong} off-contract rep(s) excluded]'
+    return detail
 
 
 def _report(
@@ -227,6 +239,20 @@ def _report(
     ]
     if total_wrong or total_failed:
         lines.append(f'  - {total_wrong} off-contract (wrong_output_type) reps, {total_failed} failed reps.')
+    # Which rows, not just how many. A row whose band was computed from half its
+    # repetitions can read `stable` while the other half never parsed, and the
+    # dataset-level count above does not say which row that was.
+    off_contract = [e for e in per_row if (e.get('n_wrong_output_type') or 0)]
+    if off_contract:
+        named = ', '.join(
+            f"#{e['source_index']} ({e['n_wrong_output_type']} of "
+            f"{e['n_wrong_output_type'] + e['n_successful_repeats'] + e['n_failed']}, band={e['band']})"
+            for e in sorted(off_contract, key=lambda e: -e['n_wrong_output_type'])[:5]
+        )
+        lines.append(
+            f'  - Rows with off-contract reps (band reflects only the parsed ones): {named}'
+            + (f' … +{len(off_contract) - 5} more' if len(off_contract) > 5 else '')
+        )
     unstable = [e for e in per_row if e['instability'] not in (None, 0.0)]
     if unstable:
         lines.append('  - Most-unstable datapoints:')
@@ -261,7 +287,7 @@ def main(run_dir: str | None = None, config: str = 'config.toml') -> str:
     scale_raw = ev.get('scale')
     scale = tuple(scale_raw) if isinstance(scale_raw, (list, tuple)) and len(scale_raw) == 2 else None
 
-    per_row = _per_row(rows, output_type, k, scale, floor)
+    per_row = _per_row(rows, output_type, k, scale, floor, n_req)
     measurable = [e for e in per_row if e['instability'] is not None]
     bands = Counter(e['band'] for e in per_row)
     mean_inst = fmean(e['instability'] for e in measurable) if measurable else None

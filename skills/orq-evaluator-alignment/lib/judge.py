@@ -321,6 +321,34 @@ def _verdict_number_token(text: str) -> tuple[str | None, str]:
     return None, ''
 
 
+def _json_number(obj: dict[str, Any] | None) -> float | None:
+    """The `value` of a JSON completion as a float, or None if it isn't one.
+
+    Accepts a QUOTED number (`{"value": "4"}`) as well as a bare one. Models quote
+    numbers routinely, and requiring `isinstance(value, (int, float))` sent those
+    completions down the free-text path — where the surrounding explanation's own
+    digits made the verdict line ambiguous, and a judge that had answered correctly
+    in the schema it was given was recorded as off-contract. Bools are excluded
+    because `True` is an `int` in Python and a boolean verdict is not a score.
+    """
+    if obj is None or 'value' not in obj:
+        return None
+    value = obj['value']
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        token = value.strip()
+        if token.count(',') == 1 and '.' not in token:
+            token = token.replace(',', '.')
+        try:
+            return float(token)
+        except ValueError:
+            return None
+    return None
+
+
 def parse_numeric(raw: str, scale: tuple[float, float] | None = None) -> ParsedVerdict:
     """Canonicalize a numeric completion: the verdict token, `,`/`.` normalized.
 
@@ -333,8 +361,9 @@ def parse_numeric(raw: str, scale: tuple[float, float] | None = None) -> ParsedV
     text = _strip_code_fences((raw or '').strip()).strip()
     obj = _loads_obj(text)
     explanation = ''
-    if obj is not None and isinstance(obj.get('value'), (int, float)) and not isinstance(obj.get('value'), bool):
-        number = float(obj['value'])
+    json_number = _json_number(obj)
+    if json_number is not None:
+        number = json_number
         explanation = str(obj.get('explanation', '') or '')
     else:
         token, reason = _verdict_number_token(text)

@@ -113,7 +113,7 @@ def test_numeric_out_of_scale_spread_clamps_to_1():
     assert instability.numeric([-50.0, 50.0], 1.0, 10.0) == pytest.approx(1.0)
 
 
-# --- string: exact-match normalized entropy H/ln(N) ---
+# --- string: exact-match normalized entropy H/ln(n_requested) ---
 
 
 def test_string_unanimous_is_0():
@@ -139,6 +139,40 @@ def test_string_6_2_2_over_10_uses_lnN_denominator():
 def test_string_empty_raises():
     with pytest.raises(ValueError):
         instability.string([])
+
+
+def test_string_denominator_does_not_move_with_failed_repetitions():
+    # The ranking bug: two rows with the SAME 50/50 behaviour at n_repeats=10, one
+    # of which lost half its repetitions to errors. Normalizing by the observed
+    # count scored the half-lost row 0.418 and the complete row 0.301, so the row
+    # we knew least about outranked the row we knew most about — and build_queue
+    # ranks on exactly this number.
+    complete = ['a'] * 5 + ['b'] * 5           # 10 of 10 came back
+    half_lost = ['a'] * 2 + ['b'] * 3          # 5 of 10 came back, same split
+    assert instability.string(complete, 10) == pytest.approx(
+        instability.string(half_lost, 10), abs=0.02
+    )
+    # Without the requested count, the half-lost row still scores higher.
+    assert instability.string(half_lost) > instability.string(complete)
+
+
+def test_string_all_distinct_is_below_1_when_repetitions_were_lost():
+    # 4 distinct out of 10 requested is not "maximally unstable" — maximal is 10
+    # distinct. Scoring it 1.0 spends the top of the scale on a thin sample.
+    assert instability.string(['a', 'b', 'c', 'd'], 10) == pytest.approx(0.602, abs=0.005)
+
+
+def test_string_clamps_when_more_came_back_than_requested():
+    # n_requested is an upper bound, not a promise; a larger observed count must
+    # not push the ratio past 1.0 and break the shared 0..1 scale.
+    assert instability.string(['a', 'b', 'c', 'd'], 2) == pytest.approx(1.0)
+
+
+def test_row_instability_string_passes_the_requested_count_through():
+    values = ['a'] * 2 + ['b'] * 3
+    assert instability.row_instability('string', values, n_requested=10) == pytest.approx(
+        instability.string(values, 10)
+    )
 
 
 # --- classify bands: <0.1 stable | 0.1–0.3 noisy | >0.3 unreliable ---

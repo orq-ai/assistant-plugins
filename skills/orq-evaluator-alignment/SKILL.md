@@ -56,7 +56,7 @@ bypasses the inline metadata).
   improve half (score → recommend → rewrite → create → retest) supports **boolean,
   categorical, and numeric** (RES-978 Part 1 + Part 2 / RES-980). Instability is one
   0..1 scale (boolean flip-rate, categorical label entropy, numeric score spread,
-  string exact-match entropy `H/ln(N)`); the rewrite preserves the evaluator's
+  string exact-match entropy `H/ln(n_repeats)`); the rewrite preserves the evaluator's
   verdict space (label set / numeric scale). Numeric rewriting is deliberately
   shallow — it nudges the scale's anchor descriptions, not a calibration model.
   **String supports detect + annotate only for now**: measurement, the confuser
@@ -445,8 +445,8 @@ labels, for free. Quote both. A new score of 0.78 that passes the 0.7 bar is a
 regression if the old judge was at 0.85, and the pass/fail flag alone won't show it.
 
 **Say what the numbers can't be.** `retest_metrics.json` carries a `caveats` list;
-read it out rather than summarising it away. There are three, and they all point the
-same way — the result is softer than it looks:
+read it out rather than summarising it away. They all point the same way — the result
+is softer than it looks:
 - these rows were chosen for being the *most* unstable, so re-measuring them drifts
   toward the middle on its own. `--baseline_rerun` re-runs the **old** judge over the
   same rows in the same pass, which is the only version of gate (a) that isolates the
@@ -454,7 +454,12 @@ same way — the result is softer than it looks:
 - the same examples produced the rewrite guidance *and* the labels that score it.
   There's no holdout, so the agreement number is an upper bound;
 - any label the user didn't confirm at step 6 is your reading of their rule, not
-  their verdict. `metadata.label_provenance` counts them.
+  their verdict. `metadata.label_provenance` counts them;
+- a row the new judge can no longer *measure* (off-contract on more than half its
+  repetitions) is outside gate (a) entirely. Both means are taken over the rows both
+  judges could measure — `instability.n_rows_compared` — and
+  `instability.n_lost_unmeasurable` counts the rest. A non-zero count is the one that
+  matters: dropping the hardest rows out of the average reads exactly like a drop.
 
 **Check what happened outside the grey zone.** `--with_low_flip` re-judges the
 stable spot-check rows too and reports how many changed verdict. Nobody labelled
@@ -506,8 +511,25 @@ Tell them, in plain terms:
   rubric says, not what production actually sends.
 
 ## Configuration & backends
-`config.toml` holds all defaults. The model that writes the recommendation (step 6/8)
-and the rewritten prompt (step 7) is selectable via `backend`:
+`config.toml` holds all defaults, including the step-8 gates:
+
+| Key | Default | What it does |
+|---|---|---|
+| `retest_min_accuracy` | 0.7 | boolean + categorical: minimum exact-match rate for gate (b) |
+| `retest_min_tpr` / `retest_min_tnr` | 0.7 | boolean only; each is skipped when the labels hold no positives / no negatives |
+| `retest_min_within_tol` | 0.7 | numeric: minimum share of points inside the band |
+| `numeric_tol` | blank → derived | the numeric agreement band in the judge's own units. **One key**, shared by the retest gate, the recommend step's disagreement extraction, and the cross-model probe |
+| `numeric_tol_fraction` | 0.1 | fraction of the declared scale range used when `numeric_tol` is blank; falls back to an absolute 0.5 when the evaluator declares no scale |
+
+Leave `numeric_tol` blank unless you have a reason not to. An absolute band means
+something different on every judge — 0.5 is half of a 0–1 groundedness scale and
+0.5% of a 0–100 one — which is the same argument that makes instability normalize by
+the declared range. A grey-zone policy that bands each point individually overrides
+both: those per-point bands are scored as given, and these values only cover points
+without one.
+
+The model that writes the recommendation (step 6/8) and the rewritten prompt (step 7)
+is selectable via `backend`:
 
 | `backend` | What it uses | API key (env only) | Endpoint env var (default) |
 |---|---|---|---|
@@ -579,7 +601,7 @@ resolve to the config value shown; overriding a flag beats `config.toml`.
 | `aggregate.py` | — |
 | `rewrite_eval.py` | `--max_attempts` (3), `--backend`, `--backend_model`, `--backend_base_url` |
 | `create_eval.py` | `--approve` (False), `--edits <file>` (None), `--force` (False; bypass create-side guards, e.g. non-routable judge slug) |
-| `retest.py` | `--n_repeats` / `--temperature` (default: whatever the step-3 run used), `--num_samples` (cap rows, smoke test — narrows both sides of the comparison), `--tol` (0.5, numeric within-tolerance band), `--all_rows` (False — by default only the **labelled** rows are re-judged), `--with_low_flip` (False — also re-judge the stable spot-check rows as a regression check), `--baseline_rerun` (False — re-run the OLD judge over the same rows for a true A/B; doubles the cost) |
+| `retest.py` | `--n_repeats` / `--temperature` (default: whatever the step-3 run used), `--num_samples` (cap rows, smoke test — narrows both sides of the comparison), `--tol` (numeric within-tolerance band; default derived from the declared scale, see Configuration), `--all_rows` (False — by default only the **labelled** rows are re-judged), `--with_low_flip` (False — also re-judge the stable spot-check rows as a regression check), `--baseline_rerun` (False — re-run the OLD judge over the same rows for a true A/B; doubles the cost) |
 
 ## Run directory contract
 Every artifact lives in `runs/<key>_<ts>_<model>_<N>dp/`: `evaluator.json` (with

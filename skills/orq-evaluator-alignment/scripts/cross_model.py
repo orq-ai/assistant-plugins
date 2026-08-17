@@ -93,7 +93,21 @@ def main(
     stability_main(run_dir=str(probe), config=config, num_samples=num_samples, n_repeats=n_repeats, metrics=False)
     b_by_idx = _verdicts_by_index(runner.read_json(probe / 'stability.json'))
 
-    resolved_tol = float(tol if tol is not None else cfg.get('numeric_tol', _DEFAULT_NUMERIC_TOL))
+    # Same band, same key, same derivation as retest's signal (b) — a judge-vs-judge
+    # disagreement and a judge-vs-human one are the same distance on the same scale.
+    from lib import agreement as agreement_lib  # noqa: PLC0415 — pure stdlib module
+
+    configured = cfg.get('numeric_tol')
+    if tol is not None:
+        resolved_tol = float(tol)
+    elif configured not in (None, ''):
+        resolved_tol = float(configured)
+    else:
+        resolved_tol = agreement_lib.default_tolerance(
+            evaluator.get('scale'),
+            fraction=float(cfg.get('numeric_tol_fraction', agreement_lib.DEFAULT_TOL_FRACTION)),
+            fallback=_DEFAULT_NUMERIC_TOL,
+        )
     rows = cm.cross_model_rows(output_type, a_by_idx, b_by_idx, tol=resolved_tol)
     disagree = [r for r in rows if r['disagree']]
     payload = {

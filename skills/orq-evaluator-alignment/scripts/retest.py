@@ -54,7 +54,7 @@ Usage:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import fire
 from dotenv import load_dotenv
@@ -216,13 +216,25 @@ def _load_labels(out_dir: Path) -> tuple[dict[str, Any], str, dict[str, Any] | N
     )
 
 
-def _resolve_numeric_tol(cli_tol: float | None, cfg: dict[str, Any], policy: dict[str, Any] | None) -> float:
-    """Numeric within-tolerance band, in priority order: explicit `--tol` → a
-    *uniform* per-point band from the grey-zone policy → config default.
+def _resolve_numeric_tol(
+    cli_tol: float | None,
+    cfg: dict[str, Any],
+    policy: dict[str, Any] | None,
+    scale: Sequence[float] | None = None,
+) -> float:
+    """The run-wide numeric band, in priority order: explicit `--tol` → a *uniform*
+    per-point band from the grey-zone policy → configured `numeric_tol` → a band
+    derived from the evaluator's declared scale.
 
-    Per-point *varying* bands are a deliberate v1 deferral (§6, numeric-calibration
-    is the flagged high-risk surface); when the policy pins one band for every
-    point we honour it, otherwise we fall back to the single configured tolerance.
+    Per-point *varying* bands are no longer dropped here: they are passed through to
+    `agreement.numeric_agreement` as `tols`, and this value is what a point without
+    its own band falls back to.
+
+    The derived default is the important part. A fixed 0.5 is 50% of a 0–1 scale and
+    0.5% of a 0–100 one, so the gate that exists to stop signal (a) being gamed went
+    vacuous on exactly the 0–1 judges most groundedness rubrics use. §1 of this work
+    normalizes instability by the declared range for the same reason; signal (b) now
+    matches.
     """
     if cli_tol is not None:
         return float(cli_tol)
@@ -230,26 +242,40 @@ def _resolve_numeric_tol(cli_tol: float | None, cfg: dict[str, Any], policy: dic
         bands = {lbl.get('tolerance') for lbl in policy.get('labels', []) if lbl.get('tolerance') is not None}
         if len(bands) == 1:
             return float(next(iter(bands)))
-    return float(cfg.get('numeric_tol', _DEFAULT_NUMERIC_TOL))
+    configured = cfg.get('numeric_tol')
+    if configured not in (None, ''):
+        return float(configured)
+    from lib import agreement as agreement_lib  # noqa: PLC0415 — pure stdlib module
+
+    return agreement_lib.default_tolerance(
+        scale, fraction=float(cfg.get('numeric_tol_fraction', agreement_lib.DEFAULT_TOL_FRACTION))
+    )
 
 
-def _mean_instability_over(metrics: dict[str, Any], scope: set[int]) -> tuple[float | None, bool]:
-    """Mean instability across just the rows in `scope`, from a metrics.json.
+def _instability_by_index(
+    metrics: dict[str, Any], index_map: dict[int, int] | None = None
+) -> dict[int, float]:
+    """`{original_source_index: instability}` for the MEASURABLE rows of a metrics.json.
 
-    Returns `(mean, scoped)`. `scoped` is False when the per-row detail wasn't
-    there and the run-wide `scores.mean_instability` had to stand in — a different
-    comparison basis, so the caller says so instead of presenting the delta as
-    like-for-like. `(None, False)` when neither is available: a missing number is
-    reported as missing, never as a zero drop.
+    Unmeasurable rows (instability `None` — too few usable verdicts, or no scale to
+    normalize by) are absent rather than zero, so the caller can see which rows a
+    run could and could not measure. `index_map` translates a sub-run's positional
+    index back to the original, as in `_verdicts_by_index`.
     """
-    per_row = metrics.get('per_row') or []
-    values = [
-        r['instability'] for r in per_row
-        if r.get('source_index') in scope and isinstance(r.get('instability'), (int, float))
-    ]
-    if values:
-        return sum(values) / len(values), True
-    return metrics.get('scores', {}).get('mean_instability'), False
+    out: dict[int, float] = {}
+    for row in metrics.get('per_row') or []:
+        idx = row.get('source_index')
+        if index_map is not None:
+            idx = index_map.get(idx, idx)
+        value = row.get('instability')
+        if idx is not None and isinstance(value, (int, float)) and not isinstance(value, bool):
+            out[idx] = float(value)
+    return out
+
+
+def _mean_over(by_idx: dict[int, float], indices: set[int]) -> float | None:
+    values = [by_idx[i] for i in indices if i in by_idx]
+    return (sum(values) / len(values)) if values else None
 
 
 def _verdicts_by_index(stability: dict[str, Any], index_map: dict[int, int] | None = None) -> dict[int, Any]:
@@ -267,14 +293,22 @@ def _verdicts_by_index(stability: dict[str, Any], index_map: dict[int, int] | No
     return out
 
 
-def _pair_with_labels(labels: dict[str, Any], judge_by_idx: dict[int, Any]) -> list[tuple[Any, Any]]:
+def _pair_with_labels(
+    labels: dict[str, Any], judge_by_idx: dict[int, Any]
+) -> tuple[list[tuple[Any, Any]], list[float | None]]:
     """Zip each human label to a judge verdict on the same datapoint.
 
     The human `value` is ground truth; the judge side is the jury's
     `aggregate_value` (the majority bool/str/float per type). Rows with no usable
     judge verdict or no human label are skipped — they cannot inform agreement.
+
+    Returns `(pairs, tols)`, positionally aligned. `tols[i]` is that point's own
+    numeric band when the human gave it one (`None` otherwise), so a policy that
+    banded each point differently is scored against what the human actually said
+    instead of against the run-wide default.
     """
     pairs: list[tuple[Any, Any]] = []
+    tols: list[float | None] = []
     for key, ann in labels.items():
         if not isinstance(ann, dict) or ann.get('value') is None:
             continue
@@ -286,17 +320,20 @@ def _pair_with_labels(labels: dict[str, Any], judge_by_idx: dict[int, Any]) -> l
         if judge_value is None:
             continue
         pairs.append((ann['value'], judge_value))
-    return pairs
+        band = ann.get('tolerance')
+        tols.append(float(band) if isinstance(band, (int, float)) and not isinstance(band, bool) else None)
+    return pairs, tols
 
 
 def _evaluate_agreement(
     pairs: list[tuple[Any, Any]], output_type: str, tol: float,
     min_accuracy: float, min_tpr: float, min_tnr: float, min_within_tol: float,
+    tols: list[float | None] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Compute signal (b) and its pass/fail against the type-native bar."""
     from lib import agreement as agreement_lib
 
-    scores = agreement_lib.agreement(output_type, pairs, tol=tol)
+    scores = agreement_lib.agreement(output_type, pairs, tol=tol, tols=tols)
     if output_type == 'boolean':
         # A None rate (no positives / no negatives among labels) does not fail the
         # gate on its own — accuracy still must clear the bar, and any present rate
@@ -384,7 +421,10 @@ def main(
             and marks the comparison not comparable.
         temperature: Judge temperature. Defaults to the original run's, for the
             same reason.
-        tol: Numeric within-tolerance tolerance (raw scale). Default 0.5.
+        tol: Numeric within-tolerance band, in the judge's own units. Defaults to a
+            uniform band from the grey-zone policy, then `numeric_tol`, then a
+            fraction of the evaluator's declared scale. Points the policy banded
+            individually keep their own band regardless of this.
     """
     cfg = runner.load_config(config)
     out_dir = runner.resolve_run_dir(run_dir) if run_dir else runner.latest_run_dir(cfg.get('runs_dir', 'runs'))
@@ -435,16 +475,8 @@ def main(
         out_dir, 'retest', _new_evaluator_config(new_eval, source_eval), selected
     )
 
-    # Compare like with like: the original mean is recomputed over exactly the rows
-    # being re-judged. Comparing a subset's new mean against the full run's old mean
-    # would make the drop an artifact of which rows were selected.
     scope = set(index_map.values())
-    original_mean, scoped = _mean_instability_over(original_metrics, scope)
-    if not scoped and original_mean is not None:
-        logger.warning(
-            '⚠ metrics.json carries no per-row instability for these rows; falling back to '
-            'the RUN-WIDE mean. The before/after numbers below are over different row sets.'
-        )
+    original_inst = _instability_by_index(original_metrics)
     n_total_rows = len(runner.read_jsonl(out_dir / 'traces.jsonl'))
     logger.info(
         f'  Retesting {len(scope)} row(s)'
@@ -464,23 +496,61 @@ def main(
         metrics=True,  # stability.main chains metrics.main when metrics=True
     )
     retest_metrics = runner.read_json(retest_dir / 'metrics.json')
-    retest_mean = retest_metrics.get('scores', {}).get('mean_instability')
+    retest_inst = _instability_by_index(retest_metrics, index_map)
     retest_stability = runner.read_json(retest_dir / 'stability.json')
     new_by_idx = _verdicts_by_index(retest_stability, index_map)
 
     # 2b) Optional true A/B: the OLD judge over the SAME rows, in the same pass.
-    baseline_mean = None
+    baseline_inst: dict[int, float] = {}
     if baseline_rerun:
         logger.info('  Re-running the ORIGINAL judge over the same rows (--baseline_rerun).')
-        baseline_dir, _ = _materialize_subrun(out_dir, 'retest_baseline', source_eval, selected)
+        baseline_dir, baseline_map = _materialize_subrun(
+            out_dir, 'retest_baseline', source_eval, selected
+        )
         stability_main(
             run_dir=str(baseline_dir), config=config, n_repeats=resolved_n,
             temperature=resolved_temp, metrics=True,
         )
-        baseline_mean = runner.read_json(baseline_dir / 'metrics.json').get('scores', {}).get('mean_instability')
+        baseline_inst = _instability_by_index(
+            runner.read_json(baseline_dir / 'metrics.json'), baseline_map
+        )
 
     # 3a) Signal (a): instability dropped. Against the re-measured baseline when we
     #     have one, else against the original run's measurement of the same rows.
+    #
+    # Both means are taken over the rows BOTH sides could measure. Averaging each
+    # side over its own measurable set let a rewrite pass gate (a) by going
+    # *unmeasurable* on the hardest rows: an off-contract verdict on more than half
+    # the repetitions drops that row below metrics.py's floor, out of the retest
+    # mean, and the remaining rows average lower. The rows selected here are the
+    # most unstable ones in the run, so that is precisely where it would happen —
+    # and the mean alone cannot show it. `n_lost_unmeasurable` reports the gap.
+    before_inst = baseline_inst if baseline_rerun else original_inst
+    comparable_rows = {i for i in scope if i in before_inst and i in retest_inst}
+    n_lost_unmeasurable = len({i for i in scope if i in before_inst} - comparable_rows)
+    scoped = bool(comparable_rows)
+    if scoped:
+        original_mean = _mean_over(original_inst, comparable_rows)
+        baseline_mean = _mean_over(baseline_inst, comparable_rows) if baseline_rerun else None
+        retest_mean = _mean_over(retest_inst, comparable_rows)
+    else:
+        # No per-row overlap (an older metrics.json with no `per_row`, or nothing
+        # measurable on either side). Fall back to the run-wide numbers and say so
+        # rather than present a delta over two different row sets as like-for-like.
+        original_mean = original_metrics.get('scores', {}).get('mean_instability')
+        baseline_mean = None
+        retest_mean = retest_metrics.get('scores', {}).get('mean_instability')
+        logger.warning(
+            '⚠ No rows are measurable on both sides; falling back to the RUN-WIDE means. '
+            'The before/after numbers below are over different row sets.'
+        )
+    if n_lost_unmeasurable:
+        logger.warning(
+            f'⚠ {n_lost_unmeasurable} row(s) the old judge could measure are UNMEASURABLE under '
+            'the new one (too few on-contract verdicts). They are excluded from both means, so '
+            'gate (a) says nothing about them — check total_wrong_output_type in the retest run.'
+        )
+
     compare_against = baseline_mean if baseline_mean is not None else original_mean
     if compare_against is None or retest_mean is None:
         instability_dropped = False
@@ -491,7 +561,8 @@ def main(
 
     # 3b) Signal (b): the new evaluator agrees with the human labels — and, for
     #     free, what the OLD one scored on the same labels.
-    output_type = (runner.read_json(retest_dir / 'evaluator.json').get('output_type') or 'boolean').strip().lower()
+    retest_eval = runner.read_json(retest_dir / 'evaluator.json')
+    output_type = (retest_eval.get('output_type') or 'boolean').strip().lower()
     if output_type == 'string':
         # String is detect + annotate only (no rewrite/retest); agreement() has no
         # string branch, so reaching here would raise a raw ValueError inside
@@ -500,8 +571,8 @@ def main(
             'retest does not support string evaluators — the string type is '
             'detect + annotate only. Stop the alignment after annotation.'
         )
-    resolved_tol = _resolve_numeric_tol(tol, cfg, policy)
-    pairs = _pair_with_labels(labels, new_by_idx)
+    resolved_tol = _resolve_numeric_tol(tol, cfg, policy, retest_eval.get('scale'))
+    pairs, pair_tols = _pair_with_labels(labels, new_by_idx)
     if not pairs:
         raise SystemExit(
             'No (human, judge) pairs to score agreement — need labelled annotations '
@@ -514,7 +585,7 @@ def main(
         float(cfg.get('retest_min_within_tol', _DEFAULT_MIN_WITHIN_TOL)),
     )
     agreement_scores, agreement_passed = _evaluate_agreement(
-        pairs, output_type, resolved_tol, *bars
+        pairs, output_type, resolved_tol, *bars, tols=pair_tols
     )
 
     # The "before" side of (b) costs nothing: the original run already judged these
@@ -525,9 +596,11 @@ def main(
     agreement_before: dict[str, Any] | None = None
     if original_stability_path.exists():
         old_by_idx = _verdicts_by_index(runner.read_json(original_stability_path))
-        before_pairs = _pair_with_labels(labels, old_by_idx)
+        before_pairs, before_tols = _pair_with_labels(labels, old_by_idx)
         if before_pairs:
-            agreement_before, _ = _evaluate_agreement(before_pairs, output_type, resolved_tol, *bars)
+            agreement_before, _ = _evaluate_agreement(
+                before_pairs, output_type, resolved_tol, *bars, tols=before_tols
+            )
             agreement_before['n_pairs'] = len(before_pairs)
 
     regression = _regression_report(old_by_idx, new_by_idx, _low_flip_indices(out_dir) & scope)
@@ -558,6 +631,12 @@ def main(
             'drop': drop,
             'dropped': instability_dropped,
             'comparable': comparable,
+            # Both means are over these rows and no others. `n_lost_unmeasurable`
+            # is the rows the old judge measured and the new one could not — they
+            # are outside the comparison, so the drop says nothing about them.
+            'n_rows_compared': len(comparable_rows),
+            'n_lost_unmeasurable': n_lost_unmeasurable,
+            'retest_wrong_output_type': retest_metrics.get('scores', {}).get('total_wrong_output_type'),
         },
         'agreement': {
             **agreement_scores,
@@ -568,14 +647,15 @@ def main(
         'success': success,
         # Read these out with the numbers, not instead of them. Each names a way
         # the two gates overstate the result, and none is visible in the scores.
-        'caveats': _caveats(baseline_mean is not None, provenance, regression),
+        'caveats': _caveats(baseline_mean is not None, provenance, regression, n_lost_unmeasurable),
     }
     runner.write_json(out_dir / 'retest_metrics.json', payload)
 
     logger.info('── Retest validation ──')
     logger.info(
         f'  (a) instability: {original_mean} → {retest_mean} (drop={drop}, vs '
-        f'{payload["instability"]["compared_against"]}) → '
+        f'{payload["instability"]["compared_against"]}, over {len(comparable_rows)} row(s) '
+        f'measurable on both sides) → '
         f'{"DROPPED" if instability_dropped else "NOT dropped"}'
         + ('' if comparable else '  [NOT COMPARABLE: fewer repeats than the original run]')
     )
@@ -597,7 +677,8 @@ def main(
 
 
 def _caveats(
-    has_baseline: bool, provenance: dict[str, int] | None, regression: dict[str, Any] | None
+    has_baseline: bool, provenance: dict[str, int] | None, regression: dict[str, Any] | None,
+    n_lost_unmeasurable: int = 0,
 ) -> list[str]:
     """The limits of the two gates, in the words the conductor should use.
 
@@ -625,6 +706,12 @@ def _caveats(
         out.append(
             'Behaviour outside the grey zone was not re-measured. Pass --with_low_flip to '
             'check the rows the old judge was completely steady on.'
+        )
+    if n_lost_unmeasurable:
+        out.append(
+            f'{n_lost_unmeasurable} row(s) the old judge could measure are unmeasurable under the '
+            'new one, so they sit outside gate (a) entirely. A rewrite that answers off-contract '
+            'on the hardest rows removes them from the mean, which reads as a drop.'
         )
     return out
 

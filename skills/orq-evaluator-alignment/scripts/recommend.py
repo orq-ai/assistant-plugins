@@ -68,8 +68,31 @@ RECOMMEND_PROMPT = (runner.SKILL_ROOT / 'prompts' / 'recommend_prompt.md').read_
 
 _NUMERIC_TYPES = {'number', 'numeric'}
 # Default agreement band for numeric: |judge − human| at or below this counts as
-# agreement, not a disagreement. Kept small; overridable via config/kwarg.
+# agreement, not a disagreement. Only used when no scale is declared — see
+# `_resolve_tolerance`.
 _DEFAULT_NUMERIC_TOLERANCE = 0.5
+
+
+def _resolve_tolerance(cfg: dict[str, Any], scale: Any) -> float:
+    """The numeric agreement band, from one config key shared with retest/cross_model.
+
+    This step used to read `numeric_tolerance` while `retest.py` and
+    `cross_model.py` read `numeric_tol`, so setting the one that looked right moved
+    what counts as a disagreement HERE and left the gate that signs the rewrite off
+    on its default — two different bands for one concept, neither documented.
+    `numeric_tol` is now the single key; the band is otherwise derived from the
+    evaluator's declared scale (`lib.agreement.default_tolerance`).
+    """
+    from lib import agreement as agreement_lib  # noqa: PLC0415 — pure stdlib module
+
+    configured = cfg.get('numeric_tol', cfg.get('numeric_tolerance'))
+    if configured not in (None, ''):
+        return float(configured)
+    return agreement_lib.default_tolerance(
+        scale,
+        fraction=float(cfg.get('numeric_tol_fraction', agreement_lib.DEFAULT_TOL_FRACTION)),
+        fallback=_DEFAULT_NUMERIC_TOLERANCE,
+    )
 
 
 # ── pure per-type disagreement extraction (§2.2) ─────────────────────────────
@@ -352,7 +375,7 @@ async def _run(out_dir: Path, cfg: dict[str, Any]) -> tuple[list[dict[str, Any]]
             'Stop the alignment after annotation and report the annotations to the user.'
         )
     labels = evaluator.get('categorical_labels') or []
-    tolerance = float(cfg.get('numeric_tolerance', _DEFAULT_NUMERIC_TOLERANCE))
+    tolerance = _resolve_tolerance(cfg, evaluator.get('scale'))
 
     rows_by_idx = _rows_by_index(metrics, stability)
     labeled = _labeled_annotations(annotations)
