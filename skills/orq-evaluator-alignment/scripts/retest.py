@@ -56,6 +56,8 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -508,7 +510,60 @@ def _pair_with_labels(
 
 
 STRING_PAIRS_FILE = 'string_pairs.json'
+STRING_PAIRS_KEY_FILE = 'string_pairs_key.json'
 STRING_VERDICTS_FILE = 'string_verdicts.json'
+
+# Mirrors `grey_zone.LABEL_SOURCES`' validation style: a closed set of values the
+# report knows how to caveat, checked loud rather than left to silently drop the
+# honesty caveat `scored_by` drives (§4.3).
+_STRING_SCORED_BY = frozenset({'conductor', 'human_confirmed'})
+
+
+def _validate_string_scored_by(scored_by: str) -> None:
+    if scored_by not in _STRING_SCORED_BY:
+        raise SystemExit(
+            f'{STRING_VERDICTS_FILE} scored_by must be one of {sorted(_STRING_SCORED_BY)}, '
+            f'got {scored_by!r}.'
+        )
+
+
+def _pairs_fingerprint(
+    pairs: list[tuple[Any, Any]], indices: list[int], old_by_idx: dict[int, Any]
+) -> str:
+    """SHA256 over the `[idx, human, new, original]` rows a `string_verdicts.json`
+    is scored against, sorted by idx for a stable hash regardless of dict/zip
+    ordering (§3.7). Computed from the semantically-labelled values, never the
+    blinded answer_a/answer_b a reader saw — this fingerprint's job is identifying
+    WHICH pairs were scored, not preserving the blind.
+    """
+    rows = sorted(
+        ([idx, human, judge, old_by_idx.get(idx)] for (human, judge), idx in zip(pairs, indices)),
+        key=lambda r: r[0],
+    )
+    canonical = json.dumps(rows, sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+
+
+def _check_pairs_fingerprint(
+    string_verdicts: dict[str, Any], pairs: list[tuple[Any, Any]], indices: list[int],
+    old_by_idx: dict[int, Any],
+) -> None:
+    """Refuse a `string_verdicts.json` scored against a different set of pairs (§3.7).
+
+    The file is free-form and hand-edited: a stale one from a previous rewrite
+    would score BRAND-NEW answers with OLD decisions, and nothing about its shape
+    would look wrong — same source_index values, same match_a/match_b keys, wrong
+    content underneath. Missing entirely counts as a mismatch, not a pass.
+    """
+    current = _pairs_fingerprint(pairs, indices, old_by_idx)
+    recorded = string_verdicts.get('pairs_fingerprint')
+    if recorded != current:
+        raise SystemExit(
+            f'{STRING_VERDICTS_FILE} was scored against a different set of pairs '
+            f'(recorded {recorded!r}, current {current!r}). Stale verdicts from a previous '
+            f'rewrite would score brand-new answers with old decisions. Delete '
+            f'{STRING_VERDICTS_FILE} and redo the read.'
+        )
 
 
 def _write_string_pairs(
@@ -518,35 +573,51 @@ def _write_string_pairs(
     old_by_idx: dict[int, Any],
     policy: dict[str, Any] | None,
 ) -> Path:
-    """Hand the conductor the free-text pairs to score, and stop.
+    """Hand the conductor the free-text pairs to score, blind, and stop.
 
     Signal (b) for string cannot be computed here: `==` on free text reads near-zero
     for a judge that is doing fine, so the comparison needs a reader. This is the
     same shape the grey-zone stage already uses — code assembles a bounded payload,
     the conductor decides, code consumes the decision — rather than a new mechanism.
 
+    §4.3: the two answers are anonymised as `answer_a`/`answer_b`, shuffled per
+    entry by a deterministic hash of `source_index` — the reader is never told
+    which judge wrote which answer, so knowing the rewrite is under test cannot
+    nudge the read toward it. `string_pairs_key.json` records which slot held
+    which judge's answer; `_unblind_string_verdicts` reverses it AFTER the reader
+    has already committed to match_a/match_b.
+
     The OLD judge's answer rides along so one pass produces both the score and its
     `before`, exactly as the other three types get for free.
     """
     entries = []
+    key: dict[str, dict[str, str]] = {}
     for (human, judge), idx in zip(pairs, indices):
+        original = old_by_idx.get(idx)
+        a_is_new = hashlib.sha256(f'{idx}'.encode()).digest()[0] % 2 == 0
         entries.append({
             'source_index': idx,
             'human_value': human,
-            'new_judge_value': judge,
-            'original_judge_value': old_by_idx.get(idx),
+            'answer_a': judge if a_is_new else original,
+            'answer_b': original if a_is_new else judge,
         })
+        key[str(idx)] = {'a': 'new' if a_is_new else 'original'}
+    fingerprint = _pairs_fingerprint(pairs, indices, old_by_idx)
     payload = {
         'metadata': {
             'output_type': 'string',
             'n_pairs': len(entries),
             'rule': _policy_rules(policy),
+            'pairs_fingerprint': fingerprint,
             'instructions': (
-                'For each entry decide whether the judge\'s answer means the same thing as '
-                'the human\'s, under the rule above — not whether the wording matches. Write '
-                f'{STRING_VERDICTS_FILE} next to this file: '
-                '{"scored_by": "conductor"|"human_confirmed", "verdicts": '
-                '[{"source_index": N, "match_new": true|false, "match_original": true|false, '
+                'For each entry decide whether answer_a means the same thing as the '
+                "human's value under the rule above, and whether answer_b does — not "
+                'whether the wording matches. answer_a/answer_b are anonymised and '
+                'randomly ordered per entry so the read cannot be nudged toward either '
+                f'judge. Write {STRING_VERDICTS_FILE} next to this file: '
+                '{"scored_by": "conductor"|"human_confirmed", '
+                f'"pairs_fingerprint": {fingerprint!r}, "verdicts": '
+                '[{"source_index": N, "match_a": true|false, "match_b": true|false, '
                 '"reason": "..."}]}. Cover every source_index listed here.'
             ),
         },
@@ -554,7 +625,32 @@ def _write_string_pairs(
     }
     path = out_dir / STRING_PAIRS_FILE
     runner.write_json(path, payload)
+    runner.write_json(out_dir / STRING_PAIRS_KEY_FILE, key)
     return path
+
+
+def _unblind_string_verdicts(verdicts: dict[str, Any], pairs_key: dict[str, Any]) -> dict[str, Any]:
+    """Translate the reader's blind `match_a`/`match_b` decisions back to
+    `match_new`/`match_original`, using the per-entry shuffle `string_pairs_key.json`
+    recorded (§4.3). The reader never sees which slot held which judge's answer;
+    this is the one place that reverses it, after the decision is already on paper.
+    Entries the key does not cover (or `source_index` missing) pass through
+    unchanged — `_string_matches` already treats a missing match_new/match_original
+    as "not scored" and refuses a subset.
+    """
+    out_verdicts = []
+    for v in verdicts.get('verdicts', []):
+        if not isinstance(v, dict):
+            continue
+        idx = v.get('source_index')
+        slot_a = pairs_key.get(str(idx), {}).get('a')
+        entry = dict(v)
+        if slot_a == 'new':
+            entry['match_new'], entry['match_original'] = v.get('match_a'), v.get('match_b')
+        elif slot_a == 'original':
+            entry['match_new'], entry['match_original'] = v.get('match_b'), v.get('match_a')
+        out_verdicts.append(entry)
+    return {**verdicts, 'verdicts': out_verdicts}
 
 
 def _policy_rules(policy: dict[str, Any] | None) -> list[str]:
@@ -974,6 +1070,17 @@ def main(
                 f'{verdicts_path}, then re-run this command. Instructions are in the file.'
             )
         string_verdicts = runner.read_json(verdicts_path)
+        # §3.7: refuse verdicts scored against a DIFFERENT set of pairs before
+        # trusting anything else in the file — a stale file from a previous
+        # rewrite looks identical in shape and would silently score new answers
+        # with old decisions.
+        _check_pairs_fingerprint(string_verdicts, pairs, pair_indices, old_scoped)
+        _validate_string_scored_by(string_verdicts.get('scored_by', 'conductor'))
+        # §4.3: the reader decided match_a/match_b blind; unblind via the shuffle
+        # key written alongside the pairs before anything reads match_new/
+        # match_original off this file.
+        pairs_key = runner.read_json(out_dir / STRING_PAIRS_KEY_FILE)
+        string_verdicts = _unblind_string_verdicts(string_verdicts, pairs_key)
 
     matches = _string_matches(string_verdicts, pair_indices, 'match_new') if string_verdicts else None
     if output_type == 'string' and matches is None:

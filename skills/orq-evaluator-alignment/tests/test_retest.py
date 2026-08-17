@@ -598,6 +598,191 @@ def test_string_pairs_file_carries_both_judges(tmp_path):
     assert written['metadata']['rule'] == ['a paraphrase of the same intent counts']
 
 
+def test_string_pairs_are_blind_not_labelled_by_judge(tmp_path): # §4.3
+    # today: `new_judge_value`/`original_judge_value` name which judge wrote which
+    # answer, so a reader who knows the rewrite is being validated can be nudged
+    # toward it without meaning to.
+    labels, new_by_idx, old_by_idx = _string_setup()
+    pairs, _tols, indices = retest._pair_with_labels(labels, new_by_idx)
+    path = retest._write_string_pairs(tmp_path, pairs, indices, old_by_idx, None)
+
+    written = json.loads(path.read_text(encoding='utf-8'))
+    for entry in written['pairs']:
+        assert 'new_judge_value' not in entry
+        assert 'original_judge_value' not in entry
+        assert {'answer_a', 'answer_b'} <= entry.keys()
+        assert 'human_value' in entry  # ground truth stays labelled
+
+    key = json.loads((tmp_path / retest.STRING_PAIRS_KEY_FILE).read_text(encoding='utf-8'))
+    for entry in written['pairs']:
+        idx = entry['source_index']
+        slot = key[str(idx)]['a']
+        assert slot in ('new', 'original')
+        expected_new = new_by_idx[idx]
+        expected_original = old_by_idx[idx]
+        if slot == 'new':
+            assert entry['answer_a'] == expected_new and entry['answer_b'] == expected_original
+        else:
+            assert entry['answer_a'] == expected_original and entry['answer_b'] == expected_new
+
+
+def test_blind_verdicts_round_trip_to_the_correct_accuracy(tmp_path):
+    # A reader scoring match_a/match_b blind must unblind to the SAME accuracy a
+    # non-blind match_new/match_original scoring would have produced.
+    labels, new_by_idx, old_by_idx = _string_setup()
+    pairs, _tols, indices = retest._pair_with_labels(labels, new_by_idx)
+    retest._write_string_pairs(tmp_path, pairs, indices, old_by_idx, None)
+    key = json.loads((tmp_path / retest.STRING_PAIRS_KEY_FILE).read_text(encoding='utf-8'))
+
+    # The reader says: new is right both times, original is right once (idx 3 only).
+    verdicts = {'scored_by': 'conductor', 'verdicts': []}
+    truth = {3: {'new': True, 'original': True}, 4: {'new': True, 'original': False}}
+    for idx in indices:
+        slot_a = key[str(idx)]['a']
+        match_a = truth[idx][slot_a]
+        match_b = truth[idx]['original' if slot_a == 'new' else 'new']
+        verdicts['verdicts'].append({'source_index': idx, 'match_a': match_a, 'match_b': match_b})
+
+    unblinded = retest._unblind_string_verdicts(verdicts, key)
+    new_matches = retest._string_matches(unblinded, indices, 'match_new')
+    original_matches = retest._string_matches(unblinded, indices, 'match_original')
+    assert new_matches == [True, True]
+    assert original_matches == [True, False]
+
+
+def test_scored_by_must_be_a_known_source(tmp_path):
+    # today: an unrecognised scored_by (e.g. a typo'd "human") silently drops the
+    # honesty caveat instead of failing loud.
+    with pytest.raises(SystemExit, match=r"'conductor'.*'human_confirmed'|'human_confirmed'.*'conductor'"):
+        retest._validate_string_scored_by('human')
+    retest._validate_string_scored_by('conductor')  # does not raise
+    retest._validate_string_scored_by('human_confirmed')  # does not raise
+
+
+# --- string_verdicts.json is provably about the current pairs (§3.7) ---
+
+
+def test_pairs_fingerprint_mismatch_refuses_to_score(tmp_path):
+    labels, new_by_idx, old_by_idx = _string_setup()
+    pairs, _tols, indices = retest._pair_with_labels(labels, new_by_idx)
+
+    with pytest.raises(SystemExit, match='different set of pairs'):
+        retest._check_pairs_fingerprint(
+            {'pairs_fingerprint': 'deadbeef'}, pairs, indices, old_by_idx
+        )
+    with pytest.raises(SystemExit, match='different set of pairs'):
+        retest._check_pairs_fingerprint({}, pairs, indices, old_by_idx)  # missing entirely
+
+
+def test_pairs_fingerprint_match_proceeds(tmp_path):
+    labels, new_by_idx, old_by_idx = _string_setup()
+    pairs, _tols, indices = retest._pair_with_labels(labels, new_by_idx)
+    fp = retest._pairs_fingerprint(pairs, indices, old_by_idx)
+
+    retest._check_pairs_fingerprint({'pairs_fingerprint': fp}, pairs, indices, old_by_idx)  # no raise
+
+
+def test_write_string_pairs_records_the_fingerprint(tmp_path):
+    labels, new_by_idx, old_by_idx = _string_setup()
+    pairs, _tols, indices = retest._pair_with_labels(labels, new_by_idx)
+    path = retest._write_string_pairs(tmp_path, pairs, indices, old_by_idx, None)
+
+    written = json.loads(path.read_text(encoding='utf-8'))
+    expected = retest._pairs_fingerprint(pairs, indices, old_by_idx)
+    assert written['metadata']['pairs_fingerprint'] == expected
+
+
+def test_string_retest_round_trips_through_the_blind_reader_handshake(tmp_path, monkeypatch):
+    # End-to-end proof that main() actually wires the blinding + fingerprint +
+    # scored_by checks together: write pairs, stop; the conductor answers blind
+    # (match_a/match_b, no idea which is which); re-run scores correctly.
+    n = 2
+    _write(tmp_path / 'evaluator.json', {
+        'id': 'src', 'prompt': 'Judge: {{log.output}}', 'judge_model': 'm',
+        'output_type': 'string', 'categorical_labels': [], 'scale': None, 'variables': [],
+    })
+    _write(tmp_path / 'new_evaluator.json', {
+        'id': 'new', 'key': 'k', 'prompt': 'Judge better: {{log.output}}', 'judge_model': 'm',
+        'output_type': 'string', 'categorical_labels': [], 'scale': None,
+    })
+    (tmp_path / 'traces.jsonl').write_text(
+        '\n'.join(json.dumps({'query': f'q{i}', 'output': f'o{i}'}) for i in range(n)) + '\n',
+        encoding='utf-8',
+    )
+    _write(tmp_path / 'stability.json', {
+        'metadata': {'output_type': 'string'},
+        'rows': [{'source_index': i, 'aggregate_value': 'original answer', 'reference': ''} for i in range(n)],
+    })
+    _write(tmp_path / 'metrics.json', {
+        'metadata': {'output_type': 'string', 'evaluator_id': 'src'},
+        'scores': {'mean_instability': 0.5},
+        'per_row': [{'source_index': i, 'instability': 0.5} for i in range(n)],
+    })
+    _write(tmp_path / 'annotations.json', {str(i): {'value': 'the human answer'} for i in range(n)})
+    _stub_stability_main(monkeypatch, lambda row: 'new answer', output_type='string')
+
+    with pytest.raises(SystemExit, match='needs a reader'):
+        retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG)
+
+    pairs_payload = json.loads((tmp_path / retest.STRING_PAIRS_FILE).read_text(encoding='utf-8'))
+    for entry in pairs_payload['pairs']:
+        assert 'new_judge_value' not in entry and 'original_judge_value' not in entry
+
+    verdicts = {
+        'scored_by': 'conductor',
+        'pairs_fingerprint': pairs_payload['metadata']['pairs_fingerprint'],
+        # Both slots score as a match — the reader cannot tell which is which,
+        # and does not need to for this test.
+        'verdicts': [
+            {'source_index': e['source_index'], 'match_a': True, 'match_b': True}
+            for e in pairs_payload['pairs']
+        ],
+    }
+    _write(tmp_path / retest.STRING_VERDICTS_FILE, verdicts)
+
+    retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG)
+    rm = json.loads((tmp_path / 'retest_metrics.json').read_text(encoding='utf-8'))
+    assert rm['agreement']['accuracy'] == 1.0
+    assert rm['agreement']['scored_by'] == 'conductor'
+
+
+def test_string_retest_refuses_an_unrecognised_scored_by(tmp_path, monkeypatch):
+    n = 1
+    _write(tmp_path / 'evaluator.json', {
+        'id': 'src', 'prompt': 'Judge: {{log.output}}', 'judge_model': 'm',
+        'output_type': 'string', 'categorical_labels': [], 'scale': None, 'variables': [],
+    })
+    _write(tmp_path / 'new_evaluator.json', {
+        'id': 'new', 'key': 'k', 'prompt': 'Judge better: {{log.output}}', 'judge_model': 'm',
+        'output_type': 'string', 'categorical_labels': [], 'scale': None,
+    })
+    (tmp_path / 'traces.jsonl').write_text(json.dumps({'query': 'q0', 'output': 'o0'}) + '\n', encoding='utf-8')
+    _write(tmp_path / 'stability.json', {
+        'metadata': {'output_type': 'string'},
+        'rows': [{'source_index': 0, 'aggregate_value': 'original answer', 'reference': ''}],
+    })
+    _write(tmp_path / 'metrics.json', {
+        'metadata': {'output_type': 'string', 'evaluator_id': 'src'},
+        'scores': {'mean_instability': 0.5},
+        'per_row': [{'source_index': 0, 'instability': 0.5}],
+    })
+    _write(tmp_path / 'annotations.json', {'0': {'value': 'the human answer'}})
+    _stub_stability_main(monkeypatch, lambda row: 'new answer', output_type='string')
+
+    with pytest.raises(SystemExit):
+        retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG)  # writes the pairs file
+
+    pairs_payload = json.loads((tmp_path / retest.STRING_PAIRS_FILE).read_text(encoding='utf-8'))
+    _write(tmp_path / retest.STRING_VERDICTS_FILE, {
+        'scored_by': 'human',  # not in {'conductor', 'human_confirmed'}
+        'pairs_fingerprint': pairs_payload['metadata']['pairs_fingerprint'],
+        'verdicts': [{'source_index': 0, 'match_a': True, 'match_b': True}],
+    })
+
+    with pytest.raises(SystemExit, match='conductor'):
+        retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG)
+
+
 def test_string_matches_align_by_source_index_not_position(tmp_path):
     # The verdicts file is written by hand, so its order cannot be assumed.
     verdicts = {'verdicts': [
