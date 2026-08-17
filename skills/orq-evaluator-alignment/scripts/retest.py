@@ -65,7 +65,7 @@ from loguru import logger
 
 import _bootstrap  # noqa: F401
 from lib import grey_zone, runner
-from lib.content import traces_fingerprint
+from lib.content import reference_is_judge_input, traces_fingerprint
 
 load_dotenv()
 
@@ -138,7 +138,14 @@ def _select_rows(
     exactly the rows that were re-judged: it used to narrow only the retest run
     while the "before" mean stayed over the full label set, which is the
     subset-vs-full-run artifact the rest of this file exists to avoid.
+
+    `num_samples == 0` refuses outright (§4.6) rather than silently materializing
+    an empty retest sub-run: `0` reads as "no cap" one flag away (`-1` in
+    stability.py's own convention) and would otherwise fail confusingly, much
+    later, on the empty pairs.
     """
+    if num_samples == 0:
+        raise SystemExit('--num_samples must be >= 1 (0 would retest nothing)')
     rows = runner.read_jsonl(out_dir / 'traces.jsonl')
     if not rows:
         raise SystemExit(f'No datapoints in {out_dir / "traces.jsonl"} — nothing to retest.')
@@ -219,21 +226,88 @@ def _load_labels(out_dir: Path) -> tuple[dict[str, Any], str, dict[str, Any] | N
     )
 
 
+def _coerce_bool_tolerant(value: Any) -> bool | None:
+    """Best-effort bool from a dataset reference; `None` (never a raise) on
+    anything genuinely ambiguous. Mirrors `metrics.py::_coerce_bool` deliberately
+    — NOT `lib.agreement._coerce_bool`, which raises: that raise fires AFTER the
+    retest run has already spent the judge calls it exists to score (§1.1), so a
+    single free-text reference among hundreds of parseable ones crashed the whole
+    report instead of being counted and skipped.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value) if value in (0, 1) else None
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in {'true', 'yes', 'pass', '1'}:
+            return True
+        if v in {'false', 'no', 'fail', '0'}:
+            return False
+    return None
+
+
+def _parse_reference_label(
+    reference: Any, output_type: str, normalized_categorical_labels: set[str]
+) -> Any:
+    """Parse a raw dataset `reference` into THIS judge's verdict space, or `None`
+    when it cannot be read there. `None` is the unreadable signal the caller
+    counts and skips on — never coerced into a value that would silently score as
+    a wrong (or, worse, a lucky right) answer.
+    """
+    if output_type == 'boolean':
+        return _coerce_bool_tolerant(reference)
+    if output_type == 'categorical':
+        if not normalized_categorical_labels:
+            return str(reference)
+        return str(reference) if str(reference).strip().lower() in normalized_categorical_labels else None
+    if output_type in ('number', 'numeric'):
+        try:
+            return float(reference)
+        except (TypeError, ValueError):
+            return None
+    return str(reference)  # string: free text is accepted as-is
+
+
 def _merge_dataset_labels(
-    out_dir: Path, labels: dict[str, Any]
-) -> tuple[dict[str, Any], int]:
+    out_dir: Path,
+    labels: dict[str, Any],
+    output_type: str,
+    categorical_labels: list[str],
+    variables: list[str],
+) -> tuple[dict[str, Any], int, int]:
     """Fill unanswered rows from the dataset's own `reference`, tagged as such.
 
     Only rows the human did **not** answer about are filled — a grey-zone answer
     always wins, because it is the user's verdict on this rubric and the dataset's
-    label is not. Returns `(labels, n_added)`; `n_added` is 0 when the run carried
-    no ground truth, which is the ordinary case for a trace-scanned run.
+    label is not. Returns `(labels, n_added, n_unreadable)`; both counts are 0
+    when the run carried no ground truth, which is the ordinary case for a
+    trace-scanned run.
+
+    Two things a plain "copy `reference` in" skipped (§1.1):
+      - An evaluator that declares a reference-family variable (`{{log.reference}}`
+        etc.) was shown the reference as judge INPUT, so merging it back in as
+        ground truth would grade the judge on what it was just told — the same
+        circularity `metrics.py::_correctness` already refuses. Checked first, via
+        the shared `lib.content.reference_is_judge_input` rule, and short-circuits
+        the whole merge rather than filtering it row by row.
+      - A `reference` that cannot be read into this judge's verdict space (free
+        text for a boolean judge, a categorical label the judge never declares) is
+        not "close enough" to a value — merging it anyway would either crash later
+        or silently score a comparison that was never meaningful.
     """
+    if reference_is_judge_input(variables):
+        logger.info(
+            '  Dataset references are judge input for this evaluator (a declared '
+            "variable maps to `reference`); not merged as ground truth."
+        )
+        return labels, 0, 0
     stability_path = out_dir / 'stability.json'
     if not stability_path.exists():
-        return labels, 0
+        return labels, 0, 0
+    normalized_cat = {str(lbl).strip().lower() for lbl in categorical_labels or []}
     merged = dict(labels)
-    added = 0
+    added = unreadable = 0
     for row in runner.read_json(stability_path).get('rows', []):
         idx, reference = row.get('source_index'), row.get('reference')
         if idx is None or reference in (None, ''):
@@ -241,9 +315,66 @@ def _merge_dataset_labels(
         key = str(idx)
         if key in merged and isinstance(merged[key], dict) and merged[key].get('value') is not None:
             continue  # the human answered this one; their verdict stands
-        merged[key] = {'value': reference, 'label_source': 'dataset_reference'}
+        value = _parse_reference_label(reference, output_type, normalized_cat)
+        if value is None:
+            unreadable += 1
+            continue
+        merged[key] = {'value': value, 'label_source': 'dataset_reference'}
         added += 1
-    return merged, added
+    if unreadable:
+        logger.warning(
+            f'⚠ {unreadable} dataset reference(s) could not be read into this '
+            "judge's verdict space; skipped rather than merged as ground truth."
+        )
+    return merged, added, unreadable
+
+
+def _labelled_indices(labels: dict[str, Any]) -> set[int]:
+    """Row indices carrying a usable value — human-answered or merged, whichever
+    `labels` currently holds. Shared by the default retest scope and the
+    unlabelled-regression view so both use the same definition of "labelled".
+    """
+    return {
+        int(k) for k, v in labels.items()
+        if isinstance(v, dict) and v.get('value') is not None and str(k).lstrip('-').isdigit()
+    }
+
+
+def _build_wanted(
+    labels_before_merge: dict[str, Any],
+    labels: dict[str, Any],
+    all_rows: bool,
+    with_dataset_labels: bool,
+    with_low_flip: bool,
+    low_flip: set[int],
+) -> set[int] | None:
+    """Rows to materialize into the retest sub-run (§3.6).
+
+    Built from the labels the human actually answered, BEFORE the dataset merge —
+    a merge should not silently multiply how many rows a retest re-judges (and
+    pays for). Rows the merge added (`label_source == 'dataset_reference'`) are
+    re-judged only when `with_dataset_labels` asks for them explicitly; otherwise
+    the caller is told how many were left out and why, since gate (b) will only
+    ever be scored against a subset of the merged labels without them.
+    """
+    if all_rows:
+        return None
+    wanted = _labelled_indices(labels_before_merge)
+    dataset_indices = {
+        int(k) for k, v in labels.items()
+        if isinstance(v, dict) and v.get('label_source') == 'dataset_reference'
+    }
+    if with_dataset_labels:
+        wanted |= dataset_indices
+    elif dataset_indices:
+        logger.info(
+            f'  {len(dataset_indices)} dataset-labelled row(s) not re-judged; pass '
+            '--with_dataset_labels to score gate (b) against them (costs '
+            f'{len(dataset_indices)} x repeats).'
+        )
+    if with_low_flip:
+        wanted |= low_flip
+    return wanted
 
 
 def _resolve_numeric_tol(
@@ -280,6 +411,23 @@ def _resolve_numeric_tol(
     return agreement_lib.default_tolerance(
         scale, fraction=float(cfg.get('numeric_tol_fraction', agreement_lib.DEFAULT_TOL_FRACTION))
     )
+
+
+def _comparable_measurement(
+    original_n: int | None, resolved_n: int, original_temp: float | None, resolved_temp: float | None,
+) -> bool:
+    """Whether gate (a)'s retest measurement is like-for-like with the original run.
+
+    N and temperature both bias the instability ESTIMATE, not just the judge's
+    verdicts: fewer repeats under-count how often a judge flips, and a different
+    temperature changes how often it flips in the first place (§4.5). Either one
+    drifting makes "the new judge is steadier" indistinguishable from "the
+    measurement moved" — a `None` original value means nothing was declared to
+    compare against, so it cannot fail the check.
+    """
+    n_ok = original_n is None or resolved_n >= int(original_n)
+    temp_ok = original_temp is None or resolved_temp == original_temp
+    return n_ok and temp_ok
 
 
 def _instability_by_index(
@@ -463,6 +611,31 @@ def _evaluate_agreement(
     return scores, passed
 
 
+def _primary_metric(output_type: str) -> str:
+    """The single number `_evaluate_agreement` gates each type on — the same key
+    `_regressed_vs_before` compares before vs. after."""
+    return 'accuracy' if output_type in ('boolean', 'categorical', 'string') else 'within_tolerance_rate'
+
+
+def _regressed_vs_before(
+    output_type: str, after: dict[str, Any], before: dict[str, Any] | None
+) -> bool | None:
+    """Whether signal (b) got WORSE than the judge it is replacing (§2.1).
+
+    `before` is optional (no original stability.json, or no rows both sides could
+    pair) — a genuine "cannot tell" must read as `None`, never as `False`, because
+    the gate below treats `None` as "does not block success" and `False` the same
+    way a real non-regression would: only an ACTUAL regression may block it.
+    """
+    if not before:
+        return None
+    key = _primary_metric(output_type)
+    after_value, before_value = after.get(key), before.get(key)
+    if after_value is None or before_value is None:
+        return None
+    return after_value < before_value
+
+
 def _low_flip_indices(out_dir: Path) -> set[int]:
     """The stable spot-check rows the queue held back (`low_flip_sample`).
 
@@ -517,6 +690,40 @@ def _regression_report(
     }
 
 
+def _metadata_label_source(label_source: str, n_from_dataset: int) -> str:
+    """`metadata.label_source`, naming the merge when it actually happened —
+    `label_source` alone (§4.6) claimed the report was scored purely against
+    `grey_zone_policy`/`annotations` even on a run where some of those pairs were
+    really `dataset_reference` labels merged in underneath them."""
+    return f'{label_source}+dataset_reference' if n_from_dataset else label_source
+
+
+def _build_provenance(
+    policy: dict[str, Any] | None, pair_indices: list[int], labels: dict[str, Any],
+) -> dict[str, int]:
+    """How many of the SCORED pairs trace to each label source (§4.6).
+
+    `grey_zone.label_provenance(policy)` counts every label the POLICY carries,
+    whether or not it was ever re-judged — a dataset label merged in but excluded
+    from this retest (no --with_dataset_labels) inflated the dataset-reference
+    count with rows that were never actually part of `pairs`. Rescoped here to
+    `pair_indices`, the rows agreement was actually computed over, on both label
+    sources: the grey-zone-policy path (which already separates
+    derived/human_confirmed/dataset_reference) and the annotations-UI path, which
+    previously reported no human count at all once any dataset label was merged.
+    """
+    n_dataset = sum(
+        1 for idx in pair_indices
+        if isinstance(labels.get(str(idx)), dict) and labels[str(idx)].get('label_source') == 'dataset_reference'
+    )
+    if policy is not None:
+        provenance = grey_zone.label_provenance(policy)
+    else:
+        provenance = {'annotations': len(pair_indices) - n_dataset}
+    provenance['dataset_reference'] = n_dataset
+    return provenance
+
+
 def main(
     run_dir: str | None = None,
     config: str = 'config.toml',
@@ -526,6 +733,7 @@ def main(
     tol: float | None = None,
     all_rows: bool = False,
     with_low_flip: bool = False,
+    with_dataset_labels: bool = False,
     baseline_rerun: bool = False,
 ) -> str:
     """Retest the new evaluator over the confusers and score both signals.
@@ -542,6 +750,12 @@ def main(
             to re-measure run-wide instability with the new evaluator.
         with_low_flip: Also re-judge the queue's stable spot-check rows, as an
             unlabelled regression check on behaviour outside the grey zone.
+        with_dataset_labels: Also re-judge rows whose only label came from the
+            dataset's own `reference` (merged in as `label_source=dataset_reference`,
+            §3d) rather than a human answer. Off by default: those rows can
+            multiply the retest cost far past what the human actually labelled,
+            for a signal that is someone else's prior judgement, not the user's
+            verdict on this rubric.
         baseline_rerun: Re-run the ORIGINAL judge over the same rows in this pass.
             Doubles the cost and is the only way gate (a) isolates the rewrite from
             the regression-to-the-mean that selecting the most unstable rows causes.
@@ -570,6 +784,14 @@ def main(
 
     new_eval = runner.read_json(out_dir / 'new_evaluator.json')
     source_eval = runner.read_json(out_dir / 'evaluator.json')
+    # The retest sub-run's evaluator.json — built ONCE, here, so output_type has a
+    # single resolution used by the merge below, the agreement scoring, and the
+    # materialized retest/evaluator.json. Reading it back out of the sub-run later
+    # and re-deriving output_type from that copy is the same chain computed twice.
+    retest_evaluator_config = _new_evaluator_config(new_eval, source_eval)
+    output_type = (retest_evaluator_config['output_type'] or 'boolean').strip().lower()
+    categorical_labels = retest_evaluator_config['categorical_labels']
+    variables = retest_evaluator_config['variables']
 
     # Run parameters come from the ORIGINAL run unless overridden. Instability is
     # estimated from N repetitions at a given temperature, and both bias the
@@ -577,42 +799,49 @@ def main(
     # measurements and calls the difference an improvement.
     original_meta = original_metrics.get('metadata', {})
     original_n = original_meta.get('n_repeats')
+    original_temp = original_meta.get('temperature')
     resolved_n = int(n_repeats or original_n or cfg.get('n_repeats', _DEFAULT_N_REPEATS))
-    resolved_temp = temperature if temperature is not None else original_meta.get('temperature')
-    comparable = original_n is None or resolved_n >= int(original_n)
-    if not comparable:
+    resolved_temp = temperature if temperature is not None else original_temp
+    if original_n is not None and resolved_n < int(original_n):
         logger.warning(
             f'⚠ Retesting at {resolved_n} repeats against a stability run of {original_n}. '
             'Fewer repeats under-estimate instability, so a "drop" here can be the sample '
             'size alone. Gate (a) is marked not comparable.'
         )
+    if original_temp is not None and resolved_temp != original_temp:
+        logger.warning(
+            f'⚠ Retesting at temperature {resolved_temp} against a stability run at '
+            f'{original_temp}. A different temperature changes how often the judge flips, '
+            'not just what it says, so gate (a) is marked not comparable.'
+        )
+    comparable = _comparable_measurement(original_n, resolved_n, original_temp, resolved_temp)
 
     # 1) Materialize the retest sub-run against the NEW evaluator. Scope it to the
     #    rows that carry a human label: those are the only ones agreement can score,
     #    and re-judging the rest costs money for a number nothing reads.
     labels, label_source, policy = _load_labels(out_dir)
-    # Dataset ground truth fills rows the human never answered about (§3d). Kept
-    # strictly separate in the provenance count: a dataset label is someone's prior
-    # judgement, not the user's verdict on this rubric, and merging the two would
-    # let a run report human-confirmed agreement nobody confirmed.
-    labels, n_from_dataset = _merge_dataset_labels(out_dir, labels)
+    labels_before_merge = labels
+    # Dataset ground truth fills rows the human never answered about (§3d), parsed
+    # into THIS judge's verdict space first so an unreadable reference is skipped
+    # and counted rather than crashing later (§1.1). Kept strictly separate in the
+    # provenance count: a dataset label is someone's prior judgement, not the
+    # user's verdict on this rubric, and merging the two would let a run report
+    # human-confirmed agreement nobody confirmed. Merged rows are NOT re-judged by
+    # default (§3.6) — pass --with_dataset_labels to include them.
+    labels, n_from_dataset, _n_unreadable_dataset = _merge_dataset_labels(
+        out_dir, labels, output_type, categorical_labels, variables
+    )
     if n_from_dataset:
         logger.info(
             f'  + {n_from_dataset} label(s) from the dataset\'s own ground truth '
             '(label_source=dataset_reference; counted separately from human answers).'
         )
-    wanted: set[int] | None = None
-    if not all_rows:
-        wanted = {
-            int(k) for k, v in labels.items()
-            if isinstance(v, dict) and v.get('value') is not None and str(k).lstrip('-').isdigit()
-        }
-        if with_low_flip:
-            wanted |= _low_flip_indices(out_dir)
-    selected = _select_rows(out_dir, wanted, num_samples)
-    retest_dir, index_map = _materialize_subrun(
-        out_dir, 'retest', _new_evaluator_config(new_eval, source_eval), selected
+    wanted = _build_wanted(
+        labels_before_merge, labels, all_rows, with_dataset_labels, with_low_flip,
+        _low_flip_indices(out_dir),
     )
+    selected = _select_rows(out_dir, wanted, num_samples)
+    retest_dir, index_map = _materialize_subrun(out_dir, 'retest', retest_evaluator_config, selected)
 
     scope = set(index_map.values())
     original_inst = _instability_by_index(original_metrics)
@@ -699,10 +928,9 @@ def main(
         instability_dropped = retest_mean < compare_against
 
     # 3b) Signal (b): the new evaluator agrees with the human labels — and, for
-    #     free, what the OLD one scored on the same labels.
-    retest_eval = runner.read_json(retest_dir / 'evaluator.json')
-    output_type = (retest_eval.get('output_type') or 'boolean').strip().lower()
-    resolved_tol = _resolve_numeric_tol(tol, cfg, policy, retest_eval.get('scale'))
+    #     free, what the OLD one scored on the same labels. output_type was
+    #     already resolved once, above (before the merge) — not re-derived here.
+    resolved_tol = _resolve_numeric_tol(tol, cfg, policy, retest_evaluator_config.get('scale'))
     pairs, pair_tols, pair_indices = _pair_with_labels(labels, new_by_idx)
     if not pairs:
         raise SystemExit(
@@ -724,6 +952,11 @@ def main(
     old_by_idx: dict[int, Any] = {}
     if original_stability_path.exists():
         old_by_idx = _verdicts_by_index(runner.read_json(original_stability_path))
+    # §4.4: the before-side must cover the SAME rows as the after-side, not every
+    # labelled row in the original run — otherwise num_samples (or a partial
+    # --with_low_flip retest) pairs a 1-row "after" against a 200-row "before" and
+    # reports a comparison that never happened on either side.
+    old_scoped = {i: v for i, v in old_by_idx.items() if i in scope}
 
     string_verdicts: dict[str, Any] | None = None
     if output_type == 'string':
@@ -733,7 +966,7 @@ def main(
         # assemble → decide → consume split the grey-zone stage already runs on.
         verdicts_path = out_dir / STRING_VERDICTS_FILE
         if not verdicts_path.exists():
-            written = _write_string_pairs(out_dir, pairs, pair_indices, old_by_idx, policy)
+            written = _write_string_pairs(out_dir, pairs, pair_indices, old_scoped, policy)
             raise SystemExit(
                 f'Free-text judge: signal (b) needs a reader, not a string compare.\n'
                 f'Wrote {written} — {len(pairs)} pair(s) to score.\n'
@@ -756,8 +989,8 @@ def main(
         agreement_scores['scored_by'] = string_verdicts.get('scored_by', 'conductor')
 
     agreement_before: dict[str, Any] | None = None
-    if old_by_idx:
-        before_pairs, before_tols, before_indices = _pair_with_labels(labels, old_by_idx)
+    if old_scoped:
+        before_pairs, before_tols, before_indices = _pair_with_labels(labels, old_scoped)
         before_matches = (
             _string_matches(string_verdicts, before_indices, 'match_original')
             if string_verdicts else None
@@ -777,25 +1010,39 @@ def main(
     # --all_rows. The narrow view was the only one that existed, so a rewrite could
     # move behaviour across the other 200 rows and the report would say "0 of 5
     # previously-stable rows changed" — true, and not what the reader took from it.
-    labelled_indices = {
-        int(k) for k, v in labels.items()
-        if isinstance(v, dict) and v.get('value') is not None and str(k).lstrip('-').isdigit()
-    }
+    labelled_indices = _labelled_indices(labels)
     regression = _regression_report(old_by_idx, new_by_idx, _low_flip_indices(out_dir) & scope)
     regression_wide = _regression_report(
         old_by_idx, new_by_idx, scope - labelled_indices, _UNLABELLED_NOTE
     )
 
-    success = bool(instability_dropped and agreement_passed and comparable)
-    provenance = grey_zone.label_provenance(policy) if policy is not None else None
-    if n_from_dataset:
-        provenance = {**(provenance or {}), 'dataset_reference': n_from_dataset}
+    # §2.1: a passing accuracy bar can still be WORSE than the judge it replaces —
+    # `before` is computed above for free, and until now nothing read it. A `None`
+    # regression (no before-score) must not block success; only a measured one may.
+    regressed_vs_before = _regressed_vs_before(output_type, agreement_scores, agreement_before)
+    if regressed_vs_before:
+        before_value = agreement_before.get(_primary_metric(output_type))
+        after_value = agreement_scores.get(_primary_metric(output_type))
+        logger.warning(
+            f'⚠ agreement regressed vs the original judge ({before_value} → {after_value}); '
+            'success forced False'
+        )
+    success = bool(instability_dropped and agreement_passed and comparable and not regressed_vs_before)
+    # §4.6: the provenance denominator is the SCORED pairs, never the merged
+    # count — a dataset label merged but excluded from this retest (no
+    # --with_dataset_labels) never entered `pairs`, so counting it here would
+    # claim agreement was measured against a row it was never computed over.
+    provenance = _build_provenance(policy, pair_indices, labels)
+    # `len(scope)` is what was ACTUALLY re-judged; `all_rows` is only the request
+    # for that. A run that happens to label every row covers the original dataset
+    # regardless of whether --all_rows was passed to ask for it.
+    covers_original_dataset = len(scope) >= n_total_rows
     payload = {
         'metadata': {
             'output_type': output_type,
             'source_evaluator_id': original_meta.get('evaluator_id'),
             'new_evaluator_id': new_eval['id'],
-            'label_source': label_source,
+            'label_source': _metadata_label_source(label_source, n_from_dataset),
             'label_provenance': provenance,
             'n_pairs': len(pairs),
             'n_rows_retested': len(index_map),
@@ -814,6 +1061,12 @@ def main(
             'drop': drop,
             'dropped': instability_dropped,
             'comparable': comparable,
+            # §2.2: without a baseline rerun, an UNCHANGED judge reads as "dropped"
+            # almost every time (the rows were selected for extreme observed
+            # instability, so re-measuring them regresses toward the mean on its
+            # own) — this says outright whether THIS run isolated the rewrite from
+            # that, rather than leaving it implied by the --baseline_rerun flag.
+            'selection_bias_controlled': bool(baseline_rerun),
             # Both means are over these rows and no others. `n_lost_unmeasurable`
             # is the rows the old judge measured and the new one could not — they
             # are outside the comparison, so the drop says nothing about them.
@@ -825,6 +1078,7 @@ def main(
             **agreement_scores,
             'passed': agreement_passed,
             'before': agreement_before,
+            'regressed_vs_before': regressed_vs_before,
         },
         'regression_on_stable_rows': regression,
         # How wide the regression check actually looked, so a clean result cannot be
@@ -833,7 +1087,7 @@ def main(
         'regression_scope': {
             'n_rows_rejudged': len(scope),
             'n_rows_in_original_run': n_total_rows,
-            'covers_original_dataset': all_rows,
+            'covers_original_dataset': covers_original_dataset,
         },
         'success': success,
         # Read these out with the numbers, not instead of them. Each names a way
@@ -841,7 +1095,12 @@ def main(
         'caveats': _caveats(
             baseline_mean is not None, provenance, regression, n_lost_unmeasurable,
             agreement_scores.get('scored_by') if output_type == 'string' else None,
-            covers_original=all_rows, n_rejudged=len(scope), n_original=n_total_rows,
+            covers_original=covers_original_dataset, n_rejudged=len(scope), n_original=n_total_rows,
+            regression_before_after=(
+                (agreement_before.get(_primary_metric(output_type)), agreement_scores.get(_primary_metric(output_type)))
+                if regressed_vs_before else None
+            ),
+            regression_wide=regression_wide, n_pairs=len(pairs),
         ),
     }
     runner.write_json(out_dir / 'retest_metrics.json', payload)
@@ -882,6 +1141,8 @@ def _caveats(
     has_baseline: bool, provenance: dict[str, int] | None, regression: dict[str, Any] | None,
     n_lost_unmeasurable: int = 0, string_scored_by: str | None = None,
     covers_original: bool = True, n_rejudged: int = 0, n_original: int = 0,
+    regression_before_after: tuple[Any, Any] | None = None,
+    regression_wide: dict[str, Any] | None = None, n_pairs: int = 0,
 ) -> list[str]:
     """The limits of the two gates, in the words the conductor should use.
 
@@ -889,11 +1150,20 @@ def _caveats(
     is only valid under conditions nobody mentions gets quoted without them.
     """
     out: list[str] = []
+    if regression_before_after is not None:
+        before_v, after_v = regression_before_after
+        out.append(
+            f'Agreement regressed vs the original judge ({before_v} → {after_v}); success is '
+            'forced False even though gate (a) and/or the accuracy bar individually passed.'
+        )
     if not has_baseline:
         out.append(
             'These rows were picked for the highest observed instability, so re-measuring '
             'them drifts toward the middle on its own. Some of the drop is that, not the '
-            'rewrite. Pass --baseline_rerun to re-run the old judge over the same rows.'
+            'rewrite. Pass --baseline_rerun to re-run the old judge over the same rows. On '
+            'this default path an unchanged judge reads as "dropped" almost every time (the '
+            'rows were selected for extreme observed instability), so treat the dropped '
+            'verdict as unreliable without --baseline_rerun.'
         )
     out.append(
         'The same examples produced the guidance for the rewrite and the labels that score '
@@ -907,7 +1177,7 @@ def _caveats(
         )
     if provenance and provenance.get('dataset_reference'):
         out.append(
-            f'{provenance["dataset_reference"]} of {sum(provenance.values())} labels came from '
+            f'{provenance["dataset_reference"]} of {n_pairs} labels came from '
             "the dataset's own ground truth, not from this conversation. That is someone's "
             'prior judgement — possibly stale, possibly written against a different version of '
             'the rubric — so agreement on those rows is not the user agreeing.'
@@ -916,6 +1186,11 @@ def _caveats(
         out.append(
             'Behaviour outside the grey zone was not re-measured. Pass --with_low_flip to '
             'check the rows the old judge was completely steady on.'
+        )
+    if regression_wide is None:
+        out.append(
+            'The unlabelled-row regression check had no rows to compare — every re-judged row '
+            'carried a label, so nothing here says whether behaviour moved outside the grey zone.'
         )
     if not covers_original:
         out.append(

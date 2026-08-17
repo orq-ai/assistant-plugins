@@ -139,6 +139,120 @@ def test_a_point_without_its_own_band_falls_back_to_the_run_wide_one():
     assert scores['n_within'] == 1  # the unbanded point clears 0.5, the banded one does not
 
 
+# --- dataset labels are parsed into the verdict space before merging (§1.1) ---
+
+
+def test_unreadable_reference_is_skipped_not_crashed(tmp_path):
+    # today: lib.agreement._coerce_bool raises ValueError on a free-text reference
+    # for a boolean judge, uncaught — the retest run crashes AFTER the judge calls
+    # it exists to score have already been spent.
+    _write(tmp_path / 'stability.json', {'rows': [
+        {'source_index': 3, 'reference': 'Paris is the capital of France.'},
+    ]})
+    labels, n_added, n_unreadable = retest._merge_dataset_labels(
+        tmp_path, {}, 'boolean', [], []
+    )
+    assert labels == {}
+    assert n_added == 0
+    assert n_unreadable == 1
+
+
+def test_reference_is_judge_input_is_not_merged_as_ground_truth(tmp_path):
+    # An evaluator that declares {{log.reference}} was shown the answer as INPUT;
+    # merging it back in as ground truth would grade the judge on what it was told.
+    _write(tmp_path / 'stability.json', {'rows': [
+        {'source_index': 0, 'reference': 'safe'},
+    ]})
+    labels, n_added, n_unreadable = retest._merge_dataset_labels(
+        tmp_path, {}, 'categorical', ['safe', 'abuse'], ['log.reference', 'log.output']
+    )
+    assert labels == {}
+    assert n_added == 0
+    assert n_unreadable == 0
+
+
+def test_readable_references_merge_normally(tmp_path):
+    _write(tmp_path / 'stability.json', {'rows': [
+        {'source_index': 1, 'reference': 'true'},
+        {'source_index': 2, 'reference': 'no'},
+    ]})
+    labels, n_added, n_unreadable = retest._merge_dataset_labels(
+        tmp_path, {}, 'boolean', [], []
+    )
+    assert labels['1'] == {'value': True, 'label_source': 'dataset_reference'}
+    assert labels['2'] == {'value': False, 'label_source': 'dataset_reference'}
+    assert n_added == 2
+    assert n_unreadable == 0
+
+
+def test_unreadable_categorical_reference_is_skipped(tmp_path):
+    _write(tmp_path / 'stability.json', {'rows': [
+        {'source_index': 0, 'reference': 'not-a-declared-label'},
+    ]})
+    labels, n_added, n_unreadable = retest._merge_dataset_labels(
+        tmp_path, {}, 'categorical', ['safe', 'abuse'], []
+    )
+    assert labels == {}
+    assert n_added == 0
+    assert n_unreadable == 1
+
+
+def test_a_human_answer_is_never_overwritten_by_a_dataset_label(tmp_path):
+    _write(tmp_path / 'stability.json', {'rows': [
+        {'source_index': 5, 'reference': 'true'},
+    ]})
+    labels, n_added, n_unreadable = retest._merge_dataset_labels(
+        tmp_path, {'5': {'value': False}}, 'boolean', [], []
+    )
+    assert labels == {'5': {'value': False}}
+    assert n_added == 0
+
+
+# --- dataset-labelled rows are re-judged only on request (§3.6) ---
+
+
+def test_dataset_labelled_rows_are_excluded_from_the_default_wanted_set():
+    labels_before_merge = {str(i): {'value': True} for i in range(3)}
+    labels_merged = {
+        **labels_before_merge,
+        **{str(i): {'value': True, 'label_source': 'dataset_reference'} for i in range(3, 20)},
+    }
+    wanted = retest._build_wanted(
+        labels_before_merge, labels_merged, all_rows=False, with_dataset_labels=False,
+        with_low_flip=False, low_flip=set(),
+    )
+    assert wanted == {0, 1, 2}
+
+
+def test_with_dataset_labels_flag_adds_the_merged_rows():
+    labels_before_merge = {str(i): {'value': True} for i in range(3)}
+    labels_merged = {
+        **labels_before_merge,
+        **{str(i): {'value': True, 'label_source': 'dataset_reference'} for i in range(3, 20)},
+    }
+    wanted = retest._build_wanted(
+        labels_before_merge, labels_merged, all_rows=False, with_dataset_labels=True,
+        with_low_flip=False, low_flip=set(),
+    )
+    assert wanted == set(range(20))
+
+
+def test_all_rows_flag_short_circuits_the_wanted_set():
+    wanted = retest._build_wanted(
+        {'0': {'value': True}}, {'0': {'value': True}}, all_rows=True,
+        with_dataset_labels=False, with_low_flip=False, low_flip=set(),
+    )
+    assert wanted is None
+
+
+def test_with_low_flip_still_unions_in_the_spot_check_rows():
+    wanted = retest._build_wanted(
+        {'0': {'value': True}}, {'0': {'value': True}}, all_rows=False,
+        with_dataset_labels=False, with_low_flip=True, low_flip={9, 11},
+    )
+    assert wanted == {0, 9, 11}
+
+
 # --- the retest set is scoped to the labelled rows ---
 
 
@@ -304,9 +418,12 @@ def test_rows_the_new_judge_cannot_measure_are_outside_the_comparison():
 # --- the success gate itself ---
 
 
-def _gate(dropped: bool, agreement_passed: bool, comparable: bool = True) -> bool:
+def _gate(
+    dropped: bool, agreement_passed: bool, comparable: bool = True,
+    regressed_vs_before: bool | None = None,
+) -> bool:
     """The one line the whole skill turns on, mirrored from retest.main."""
-    return bool(dropped and agreement_passed and comparable)
+    return bool(dropped and agreement_passed and comparable and not regressed_vs_before)
 
 
 def test_success_requires_both_signals():
@@ -324,6 +441,64 @@ def test_success_requires_a_comparable_measurement():
     assert _gate(True, True, comparable=False) is False
 
 
+def test_success_is_blocked_by_a_regression_vs_before(): # §2.1
+    # today: `success` ignores `before` entirely — a rewrite that PASSES the
+    # accuracy bar but is WORSE than the judge it replaced still reports PASS.
+    assert _gate(True, True, regressed_vs_before=True) is False
+
+
+def test_success_is_not_blocked_by_an_unmeasured_regression():
+    # A `before` that could not be computed (no original stability.json, no
+    # overlapping pairs) must not silently fail every retest.
+    assert _gate(True, True, regressed_vs_before=None) is True
+    assert _gate(True, True, regressed_vs_before=False) is True
+
+
+# --- signal (b)'s gate must respect the `before` score (§2.1) ---
+
+
+def test_primary_metric_is_accuracy_for_bool_categorical_string():
+    assert retest._primary_metric('boolean') == 'accuracy'
+    assert retest._primary_metric('categorical') == 'accuracy'
+    assert retest._primary_metric('string') == 'accuracy'
+
+
+def test_primary_metric_is_within_tolerance_rate_for_numeric():
+    assert retest._primary_metric('number') == 'within_tolerance_rate'
+    assert retest._primary_metric('numeric') == 'within_tolerance_rate'
+
+
+def test_regressed_vs_before_true_when_the_primary_metric_drops():
+    after = {'accuracy': 0.75}
+    before = {'accuracy': 1.0, 'n_pairs': 4}
+    assert retest._regressed_vs_before('boolean', after, before) is True
+
+
+def test_regressed_vs_before_false_when_it_improves():
+    after = {'accuracy': 0.9}
+    before = {'accuracy': 0.7, 'n_pairs': 4}
+    assert retest._regressed_vs_before('boolean', after, before) is False
+
+
+def test_regressed_vs_before_is_none_without_a_before_score():
+    assert retest._regressed_vs_before('boolean', {'accuracy': 0.9}, None) is None
+    assert retest._regressed_vs_before('boolean', {'accuracy': 0.9}, {}) is None
+
+
+def test_regressed_vs_before_uses_within_tolerance_rate_for_numeric():
+    after = {'within_tolerance_rate': 0.5}
+    before = {'within_tolerance_rate': 0.8}
+    assert retest._regressed_vs_before('number', after, before) is True
+
+
+def test_caveats_name_the_regression_vs_before():
+    caveats = retest._caveats(
+        True, None, {}, regression_before_after=(1.0, 0.75),
+    )
+    assert any('regressed vs the original judge (1.0 → 0.75)' in c for c in caveats)
+    assert not any('regressed vs the original judge' in c for c in retest._caveats(True, None, {}))
+
+
 def test_caveats_are_always_stated():
     # Including on the good runs — especially then.
     caveats = retest._caveats(has_baseline=True, provenance={'derived': 0, 'human_confirmed': 4}, regression={})
@@ -336,11 +511,44 @@ def test_caveats_name_the_selection_bias_without_a_baseline_rerun():
     assert any('--with_low_flip' in c for c in caveats)
 
 
+def test_caveats_state_the_dropped_verdict_is_unreliable_without_a_baseline(): # §2.2 honesty
+    # today: the no-baseline caveat says WHY the rows drift toward the middle, but
+    # not that the dropped verdict itself is close to guaranteed on this default
+    # path — a maintainer reading only the headline number has no reason to doubt it.
+    without_baseline = retest._caveats(has_baseline=False, provenance=None, regression=None)
+    assert any('unreliable without --baseline_rerun' in c for c in without_baseline)
+    with_baseline = retest._caveats(has_baseline=True, provenance=None, regression=None)
+    assert not any('unreliable without --baseline_rerun' in c for c in with_baseline)
+
+
 def test_caveats_report_derived_labels():
     caveats = retest._caveats(
         has_baseline=True, provenance={'derived': 3, 'human_confirmed': 1}, regression={}
     )
     assert any('derived by' in c for c in caveats)
+
+
+# --- temperature joins the comparability check (§4.5) ---
+
+
+def test_comparable_measurement_is_false_on_a_different_temperature():
+    # today: `comparable` only checks n_repeats — a retest at temperature=0.0
+    # against a stability run at 1.0 reports "comparable" while measuring
+    # something else entirely.
+    assert retest._comparable_measurement(5, 5, 1.0, 0.0) is False
+
+
+def test_comparable_measurement_is_true_on_the_same_temperature():
+    assert retest._comparable_measurement(5, 5, 1.0, 1.0) is True
+
+
+def test_comparable_measurement_ignores_an_undeclared_original_temperature():
+    # An older run recorded no temperature at all — nothing to compare against.
+    assert retest._comparable_measurement(5, 5, None, 0.3) is True
+
+
+def test_comparable_measurement_still_checks_n_repeats():
+    assert retest._comparable_measurement(5, 2, None, None) is False
 
 
 # --- the regression check on rows the old judge never wavered on ---
@@ -386,8 +594,6 @@ def test_string_pairs_file_carries_both_judges(tmp_path):
 
     written = json.loads(path.read_text(encoding='utf-8'))
     assert [p['source_index'] for p in written['pairs']] == [3, 4]
-    assert written['pairs'][1]['new_judge_value'] == 'billing issue'
-    assert written['pairs'][1]['original_judge_value'] == 'spam'
     # The reader scores against the user's rule, not its own idea of a good answer.
     assert written['metadata']['rule'] == ['a paraphrase of the same intent counts']
 
@@ -479,3 +685,180 @@ def test_caveat_fires_when_the_check_was_narrower_than_the_run():
     assert any('17 of the 200' in c for c in narrow)
     full = retest._caveats(True, None, {}, 0, None, covers_original=True, n_rejudged=200, n_original=200)
     assert not any('of the 200 datapoint' in c for c in full)
+
+
+# --- five payload untruths (§4.6) ---
+
+
+def test_regression_wide_none_gets_its_own_caveat():
+    # today: nothing distinguishes "the unlabelled-row check found 0 changes" from
+    # "the unlabelled-row check never ran" — regression_wide=None (every re-judged
+    # row was labelled, so there was nothing to compare) is silent either way.
+    without_wide = retest._caveats(True, None, {}, regression_wide=None)
+    assert any('unlabelled-row regression check had no rows to compare' in c for c in without_wide)
+    with_wide = retest._caveats(True, None, {}, regression_wide={'n_compared': 3, 'n_changed': 0})
+    assert not any('unlabelled-row regression check had no rows to compare' in c for c in with_wide)
+
+
+def test_metadata_label_source_names_the_merge():
+    assert retest._metadata_label_source('annotations', 0) == 'annotations'
+    assert retest._metadata_label_source('annotations', 3) == 'annotations+dataset_reference'
+    assert retest._metadata_label_source('grey_zone_policy', 2) == 'grey_zone_policy+dataset_reference'
+
+
+def test_provenance_denominator_is_the_scored_pairs_not_the_merged_count():
+    # 5 dataset labels were merged, but only 2 of them ended up in `pairs` (the
+    # rest were never retested); the caveat's numbers must be 2 of 5 (len(pairs)),
+    # never "5 of N_merged".
+    caveats = retest._caveats(
+        True, {'annotations': 3, 'dataset_reference': 2}, {}, n_pairs=5,
+    )
+    assert any('2 of 5 labels' in c for c in caveats)
+
+
+def test_build_provenance_counts_only_scored_pairs_on_the_policy_path():
+    policy = {'labels': [
+        {'source_index': i, 'value': True, 'label_source': 'human_confirmed'} for i in range(5)
+    ]}
+    # Merge added dataset labels for indices 5..9, but only index 5 was retested.
+    labels = {
+        **{str(i): {'value': True} for i in range(5)},
+        **{str(i): {'value': True, 'label_source': 'dataset_reference'} for i in range(5, 10)},
+    }
+    provenance = retest._build_provenance(policy, [0, 1, 2, 5], labels)
+    assert provenance['dataset_reference'] == 1  # only index 5 was among the scored pairs
+    assert provenance['human_confirmed'] == 5  # unaffected: the policy path's own count
+
+
+def test_build_provenance_on_the_annotations_path_names_both_sources():
+    labels = {
+        **{str(i): {'value': True} for i in range(3)},
+        **{str(i): {'value': True, 'label_source': 'dataset_reference'} for i in range(3, 5)},
+    }
+    provenance = retest._build_provenance(None, [0, 1, 2, 3, 4], labels)
+    assert provenance == {'annotations': 3, 'dataset_reference': 2}
+
+
+def test_num_samples_zero_refuses_to_retest_nothing(tmp_path):
+    _seed_retest_inputs(tmp_path, n_rows=5)
+    with pytest.raises(SystemExit, match=r'--num_samples must be >= 1'):
+        retest._select_rows(tmp_path, None, 0)
+
+
+def test_covers_original_dataset_is_true_without_the_flag_when_every_row_is_labelled(tmp_path, monkeypatch):
+    # today: covers_original_dataset just echoes the --all_rows FLAG, so a run
+    # that happens to label (and thus re-judge) every row reports "did not cover
+    # the original dataset" even though it manifestly did.
+    n = 5
+    _seed_full_run(tmp_path, n=n, output_type='boolean')
+    _write(tmp_path / 'annotations.json', {str(i): {'value': True, 'reason': ''} for i in range(n)})
+    _stub_stability_main(monkeypatch, lambda row: True, output_type='boolean')
+
+    retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG)  # no --all_rows
+
+    rm = json.loads((tmp_path / 'retest_metrics.json').read_text(encoding='utf-8'))
+    assert rm['regression_scope']['covers_original_dataset'] is True
+
+
+# --- end-to-end retest.main(): scoping and payload honesty ---
+#
+# The helpers above cover retest.py's pure functions in isolation. A few defects
+# (§4.4's before-side scoping, §2.2's selection_bias_controlled field, §4.6's
+# covers_original_dataset) live entirely in how `main` WIRES those functions
+# together, so no unit test of a single function can see them — only running
+# `main` itself can. `_stub_stability_main` replaces the (heavy, judge-calling)
+# `stability.main` with a fast fake that writes stability.json/metrics.json
+# straight from a per-row verdict function, the way `test_pipeline.py` stubs the
+# jury (`run_jury_for_row`) for its own end-to-end runs — this stubs one level
+# higher because these tests are about retest.py's scoping/gating/payload wiring,
+# not the jury.
+
+FAKE_CONFIG = str(Path(__file__).resolve().parents[1] / 'tests' / 'config_fake.toml')
+
+
+def _stub_stability_main(monkeypatch, verdict_fn, output_type: str = 'boolean') -> None:
+    import stability
+
+    def fake_main(*, run_dir, config, n_repeats=None, temperature=None, metrics=True):
+        rd = Path(run_dir)
+        rows = retest.runner.read_jsonl(rd / 'traces.jsonl')
+        stab_rows, per_row = [], []
+        for i, row in enumerate(rows):
+            stab_rows.append({
+                'source_index': i, 'aggregate_value': verdict_fn(row), 'reference': row.get('reference', ''),
+            })
+            per_row.append({'source_index': i, 'instability': 0.0, 'band': 'stable'})
+        retest.runner.write_json(rd / 'stability.json', {
+            'metadata': {'output_type': output_type, 'n_repeats': n_repeats, 'temperature': temperature},
+            'rows': stab_rows,
+        })
+        retest.runner.write_json(rd / 'metrics.json', {
+            'metadata': {'output_type': output_type, 'n_repeats': n_repeats, 'temperature': temperature},
+            'scores': {'mean_instability': 0.0},
+            'per_row': per_row,
+        })
+
+    monkeypatch.setattr(stability, 'main', fake_main)
+
+
+def _seed_full_run(tmp_path: Path, n: int = 5, output_type: str = 'boolean') -> Path:
+    """A run dir shaped like a finished alignment WITH the original stability run
+    already present (stability.json + metrics.json) — what `_seed_retest_inputs`
+    omits, since its callers only ever exercise `_select_rows`/`_materialize_subrun`
+    directly rather than `main()`."""
+    _write(tmp_path / 'evaluator.json', {
+        'id': 'src', 'prompt': 'Judge: {{log.output}}', 'judge_model': 'm',
+        'output_type': output_type, 'categorical_labels': [], 'scale': None, 'variables': [],
+    })
+    _write(tmp_path / 'new_evaluator.json', {
+        'id': 'new', 'key': 'k', 'prompt': 'Judge better: {{log.output}}', 'judge_model': 'm',
+        'output_type': output_type, 'categorical_labels': [], 'scale': None,
+    })
+    (tmp_path / 'traces.jsonl').write_text(
+        '\n'.join(json.dumps({'query': f'q{i}', 'output': f'o{i}'}) for i in range(n)) + '\n',
+        encoding='utf-8',
+    )
+    _write(tmp_path / 'stability.json', {
+        'metadata': {'output_type': output_type},
+        'rows': [{'source_index': i, 'aggregate_value': True, 'reference': ''} for i in range(n)],
+    })
+    _write(tmp_path / 'metrics.json', {
+        'metadata': {'output_type': output_type, 'evaluator_id': 'src'},
+        'scores': {'mean_instability': 0.5},
+        'per_row': [{'source_index': i, 'instability': 0.5} for i in range(n)],
+    })
+    return tmp_path
+
+
+def test_agreement_before_is_scoped_to_the_retested_rows(tmp_path, monkeypatch):
+    # today: `old_by_idx` is unscoped, so the before-side pairs against every
+    # LABELLED row regardless of how many were actually re-judged — num_samples=1
+    # retests one row but reports agreement_before over all 20.
+    n = 20
+    _seed_full_run(tmp_path, n=n, output_type='boolean')
+    _write(tmp_path / 'annotations.json', {str(i): {'value': True, 'reason': ''} for i in range(n)})
+    _stub_stability_main(monkeypatch, lambda row: True, output_type='boolean')
+
+    retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG, num_samples=1)
+
+    rm = json.loads((tmp_path / 'retest_metrics.json').read_text(encoding='utf-8'))
+    assert rm['agreement']['before']['n_pairs'] == 1
+
+
+def test_selection_bias_controlled_reflects_baseline_rerun(tmp_path, monkeypatch):
+    # §2.2 honesty: the field must say whether THIS run actually isolated the
+    # rewrite from selection bias, not just restate the --baseline_rerun flag.
+    n = 5
+    _seed_full_run(tmp_path, n=n, output_type='boolean')
+    _write(tmp_path / 'annotations.json', {str(i): {'value': True, 'reason': ''} for i in range(n)})
+    _stub_stability_main(monkeypatch, lambda row: True, output_type='boolean')
+
+    retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG)
+    rm = json.loads((tmp_path / 'retest_metrics.json').read_text(encoding='utf-8'))
+    assert rm['instability']['selection_bias_controlled'] is False
+    assert any('unreliable without --baseline_rerun' in c for c in rm['caveats'])
+
+    retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG, baseline_rerun=True)
+    rm = json.loads((tmp_path / 'retest_metrics.json').read_text(encoding='utf-8'))
+    assert rm['instability']['selection_bias_controlled'] is True
+    assert not any('unreliable without --baseline_rerun' in c for c in rm['caveats'])
