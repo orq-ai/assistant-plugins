@@ -14,7 +14,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import _bootstrap  # noqa: F401,E402
 
-from fetch_traces import _dedup_rows, _judged_input_key, _resolve_judge_model  # noqa: E402
+import json  # noqa: E402
+
+import pytest  # noqa: E402
+
+from fetch_traces import (  # noqa: E402
+    _dedup_rows,
+    _judged_input_key,
+    _resolve_judge_model,
+    _guard_foreign_rows,
+    _scan_depth_note,
+    foreign_rows,
+)
 
 
 def _q(row):
@@ -128,3 +139,79 @@ def test_dedup_rows_with_judged_input_key_collapses_cross_trace_repeats():
     out, dropped = _dedup_rows(rows, _judged_input_key)
     assert [r['trace_id'] for r in out] == ['t1', 't3']
     assert dropped == 1
+
+
+# --- scan depth: the number only means something next to the window it came from ---
+
+
+def test_scan_depth_flags_a_truncated_scan_as_a_slice():
+    # Hitting the cap is the tell that there IS more history, so the deeper scan is
+    # worth offering. Without this the count reads as "all this judge has".
+    echo = {'limit': 200, 'n_traces_scanned': 200, 'scan_truncated': True}
+    note = _scan_depth_note(echo, 18)
+    assert '18 datapoint(s) from the 200 most recent' in note
+    assert 'SLICE' in note
+    assert '--trace_limit 2000' in note
+
+
+def test_scan_depth_does_not_offer_a_deeper_scan_that_cannot_help():
+    # Under the cap the window already held every trace there was; a bigger limit
+    # re-scans the same traces. Offering it anyway teaches the user to ignore the ask.
+    echo = {'limit': 200, 'n_traces_scanned': 43, 'scan_truncated': False}
+    note = _scan_depth_note(echo, 18)
+    assert '--trace_limit 2000' not in note
+    assert 'trace_start_date' in note
+
+
+def test_scan_depth_survives_an_echo_without_counts():
+    # Older run dirs / the no-traces early return carry no scan counts.
+    assert _scan_depth_note({}, 5) == 'Scan: 5 datapoint(s).'
+
+
+# --- the scan overwrites; the other input sources append ---
+
+
+def test_foreign_rows_counts_non_trace_sources():
+    rows = [
+        {'query': 'a', 'trace_id': 't1'},                 # from the scan
+        {'query': 'b', 'source': 'dataset:ds-1'},
+        {'query': 'c', 'source': 'dataset:ds-1'},
+        {'query': 'd', 'synthetic': True},
+    ]
+    assert foreign_rows(rows) == {'dataset:ds-1': 2, 'synthetic': 1}
+
+
+def test_foreign_rows_is_empty_for_a_pure_trace_scan():
+    assert foreign_rows([{'query': 'a', 'trace_id': 't1'}, {'query': 'b', 'span_id': 's'}]) == {}
+
+
+def test_scan_refuses_to_delete_rows_another_source_added(tmp_path):
+    # fetch_traces rewrites traces.jsonl wholesale while dataset_inputs/seed_inputs
+    # append to it, so running the scan second used to silently drop their rows —
+    # and the row count afterwards looks perfectly reasonable.
+    (tmp_path / 'traces.jsonl').write_text(
+        json.dumps({'query': 'a', 'source': 'dataset:ds-1'}) + '\n', encoding='utf-8'
+    )
+    with pytest.raises(SystemExit) as exc:
+        _guard_foreign_rows(tmp_path, replace=False)
+    assert 'dataset:ds-1' in str(exc.value)
+    assert '--replace' in str(exc.value)
+
+
+def test_scan_overwrites_when_replace_is_explicit(tmp_path):
+    (tmp_path / 'traces.jsonl').write_text(
+        json.dumps({'query': 'a', 'synthetic': True}) + '\n', encoding='utf-8'
+    )
+    _guard_foreign_rows(tmp_path, replace=True)  # no raise
+
+
+def test_scan_is_unguarded_over_its_own_rows(tmp_path):
+    # Re-scanning deeper is the documented step-1a move and must not need a flag.
+    (tmp_path / 'traces.jsonl').write_text(
+        json.dumps({'query': 'a', 'trace_id': 't1'}) + '\n', encoding='utf-8'
+    )
+    _guard_foreign_rows(tmp_path, replace=False)
+
+
+def test_scan_is_unguarded_on_a_fresh_run_dir(tmp_path):
+    _guard_foreign_rows(tmp_path, replace=False)

@@ -3,7 +3,8 @@ name: orq-evaluator-alignment
 description: >-
   Align, calibrate, or improve an existing LLM-as-a-judge (orq evaluator) so its
   verdicts match human judgment — boolean, categorical, numeric, or free-form
-  string judges (string: detect + annotate only, no rewrite/create yet). Use when
+  string judges (string agreement is scored by reading the answers, not by exact
+  match). Use when
   the user wants to "align my evaluator", "improve my eval", "my judge keeps
   changing its mind", "find ambiguous cases", or "annotate an evaluator" — i.e.
   they have an LLM judge that disagrees with human labels or is inconsistent.
@@ -59,18 +60,32 @@ bypasses the inline metadata).
   string exact-match entropy `H/ln(n_repeats)`); the rewrite preserves the evaluator's
   verdict space (label set / numeric scale). Numeric rewriting is deliberately
   shallow — it nudges the scale's anchor descriptions, not a calibration model.
-  **String supports detect + annotate only for now**: measurement, the confuser
-  queue, and the free-text annotation widget all work, but `recommend`/`rewrite`/
-  `create_eval` do **not** consume string yet (`create_eval` fails fast on it) — so
-  string annotations are captured but don't auto-drive a rewrite. Step 1 accepts all
-  four output types and fails fast on anything else.
+  **String runs the whole flow, with one difference at step 8**: agreement cannot be
+  computed by `==`, because two correct free-text answers worded differently would
+  score as a disagreement and reject every rewrite. So the retest writes the pairs
+  out, you decide match/no-match per example against the user's own rule, and it
+  resumes from your verdicts — assemble → decide → consume, the same split the
+  grey-zone stage uses. `recommend.py` (the fallback path only) still refuses string
+  for exactly the `==` reason. Step 1 accepts all four output types and fails fast on
+  anything else.
 - **Consistency is a ceiling, not proof.** A steady judge is *reproducible*, not
   *right* — it can be wrong the same way every time. You find the examples it's
   unsure about; only the user can say what the answer should be.
-- **The blind spot, which you must say out loud:** this method finds examples the
-  judge wavers on, so it structurally cannot find the ones it gets wrong with total
-  confidence. State it in the final summary every time, and offer the stable
-  spot-check sample (config `low_flip_sample_size`) as the cheap partial check.
+- **The blind spot, which you must say out loud — unless you measured it.** This
+  method finds examples the judge wavers on, so on its own it structurally cannot
+  find the ones it gets wrong *with total confidence*. Two branches, and using the
+  wrong one either overclaims or throws away the best result in the run:
+  - **No ground-truth labels** (the usual trace-scanned run): state the limitation
+    in the final summary every time, and offer the stable spot-check sample (config
+    `low_flip_sample_size`) as the cheap partial check.
+  - **Rows carried a `reference` label** (a dataset with `expected_output`):
+    `metrics.json` has a `correctness` block and the limitation **does not apply to
+    the rows it covers**. Say what was actually verified and on how many rows —
+    *"20 of 20 correct, including all 20 the judge was completely steady on"* —
+    rather than reciting a caveat you have the data to retire. `by_band.stable` is
+    the number that matters: it is the blind spot, measured. Still name the labels
+    as `dataset_reference` (§ step 8) — they are someone's prior judgement, not the
+    user's verdict — and keep the caveat for whatever rows were unlabelled.
 
 ## The flow
 
@@ -92,16 +107,15 @@ Three answers, three routes:
 - **No, and no prompt yet** → this is the wrong skill. Say so plainly and point them
   at **`orq-build-evaluator`**, which starts from what they want to catch. Stop here.
 
-### 1. Check the judge, and look for data
+### 1. Check the judge
 Once you have the ID, run **one** command:
 ```
 uv run scripts/fetch_evaluator.py --evaluator_id <id>
 ```
-It fetches the judge **and** scans the 200 most recent traces for examples it has
-already scored. Tell the user, in their words, what came back:
+This fetches the judge and **stops** — where the examples come from is step 1a, and
+it is the user's call, not a default. Tell the user, in their words, what came back:
 - **the judge is the right one** — say what it looks at (its template variables) and
   what it decides, in one sentence, and ask them to confirm;
-- **how many examples we have to work with** (`traces.jsonl`);
 - **which model is doing the judging** (`judge_model` on `evaluator.json`). Resolved
   in priority order: an explicit `--judge_model` override → the evaluator's config
   model id looked up via `GET /v2/models` (registry UUID → slug) → the model seen on
@@ -120,44 +134,67 @@ already scored. Tell the user, in their words, what came back:
   Without it, we can't re-run the judge at step 3, so this has to be settled here.
 
 The command prints a run directory — **pass that `--run_dir` to every later step.**
-It starts as `<key>_<ts>` and is renamed to `<key>_<ts>_<model>_<N>dp` once the scan
-knows the model and example count, so always use the **printed** path. If the judge's
-output type isn't boolean, categorical, number, or string, it stops before scanning —
-tell the user those four are what's supported, and that free-text judges can be
-measured and annotated but not yet rewritten.
+It starts as `<key>_<ts>` and is renamed to `<key>_<ts>_<model>_<N>dp` once the model
+and example count are known, so always use the **printed** path. If the judge's
+output type isn't boolean, categorical, number, or string, it stops here — tell the
+user those four are what's supported.
 
-**If the scan found nothing (or too little), go to step 1a.** A scan covering 0–9
-usable examples is the normal case for a judge that is new, rarely triggered, or
-older than the scan window — it is not a failure, and it has a menu of fixes.
+### 1a. Ask where the examples should come from  ⟵ GATE
+**Always ask. There is no default source.** The judge is fetched; nothing has been
+scanned, pulled or generated yet. Four routes, and the right one depends on facts
+only the user has — how long this judge has been live, whether it fires often, whether
+the cases they care about have happened yet.
 
-### 1a. Not enough examples — ask how they want to get data  ⟵ GATE
-Reach this from **step 1** when the scan came back with fewer than 10 usable
-examples, and again from **step 4** if the judge turns out to be perfectly consistent
-on everything (nothing to review). Don't push on and don't pick for them. Say where
-things stand in one line — *"the scan found 4 examples this judge has scored, which
-isn't enough to tell signal from noise"* — then offer the choice:
+> *"I've got the judge. Now I need examples to test it on. I can scan your production
+> traces for cases it's already scored, pull an orq dataset you've already got, take
+> examples you bring me, or generate some. Which fits?"*
 
-> *"Four ways to get more: I can look further back through your traces, use a dataset
-> you already have in orq, take examples you bring me, or make some up. Which fits?"*
+Lead with the trace scan and say why it's the one to beat: **it is the only source
+that shows what the judge actually meets in production.** The other three test what
+the rubric *says*. That's a real difference and worth one sentence, but it is not a
+reason to pick for them — a judge that went live yesterday has nothing to scan, and
+saying so up front beats an empty scan that reads like a dead end.
 
-1. **Look further back** (cheapest — try this first). The scan only covers the most
-   recent 200 traces, and matching happens on our side, so an older or rarely-used
-   judge simply sits outside the window.
+**They can combine sources**, and several will want to: scan production, then top up
+with generated borderline cases. One ordering constraint — **the trace scan must go
+first.** It rewrites `traces.jsonl` wholesale; the other three append. Running it
+second deletes what they added, so it refuses when it finds rows from another source
+(`--replace` to override deliberately).
+
+1. **Scan production traces.** Reads the most recent traces and keeps the ones this
+   judge has already scored.
    ```
-   uv run scripts/fetch_traces.py --run_dir <run_dir> --trace_limit 2000
+   uv run scripts/fetch_traces.py --run_dir <run_dir>                    # 200 (default)
+   uv run scripts/fetch_traces.py --run_dir <run_dir> --trace_limit 2000 # deeper
    ```
-   Widen `trace_start_date`/`trace_end_date` in `config.toml` too if the judge is
-   older than that. The evaluator is already saved, so this only re-pulls traces.
-   **Only safe before anything is labelled** — it rewrites `traces.jsonl` wholesale,
-   and every label is keyed by position in that file. After step 6, re-run
-   stability → metrics → build_queue and redo the labels.
+   It reports the count **next to the window it came from**, and whether it hit the
+   cap: *"18 datapoints from the 200 most recent traces — and the scan filled up"*
+   means there is history behind it, so offer the deeper scan. If it came back
+   **under** the cap it already saw every trace in the window; a bigger limit
+   re-scans the same traces, so widen `trace_start_date`/`trace_end_date` instead.
+   Read this back before step 2 prices the run: more examples cost proportionally
+   more, and after step 6 re-scanning is no longer free — it rewrites the file every
+   label is keyed into, so it means redoing stability → metrics → build_queue and
+   the labelling.
 2. **Use a dataset already in orq.**
    ```
    uv run scripts/dataset_inputs.py list --config config.toml        # pick one
    uv run scripts/dataset_inputs.py pull --run_dir <run_dir> --dataset_id <id>
    ```
-   It matches the dataset's columns to what the judge reads. If a field can't be
-   matched it tells you which one — ask the user to map that field, don't guess.
+   It matches the dataset's columns to what the judge reads, deriving `output` from
+   the last assistant turn and `query` from the last user turn when the exchange
+   lives under `messages` rather than in `inputs`. If a field still can't be matched
+   it prints **one inventory** — what the judge needs, what the dataset holds, what
+   each field could map to — instead of one line per row. Read that back and ask the
+   user to confirm the mapping; don't guess:
+   ```
+   uv run scripts/dataset_inputs.py pull --run_dir <run_dir> --dataset_id <id> \
+       --map "log.output=messages.assistant.last"
+   ```
+   **Datasets often carry ground truth** (`expected_output`). That is the single
+   most valuable thing a run can have: it turns step 4 from "is the judge steady?"
+   into "is it *right*?", and it is the only way to see a judge that is stable and
+   wrong. Say so when offering this option.
 3. **Take examples they bring.** For data that isn't in orq yet — a spreadsheet, a
    log export, examples pasted into chat. Write them to
    `<run_dir>/synthetic_datapoints.json` as a list of
@@ -173,16 +210,27 @@ isn't enough to tell signal from noise"* — then offer the choice:
    borderline cases — **based on the real examples if there are any**, on the judge's
    own rubric if there are none. Same `convert` / `save` commands as option 3.
 
-**One more, for when there is plenty of data but the judge never wavers** (step 4
-shows a flat profile): ask a **second model** to judge the same examples, and treat
-the ones the two models disagree on as the interesting cases. Needs a completed
-`stability.py` run first, and confirm the second model with the user.
+**Check what you ended up with before moving on.** Fewer than 10 usable examples is
+too few to tell signal from noise — say so in one line (*"that's 4 examples, which
+isn't enough to tell a real disagreement from a coin flip"*) and offer the remaining
+routes rather than proceeding. This is a normal outcome for a judge that is new,
+rarely triggered, or older than the scan window, not a failure.
+
+**Come back here from step 4** if the judge turns out perfectly consistent on
+everything — there is nothing to review, and more or different examples is the fix.
+
+**Not an input source, but it belongs in the same conversation:** when there is plenty
+of data and the judge simply never wavers, ask a **second model** to judge the same
+examples and treat the disagreements as the interesting cases. This needs a completed
+`stability.py` run first, so it is a step-4 remedy rather than a step-1a choice.
+Confirm the second model with the user.
 ```
 uv run scripts/cross_model.py --run_dir <run_dir> --model <provider/model>
 ```
 
-After whichever they pick, **re-run stability → metrics** and read the report again.
-If it's still starved, offer the remaining options rather than proceeding.
+**If the judge model came back unresolved** (`…_model-unknown_…`) and they picked a
+non-trace source, ask for the model now — production spans were the fallback that
+would have supplied it, and step 3 cannot re-run a judge it cannot name.
 
 **Say this in the final summary whenever options 2–4 contributed:** examples that
 didn't come from production test what the rubric *says*, not what the judge actually
@@ -230,6 +278,21 @@ for anyone who asks.
 Say plainly what this does **not** tell them: consistency is not correctness. A judge
 that is wrong the same way every time scores perfectly here. That caveat belongs in
 this message, not only in the final summary.
+
+**Unless `metrics.json` has a `correctness` block** — then it *does* tell them, for
+the rows it covers, and burying that would waste the most valuable number in the run.
+It appears when the examples carried ground truth (a dataset with `expected_output`).
+Lead with the accuracy and, specifically, the accuracy on rows the judge was **stable**
+on: *"and on the 20 it was completely steady about, it was right on all 20 — so this
+isn't consistent-but-wrong, it's consistent-and-right."* That sentence is the one the
+rest of the method cannot produce. If instead it reads *"steady on 20, right on 12"*,
+say that just as plainly: the judge is reliably wrong, and no amount of rewriting for
+consistency will help.
+
+`wrong_vs_reference` rows enter the queue as their own class — stable, and disagreeing
+with the label. Before any of them drives a rewrite, **ask the user to confirm the
+label**: a dataset label is someone's prior judgement, possibly stale, possibly from a
+different version of the rubric. Never auto-approve a rewrite on dataset labels alone.
 
 (For yes/no judges the heavier agreement stats — 1-Flip Consistency, Gwet AC1,
 Fleiss κ — are computed too. Offer them; don't lead with them.)
@@ -376,10 +439,11 @@ they go and can be resumed. Then, **for boolean / categorical / numeric judges o
 uv run scripts/recommend.py --run_dir <run_dir>
 uv run scripts/aggregate.py --run_dir <run_dir>
 ```
-**Stop here for a free-text (string) judge.** It can be measured and annotated but
-not rewritten, and `recommend.py` refuses it rather than spending one model call per
-annotation on guidance that `rewrite_eval` will then reject. Report the annotations
-back to the user and end the session.
+**Free-text (string) judges take the grey-zone route, not this one.** `recommend.py`
+refuses string because its disagreement extraction compares the human label to the
+judge verdict with `==`, which reads two correctly-worded-differently answers as a
+disagreement. The grey-zone path reads the answers instead, so it handles string
+fine — go there and carry on to steps 7 and 8 as normal.
 
 Both routes end at `aggregated.md`; steps 7 and 8 read whichever of
 `grey_zone_policy.json` / `annotations.json` is **newer**, so if you switch to the UI
@@ -461,11 +525,48 @@ is softer than it looks:
   `instability.n_lost_unmeasurable` counts the rest. A non-zero count is the one that
   matters: dropping the hardest rows out of the average reads exactly like a drop.
 
-**Check what happened outside the grey zone.** `--with_low_flip` re-judges the
-stable spot-check rows too and reports how many changed verdict. Nobody labelled
-those, so a change isn't automatically wrong — but a rewrite that settles the grey
-zone by unsettling everything else is the classic failure here, and this is the only
-place it shows up.
+**Free-text judges need you to score gate (b).** `==` is the wrong comparison for
+free text, so on a string evaluator the retest writes `string_pairs.json` and stops.
+Each entry carries the human's answer, the new judge's answer, and the old judge's,
+plus the grey-zone rules the user settled. Decide **match / no-match against that
+rule** — same meaning, not same wording — write `string_verdicts.json` with a
+`match_new` (and `match_original`, which gets you the `before` number for free) per
+`source_index`, then re-run the same command. Cover every example: a partial file is
+refused rather than scored as if it covered the set.
+
+Two things to say out loud when you report it. You are judging work you just wrote,
+so gate (b) here is a sanity check, not evidence — read a sample back to the user and
+mark those `"scored_by": "human_confirmed"` once they agree. And gate (a) is
+unaffected: exact-match self-consistency is a valid stability test even though it is
+an invalid correctness test, which is the whole reason the two are split.
+
+**Check what happened outside the grey zone — and ask how wide to check.**  ⟵ GATE
+The examples you worked on are *supposed* to change. The question a new evaluator
+raises is what happened to everything else, and by default the answer covers only the
+labelled rows plus, with `--with_low_flip`, the ~5 stable spot-check rows the queue
+held back. That is a narrow check reported in confident words, so say what it covers
+and offer the wide one:
+
+> *"That's the 12 examples we worked on plus 5 steady ones — all fine. Want me to
+> re-run the new judge over all 200 original datapoints and show you what moved? It's
+> 200 × 8 calls, so it costs about the same as the first run. Worth it if this
+> evaluator is already scoring live traffic."*
+
+```
+uv run scripts/retest.py --run_dir <run_dir> --with_low_flip              # ~5 rows
+uv run scripts/retest.py --run_dir <run_dir> --all_rows --with_low_flip   # the lot
+```
+
+`retest_metrics.json` carries both views — `regression_on_stable_rows` (the spot-check
+sample) and `regression_on_unlabelled_rows` (every re-judged row nobody labelled) —
+plus `regression_scope`, which records how many of the original datapoints were
+actually re-judged. **Quote that scope with the number.** "0 of 5 previously-stable
+rows changed" is true and reads as "nothing regressed", which it does not mean; a
+caveat says so whenever the check was narrower than the original run.
+
+A changed verdict here isn't automatically wrong — nobody labelled these rows — but a
+rewrite that settles the grey zone by unsettling everything else is the classic
+failure of this whole process, and this is the only place it surfaces.
 
 **It re-judges only the examples you settled answers for** — those are the only ones
 agreement can score, so re-running the rest would cost money for verdicts nothing
@@ -583,14 +684,14 @@ resolve to the config value shown; overriding a flag beats `config.toml`.
 
 | Script | Overridable flags (default) |
 |---|---|
-| `fetch_evaluator.py` | `--evaluator_id` (req/config), `--with_traces` (True; `--no-with_traces` to skip), `--trace_limit` (200), `--judge_model` (slug override when the config id can't be resolved) |
-| `fetch_traces.py` | `--trace_limit` (200) |
+| `fetch_evaluator.py` | `--evaluator_id` (req/config), `--with_traces` (**False** — the input source is step 1a's question; pass it to scan in the same command), `--trace_limit` (200, with `--with_traces`), `--judge_model` (slug override when the config id can't be resolved) |
+| `fetch_traces.py` | `--trace_limit` (200), `--replace` (False — required to overwrite rows another input source appended, since the scan rewrites `traces.jsonl` wholesale), `--force` / `--dedup` |
 | `estimate_cost.py` | `--n_repeats` (cfg 8), `--num_samples` (cfg -1 = all) |
-| `stability.py` | `--num_samples` (cfg -1), `--n_repeats` (cfg 8), `--max_concurrency` (cfg 8), `--temperature` (cfg 1), `--metrics` (True; `--no-metrics` to skip) |
+| `stability.py` | `--num_samples` (cfg -1), `--n_repeats` (cfg 8), `--max_concurrency` (cfg 8), `--temperature` (cfg 1), `--metrics` (True; skip with `--metrics False` — **not** `--no-metrics`, which fire rejects *after* the run completes, making a finished run look failed) |
 | `metrics.py` | — (run_dir/config only) |
 | `build_queue.py` | `--count` (-1 = all), `--low_flip_sample_size` (cfg 5). Also projects the step-6 context budget into `queue.json` `meta.grey_zone_projection` |
 | `dataset_inputs.py list` | `--limit` (100) |
-| `dataset_inputs.py pull` | `--dataset_id` (req), `--limit` (200) |
+| `dataset_inputs.py pull` | `--dataset_id` (req), `--limit` (200), `--map "<var>=<source>"` (repeatable; sources: `inputs.<key>`, `messages.<role>.last\|first`, `messages.all`, `expected_output`) |
 | `seed_inputs.py convert` | — (run_dir/config only) |
 | `seed_inputs.py save` | `--dataset_name` (new) OR `--dataset_id` (append) |
 | `cross_model.py` | `--model` (req; 2nd judge slug), `--num_samples`, `--n_repeats`, `--tol` (0.5) |
@@ -605,16 +706,23 @@ resolve to the config value shown; overriding a flag beats `config.toml`.
 
 ## Run directory contract
 Every artifact lives in `runs/<key>_<ts>_<model>_<N>dp/`: `evaluator.json` (with
-`output_type` + `categorical_labels`/`scale`), `traces.jsonl`, `stability.json`,
-`metrics.json`, `queue.json` (each confuser carries its `verdict_space` + a
-`reason` of instability/cross_model/low_flip), `synthetic_datapoints.json`
+`output_type` + `categorical_labels`/`scale`), `traces.jsonl`, `scan.json` (what the
+trace scan covered, and whether it hit its cap), `stability.json` (rows carry
+`reference` when the source supplied ground truth), `metrics.json` (+ a `correctness`
+block when labels were present), `queue.json` (each confuser carries its
+`verdict_space` + a `reason` of instability/cross_model/wrong_vs_reference/low_flip),
+`dataset_inventory.json` + `input_mapping.json` (what a dataset held and how its
+fields were mapped, written only when rows were skipped or `--map` was used),
+`synthetic_datapoints.json`
 (conductor-authored seed, §11) + `cross_model.json` (second-model disagreers) when
 a starved run was seeded, `grey_zone_payload.json` (the conductor's bounded confuser payload),
 `grey_zone_policy.json` (grey zones + questions + answers + per-point policy
 labels with their `label_source` — the default feedback artifact),
 `annotations.json` (typed values — the UI fallback), `recommendations.json`,
 `aggregated.md` + `aggregated.json`, `new_prompt.md`, `rewrite_status.json`,
-`approval.json`, `new_evaluator.json`, `retest_metrics.json`, and the retest's own
+`approval.json`, `new_evaluator.json`, `retest_metrics.json`, `string_pairs.json` +
+`string_verdicts.json` (free-text judges only — the pairs handed to a reader and the
+match/no-match decisions handed back), and the retest's own
 sub-runs `retest/` (+ `retest_baseline/` with `--baseline_rerun`), each holding the
 filtered `traces.jsonl` and the `index_map.json` that pairs its positional
 `source_index` back to the parent's. Any step is re-runnable in isolation against an

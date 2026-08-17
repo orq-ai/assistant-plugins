@@ -305,6 +305,12 @@ def assemble_payload(
             # the instability-ranked ones, so they are the first the token clamp
             # drops — hence `n_dropped_cross_model` in the budget block.
             'reason': item.get('reason', 'instability'),
+            # Ground truth, when the dataset carried it. This is what lets the
+            # conductor group by HOW the judge is wrong — "it over-flags fiction" —
+            # rather than only by what it was unsure about. `judge_correct` is None
+            # when no label was readable: absent, not False.
+            'reference': item.get('reference', ''),
+            'judge_correct': item.get('judge_correct'),
             'input': compact_input,
             'verdict_split': _verdict_split(output_type, votes),
             'representative_reasoning': reasoning,
@@ -395,7 +401,11 @@ _NUMERIC_TYPES = frozenset({'number', 'numeric'})
 # ground truth the retest scores against is model-derived, not human-given. That is
 # a real gap in the evidence and it is recorded rather than assumed away: the
 # conductor reads the derived labels back and marks the ones the human confirmed.
-LABEL_SOURCES = frozenset({'derived', 'human_confirmed'})
+#   dataset_reference — the label came from the dataset's own ground truth, not
+#   from this conversation at all. Counted separately and never merged into the
+#   human-answer total: a dataset label is someone's prior judgement, possibly
+#   stale, possibly written against a different version of the rubric.
+LABEL_SOURCES = frozenset({'derived', 'human_confirmed', 'dataset_reference'})
 _DEFAULT_LABEL_SOURCE = 'derived'
 
 

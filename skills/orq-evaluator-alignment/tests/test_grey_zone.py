@@ -612,7 +612,7 @@ def test_label_source_defaults_to_derived():
         [{'source_index': 0, 'value': True}, {'source_index': 1, 'value': False}],
     )
     grey_zone.validate_policy(policy)
-    assert grey_zone.label_provenance(policy) == {'derived': 2, 'human_confirmed': 0}
+    assert grey_zone.label_provenance(policy) == {'dataset_reference': 0, 'derived': 2, 'human_confirmed': 0}
 
 
 def test_label_provenance_counts_confirmed_labels():
@@ -623,7 +623,7 @@ def test_label_provenance_counts_confirmed_labels():
             {'source_index': 1, 'value': False, 'label_source': 'derived'},
         ],
     )
-    assert grey_zone.label_provenance(policy) == {'derived': 1, 'human_confirmed': 1}
+    assert grey_zone.label_provenance(policy) == {'dataset_reference': 0, 'derived': 1, 'human_confirmed': 1}
 
 
 def test_unknown_label_source_is_rejected():

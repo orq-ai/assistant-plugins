@@ -114,7 +114,7 @@ def _verdict_space(output_type: str, labels: list[str], scale: tuple[float, floa
 
 def _display_item(
     rank: int, e: dict[str, Any], low_flip: bool, template: str, verdict_space: dict[str, Any],
-    src: dict[str, Any], reason: str = 'instability',
+    src: dict[str, Any], reason: str = 'instability', judge_correct: bool | None = None,
 ) -> dict[str, Any]:
     # The judged input (query/output/messages) comes from `src` — the stability.json
     # row for this datapoint — not from the metrics entry `e`, which no longer
@@ -126,8 +126,15 @@ def _display_item(
         'source_index': e.get('source_index'),
         'low_flip_sample': low_flip,
         # Why this datapoint is in the queue: 'instability' (self-inconsistent),
-        # 'cross_model' (two models disagree — §11.3 opt 4), or 'low_flip' (sanity).
+        # 'cross_model' (two models disagree — §11.3 opt 4), 'wrong_vs_reference'
+        # (stable, and disagrees with the dataset's ground truth), or 'low_flip'.
         'reason': reason,
+        # Ground truth and whether the judge matched it, when the dataset carried a
+        # label. Lets the conductor group by HOW the judge is wrong (systematically
+        # over-flagging fiction, say) rather than only by what it is unsure about.
+        # `judge_correct` is None when there was no readable label — absent, not False.
+        'reference': src.get('reference', ''),
+        'judge_correct': judge_correct,
         # A seeded row's provenance flows through from stability (§11.6), if present.
         'synthetic': src.get('synthetic', False),
         'source': src.get('source'),
@@ -284,9 +291,39 @@ def main(
     cross_idx = set(runner.read_json(cm_path).get('disagreeing_indices', [])) if cm_path.exists() else set()
     cross_only = [e for e in per_row if e.get('source_index') in cross_idx and e.get('source_index') not in flipped_idx]
 
-    confusers = [(e, 'instability') for e in flipped] + [(e, 'cross_model') for e in cross_only]
+    # Stable-but-WRONG rows (flow-friction §3b). When the dataset carried ground
+    # truth, these are the highest-information rows in the run and the only ones
+    # instability-ranking can never surface — the judge is perfectly steady, and
+    # steadily wrong. Appended as their own `reason` rather than interleaved into
+    # the instability ranking, which stays a clean single-metric order.
+    wrong_idx = set((metrics.get('correctness') or {}).get('wrong_source_indices') or [])
+    wrong_only = [
+        e for e in per_row
+        if e.get('source_index') in wrong_idx
+        and e.get('source_index') not in flipped_idx
+        and e.get('source_index') not in cross_idx
+    ]
+
+    confusers = (
+        [(e, 'instability') for e in flipped]
+        + [(e, 'cross_model') for e in cross_only]
+        + [(e, 'wrong_vs_reference') for e in wrong_only]
+    )
+    # Correct / wrong / unlabelled, per row, from the correctness block metrics
+    # already computed — so the queue never re-derives what "wrong" means.
+    correctness = metrics.get('correctness') or {}
+    labelled_idx = set(correctness.get('labelled_source_indices') or [])
+    def _correct(idx: Any) -> bool | None:
+        if idx in wrong_idx:
+            return False
+        return True if idx in labelled_idx else None
+
     items = [
-        _display_item(i + 1, e, False, template, verdict_space, inputs_by_idx.get(e.get('source_index'), {}), reason)
+        _display_item(
+            i + 1, e, False, template, verdict_space,
+            inputs_by_idx.get(e.get('source_index'), {}), reason,
+            _correct(e.get('source_index')),
+        )
         for i, (e, reason) in enumerate(confusers)
     ]
 

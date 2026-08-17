@@ -171,9 +171,35 @@ def build_verdict_space_context(evaluator: dict[str, Any]) -> dict[str, str]:
             'type_guidance': type_guidance,
         }
 
+    if output_type == 'string':
+        # Free text has no declared verdict space to hold still — no label set, no
+        # scale. That makes the preservation rule about SHAPE rather than values:
+        # the answer has to stay the same kind of thing, or the retest is comparing
+        # against a different contract than the one the human labelled. The variable
+        # check in `check_preservation` still applies and is the real guard here.
+        verdict_space = (
+            'Type: free-form string. The judge returns text, not a label from a set or a '
+            'score on a scale, so there is no enumerated verdict space to preserve. What '
+            'must not change is the SHAPE of the answer: the same kind of thing, at the '
+            'same granularity, in the same form the prompt below asks for.'
+        )
+        preservation_rule = (
+            'Keep the answer format exactly as the prompt specifies it — same kind of value, '
+            'same granularity, same casing and phrasing conventions. Do not turn a short '
+            'answer into a sentence, add commentary or justification around the value, or '
+            'introduce a new output format. There is no label set or scale to preserve; the '
+            'format IS the contract.'
+        )
+        type_guidance = _FREE_TEXT_GUIDANCE
+        return {
+            'verdict_space': verdict_space,
+            'preservation_rule': preservation_rule,
+            'type_guidance': type_guidance,
+        }
+
     raise ValueError(
         f'output_type={output_type!r} is not supported for rewrite. Expected '
-        'boolean | categorical | number.'
+        'boolean | categorical | number | string.'
     )
 
 
@@ -182,6 +208,15 @@ _PICK_A_LABEL_GUIDANCE = (
     'which label applies move toward the human labels — tighten, loosen, clarify, or '
     'reframe the label definitions and their boundaries. Adjust which label a class of '
     'cases should receive; never change the set of labels itself.'
+)
+
+_FREE_TEXT_GUIDANCE = (
+    'This is a free-text judge. Edit the rubric so the *content* of the answer moves '
+    'toward what the human wanted — what to include, what to leave out, how to phrase '
+    'the borderline cases the grey-zone answers describe. Do not add an enumerated '
+    'label set or a numeric scale: converting a free-text judge into a categorical or '
+    'numeric one is not a rewrite, it is a different evaluator, and everything measured '
+    'about the old one stops applying.'
 )
 
 _NUMERIC_SHALLOW_GUIDANCE = (

@@ -459,6 +459,90 @@ def _in_window(iso: str | None, start: int | None, end: int | None) -> bool:
     return not (end and ms > end)
 
 
+def foreign_rows(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """Count existing rows that did NOT come from a trace scan, by source.
+
+    The scan writes `traces.jsonl` **wholesale**, while `dataset_inputs.pull` and
+    `seed_inputs.convert` *append* to it. So running the scan after either of them
+    deletes their rows — silently, because the scan has no reason to look at what
+    was there and the row count afterwards looks perfectly reasonable.
+
+    Now that the input source is a menu the user picks from (SKILL.md step 1a) rather
+    than a scan that always ran first, mixing sources is an ordinary thing to want,
+    and "scan, then add a dataset" and "add a dataset, then scan" have to stop being
+    the same command in a different order with silently different results.
+    """
+    counts: dict[str, int] = {}
+    for row in rows:
+        if row.get('synthetic'):
+            counts['synthetic'] = counts.get('synthetic', 0) + 1
+        else:
+            source = str(row.get('source') or '')
+            if source.startswith('dataset:'):
+                counts[source] = counts.get(source, 0) + 1
+    return counts
+
+
+def _guard_foreign_rows(out_dir: Path, replace: bool) -> None:
+    """Refuse to overwrite non-trace rows unless the caller said to."""
+    path = out_dir / 'traces.jsonl'
+    if not path.exists():
+        return
+    counts = foreign_rows(runner.read_jsonl(path))
+    if not counts:
+        return
+    total = sum(counts.values())
+    detail = ', '.join(f'{n} from {src}' for src, n in sorted(counts.items()))
+    if replace:
+        logger.warning(
+            f'⚠ --replace: discarding {total} row(s) not from a trace scan ({detail}).'
+        )
+        return
+    raise SystemExit(
+        f'traces.jsonl already holds {total} row(s) from another input source ({detail}), and '
+        f'the trace scan REWRITES that file rather than adding to it — running it now would '
+        f'delete them.\n'
+        f'  • To combine sources, scan FIRST, then re-add the others (they append):\n'
+        f'      uv run scripts/dataset_inputs.py pull --run_dir {out_dir} --dataset_id <id>\n'
+        f'      uv run scripts/seed_inputs.py convert --run_dir {out_dir}\n'
+        f'  • To use traces alone and drop what is there: --replace\n'
+        f'  • To keep what is there and skip the scan: do not run this command.'
+    )
+
+
+def _scan_depth_note(filter_echo: dict[str, Any], n_rows: int) -> str:
+    """How deep the scan went, and whether going deeper could find anything.
+
+    Returns the lines the conductor reads back before the run is priced. The
+    distinction that matters is `scan_truncated`: the scan stopping *at the cap* means
+    there is history behind it, and a deeper scan is worth offering; stopping *under*
+    the cap means the window already held every trace there was, so raising
+    `--trace_limit` would re-scan the same traces and find the same rows. Suggesting
+    the deeper scan in that case wastes the user's time and teaches them to ignore
+    the question.
+    """
+    limit = filter_echo.get('limit')
+    scanned = filter_echo.get('n_traces_scanned')
+    if scanned is None or limit is None:
+        return f'Scan: {n_rows} datapoint(s).'
+    lines = [f'Scan depth: {n_rows} datapoint(s) from the {scanned} most recent trace(s) '
+             f'(--trace_limit {limit}).']
+    if filter_echo.get('scan_truncated'):
+        lines.append(
+            f'  ⚠ The scan stopped at the {limit}-trace cap, so this is a SLICE of the '
+            f'history, not all of it. `--trace_limit 2000` scans deeper (traces only — '
+            f'no judge calls, so it costs nothing but time) and is safe to run now, '
+            f'before anything is labelled.'
+        )
+    else:
+        lines.append(
+            f'  This is every trace in the window ({scanned} < the {limit} cap), so a '
+            f'deeper --trace_limit would re-scan the same traces. Widen '
+            f'trace_start_date/trace_end_date instead if the judge is older than this.'
+        )
+    return '\n'.join(lines)
+
+
 async def _fetch(
     evaluator_id: str, evaluator_key: str, cfg: dict[str, Any], template: str, force: bool = False
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any] | None]:
@@ -509,6 +593,12 @@ async def _fetch(
                         f'may be truncated — raise --trace_limit to cover the full window.'
                     )
         logger.info(f'v3oql returned {len(traces)} traces to scan')
+        # Whether the scan *ran out of traces* or *ran out of budget*. Hitting the cap
+        # means there is almost certainly more history behind it, so widening is worth
+        # offering; coming back under the cap means the window held everything there
+        # was and a bigger --trace_limit would re-scan the same traces for nothing.
+        filter_echo['n_traces_scanned'] = len(traces)
+        filter_echo['scan_truncated'] = len(traces) >= limit
         if not traces:
             return [], filter_echo, None
 
@@ -755,6 +845,7 @@ def main(
     trace_limit: int | None = 200,
     force: bool = False,
     dedup: bool = True,
+    replace: bool = False,
 ) -> str:
     """Fetch traces for the evaluator recorded in the run directory.
 
@@ -771,6 +862,10 @@ def main(
             auth/rate-limit failure aborts instead of writing garbage. It covers
             the span-detail half ONLY — an extraction/shape gap still aborts,
             since forcing that writes empty rows that look perfectly stable.
+        replace: Overwrite `traces.jsonl` even when it holds rows from another
+            input source (an orq dataset, or examples the user brought). Off by
+            default: this command rewrites that file wholesale while the other
+            sources append to it, so running it second silently deletes them.
         dedup: Drop exact-duplicate datapoints (identical judged input) before
             writing, keeping the first occurrence. On by default; pass
             --dedup=False to keep every trace.
@@ -781,6 +876,10 @@ def main(
     out_dir = runner.resolve_run_dir(run_dir) if run_dir else runner.latest_run_dir(cfg.get('runs_dir', 'runs'))
     if out_dir is None:
         raise SystemExit('No run directory. Run fetch_evaluator.py first.')
+
+    # Before spending the scan: this command overwrites traces.jsonl, and the other
+    # input sources append to it. Check what is already there.
+    _guard_foreign_rows(out_dir, replace)
 
     evaluator = runner.read_json(out_dir / 'evaluator.json')
     evaluator_id = evaluator['id']
@@ -825,6 +924,17 @@ def main(
 
     runner.write_jsonl(out_dir / 'traces.jsonl', rows)
     logger.info(f'✓ Wrote {len(rows)} datapoints to {out_dir / "traces.jsonl"}')
+
+    # State the scan DEPTH next to the count, because the two read very differently
+    # and only one of them is a fact about the judge. "18 examples" sounds like all
+    # this judge has; "18 examples out of the most recent 200 traces, and the scan
+    # hit that cap" says it is a slice of a larger history. The conductor offers the
+    # deeper scan off this — the choice belongs here, before the stability run turns
+    # rows into judge calls, not after.
+    scan_depth = _scan_depth_note(filter_echo, len(rows))
+    runner.write_json(out_dir / 'scan.json', {**filter_echo, 'n_datapoints': len(rows)})
+    for line in scan_depth.splitlines():
+        logger.info(line)
 
     # Fetch the registry once so the trace-observed model (a display alias) is
     # normalised to its routable refId before pinning — else it 403s (RES-978).

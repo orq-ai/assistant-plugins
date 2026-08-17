@@ -10,6 +10,8 @@ on the same confusers?
   - categorical → exact-match accuracy (case/whitespace-normalized).
   - numeric     → MAE and within-tolerance rate on the raw scale, with the default
     band derived from the evaluator's DECLARED scale (`default_tolerance`).
+  - string      → accuracy over match/no-match decisions a *reader* supplies
+    (`string_agreement`), because `==` is the wrong comparison for free text.
 
 Pure by design, mirroring `lib.instability`: no I/O, no judge calls, stdlib only,
 no evaluatorq/orq import — so it stays unit-testable and imports safely on the
@@ -190,12 +192,45 @@ def numeric_agreement(
     }
 
 
+def string_agreement(pairs: Sequence[Pair], matches: Sequence[bool]) -> dict[str, Any]:
+    """Accuracy over free-text pairs a *reader* scored, not `==`.
+
+    The other three types compare mechanically. Free text cannot: two correct
+    summaries differ in wording, so exact-match against a human label reads near-zero
+    for a judge that is doing fine. That is why this metric takes `matches` — one
+    match/no-match decision per pair, made by the conductor (or the user) against the
+    rule the grey-zone stage settled — instead of comparing the strings itself.
+
+    Exact-match remains correct for *stability* (`lib.instability.string`), where the
+    question is whether the same judge said the identical thing twice. It is only
+    *correctness* that needs a reader. Keeping the two apart is the whole reason this
+    function exists rather than a `==` branch in `agreement`.
+
+    `matches` is positionally aligned with `pairs` and must cover every one of them:
+    a silently short list would score the rewrite on a subset and report the number
+    as if it covered the set.
+    """
+    _require_pairs(pairs, 'string')
+    if len(matches) != len(pairs):
+        raise ValueError(f'matches has {len(matches)} entries for {len(pairs)} pairs')
+    n = len(pairs)
+    n_match = sum(1 for m in matches if m)
+    return {
+        'accuracy': n_match / n,
+        'n_match': n_match,
+        'n': n,
+        # Named so the report can never present a read judgment as a measurement.
+        'scored_by': 'reader',
+    }
+
+
 def agreement(output_type: str, pairs: Sequence[Pair], **kw: Any) -> dict[str, Any]:
     """Dispatch `(human, judge)` pairs to the metric for `output_type`.
 
     boolean / categorical ignore extra kwargs; numeric reads `tol` (the run-wide
-    band) and `tols` (optional per-pair bands). Fails loud on an unrecognised
-    `output_type`, mirroring `lib.instability`.
+    band) and `tols` (optional per-pair bands); string requires `matches`, the
+    per-pair decisions a reader made. Fails loud on an unrecognised `output_type`,
+    mirroring `lib.instability`.
     """
     t = (output_type or '').strip().lower()
     if t == 'boolean':
@@ -204,4 +239,13 @@ def agreement(output_type: str, pairs: Sequence[Pair], **kw: Any) -> dict[str, A
         return categorical_agreement(pairs)
     if t in _NUMERIC_TYPES:
         return numeric_agreement(pairs, tol=kw.get('tol', FALLBACK_TOL), tols=kw.get('tols'))
-    raise ValueError(f'unknown output_type {output_type!r} (expected boolean | categorical | number)')
+    if t == 'string':
+        matches = kw.get('matches')
+        if matches is None:
+            raise ValueError(
+                'string agreement needs `matches` — free text cannot be scored by =='
+            )
+        return string_agreement(pairs, matches)
+    raise ValueError(
+        f'unknown output_type {output_type!r} (expected boolean | categorical | number | string)'
+    )

@@ -155,6 +155,113 @@ def _per_row(
     return entries
 
 
+# ── correctness against dataset ground truth (flow-friction §3) ───────────────
+# Instability answers "does the judge agree with itself". When rows carry a
+# `reference` label it can also answer "is it RIGHT" — the question the skill
+# otherwise says, correctly, that it structurally cannot answer. It was being
+# collected and thrown away: `map_datapoint` routed `expected_output` into
+# `reference`, and nothing downstream read it, because an evaluator declaring no
+# {{reference}} variable never renders it.
+
+
+def _numeric_tol(cfg: dict[str, Any], scale: tuple[float, float] | None) -> float:
+    """The same band the retest gates on, so "correct" means one thing per run."""
+    from lib import agreement as agreement_lib  # noqa: PLC0415 — pure stdlib module
+
+    configured = cfg.get('numeric_tol')
+    if configured not in (None, ''):
+        return float(configured)
+    return agreement_lib.default_tolerance(
+        scale, fraction=float(cfg.get('numeric_tol_fraction', agreement_lib.DEFAULT_TOL_FRACTION))
+    )
+
+
+def _reference_matches(reference: Any, verdict: Any, output_type: str, tol: float) -> bool | None:
+    """Whether a judge verdict matches a ground-truth label, type-natively.
+
+    Returns None when the label cannot be read into the judge's verdict space —
+    excluded from the count and warned about once, never coerced into a False that
+    would read as the judge being wrong.
+    """
+    if verdict is None or reference in (None, ''):
+        return None
+    if output_type == 'boolean':
+        ref, got = _coerce_bool(reference), _coerce_bool(verdict)
+        return None if ref is None or got is None else ref == got
+    if output_type == 'categorical':
+        return str(reference).strip().lower() == str(verdict).strip().lower()
+    if output_type in _NUMERIC_TYPES:
+        try:
+            return abs(float(reference) - float(verdict)) <= tol
+        except (TypeError, ValueError):
+            return None
+    return None  # string: `==` is the wrong comparison; the conductor reads those
+
+
+def _correctness(
+    rows: list[dict[str, Any]], per_row: list[dict[str, Any]], output_type: str, tol: float
+) -> dict[str, Any] | None:
+    """Accuracy against `reference`, overall and **by instability band**.
+
+    `by_band` is the point of the whole block. Accuracy among the rows the judge
+    was *stable* on is the direct measurement of the consistently-wrong blind spot:
+    a judge that is 100% stable and 60% correct on those rows is the exact failure
+    instability-ranking cannot surface, and here it becomes a headline number
+    instead of a caveat.
+    """
+    if output_type == 'string':
+        return {
+            'n_labelled': 0,
+            'reason_omitted': (
+                'string verdicts are not comparable with == (two correct answers differ in '
+                'wording), so correctness is scored by reading, at the retest step'
+            ),
+        }
+    verdicts = {r.get('source_index'): r.get('aggregate_value') for r in rows}
+    bands = {e['source_index']: e['band'] for e in per_row}
+    n_unreadable = 0
+    confusion: Counter = Counter()
+    by_band: dict[str, dict[str, int]] = {}
+    n_correct = n_labelled = 0
+    wrong_indices: list[int] = []
+    labelled_indices: list[int] = []
+    for row in rows:
+        idx = row.get('source_index')
+        match = _reference_matches(row.get('reference'), verdicts.get(idx), output_type, tol)
+        if match is None:
+            if row.get('reference') not in (None, '') and verdicts.get(idx) is not None:
+                n_unreadable += 1
+            continue
+        n_labelled += 1
+        n_correct += int(match)
+        labelled_indices.append(idx)
+        if not match:
+            wrong_indices.append(idx)
+        confusion[f'{row.get("reference")}→{verdicts.get(idx)}'] += 1
+        slot = by_band.setdefault(bands.get(idx, 'unmeasurable'), {'n': 0, 'n_correct': 0})
+        slot['n'] += 1
+        slot['n_correct'] += int(match)
+    if not n_labelled:
+        return None
+    for slot in by_band.values():
+        slot['accuracy'] = slot['n_correct'] / slot['n']
+    return {
+        'n_labelled': n_labelled,
+        'n_correct': n_correct,
+        'accuracy': n_correct / n_labelled,
+        'confusion': dict(confusion),
+        # Never laundered into a human verdict: a dataset label is someone's prior
+        # judgement, possibly stale, possibly from a different rubric version.
+        'label_source': 'dataset_reference',
+        'by_band': by_band,
+        'wrong_source_indices': sorted(wrong_indices),
+        # Which rows carried a readable label at all, so downstream can tell
+        # "judge was right" from "nobody said" without re-deriving the comparison.
+        'labelled_source_indices': sorted(labelled_indices),
+        'n_unreadable_labels': n_unreadable,
+    }
+
+
 def _row_bools(row: dict[str, Any]) -> list[bool]:
     return [b for b in (_coerce_bool(v) for v in row.get('repetitions', [])) if b is not None]
 
@@ -222,9 +329,36 @@ def _detail_str(output_type: str, e: dict[str, Any]) -> str:
     return detail
 
 
+def _correctness_lines(c: dict[str, Any] | None) -> list[str]:
+    """The correctness headline, with the stable-row accuracy called out.
+
+    Overall accuracy is the reassuring number; accuracy among the rows the judge
+    never wavered on is the one that can contradict the whole run. A judge at 0.0
+    instability and 0.6 stable-row accuracy is consistently wrong, which is the
+    failure everything else here is blind to — so it gets its own line, not a
+    field in a nested dict.
+    """
+    if not c or not c.get('n_labelled'):
+        return []
+    lines = [
+        f"  - correctness vs dataset labels: {c['n_correct']}/{c['n_labelled']} "
+        f"({c['accuracy']:.0%}) — labels are `dataset_reference`, not the user's verdict."
+    ]
+    stable = c.get('by_band', {}).get('stable')
+    if stable:
+        lines.append(
+            f"      on rows the judge was STABLE: {stable['n_correct']}/{stable['n']} "
+            f"({stable['accuracy']:.0%}) ← the consistently-wrong blind spot, measured"
+        )
+    if c.get('wrong_source_indices'):
+        lines.append(f"      wrong on: {c['wrong_source_indices'][:10]}")
+    return lines
+
+
 def _report(
     per_row: list[dict[str, Any]], output_type: str, mean_inst: float | None,
-    bands: Counter, n_rows: int, n_measurable: int, total_wrong: int, total_failed: int
+    bands: Counter, n_rows: int, n_measurable: int, total_wrong: int, total_failed: int,
+    correctness: dict[str, Any] | None = None,
 ) -> str:
     def _fmt(v: Any) -> str:
         return f'{v:.3f}' if isinstance(v, (int, float)) else 'n/a'
@@ -236,6 +370,7 @@ def _report(
         f'Instability summary over {n_rows} datapoints ({n_measurable} measurable, type={output_type}):',
         f'  - mean instability: {_fmt(mean_inst)} (0 = judge always agrees with itself, 1 = maximal).',
         f'  - bands: {hist}.',
+        *_correctness_lines(correctness),
     ]
     if total_wrong or total_failed:
         lines.append(f'  - {total_wrong} off-contract (wrong_output_type) reps, {total_failed} failed reps.')
@@ -288,6 +423,12 @@ def main(run_dir: str | None = None, config: str = 'config.toml') -> str:
     scale = tuple(scale_raw) if isinstance(scale_raw, (list, tuple)) and len(scale_raw) == 2 else None
 
     per_row = _per_row(rows, output_type, k, scale, floor, n_req)
+    correctness = _correctness(rows, per_row, output_type, _numeric_tol(cfg, scale))
+    if correctness and correctness.get('n_unreadable_labels'):
+        logger.warning(
+            f"⚠ {correctness['n_unreadable_labels']} row(s) carry a ground-truth label this "
+            f"judge's verdict space cannot read; excluded rather than counted as wrong."
+        )
     measurable = [e for e in per_row if e['instability'] is not None]
     bands = Counter(e['band'] for e in per_row)
     mean_inst = fmean(e['instability'] for e in measurable) if measurable else None
@@ -299,7 +440,10 @@ def main(run_dir: str | None = None, config: str = 'config.toml') -> str:
     panel = _panel_agreement(rows) if output_type == 'boolean' else {
         'fleiss_kappa': None, 'gwet_ac1': None, 'prevalence_true': None, 'one_flip_consistency': None
     }
-    report = _report(per_row, output_type, mean_inst, bands, len(rows), len(measurable), total_wrong, total_failed)
+    report = _report(
+        per_row, output_type, mean_inst, bands, len(rows), len(measurable),
+        total_wrong, total_failed, correctness,
+    )
 
     metrics = {
         'metadata': {**meta, 'output_type': output_type, 'k': k, 'scale': list(scale) if scale else None},
@@ -321,6 +465,9 @@ def main(run_dir: str | None = None, config: str = 'config.toml') -> str:
             'gwet_ac1': panel['gwet_ac1'],
             'prevalence_true': panel['prevalence_true'],
         },
+        # Present only when rows carried a readable ground-truth label. Absent means
+        # "not measured", never "nothing wrong found".
+        'correctness': correctness,
         'report': report,
         'per_row': per_row,
     }

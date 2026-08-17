@@ -154,11 +154,16 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: asks whether they have a judge in orq at all before asking for an ID; hands off to `orq-build-evaluator` if they don't
 - Verify: accepts boolean, categorical, numeric and string judges (not just Pass/Fail), and fails fast on any other output type
 - Verify: runs the repeated-judging step and reports one 0..1 instability score before proposing any rewrite
-- Verify: when the trace scan comes up short it offers the recovery options **at that point**, not several steps later
+- Verify: after fetching the judge it **asks where the examples should come from** — traces, an orq dataset, examples you bring, or generated ones — instead of scanning traces by default and treating the other three as recovery options
+- Verify: offers the deeper trace scan only when the scan hit its cap (there is more history), not when it came back under the cap (a deeper scan would re-read the same traces)
+- Verify: refuses to run the trace scan over rows another source added, since the scan overwrites `traces.jsonl` and the others append to it
 - Verify: groups the unstable examples and asks a few questions, rather than presenting every row for individual labelling (the annotation UI is the fallback, not the default)
 - Verify: describes judge behaviour in plain terms ("it gave a different answer 6 times out of 8"), not the statistics or the internal vocabulary (confuser, grey zone, conductor)
 - Verify: reads the per-point labels it derived from the user's rule back to them before the rewrite, rather than treating its own application of the rule as their verdict
 - Verify: reviews the stable spot-check rows with the user (`assemble --include_low_flip`) instead of only promising to
+- Verify: pulls a dataset whose exchange lives under `messages` (metadata-only `inputs`) instead of skipping every row as unmappable, and on a genuine mismatch prints one inventory of what the dataset holds rather than N identical `missing [...]` lines
+- Verify: when the examples carry ground truth it reports **accuracy, and accuracy on the rows the judge was stable on**, instead of reciting the consistently-wrong caveat it now has the data to retire — and still tags those labels `dataset_reference`, not the user's verdict
+- Verify: after the new evaluator exists it **asks whether to re-run the old datapoints** to check for regression, quotes what that costs, and states how many of the original rows the check actually covered rather than reporting a 5-row result as "nothing regressed"
 - Verify: only creates the new evaluator after human approval (never auto-creates)
 - Verify: quotes the retest against what the **original** judge scored on the same labels, and reads out the `caveats` (selection effect, no holdout, derived labels) rather than reporting the drop alone
 - Verify: the final summary states the consistently-wrong blind spot even when the numbers are good

@@ -18,7 +18,10 @@ a judge that is consistently wrong but never flips scores a perfect instability 
   (a) instability DROPPED  — new evaluator's mean instability < the baseline's, and
   (b) verdicts AGREE with the human labels — `lib.agreement` between the new
       evaluator's majority verdict and the human `value` per confuser
-      (boolean: TPR/TNR; categorical: accuracy; numeric: MAE / within-tolerance).
+      (boolean: TPR/TNR; categorical: accuracy; numeric: MAE / within-tolerance;
+      string: accuracy over match/no-match decisions a *reader* makes, because `==`
+      on free text rejects correct answers that are merely worded differently — the
+      run writes `string_pairs.json`, stops, and resumes from `string_verdicts.json`).
 
 Report success = (a) AND (b). (a) alone is gameable; (b) keeps it honest.
 
@@ -216,6 +219,33 @@ def _load_labels(out_dir: Path) -> tuple[dict[str, Any], str, dict[str, Any] | N
     )
 
 
+def _merge_dataset_labels(
+    out_dir: Path, labels: dict[str, Any]
+) -> tuple[dict[str, Any], int]:
+    """Fill unanswered rows from the dataset's own `reference`, tagged as such.
+
+    Only rows the human did **not** answer about are filled — a grey-zone answer
+    always wins, because it is the user's verdict on this rubric and the dataset's
+    label is not. Returns `(labels, n_added)`; `n_added` is 0 when the run carried
+    no ground truth, which is the ordinary case for a trace-scanned run.
+    """
+    stability_path = out_dir / 'stability.json'
+    if not stability_path.exists():
+        return labels, 0
+    merged = dict(labels)
+    added = 0
+    for row in runner.read_json(stability_path).get('rows', []):
+        idx, reference = row.get('source_index'), row.get('reference')
+        if idx is None or reference in (None, ''):
+            continue
+        key = str(idx)
+        if key in merged and isinstance(merged[key], dict) and merged[key].get('value') is not None:
+            continue  # the human answered this one; their verdict stands
+        merged[key] = {'value': reference, 'label_source': 'dataset_reference'}
+        added += 1
+    return merged, added
+
+
 def _resolve_numeric_tol(
     cli_tol: float | None,
     cfg: dict[str, Any],
@@ -295,20 +325,23 @@ def _verdicts_by_index(stability: dict[str, Any], index_map: dict[int, int] | No
 
 def _pair_with_labels(
     labels: dict[str, Any], judge_by_idx: dict[int, Any]
-) -> tuple[list[tuple[Any, Any]], list[float | None]]:
+) -> tuple[list[tuple[Any, Any]], list[float | None], list[int]]:
     """Zip each human label to a judge verdict on the same datapoint.
 
     The human `value` is ground truth; the judge side is the jury's
     `aggregate_value` (the majority bool/str/float per type). Rows with no usable
     judge verdict or no human label are skipped — they cannot inform agreement.
 
-    Returns `(pairs, tols)`, positionally aligned. `tols[i]` is that point's own
-    numeric band when the human gave it one (`None` otherwise), so a policy that
-    banded each point differently is scored against what the human actually said
-    instead of against the run-wide default.
+    Returns `(pairs, tols, indices)`, all positionally aligned. `tols[i]` is that
+    point's own numeric band when the human gave it one (`None` otherwise), so a
+    policy that banded each point differently is scored against what the human
+    actually said instead of against the run-wide default. `indices[i]` is the
+    `source_index` the pair came from, which the string path needs to pair the
+    conductor's per-example verdicts back onto the right row.
     """
     pairs: list[tuple[Any, Any]] = []
     tols: list[float | None] = []
+    indices: list[int] = []
     for key, ann in labels.items():
         if not isinstance(ann, dict) or ann.get('value') is None:
             continue
@@ -322,18 +355,97 @@ def _pair_with_labels(
         pairs.append((ann['value'], judge_value))
         band = ann.get('tolerance')
         tols.append(float(band) if isinstance(band, (int, float)) and not isinstance(band, bool) else None)
-    return pairs, tols
+        indices.append(idx)
+    return pairs, tols, indices
+
+
+STRING_PAIRS_FILE = 'string_pairs.json'
+STRING_VERDICTS_FILE = 'string_verdicts.json'
+
+
+def _write_string_pairs(
+    out_dir: Path,
+    pairs: list[tuple[Any, Any]],
+    indices: list[int],
+    old_by_idx: dict[int, Any],
+    policy: dict[str, Any] | None,
+) -> Path:
+    """Hand the conductor the free-text pairs to score, and stop.
+
+    Signal (b) for string cannot be computed here: `==` on free text reads near-zero
+    for a judge that is doing fine, so the comparison needs a reader. This is the
+    same shape the grey-zone stage already uses — code assembles a bounded payload,
+    the conductor decides, code consumes the decision — rather than a new mechanism.
+
+    The OLD judge's answer rides along so one pass produces both the score and its
+    `before`, exactly as the other three types get for free.
+    """
+    entries = []
+    for (human, judge), idx in zip(pairs, indices):
+        entries.append({
+            'source_index': idx,
+            'human_value': human,
+            'new_judge_value': judge,
+            'original_judge_value': old_by_idx.get(idx),
+        })
+    payload = {
+        'metadata': {
+            'output_type': 'string',
+            'n_pairs': len(entries),
+            'rule': _policy_rules(policy),
+            'instructions': (
+                'For each entry decide whether the judge\'s answer means the same thing as '
+                'the human\'s, under the rule above — not whether the wording matches. Write '
+                f'{STRING_VERDICTS_FILE} next to this file: '
+                '{"scored_by": "conductor"|"human_confirmed", "verdicts": '
+                '[{"source_index": N, "match_new": true|false, "match_original": true|false, '
+                '"reason": "..."}]}. Cover every source_index listed here.'
+            ),
+        },
+        'pairs': entries,
+    }
+    path = out_dir / STRING_PAIRS_FILE
+    runner.write_json(path, payload)
+    return path
+
+
+def _policy_rules(policy: dict[str, Any] | None) -> list[str]:
+    """The resolved grey-zone rules, so the reader scores against what the user said
+    rather than against their own idea of a good answer."""
+    if not policy:
+        return []
+    return [
+        str(gz.get('rule', '')).strip()
+        for gz in policy.get('grey_zones', [])
+        if str(gz.get('rule', '')).strip()
+    ]
+
+
+def _string_matches(
+    verdicts: dict[str, Any], indices: list[int], key: str
+) -> list[bool] | None:
+    """Line the reader's per-example decisions up with the pairs, or None if any is
+    missing — a short list would score the rewrite on a subset and report the number
+    as though it covered the set."""
+    by_idx = {
+        v.get('source_index'): v.get(key)
+        for v in verdicts.get('verdicts', []) if isinstance(v, dict)
+    }
+    if any(by_idx.get(i) is None for i in indices):
+        return None
+    return [bool(by_idx[i]) for i in indices]
 
 
 def _evaluate_agreement(
     pairs: list[tuple[Any, Any]], output_type: str, tol: float,
     min_accuracy: float, min_tpr: float, min_tnr: float, min_within_tol: float,
     tols: list[float | None] | None = None,
+    matches: list[bool] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Compute signal (b) and its pass/fail against the type-native bar."""
     from lib import agreement as agreement_lib
 
-    scores = agreement_lib.agreement(output_type, pairs, tol=tol, tols=tols)
+    scores = agreement_lib.agreement(output_type, pairs, tol=tol, tols=tols, matches=matches)
     if output_type == 'boolean':
         # A None rate (no positives / no negatives among labels) does not fail the
         # gate on its own — accuracy still must clear the bar, and any present rate
@@ -344,7 +456,7 @@ def _evaluate_agreement(
             and (tpr is None or tpr >= min_tpr)
             and (tnr is None or tnr >= min_tnr)
         )
-    elif output_type == 'categorical':
+    elif output_type in ('categorical', 'string'):
         passed = scores['accuracy'] >= min_accuracy
     else:  # numeric
         passed = scores['within_tolerance_rate'] >= min_within_tol
@@ -368,10 +480,30 @@ def _low_flip_indices(out_dir: Path) -> set[int]:
     }
 
 
+_LOW_FLIP_NOTE = (
+    'Rows the ORIGINAL judge was completely consistent on. A changed verdict here '
+    'is not automatically wrong — nobody labelled these — but it is the rewrite '
+    'moving behaviour outside the grey zone it was asked to settle.'
+)
+
+_UNLABELLED_NOTE = (
+    'Every re-judged row carrying NO human label — the regression surface. The rows '
+    'that WERE labelled are supposed to change; these are the ones that were never '
+    'discussed, so a change here is the rewrite reaching further than it was asked '
+    'to. Only as wide as what was re-judged: without --all_rows this is just the '
+    'stable spot-check sample, not the original dataset.'
+)
+
+
 def _regression_report(
-    old_by_idx: dict[int, Any], new_by_idx: dict[int, Any], indices: set[int]
+    old_by_idx: dict[int, Any], new_by_idx: dict[int, Any], indices: set[int],
+    note: str = _LOW_FLIP_NOTE,
 ) -> dict[str, Any] | None:
-    """How the new judge answered the rows the old one never wavered on."""
+    """How the new judge answered a set of rows the human never labelled.
+
+    Returns None when no row in `indices` was answered by both judges — there is
+    nothing to compare, which is reported as absent rather than as zero changes.
+    """
     compared = [i for i in sorted(indices) if i in old_by_idx and i in new_by_idx]
     if not compared:
         return None
@@ -379,12 +511,9 @@ def _regression_report(
     return {
         'n_compared': len(compared),
         'n_changed': len(changed),
+        'changed_rate': len(changed) / len(compared),
         'changed_source_indices': changed,
-        'note': (
-            'Rows the ORIGINAL judge was completely consistent on. A changed verdict here '
-            'is not automatically wrong — nobody labelled these — but it is the rewrite '
-            'moving behaviour outside the grey zone it was asked to settle.'
-        ),
+        'note': note,
     }
 
 
@@ -462,6 +591,16 @@ def main(
     #    rows that carry a human label: those are the only ones agreement can score,
     #    and re-judging the rest costs money for a number nothing reads.
     labels, label_source, policy = _load_labels(out_dir)
+    # Dataset ground truth fills rows the human never answered about (§3d). Kept
+    # strictly separate in the provenance count: a dataset label is someone's prior
+    # judgement, not the user's verdict on this rubric, and merging the two would
+    # let a run report human-confirmed agreement nobody confirmed.
+    labels, n_from_dataset = _merge_dataset_labels(out_dir, labels)
+    if n_from_dataset:
+        logger.info(
+            f'  + {n_from_dataset} label(s) from the dataset\'s own ground truth '
+            '(label_source=dataset_reference; counted separately from human answers).'
+        )
     wanted: set[int] | None = None
     if not all_rows:
         wanted = {
@@ -563,16 +702,8 @@ def main(
     #     free, what the OLD one scored on the same labels.
     retest_eval = runner.read_json(retest_dir / 'evaluator.json')
     output_type = (retest_eval.get('output_type') or 'boolean').strip().lower()
-    if output_type == 'string':
-        # String is detect + annotate only (no rewrite/retest); agreement() has no
-        # string branch, so reaching here would raise a raw ValueError inside
-        # asyncio.run. Fail with a clean, actionable message instead.
-        raise SystemExit(
-            'retest does not support string evaluators — the string type is '
-            'detect + annotate only. Stop the alignment after annotation.'
-        )
     resolved_tol = _resolve_numeric_tol(tol, cfg, policy, retest_eval.get('scale'))
-    pairs, pair_tols = _pair_with_labels(labels, new_by_idx)
+    pairs, pair_tols, pair_indices = _pair_with_labels(labels, new_by_idx)
     if not pairs:
         raise SystemExit(
             'No (human, judge) pairs to score agreement — need labelled annotations '
@@ -584,29 +715,81 @@ def main(
         float(cfg.get('retest_min_tnr', _DEFAULT_MIN_TNR)),
         float(cfg.get('retest_min_within_tol', _DEFAULT_MIN_WITHIN_TOL)),
     )
-    agreement_scores, agreement_passed = _evaluate_agreement(
-        pairs, output_type, resolved_tol, *bars, tols=pair_tols
-    )
 
     # The "before" side of (b) costs nothing: the original run already judged these
     # very rows. Without it a passing score can still be worse than what the judge
-    # did before the rewrite, and nothing in the report would show it.
+    # did before the rewrite, and nothing in the report would show it. Read first,
+    # because the string path hands both sides to the reader in a single pass.
     original_stability_path = out_dir / 'stability.json'
     old_by_idx: dict[int, Any] = {}
-    agreement_before: dict[str, Any] | None = None
     if original_stability_path.exists():
         old_by_idx = _verdicts_by_index(runner.read_json(original_stability_path))
-        before_pairs, before_tols = _pair_with_labels(labels, old_by_idx)
-        if before_pairs:
+
+    string_verdicts: dict[str, Any] | None = None
+    if output_type == 'string':
+        # Free text is the one type `==` cannot score: two correct answers differ in
+        # wording, so exact-match would reject every rewrite including the good ones.
+        # The comparison is handed to a reader instead of skipped — the same
+        # assemble → decide → consume split the grey-zone stage already runs on.
+        verdicts_path = out_dir / STRING_VERDICTS_FILE
+        if not verdicts_path.exists():
+            written = _write_string_pairs(out_dir, pairs, pair_indices, old_by_idx, policy)
+            raise SystemExit(
+                f'Free-text judge: signal (b) needs a reader, not a string compare.\n'
+                f'Wrote {written} — {len(pairs)} pair(s) to score.\n'
+                f'Decide match/no-match per example against the grey-zone rule, write '
+                f'{verdicts_path}, then re-run this command. Instructions are in the file.'
+            )
+        string_verdicts = runner.read_json(verdicts_path)
+
+    matches = _string_matches(string_verdicts, pair_indices, 'match_new') if string_verdicts else None
+    if output_type == 'string' and matches is None:
+        raise SystemExit(
+            f'{STRING_VERDICTS_FILE} does not cover every pair (need a match_new for each of '
+            f'{len(pair_indices)} source_index values). Scoring a subset and reporting it as '
+            'the whole set is the failure this refuses to make.'
+        )
+    agreement_scores, agreement_passed = _evaluate_agreement(
+        pairs, output_type, resolved_tol, *bars, tols=pair_tols, matches=matches
+    )
+    if string_verdicts is not None:
+        agreement_scores['scored_by'] = string_verdicts.get('scored_by', 'conductor')
+
+    agreement_before: dict[str, Any] | None = None
+    if old_by_idx:
+        before_pairs, before_tols, before_indices = _pair_with_labels(labels, old_by_idx)
+        before_matches = (
+            _string_matches(string_verdicts, before_indices, 'match_original')
+            if string_verdicts else None
+        )
+        # A string `before` is optional: the reader may have scored only the new
+        # answers. Omit it rather than fabricate one.
+        if before_pairs and not (output_type == 'string' and before_matches is None):
             agreement_before, _ = _evaluate_agreement(
-                before_pairs, output_type, resolved_tol, *bars, tols=before_tols
+                before_pairs, output_type, resolved_tol, *bars,
+                tols=before_tols, matches=before_matches,
             )
             agreement_before['n_pairs'] = len(before_pairs)
 
+    # Two regression views over rows nobody labelled. The narrow one is the stable
+    # spot-check sample (~5 rows) the queue held back; the wide one is every
+    # re-judged row without a label, which is the whole original dataset under
+    # --all_rows. The narrow view was the only one that existed, so a rewrite could
+    # move behaviour across the other 200 rows and the report would say "0 of 5
+    # previously-stable rows changed" — true, and not what the reader took from it.
+    labelled_indices = {
+        int(k) for k, v in labels.items()
+        if isinstance(v, dict) and v.get('value') is not None and str(k).lstrip('-').isdigit()
+    }
     regression = _regression_report(old_by_idx, new_by_idx, _low_flip_indices(out_dir) & scope)
+    regression_wide = _regression_report(
+        old_by_idx, new_by_idx, scope - labelled_indices, _UNLABELLED_NOTE
+    )
 
     success = bool(instability_dropped and agreement_passed and comparable)
     provenance = grey_zone.label_provenance(policy) if policy is not None else None
+    if n_from_dataset:
+        provenance = {**(provenance or {}), 'dataset_reference': n_from_dataset}
     payload = {
         'metadata': {
             'output_type': output_type,
@@ -644,10 +827,22 @@ def main(
             'before': agreement_before,
         },
         'regression_on_stable_rows': regression,
+        # How wide the regression check actually looked, so a clean result cannot be
+        # read as covering more ground than it did.
+        'regression_on_unlabelled_rows': regression_wide,
+        'regression_scope': {
+            'n_rows_rejudged': len(scope),
+            'n_rows_in_original_run': n_total_rows,
+            'covers_original_dataset': all_rows,
+        },
         'success': success,
         # Read these out with the numbers, not instead of them. Each names a way
         # the two gates overstate the result, and none is visible in the scores.
-        'caveats': _caveats(baseline_mean is not None, provenance, regression, n_lost_unmeasurable),
+        'caveats': _caveats(
+            baseline_mean is not None, provenance, regression, n_lost_unmeasurable,
+            agreement_scores.get('scored_by') if output_type == 'string' else None,
+            covers_original=all_rows, n_rejudged=len(scope), n_original=n_total_rows,
+        ),
     }
     runner.write_json(out_dir / 'retest_metrics.json', payload)
 
@@ -669,6 +864,13 @@ def main(
             f'  regression check: {regression["n_changed"]} of {regression["n_compared"]} '
             'previously-stable row(s) changed verdict.'
         )
+    if regression_wide:
+        logger.info(
+            f'  regression check (all unlabelled): {regression_wide["n_changed"]} of '
+            f'{regression_wide["n_compared"]} row(s) nobody labelled changed verdict '
+            f'— re-judged {len(scope)} of {n_total_rows} original datapoint(s)'
+            + ('.' if all_rows else '; pass --all_rows to cover the rest.')
+        )
     for caveat in payload['caveats']:
         logger.warning(f'  ⚠ {caveat}')
     logger.info(f'✓ Wrote {out_dir / "retest_metrics.json"} — success={success}')
@@ -678,7 +880,8 @@ def main(
 
 def _caveats(
     has_baseline: bool, provenance: dict[str, int] | None, regression: dict[str, Any] | None,
-    n_lost_unmeasurable: int = 0,
+    n_lost_unmeasurable: int = 0, string_scored_by: str | None = None,
+    covers_original: bool = True, n_rejudged: int = 0, n_original: int = 0,
 ) -> list[str]:
     """The limits of the two gates, in the words the conductor should use.
 
@@ -702,16 +905,43 @@ def _caveats(
             'applying the rule rather than confirmed by the user, so agreement partly '
             'measures whether the new judge matches that reading of the rule.'
         )
+    if provenance and provenance.get('dataset_reference'):
+        out.append(
+            f'{provenance["dataset_reference"]} of {sum(provenance.values())} labels came from '
+            "the dataset's own ground truth, not from this conversation. That is someone's "
+            'prior judgement — possibly stale, possibly written against a different version of '
+            'the rubric — so agreement on those rows is not the user agreeing.'
+        )
     if regression is None:
         out.append(
             'Behaviour outside the grey zone was not re-measured. Pass --with_low_flip to '
             'check the rows the old judge was completely steady on.'
+        )
+    if not covers_original:
+        out.append(
+            f'The regression check covered {n_rejudged} of the {n_original} datapoint(s) in the '
+            'original run. The rest were never re-judged, so nothing here says whether the new '
+            'evaluator changed its mind about them. Pass --all_rows to re-judge the original set '
+            '(costs rows × repeats) if this evaluator is already scoring production traffic.'
         )
     if n_lost_unmeasurable:
         out.append(
             f'{n_lost_unmeasurable} row(s) the old judge could measure are unmeasurable under the '
             'new one, so they sit outside gate (a) entirely. A rewrite that answers off-contract '
             'on the hardest rows removes them from the mean, which reads as a drop.'
+        )
+    if string_scored_by == 'conductor':
+        out.append(
+            'Agreement on this free-text judge was scored by reading the answers, not by '
+            'comparing them — and by the same model that wrote the rewrite. That is a judgment '
+            'about its own work, so treat gate (b) as a sanity check rather than evidence. '
+            'Confirm a sample with the user and mark those `human_confirmed`.'
+        )
+    elif string_scored_by == 'human_confirmed':
+        out.append(
+            'Agreement on this free-text judge was scored by reading the answers rather than '
+            'comparing them. The user confirmed the decisions, which is the strongest form '
+            'this signal takes — it is still a judgment, not a measurement.'
         )
     return out
 

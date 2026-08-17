@@ -25,6 +25,10 @@ as late and as narrowly as possible:
    self-inconsistency on one 0..1 *instability* scale, whatever its output type —
    boolean flip-rate, categorical label entropy, numeric score spread, string
    exact-match entropy. Instability ranks the queue; nobody labels anything yet.
+   When the examples arrived with ground truth (a dataset's `expected_output`),
+   the same pass also scores **correctness** — and reports accuracy *by band*,
+   because accuracy on the rows the judge was steady about is the one measurement
+   that can catch a judge that is consistently wrong.
 2. **Group, then ask once per group.** The grey-zone stage clusters the unstable
    examples by what makes them hard and puts a bounded payload in the conductor's
    context, so the user answers ~5 questions instead of labelling ~20 rows
@@ -51,15 +55,15 @@ isolation against an existing run directory.
 | Step | Script | Reads | Writes |
 |---|---|---|---|
 | 0 | _(gate — no script)_ | — | does the user even have a judge in orq yet? |
-| 1 | `fetch_evaluator.py` | evaluator id | `evaluator.json` (auto-chains `fetch_traces`) |
-| 1 | `fetch_traces.py` | `evaluator.json` | `traces.jsonl` (rerun for a wider scan) |
-| 1a | `dataset_inputs.py list\|pull` | orq dataset | `dataset_datapoints.json` — when the trace scan comes up short |
-| 1a | `seed_inputs.py convert\|save` | datapoints | seeded `traces.jsonl` rows / dataset save-back |
+| 1 | `fetch_evaluator.py` | evaluator id | `evaluator.json` — the judge only; the input source is the user's call |
+| 1a | `fetch_traces.py` | `evaluator.json` | `traces.jsonl` + `scan.json` — **input source 1**, production traces (overwrites; run it first) |
+| 1a | `dataset_inputs.py list\|pull` | orq dataset | **input source 2** — appends to `traces.jsonl` |
+| 1a | `seed_inputs.py convert\|save` | datapoints | **input sources 3 + 4** (bring your own / generated) — appends; `save` writes back to orq |
 | 1a | `cross_model.py` | `traces.jsonl` | `cross_model.json` — second-judge disagreers, for a flat profile |
 | 2 | `estimate_cost.py` | `traces.jsonl` | _(prints call + token projection; gate)_ |
-| 3 | `stability.py` | `traces.jsonl`, `evaluator.json` | `stability.json` |
-| 4 | `metrics.py` | `stability.json` | `metrics.json` (auto-run by `stability.py`) |
-| 5 | `build_queue.py` | `metrics.json` | `queue.json` |
+| 3 | `stability.py` | `traces.jsonl`, `evaluator.json` | `stability.json` (carries `reference` when the source had ground truth) |
+| 4 | `metrics.py` | `stability.json` | `metrics.json` (auto-run by `stability.py`) — instability, plus a `correctness` block when rows carried labels |
+| 5 | `build_queue.py` | `metrics.json` | `queue.json` — confusers by `reason`: instability / cross_model / wrong_vs_reference |
 | 6 | `grey_zone.py assemble` | `queue.json` | `grey_zone_payload.json` — the bounded confuser payload |
 | 6 | `grey_zone.py apply` | `grey_zone_policy.json` | per-point labels from the user's answers |
 | 6 | `serve_annotation.py` | `queue.json` | `annotations.json` — the per-row UI fallback |
@@ -67,16 +71,20 @@ isolation against an existing run directory.
 | 6 | `aggregate.py` | `recommendations.json` | `aggregated.md` + `aggregated.json` |
 | 7 | `rewrite_eval.py` | `aggregated.md`, `evaluator.json` | `new_prompt.md`, `rewrite_status.json` |
 | 7 | `create_eval.py` | `new_prompt.md`, `evaluator.json` | `approval.json`, `new_evaluator.json` |
-| 8 | `retest.py` | `new_prompt.md`, `grey_zone_policy.json` | `retest_metrics.json` |
+| 8 | `retest.py` | `new_prompt.md`, `grey_zone_policy.json` | `retest_metrics.json`; free-text judges round-trip via `string_pairs.json` → `string_verdicts.json` |
 
 ## Quick start
 
 ```bash
 cd skills/orq-evaluator-alignment
 
-uv run scripts/fetch_evaluator.py --evaluator_id <id>          # eval + 200 traces; prints the run dir
+uv run scripts/fetch_evaluator.py --evaluator_id <id>          # the judge only; prints the run dir
 RUN=runs/<key>_<ts>_<model>_<N>dp
-uv run scripts/fetch_traces.py     --run_dir $RUN --trace_limit 2000   # optional: wider scan
+# Then pick an input source (ask the user — there is no default). Traces:
+uv run scripts/fetch_traces.py     --run_dir $RUN                      # 200 most recent
+uv run scripts/fetch_traces.py     --run_dir $RUN --trace_limit 2000   # deeper
+# …or an orq dataset / your own examples / generated ones — see step 1a. Those
+# append, the scan overwrites, so run the scan first if you are combining them.
 uv run scripts/estimate_cost.py    --run_dir $RUN              # cost gate
 uv run scripts/stability.py        --run_dir $RUN --num_samples 2      # smoke
 uv run scripts/stability.py        --run_dir $RUN              # full run (+metrics)
@@ -194,10 +202,14 @@ see. It reproduces the consistently-wrong blind spot below on demand.
   create → retest) supports **boolean, categorical, and numeric** (RES-978 /
   RES-980); the rewrite preserves the verdict space (label set / numeric scale)
   and numeric rewriting is deliberately shallow (anchor-nudge, not calibration).
-  **String is detect + annotate only for now** — measurement, the confuser queue
-  and the free-text annotation widget work, but `recommend`/`rewrite`/
-  `create_eval` don't consume string yet (`create_eval` fails fast on it). Step 1
-  accepts all four types and fails fast on anything else.
+  **String runs the whole flow with one difference at step 8** — agreement is
+  scored by *reading* the answers rather than by `==`, because two correct
+  free-text answers worded differently would otherwise score as a disagreement
+  and reject every rewrite. The retest writes `string_pairs.json`, the conductor
+  (or the user) decides match/no-match per example against the grey-zone rule, and
+  the run resumes from `string_verdicts.json`. `recommend.py` — the fallback path
+  only — still refuses string for that same `==` reason. Step 1 accepts all four
+  types and fails fast on anything else.
 - **Self-consistency ≠ validity.** Instability localises where the judge is
   unstable; it cannot prove the judge is correct.
 - **Consistently-wrong blind spot.** Instability-ranking never surfaces items the

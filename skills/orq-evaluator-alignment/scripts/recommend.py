@@ -370,9 +370,12 @@ async def _run(out_dir: Path, cfg: dict[str, Any]) -> tuple[list[dict[str, Any]]
         # one meta-prompt call per annotation — the fail-fast used to sit two steps
         # downstream, after the money was spent.
         raise SystemExit(
-            'recommend does not support free-text (string) evaluators — the string type is '
-            'detect + annotate only, so nothing downstream consumes these recommendations. '
-            'Stop the alignment after annotation and report the annotations to the user.'
+            'recommend does not support free-text (string) evaluators. Its per-datapoint '
+            'disagreement extraction compares the human label to the judge verdict with ==, '
+            'which is the wrong comparison for free text: two correct answers worded '
+            'differently read as a disagreement. Use the grey-zone path instead '
+            '(grey_zone.py assemble → apply → rewrite_eval), which reads the answers rather '
+            'than comparing them. This is the fallback path, so nothing is lost by it.'
         )
     labels = evaluator.get('categorical_labels') or []
     tolerance = _resolve_tolerance(cfg, evaluator.get('scale'))

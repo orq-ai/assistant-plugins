@@ -86,6 +86,53 @@ def message_text(m: Any) -> str:
     return '\n\n'.join(chunks)
 
 
+# Roles that can stand in for a judged input/output. `system` and `tool` never
+# can: a system turn is instructions to the model, and a tool turn is machinery.
+_OUTPUT_ROLE = 'assistant'
+_QUERY_ROLE = 'user'
+
+
+def derive_io_from_messages(messages: Any) -> dict[str, str]:
+    """Recover `{query, output}` from a conversation, by rule.
+
+    A dataset row often carries the exchange under `messages` and nothing under
+    `inputs` — its `inputs` hold metadata (category, difficulty, ground_truth)
+    while the thing being judged is the conversation itself. `log.output` is then
+    unmistakably the assistant's answer, but no code path said so, and every such
+    row was skipped as unmappable while carrying exactly what the judge needed.
+
+    The rule, deliberately fixed and documented rather than inferred:
+      - `output` ← text of the **last** `assistant` message
+      - `query`  ← text of the **last** `user` message
+
+    This is not a guess about intent, which the skill refuses to make; it is a
+    contract, applied the same way every time and disclosed by the caller. A role
+    that is absent yields `''` and the row stays unmappable — the failure mode is
+    preserved for data that genuinely cannot be mapped. Messages with no `role`
+    are ignored rather than assigned positionally: "the last message is probably
+    the answer" is exactly the inference this avoids.
+
+    Extraction goes through `message_text`, so a Responses-API `parts[]` turn and
+    a multimodal `content: [...]` turn resolve identically to the trace scanner's
+    reading of the same conversation.
+    """
+    out = {'query': '', 'output': ''}
+    if not isinstance(messages, list):
+        return out
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = message.get('role')
+        if not isinstance(role, str):
+            continue  # roleless: do not guess positionally
+        role = role.strip().lower()
+        if role == _OUTPUT_ROLE:
+            out['output'] = message_text(message) or out['output']
+        elif role == _QUERY_ROLE:
+            out['query'] = message_text(message) or out['query']
+    return out
+
+
 def stringify_messages(messages: Any) -> str:
     """Render a conversation as ``role: text`` lines for a {{messages}} variable.
 

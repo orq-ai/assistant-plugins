@@ -119,7 +119,7 @@ def main(
     evaluator_id: str | None = None,
     config: str = 'config.toml',
     run_dir: str | None = None,
-    with_traces: bool = True,
+    with_traces: bool = False,
     trace_limit: int = 200,
     judge_model: str | None = None,
     scale_min: float | None = None,
@@ -127,14 +127,27 @@ def main(
 ) -> str:
     """Fetch an evaluator and create its run directory.
 
-    By default this also chains straight into the trace fetch (``with_traces``),
-    scanning the most recent ``trace_limit`` traces, so a single command confirms
-    the evaluator in one shot: its declared variables and judge prompt (this
-    step) plus the candidate datapoint count and the *real* judge model resolved
-    from the production spans (the trace step). The cost/setup GATE still comes
-    afterwards (step 3), so nothing expensive runs here — trace fetch is
-    read-only. Pass ``--no-with_traces`` to fetch only the evaluator, or rerun
-    ``fetch_traces.py --trace_limit <N>`` later to pull more data.
+    Fetches the evaluator ONLY. Where the examples come from is the user's choice
+    — a trace scan, an orq dataset, examples they bring, or generated ones — and
+    this step deliberately stops before making it for them (SKILL.md step 1a).
+
+    It used to chain straight into a 200-trace scan, which answered that question
+    silently: the scan is the *default* source rather than the *only* one, and a
+    judge that is new, rarely triggered, or older than the window has little or
+    nothing in production to find. Scanning first made those users read an empty
+    result as a dead end instead of as one option of four.
+
+    Pass ``--with_traces`` to scan in the same command (``--trace_limit N`` sets the
+    depth) once the user has chosen that route, or run ``fetch_traces.py`` after.
+    Nothing expensive happens either way; the cost GATE is step 2 and the judge is
+    not invoked until step 3.
+
+    Note the one thing the scan supplies that the other sources cannot: the judge
+    model observed on production spans. That is only a *fallback* — the model is
+    normally resolved from the evaluator's own config against ``GET /v2/models`` —
+    but if the run dir comes back ``…_model-unknown_…`` and the user picks a
+    non-trace source, they have to supply ``--judge_model``, because step 3 cannot
+    re-run a judge it cannot name.
 
     Args:
         evaluator_id: orq evaluator id (24-hex). Falls back to `evaluator_id`
@@ -142,10 +155,13 @@ def main(
         config: Path to the TOML config (relative to skill/ or absolute).
         run_dir: Optional existing run directory to write into. Omit to create
             a fresh `runs/<key>_<ts>/`.
-        with_traces: Auto-run the trace fetch after writing evaluator.json
-            (default True). The evaluator is already saved if the trace fetch
-            fails, so you can retry traces without re-fetching the evaluator.
-        trace_limit: Scan depth for the chained trace fetch (default 200).
+        with_traces: Also scan traces after writing evaluator.json. **Off by
+            default** — the trace scan is one of four input sources the user
+            chooses between, not the presumed one. Pass it once they have picked
+            that route. The evaluator is already saved if the scan fails, so a
+            retry never re-fetches the evaluator.
+        trace_limit: Scan depth for the chained trace fetch (default 200), used
+            only when ``--with_traces`` is passed.
         judge_model: Explicit judge-model slug override (e.g.
             ``mistral-large-latest``). Use this when the evaluator's config
             model can't be resolved to a routable slug AND production spans

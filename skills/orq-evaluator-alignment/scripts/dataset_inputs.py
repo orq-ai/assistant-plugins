@@ -53,10 +53,24 @@ def list_datasets(config: str = 'config.toml', limit: int = 100) -> list[dict]:
 
 
 def pull(run_dir: str | None = None, config: str = 'config.toml',
-         dataset_id: str | None = None, limit: int = 200) -> str:
-    """Append a dataset's datapoints to traces.jsonl as fresh rows."""
+         dataset_id: str | None = None, limit: int = 200,
+         map: list[str] | str | None = None) -> str:  # noqa: A002 — CLI flag name
+    """Append a dataset's datapoints to traces.jsonl as fresh rows.
+
+    Args:
+        map: Explicit variable→source mappings for fields the automatic rules
+            cannot resolve, e.g. `--map "log.output=messages.assistant.last"`.
+            Repeatable. Sources: `inputs.<key>`, `messages.<role>.last|first`,
+            `messages.all`, `expected_output`. An unknown source is an error, not
+            a silent skip. The resolved mapping is written to `input_mapping.json`
+            so the run is reproducible and the conductor can state what it did.
+    """
     if not dataset_id:
         raise SystemExit('Pass --dataset_id (run `dataset_inputs.py list` to find it).')
+    try:
+        mapping = seed.parse_map_spec(map)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     cfg = runner.load_config(config)
     out_dir = runner.resolve_run_dir(run_dir) if run_dir else runner.latest_run_dir(cfg.get('runs_dir', 'runs'))
     if out_dir is None:
@@ -70,17 +84,43 @@ def pull(run_dir: str | None = None, config: str = 'config.toml',
             return await client.list_datapoints(dataset_id, limit=limit)
 
     datapoints = asyncio.run(_run())
-    rows, skipped = seed.rows_from_datapoints(datapoints, variables, tag={'source': f'dataset:{dataset_id}'})
+    rows, skipped = seed.rows_from_datapoints(
+        datapoints, variables, tag={'source': f'dataset:{dataset_id}'}, mapping=mapping
+    )
+
+    # Report per DATASET, not per row. N identical `missing ['log.output']` lines
+    # say nothing one line doesn't, and they bury the fact that resolves the
+    # problem: which fields ARE present and what they could map to. Emitted
+    # whenever anything was skipped, and on a total miss it is the whole answer.
+    if skipped:
+        inventory = seed.dataset_inventory(datapoints, variables)
+        missing_fields = sorted({v for s in skipped for v in s['missing']})
+        report = seed.format_inventory(inventory, len(rows), missing_fields)
+        log = logger.error if not rows else logger.warning
+        for line in report.splitlines():
+            log(line)
+        runner.write_json(out_dir / 'dataset_inventory.json', inventory)
+
+    if not rows:
+        raise SystemExit(
+            f'No datapoints from dataset {dataset_id} could be mapped to what this judge reads. '
+            'The inventory above lists what the dataset holds; map the missing field explicitly '
+            'with --map, or pick a different dataset. Nothing was written.'
+        )
 
     traces_path = out_dir / 'traces.jsonl'
     existing = runner.read_jsonl(traces_path) if traces_path.exists() else []
     runner.write_jsonl(traces_path, existing + rows)
+    if mapping:
+        runner.write_json(
+            out_dir / 'input_mapping.json',
+            {'dataset_id': dataset_id, 'mapping': mapping, 'n_rows': len(rows)},
+        )
+        logger.info(f'✓ Applied --map {mapping} (recorded in input_mapping.json)')
     logger.info(
         f'✓ Added {len(rows)} dataset rows to traces.jsonl '
         f'({len(existing) + len(rows)} total); {len(skipped)} skipped (unmappable).'
     )
-    for s in skipped[:5]:
-        logger.warning(f"  skipped datapoint #{s['index']}: missing {s['missing']}")
     print(out_dir)
     return str(out_dir)
 

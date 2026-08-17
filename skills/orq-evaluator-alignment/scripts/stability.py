@@ -158,6 +158,12 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
             'query': row.get('query', ''),
             'output': row.get('output', ''),
             'messages': row.get('messages'),
+            # Ground truth rides through so metrics.py can score CORRECTNESS, not
+            # just self-consistency. A dataset row's `expected_output` landed in
+            # `reference` and stopped here, because an evaluator that declares no
+            # {{reference}} variable never renders it — so the one field that can
+            # close this method's central blind spot was collected and dropped.
+            'reference': row.get('reference', ''),
             # Seeded-row provenance (RES-980 §11.6) rides through so build_queue /
             # the report can flag synthetic or dataset-sourced datapoints.
             'synthetic': row.get('synthetic', False),

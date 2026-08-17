@@ -120,7 +120,7 @@ def test_varying_policy_bands_reach_the_metric_instead_of_being_dropped():
         '4': {'value': 2.0, 'tolerance': 2.0},
     }
     judge = {3: 4.5, 4: 2.5}
-    pairs, tols = retest._pair_with_labels(labels, judge)
+    pairs, tols, _indices = retest._pair_with_labels(labels, judge)
     assert pairs == [(4.0, 4.5), (2.0, 2.5)]
     assert tols == [0.1, 2.0]
 
@@ -133,7 +133,7 @@ def test_varying_policy_bands_reach_the_metric_instead_of_being_dropped():
 
 def test_a_point_without_its_own_band_falls_back_to_the_run_wide_one():
     labels = {'3': {'value': 4.0}, '4': {'value': 2.0, 'tolerance': 0.1}}
-    pairs, tols = retest._pair_with_labels(labels, {3: 4.4, 4: 2.4})
+    pairs, tols, _indices = retest._pair_with_labels(labels, {3: 4.4, 4: 2.4})
     assert tols == [None, 0.1]
     scores, _ = retest._evaluate_agreement(pairs, 'number', 0.5, 0.7, 0.7, 0.7, 0.7, tols=tols)
     assert scores['n_within'] == 1  # the unbanded point clears 0.5, the banded one does not
@@ -364,3 +364,118 @@ def test_low_flip_indices_come_from_the_queue(tmp_path):
         {'source_index': 11, 'low_flip_sample': True},
     ]})
     assert retest._low_flip_indices(tmp_path) == {9, 11}
+
+
+# --- string: the reader handshake (pairs out, verdicts in) ---
+
+
+def _string_setup():
+    labels = {'3': {'value': 'refund request'}, '4': {'value': 'billing question'}}
+    new_by_idx = {3: 'refund', 4: 'billing issue'}
+    old_by_idx = {3: 'refund', 4: 'spam'}
+    return labels, new_by_idx, old_by_idx
+
+
+def test_string_pairs_file_carries_both_judges(tmp_path):
+    # One reading pass has to produce the score AND its `before`, the way the other
+    # three types get the before for free.
+    labels, new_by_idx, old_by_idx = _string_setup()
+    pairs, _tols, indices = retest._pair_with_labels(labels, new_by_idx)
+    policy = {'grey_zones': [{'rule': 'a paraphrase of the same intent counts'}]}
+    path = retest._write_string_pairs(tmp_path, pairs, indices, old_by_idx, policy)
+
+    written = json.loads(path.read_text(encoding='utf-8'))
+    assert [p['source_index'] for p in written['pairs']] == [3, 4]
+    assert written['pairs'][1]['new_judge_value'] == 'billing issue'
+    assert written['pairs'][1]['original_judge_value'] == 'spam'
+    # The reader scores against the user's rule, not its own idea of a good answer.
+    assert written['metadata']['rule'] == ['a paraphrase of the same intent counts']
+
+
+def test_string_matches_align_by_source_index_not_position(tmp_path):
+    # The verdicts file is written by hand, so its order cannot be assumed.
+    verdicts = {'verdicts': [
+        {'source_index': 4, 'match_new': False},
+        {'source_index': 3, 'match_new': True},
+    ]}
+    assert retest._string_matches(verdicts, [3, 4], 'match_new') == [True, False]
+
+
+def test_string_matches_is_none_when_a_pair_is_unscored():
+    verdicts = {'verdicts': [{'source_index': 3, 'match_new': True}]}
+    assert retest._string_matches(verdicts, [3, 4], 'match_new') is None
+
+
+def test_string_matches_is_none_on_an_empty_verdicts_file():
+    assert retest._string_matches({'verdicts': []}, [3], 'match_new') is None
+
+
+def test_string_gate_uses_the_accuracy_bar():
+    labels, new_by_idx, _old = _string_setup()
+    pairs, tols, _idx = retest._pair_with_labels(labels, new_by_idx)
+    scores, passed = retest._evaluate_agreement(
+        pairs, 'string', 0.5, 0.7, 0.7, 0.7, 0.7, tols=tols, matches=[True, True]
+    )
+    assert scores['accuracy'] == pytest.approx(1.0)
+    assert passed is True
+
+    scores, passed = retest._evaluate_agreement(
+        pairs, 'string', 0.5, 0.7, 0.7, 0.7, 0.7, tols=tols, matches=[True, False]
+    )
+    assert passed is False  # 0.5 is under the 0.7 bar
+
+
+def test_string_caveat_names_who_scored_it():
+    # A model judging its own rewrite is not evidence, and the report has to say so.
+    conductor = retest._caveats(True, None, {}, 0, 'conductor')
+    assert any('same model that wrote the rewrite' in c for c in conductor)
+    confirmed = retest._caveats(True, None, {}, 0, 'human_confirmed')
+    assert any('user confirmed' in c for c in confirmed)
+    assert not any('scored by reading' in c for c in retest._caveats(True, None, {}, 0, None))
+
+
+# --- regression: how wide the check actually looked ---
+
+
+def test_regression_covers_every_unlabelled_row_not_just_the_spot_check():
+    # The old report only ever looked at the ~5 low-flip rows, so a rewrite could
+    # move behaviour across the whole dataset and it still said "0 of 5 changed".
+    old = {i: True for i in range(10)}
+    new = {**old, 7: False, 8: False}          # two rows moved, neither low-flip
+    low_flip = {0, 1}
+    scope = set(range(10))
+    labelled = {2, 3}
+
+    narrow = retest._regression_report(old, new, low_flip & scope)
+    assert narrow['n_changed'] == 0            # the reassuring, narrow answer
+
+    wide = retest._regression_report(old, new, scope - labelled, retest._UNLABELLED_NOTE)
+    assert wide['n_compared'] == 8
+    assert wide['n_changed'] == 2
+    assert wide['changed_source_indices'] == [7, 8]
+    assert wide['changed_rate'] == pytest.approx(0.25)
+
+
+def test_regression_excludes_the_labelled_rows():
+    # Labelled rows are SUPPOSED to change — counting them as regressions would
+    # report the rewrite working as if it were the rewrite misfiring.
+    old = {1: True, 2: True}
+    new = {1: False, 2: True}
+    assert retest._regression_report(old, new, {1, 2} - {1}, retest._UNLABELLED_NOTE)['n_changed'] == 0
+
+
+def test_regression_is_none_when_nothing_overlaps():
+    # Absent, not "0 changed": a row the new judge never answered says nothing.
+    assert retest._regression_report({1: True}, {}, {1}) is None
+
+
+def test_regression_note_says_how_far_it_looked():
+    wide = retest._regression_report({1: True}, {1: True}, {1}, retest._UNLABELLED_NOTE)
+    assert '--all_rows' in wide['note']
+
+
+def test_caveat_fires_when_the_check_was_narrower_than_the_run():
+    narrow = retest._caveats(True, None, {}, 0, None, covers_original=False, n_rejudged=17, n_original=200)
+    assert any('17 of the 200' in c for c in narrow)
+    full = retest._caveats(True, None, {}, 0, None, covers_original=True, n_rejudged=200, n_original=200)
+    assert not any('of the 200 datapoint' in c for c in full)

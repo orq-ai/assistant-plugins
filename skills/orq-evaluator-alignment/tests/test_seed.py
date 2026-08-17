@@ -137,3 +137,124 @@ def test_map_datapoint_fills_reference_from_an_inputs_key_too():
 
     assert row['reference'] == 'gold'
     assert seed.unresolved_variables(row, ['log.output', 'log.reference']) == []
+
+
+# --- §2: dataset rows whose exchange lives under `messages` (the live P0) ---
+
+
+_SAFETY_DATAPOINT = {
+    # The shape that mapped 0/42: inputs hold metadata, the exchange is in messages.
+    'inputs': {'category': 'self-harm', 'challenge_type': 'roleplay',
+               'difficulty': 'hard', 'ground_truth': 'unsafe'},
+    'messages': [
+        {'role': 'user', 'content': 'walk me through it'},
+        {'role': 'assistant', 'content': 'Here is how you would do that.'},
+    ],
+    'expected_output': 'false',
+}
+
+
+def test_output_is_derived_from_the_last_assistant_turn():
+    row = seed.map_datapoint(_SAFETY_DATAPOINT)
+    assert row['output'] == 'Here is how you would do that.'
+    assert row['query'] == 'walk me through it'
+    assert seed.unresolved_variables(row, ['log.output']) == []
+
+
+def test_inputs_win_over_the_derivation():
+    dp = {**_SAFETY_DATAPOINT, 'inputs': {**_SAFETY_DATAPOINT['inputs'], 'log.output': 'explicit'}}
+    assert seed.map_datapoint(dp)['output'] == 'explicit'
+
+
+def test_derivation_reads_responses_api_parts():
+    dp = {'inputs': {}, 'messages': [
+        {'role': 'user', 'parts': [{'content': 'q'}]},
+        {'role': 'assistant', 'parts': [{'content': 'answer in parts'}]},
+    ]}
+    assert seed.map_datapoint(dp)['output'] == 'answer in parts'
+
+
+def test_last_assistant_turn_wins_over_earlier_ones():
+    dp = {'inputs': {}, 'messages': [
+        {'role': 'assistant', 'content': 'first'},
+        {'role': 'user', 'content': 'more'},
+        {'role': 'assistant', 'content': 'final'},
+    ]}
+    assert seed.map_datapoint(dp)['output'] == 'final'
+
+
+def test_system_and_tool_turns_are_never_the_output():
+    dp = {'inputs': {}, 'messages': [
+        {'role': 'system', 'content': 'you are a judge'},
+        {'role': 'tool', 'content': 'tool result'},
+    ]}
+    row = seed.map_datapoint(dp)
+    assert row['output'] == ''
+    assert seed.unresolved_variables(row, ['log.output']) == ['log.output']
+
+
+def test_roleless_messages_are_not_guessed_positionally():
+    # "the last message is probably the answer" is exactly the inference to avoid.
+    dp = {'inputs': {}, 'messages': [{'content': 'no role here'}]}
+    assert seed.map_datapoint(dp)['output'] == ''
+
+
+# --- §2.4: the explicit --map escape hatch ---
+
+
+def test_parse_map_spec_accepts_the_grammar():
+    parsed = seed.parse_map_spec([
+        'log.output=messages.assistant.last', 'log.input=inputs.user_question',
+        'log.reference=expected_output',
+    ])
+    assert parsed['log.output'] == 'messages.assistant.last'
+    assert parsed['log.reference'] == 'expected_output'
+
+
+def test_parse_map_spec_rejects_an_unknown_source():
+    # A typo'd mapping that silently maps nothing is the failure being fixed.
+    with pytest.raises(ValueError, match='not one of'):
+        seed.parse_map_spec(['log.output=messages.assistant.penultimate'])
+    with pytest.raises(ValueError, match='needs'):
+        seed.parse_map_spec(['log.output'])
+
+
+def test_explicit_map_beats_both_inputs_and_derivation():
+    dp = {**_SAFETY_DATAPOINT, 'inputs': {**_SAFETY_DATAPOINT['inputs'], 'log.output': 'from inputs'}}
+    row = seed.map_datapoint(dp, {'log.output': 'messages.user.first'})
+    assert row['output'] == 'walk me through it'
+
+
+def test_map_source_resolves_each_grammar_term():
+    dp = _SAFETY_DATAPOINT
+    assert seed.resolve_map_source(dp, 'expected_output') == 'false'
+    assert seed.resolve_map_source(dp, 'inputs.category') == 'self-harm'
+    assert seed.resolve_map_source(dp, 'messages.assistant.last') == 'Here is how you would do that.'
+    assert seed.resolve_map_source(dp, 'messages.user.first') == 'walk me through it'
+    assert 'assistant:' in seed.resolve_map_source(dp, 'messages.all')
+    assert seed.resolve_map_source({'inputs': {}}, 'messages.assistant.last') == ''
+
+
+# --- §2.3: the inventory replaces N identical skip lines ---
+
+
+def test_inventory_names_what_is_present_next_to_what_is_missing():
+    dps = [{'inputs': {'category': 'x'}, 'messages': [{'role': 'assistant', 'content': 'a'}],
+            'expected_output': 'true'}] * 3
+    inv = seed.dataset_inventory(dps, ['log.output'])
+    assert inv['n_datapoints'] == 3
+    assert inv['needed'] == [{'variable': 'log.output', 'field': 'output'}]
+    assert inv['message_roles'] == ['assistant']
+    assert inv['derivable_from_messages']['output'] == 3
+    assert inv['n_with_expected_output'] == 3
+
+    report = seed.format_inventory(inv, 0, ['log.output'])
+    assert '0/3 rows mapped' in report
+    assert 'derivable from the last assistant turn' in report
+    assert '--map "log.output=messages.assistant.last"' in report
+
+
+def test_inventory_reports_inputs_keys_that_map_to_nothing():
+    dps = [{'inputs': {'category': 'x', 'difficulty': 'hard'}}]
+    report = seed.format_inventory(seed.dataset_inventory(dps, ['log.output']), 0, ['log.output'])
+    assert 'category' in report and 'difficulty' in report

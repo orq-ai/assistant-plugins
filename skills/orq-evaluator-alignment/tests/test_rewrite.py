@@ -245,3 +245,36 @@ def test_label_with_punctuation_still_matches_itself():
     proposed = 'Classify {{log.output}} as abuse (severe) or safe.'
     ok, _reason = rw.check_preservation(ev, proposed)
     assert ok is True
+
+
+def test_context_string_pins_the_format_not_a_verdict_set():
+    # Free text has no label set and no scale, so the preservation rule has to be
+    # about the SHAPE of the answer. Without one there is nothing holding the
+    # rewrite to the contract the human labelled against.
+    ev = {'output_type': 'string', 'categorical_labels': [], 'scale': None}
+    ctx = rw.build_verdict_space_context(ev)
+    assert 'free-form string' in ctx['verdict_space']
+    assert 'format IS the contract' in ctx['preservation_rule']
+
+
+def test_context_string_forbids_turning_it_into_another_type():
+    # Adding a label set or a scale is not a rewrite — it is a different evaluator,
+    # and every measurement taken of the old one stops applying.
+    ctx = rw.build_verdict_space_context({'output_type': 'string'})
+    assert 'do not add an enumerated' in ctx['type_guidance'].lower()
+
+
+def test_context_unknown_type_still_raises():
+    with pytest.raises(ValueError):
+        rw.build_verdict_space_context({'output_type': 'tensor'})
+
+
+def test_string_preservation_still_enforces_the_variable_set():
+    # The one guard that DOES apply to string: a rewrite that drops {{log.output}}
+    # leaves a judge scoring nothing.
+    ev = {'output_type': 'string', 'variables': ['log.output'], 'categorical_labels': [], 'scale': None}
+    ok, _reason = rw.check_preservation(ev, 'Summarise the answer: {{log.output}}')
+    assert ok is True
+    ok, reason = rw.check_preservation(ev, 'Summarise the answer.')
+    assert ok is False
+    assert 'log.output' in reason
