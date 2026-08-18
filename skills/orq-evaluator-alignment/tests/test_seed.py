@@ -219,10 +219,36 @@ def test_parse_map_spec_rejects_an_unknown_source():
         seed.parse_map_spec(['log.output'])
 
 
+def test_parse_map_spec_rejects_an_unmappable_variable():
+    # The source side was validated but the variable side wasn't — a typo'd
+    # variable (outout for output) parsed silently and then no-op'd forever,
+    # because field_for_variable(var) is None never routed into the row.
+    with pytest.raises(ValueError, match='outout'):
+        seed.parse_map_spec(['log.outout=inputs.x'])
+
+
 def test_explicit_map_beats_both_inputs_and_derivation():
     dp = {**_SAFETY_DATAPOINT, 'inputs': {**_SAFETY_DATAPOINT['inputs'], 'log.output': 'from inputs'}}
     row = seed.map_datapoint(dp, {'log.output': 'messages.user.first'})
     assert row['output'] == 'walk me through it'
+
+
+def test_explicit_map_onto_reference_wins_over_expected_output():
+    # An explicit --map targeting the reference field is the user answering the
+    # question themselves; it must not be clobbered by the datapoint's own
+    # expected_output afterwards (today it is — expected_output runs unconditionally).
+    dp = {'expected_output': 'stale', 'inputs': {'ground_truth': 'Paris'}}
+    row = seed.map_datapoint(dp, {'log.reference': 'inputs.ground_truth'})
+    assert row['reference'] == 'Paris'
+
+
+def test_map_onto_a_different_field_still_lets_expected_output_fill_reference():
+    # The precedence guard is scoped to the reference field only — a --map onto
+    # log.output must not suppress the expected_output -> reference fallback.
+    dp = {'expected_output': 'gold', 'inputs': {}}
+    row = seed.map_datapoint(dp, {'log.output': 'expected_output'})
+    assert row['output'] == 'gold'
+    assert row['reference'] == 'gold'
 
 
 def test_map_source_resolves_each_grammar_term():

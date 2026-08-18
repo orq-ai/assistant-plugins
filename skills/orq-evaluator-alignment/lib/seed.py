@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from lib.content import derive_io_from_messages, field_for_variable
+from lib.content import _FIELD_BY_LEAF, derive_io_from_messages, field_for_variable
 
 
 def map_datapoint(datapoint: dict[str, Any], mapping: dict[str, str] | None = None) -> dict[str, Any]:
@@ -50,16 +50,21 @@ def map_datapoint(datapoint: dict[str, Any], mapping: dict[str, str] | None = No
             row[field] = derived[field]
     # An explicit --map is the user answering the question themselves, so it wins
     # over both the inputs pass and the derivation.
+    mapped_fields: set[str] = set()
     for var, source in (mapping or {}).items():
         field = field_for_variable(var)
         if field is not None:
             value = resolve_map_source(datapoint, source)
             if value not in (None, ''):
                 row[field] = value
+                mapped_fields.add(field)
     # The datapoint's own `expected_output` is the canonical ground truth, but it
     # must not blank a reference an `inputs` key already supplied — the leaf table
-    # maps `{{...expected_output}}` too, so both routes can carry it.
-    if datapoint.get('expected_output') or not row['reference']:
+    # maps `{{...expected_output}}` too, so both routes can carry it. It must also
+    # not blank an explicit `--map` onto `reference`: that mapping is the user
+    # answering the same question by hand, and used to be overwritten unconditionally
+    # by this block running after it.
+    if 'reference' not in mapped_fields and (datapoint.get('expected_output') or not row['reference']):
         row['reference'] = datapoint.get('expected_output') or row['reference'] or ''
     return row
 
@@ -134,6 +139,17 @@ def parse_map_spec(specs: list[str] | str | None) -> dict[str, str]:
         var, source = var.strip(), source.strip()
         if not var or not _valid_map_source(source):
             raise ValueError(f'--map source {source!r} is not one of: {_MAP_GRAMMAR}')
+        # The source side was validated above; the variable side wasn't — a typo'd
+        # variable (`log.outout` for `log.output`) parsed silently and then no-op'd
+        # forever, because `field_for_variable(var) is None` never routed the mapped
+        # value into `row` in `map_datapoint`. Fail here instead, at parse time.
+        if field_for_variable(var) is None:
+            leaf = var.split('.')[-1].strip().lower()
+            leaves = ', '.join(sorted(_FIELD_BY_LEAF))
+            raise ValueError(
+                f'--map variable {var!r} does not resolve to a row field '
+                f'(leaf {leaf!r} is not one of: {leaves})'
+            )
         out[var] = source
     return out
 

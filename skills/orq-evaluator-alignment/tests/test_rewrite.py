@@ -21,7 +21,9 @@ Run:
 
 from __future__ import annotations
 
+import os
 import sys
+import time
 from pathlib import Path
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +34,7 @@ for _p in (str(SKILL_ROOT), str(SKILL_ROOT / 'scripts')):
 import _bootstrap  # noqa: F401,E402
 
 import pytest  # noqa: E402
+from loguru import logger  # noqa: E402
 
 import rewrite_eval as rw  # noqa: E402
 
@@ -278,3 +281,63 @@ def test_string_preservation_still_enforces_the_variable_set():
     ok, reason = rw.check_preservation(ev, 'Summarise the answer.')
     assert ok is False
     assert 'log.output' in reason
+
+
+# --- _read_guidance: warn (not refuse) when the labels moved after aggregation ---
+
+
+def _capture_warnings():
+    messages: list[str] = []
+    handler_id = logger.add(lambda msg: messages.append(str(msg)), level='WARNING')
+    return messages, handler_id
+
+
+def test_read_guidance_warns_when_annotations_are_newer_than_aggregated(tmp_path):
+    # aggregate.py summarised the labels into aggregated.md; if annotations.json
+    # was then touched (re-labelled, a grey-zone policy edited), the summary the
+    # rewrite is about to read no longer reflects the latest human input.
+    (tmp_path / 'aggregated.md').write_text('## Recommendations\n- be stricter', encoding='utf-8')
+    now = time.time()
+    os.utime(tmp_path / 'aggregated.md', (now - 100, now - 100))
+    (tmp_path / 'annotations.json').write_text('{}', encoding='utf-8')
+    os.utime(tmp_path / 'annotations.json', (now, now))
+
+    messages, handler_id = _capture_warnings()
+    try:
+        rw._read_guidance(tmp_path)
+    finally:
+        logger.remove(handler_id)
+
+    assert any('annotations.json' in m and 'stale' in m for m in messages)
+
+
+def test_read_guidance_warns_when_grey_zone_policy_is_newer_than_aggregated(tmp_path):
+    (tmp_path / 'aggregated.md').write_text('## Recommendations\n- be stricter', encoding='utf-8')
+    now = time.time()
+    os.utime(tmp_path / 'aggregated.md', (now - 100, now - 100))
+    (tmp_path / 'grey_zone_policy.json').write_text('{}', encoding='utf-8')
+    os.utime(tmp_path / 'grey_zone_policy.json', (now, now))
+
+    messages, handler_id = _capture_warnings()
+    try:
+        rw._read_guidance(tmp_path)
+    finally:
+        logger.remove(handler_id)
+
+    assert any('grey_zone_policy.json' in m and 'stale' in m for m in messages)
+
+
+def test_read_guidance_no_warning_when_aggregated_is_the_newest_artifact(tmp_path):
+    (tmp_path / 'annotations.json').write_text('{}', encoding='utf-8')
+    now = time.time()
+    os.utime(tmp_path / 'annotations.json', (now - 100, now - 100))
+    (tmp_path / 'aggregated.md').write_text('## Recommendations\n- be stricter', encoding='utf-8')
+    os.utime(tmp_path / 'aggregated.md', (now, now))
+
+    messages, handler_id = _capture_warnings()
+    try:
+        rw._read_guidance(tmp_path)
+    finally:
+        logger.remove(handler_id)
+
+    assert messages == []

@@ -267,3 +267,41 @@ def test_create_forwards_scale_for_both_numeric_spellings(monkeypatch, spelling)
     # A source stored as 'numeric' must not silently drop its scale on creation.
     assert _FakeClient.captured['scale'] == [1, 10]
     assert _FakeClient.captured['output_type'] == spelling
+
+
+# --- create-time guards: all three checks, not just var_check_passed (RES-978 §5.1) ---
+
+
+def test_enforce_create_guards_refuses_on_a_failed_check_not_covered_by_var_check():
+    # rewrite_eval now writes verdict_space_ok/preservation_ok alongside
+    # var_check_passed, but nothing read them — a rewrite whose preservation
+    # guard failed still created cleanly as long as the variable set matched.
+    import create_eval
+
+    status = {'var_check_passed': True, 'verdict_space_ok': True, 'preservation_ok': False}
+    with pytest.raises(SystemExit, match='preservation_ok'):
+        create_eval._enforce_create_guards(status, force=False)
+
+
+def test_enforce_create_guards_force_overrides_and_names_what_was_forced():
+    import create_eval
+
+    status = {'var_check_passed': True, 'verdict_space_ok': True, 'preservation_ok': False}
+    forced = create_eval._enforce_create_guards(status, force=True)
+    assert forced == ['preservation_ok']
+
+
+def test_enforce_create_guards_defaults_missing_keys_to_passing():
+    # A pre-existing run dir written before verdict_space_ok/preservation_ok
+    # existed has neither key — absence must not block creation.
+    import create_eval
+
+    status = {'var_check_passed': True}
+    assert create_eval._enforce_create_guards(status, force=False) == []
+
+
+def test_enforce_create_guards_passes_when_everything_is_true():
+    import create_eval
+
+    status = {'var_check_passed': True, 'verdict_space_ok': True, 'preservation_ok': True}
+    assert create_eval._enforce_create_guards(status, force=False) == []

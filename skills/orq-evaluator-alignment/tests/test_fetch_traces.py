@@ -24,6 +24,7 @@ from fetch_traces import (  # noqa: E402
     _resolve_judge_model,
     _guard_foreign_rows,
     _scan_depth_note,
+    _scan_echo,
     foreign_rows,
 )
 
@@ -166,6 +167,23 @@ def test_scan_depth_does_not_offer_a_deeper_scan_that_cannot_help():
 def test_scan_depth_survives_an_echo_without_counts():
     # Older run dirs / the no-traces early return carry no scan counts.
     assert _scan_depth_note({}, 5) == 'Scan: 5 datapoint(s).'
+
+
+# --- _scan_echo: scan_truncated must read the RAW scan, not the date-filtered window ---
+
+
+def test_scan_echo_truncation_reads_the_raw_scan_not_the_window():
+    # The window is a client-side date filter over the raw fetch, so it can be
+    # narrow (12 rows) while the raw scan still hit the trace_limit cap (200) —
+    # scan_truncated has to say so, or the note falsely claims the window held
+    # everything and a deeper --trace_limit couldn't help.
+    echo = _scan_echo(n_raw=200, n_in_window=12, limit=200)
+    assert echo == {'n_traces_scanned': 12, 'scan_truncated': True}
+
+
+def test_scan_echo_not_truncated_when_raw_scan_is_under_the_cap():
+    echo = _scan_echo(n_raw=43, n_in_window=43, limit=200)
+    assert echo == {'n_traces_scanned': 43, 'scan_truncated': False}
 
 
 # --- the scan overwrites; the other input sources append ---

@@ -47,6 +47,34 @@ from lib.orq_client import OrqClient
 load_dotenv()
 
 
+def _enforce_create_guards(status: dict[str, Any], force: bool) -> list[str]:
+    """Refuse creation unless every rewrite_eval guard passed, naming which failed.
+
+    rewrite_eval.py writes three checks to `rewrite_status.json`
+    (`var_check_passed`, `verdict_space_ok`, `preservation_ok`), but this used to
+    gate on `var_check_passed` alone — a rewrite whose verdict space had shifted
+    (a dropped categorical label, a moved numeric scale) still created cleanly as
+    long as the `{{...}}` variable set matched. `verdict_space_ok`/`preservation_ok`
+    are newer keys than `var_check_passed`, so a pre-existing run dir written
+    before they existed has neither — absence must default to passing, or every
+    legacy run dir would be blocked.
+
+    Returns the checks `--force` overrode (empty when nothing needed forcing).
+    """
+    checks = [
+        ('var_check_passed', bool(status.get('var_check_passed', True))),
+        ('verdict_space_ok', bool(status.get('verdict_space_ok', True))),
+        ('preservation_ok', bool(status.get('preservation_ok', True))),
+    ]
+    failed = [name for name, ok in checks if not ok]
+    if failed and not force:
+        raise SystemExit(
+            f'Refusing to create: {", ".join(failed)} failed. '
+            'Fix new_prompt.md (or rerun rewrite_eval.py), or pass --force to override (unsafe).'
+        )
+    return failed
+
+
 def _diff(old: str, new: str) -> str:
     lines = difflib.unified_diff(
         old.splitlines(), new.splitlines(), fromfile='current_prompt', tofile='proposed_prompt', lineterm=''
@@ -215,17 +243,16 @@ def main(
         print(out_dir)
         return str(out_dir)
 
-    if not status['var_check_passed'] and not force:
-        raise SystemExit(
-            'Refusing to create: variable-preservation check failed. '
-            'Fix new_prompt.md (or rerun rewrite_eval.py), or pass --force to override (unsafe).'
-        )
+    forced_checks = _enforce_create_guards(status, force)
 
     approval = {
         'approved': True,
         'edits': edits,
         'used_prompt_source': 'edits' if edits else 'new_prompt.md',
-        'forced_var_check': bool(force and not status['var_check_passed']),
+        # Kept for artifact compat alongside the generalised `forced_checks` below;
+        # set from the var check alone, as it always was.
+        'forced_var_check': bool(force and not status.get('var_check_passed', True)),
+        'forced_checks': forced_checks,
         'timestamp': runner.utc_timestamp(),
     }
     runner.write_json(out_dir / 'approval.json', approval)

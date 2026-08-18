@@ -543,6 +543,20 @@ def _scan_depth_note(filter_echo: dict[str, Any], n_rows: int) -> str:
     return '\n'.join(lines)
 
 
+def _scan_echo(n_raw: int, n_in_window: int, limit: int) -> dict[str, Any]:
+    """The `n_traces_scanned`/`scan_truncated` pair echoed back into the report.
+
+    `scan_truncated` has to read the RAW fetch depth (`n_raw`), not the
+    date-window-filtered count (`n_in_window`): hitting the `trace_limit` cap on
+    the raw fetch is the only thing that means more history exists behind it. A
+    narrow window (e.g. a tight trace_start_date/trace_end_date) can hold few
+    rows while the raw scan still hit the cap — computing truncation from the
+    window instead reports "this is everything" and `_scan_depth_note` tells the
+    user a deeper --trace_limit can't help when it, in fact, can.
+    """
+    return {'n_traces_scanned': n_in_window, 'scan_truncated': n_raw >= limit}
+
+
 async def _fetch(
     evaluator_id: str, evaluator_key: str, cfg: dict[str, Any], template: str, force: bool = False
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any] | None]:
@@ -597,8 +611,9 @@ async def _fetch(
         # means there is almost certainly more history behind it, so widening is worth
         # offering; coming back under the cap means the window held everything there
         # was and a bigger --trace_limit would re-scan the same traces for nothing.
-        filter_echo['n_traces_scanned'] = len(traces)
-        filter_echo['scan_truncated'] = len(traces) >= limit
+        # Truncation reads the RAW fetch depth, not the (possibly date-filtered)
+        # window — see `_scan_echo`.
+        filter_echo.update(_scan_echo(len(raw_traces), len(traces), limit))
         if not traces:
             return [], filter_echo, None
 

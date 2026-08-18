@@ -413,6 +413,28 @@ async def _rewrite(out_dir: Path, cfg: dict[str, Any], max_attempts: int) -> dic
     }
 
 
+def _warn_if_guidance_stale(out_dir: Path, agg: Path) -> None:
+    """Warn (never refuse) when a labelling artifact outran `aggregated.md`.
+
+    `grey_zone_policy.json` / `annotations.json` are the human-labelling
+    artifacts aggregate.py reads to produce `aggregated.md`. If either was
+    touched — re-labelled, a grey-zone rule edited — after `aggregated.md` was
+    last written, the summary the rewrite is about to act on predates the
+    latest human input. The rewrite still has to run (this is guidance, not a
+    hard gate elsewhere in the pipeline), so warn loudly and let the conductor
+    decide whether to re-run aggregate.py first.
+    """
+    agg_mtime = agg.stat().st_mtime
+    for name in ('grey_zone_policy.json', 'annotations.json'):
+        candidate = out_dir / name
+        if candidate.exists() and candidate.stat().st_mtime > agg_mtime:
+            logger.warning(
+                f'⚠ {name} changed after aggregated.md was written — the labels moved '
+                'after aggregation and this rewrite will use stale guidance. '
+                're-run aggregate.py first to fold the new labels in.'
+            )
+
+
 def _read_guidance(out_dir: Path) -> str:
     """Read the aggregated human policy as free-text guidance.
 
@@ -422,6 +444,7 @@ def _read_guidance(out_dir: Path) -> str:
     """
     agg = out_dir / 'aggregated.md'
     if agg.exists():
+        _warn_if_guidance_stale(out_dir, agg)
         text = agg.read_text(encoding='utf-8-sig').strip()
         if text:
             return text
