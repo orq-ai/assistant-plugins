@@ -134,7 +134,10 @@ retest_min_within_tol = 0.7    # numeric: share of points inside the band below
 # one, so an absolute band means something different on every judge.
 numeric_tol = ""
 # Fraction of the declared scale range used when numeric_tol is blank. 0.1 is one
-# point on a 1–10 judge. Falls back to an absolute 0.5 when no scale is declared.
+# point on a 1–10 judge. Falls back to an absolute 0.5 when no scale is declared —
+# EXCEPT in retest.py's gate (b), which refuses before judging rather than
+# silently scoring against that arbitrary band: declare a scale, set numeric_tol,
+# or pass --tol. cross_model.py's probe still uses the 0.5 fallback as before.
 numeric_tol_fraction = 0.1
 # A grey-zone policy may band each point individually (`tolerance` per label); those
 # per-point bands are honoured as-is, and this value covers the points without one.

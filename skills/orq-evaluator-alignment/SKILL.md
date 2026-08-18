@@ -576,7 +576,12 @@ rule** — same meaning, not same wording — write `string_verdicts.json` with
 afterward) per `source_index`, plus the `pairs_fingerprint` copied verbatim from
 `string_pairs.json` (a stale verdicts file from an earlier rewrite is refused, not
 silently scored), then re-run the same command. Cover every example: a partial file
-is refused rather than scored as if it covered the set.
+is refused rather than scored as if it covered the set. That re-run **reuses** the
+first pass's judged sub-run rather than calling the judge again — a free-text judge
+at temperature 1 won't reproduce the same modal strings twice, so re-judging on
+resume would regenerate the fingerprint every time and the verdicts you just wrote
+could never match it. `--rejudge` forces a fresh pass if you actually want one (a
+new rewrite, say); the fingerprint check still fires normally after that.
 
 Two things to say out loud when you report it. You are judging work you just wrote,
 so gate (b) here is a sanity check, not evidence — read a sample back to the user and
@@ -634,7 +639,11 @@ uv run scripts/retest.py --run_dir <run_dir> --baseline_rerun --with_low_flip
 ```
 (`--tol` is how close a score has to be to count as agreeing; it resolves, in order, a
 uniform grey-zone policy band → `numeric_tol` → `numeric_tol_fraction` × the declared
-scale, falling back to an absolute 0.5 when no scale is declared — see Configuration.
+scale. On a numeric judge with none of those AND no declared scale, the retest now
+**refuses before any judging** rather than silently falling back to an absolute 0.5 —
+that band is arbitrary (half of a 0–1 scale, 0.5% of a 0–100 one) and gate (b) exists
+precisely so gate (a) can't be gamed; pass `--tol`, set `numeric_tol`, or declare the
+scale (`fetch_evaluator.py --scale_min/--scale_max`) and re-run — see Configuration.
 `--num_samples` caps the rows, for a smoke test — it narrows both sides of the
 comparison, so the before/after stays over the same rows.)
 
@@ -670,7 +679,7 @@ Tell them, in plain terms:
 | `retest_min_tpr` / `retest_min_tnr` | 0.7 | boolean only; each is skipped when the labels hold no positives / no negatives |
 | `retest_min_within_tol` | 0.7 | numeric: minimum share of points inside the band |
 | `numeric_tol` | blank → derived | the numeric agreement band in the judge's own units. **One key**, shared by the retest gate, the recommend step's disagreement extraction, and the cross-model probe |
-| `numeric_tol_fraction` | 0.1 | fraction of the declared scale range used when `numeric_tol` is blank; falls back to an absolute 0.5 when the evaluator declares no scale |
+| `numeric_tol_fraction` | 0.1 | fraction of the declared scale range used when `numeric_tol` is blank; falls back to an absolute 0.5 when the evaluator declares no scale — `retest.py` refuses before judging instead of silently using that fallback (`cross_model.py`'s probe still falls back to it) |
 
 Leave `numeric_tol` blank unless you have a reason not to. An absolute band means
 something different on every judge — 0.5 is half of a 0–1 groundedness scale and
@@ -752,7 +761,7 @@ resolve to the config value shown; overriding a flag beats `config.toml`.
 | `aggregate.py` | — |
 | `rewrite_eval.py` | `--max_attempts` (3), `--backend`, `--backend_model`, `--backend_base_url` |
 | `create_eval.py` | `--approve` (False), `--edits <file>` (None), `--force` (False; bypasses the variable-set AND verdict-space/preservation checks — unsafe; there is no judge-slug guard) |
-| `retest.py` | `--n_repeats` / `--temperature` (default: whatever the step-3 run used — a lower `--n_repeats` or a different `--temperature` marks the comparison not comparable), `--num_samples` (cap rows, smoke test — narrows both sides of the comparison), `--tol` (numeric within-tolerance band; resolves policy band → `numeric_tol` → `numeric_tol_fraction` × scale → 0.5, see Configuration), `--all_rows` (False — by default only the **labelled** rows are re-judged), `--with_dataset_labels` (False — also re-judge rows whose only label is `dataset_reference`), `--with_low_flip` (False — also re-judge the stable spot-check rows as a regression check), `--baseline_rerun` (False — re-run the OLD judge over the same rows for a true A/B; doubles the cost) |
+| `retest.py` | `--n_repeats` / `--temperature` (default: whatever the step-3 run used — a lower `--n_repeats` or a different `--temperature` marks the comparison not comparable), `--num_samples` (cap rows, smoke test — narrows both sides of the comparison), `--tol` (numeric within-tolerance band; resolves policy band → `numeric_tol` → `numeric_tol_fraction` × scale; refuses before any judging if none of those and no declared scale, see Configuration), `--all_rows` (False — by default only the **labelled** rows are re-judged), `--with_dataset_labels` (False — also re-judge rows whose only label is `dataset_reference`), `--with_low_flip` (False — also re-judge the stable spot-check rows as a regression check), `--baseline_rerun` (False — re-run the OLD judge over the same rows for a true A/B; doubles the cost), `--rejudge` (False — force a fresh judging pass even when a matching already-judged sub-run exists; the normal resume path for a string retest reuses it instead) |
 
 ## Run directory contract
 Every artifact lives in one run directory, born `runs/<key>_<ts>/` at step 1 and

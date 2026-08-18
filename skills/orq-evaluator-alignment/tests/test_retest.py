@@ -80,35 +80,61 @@ def test_resolve_numeric_tol_uses_uniform_policy_band():
             {'source_index': 4, 'value': 2.0, 'tolerance': 1.0},
         ],
     }
-    assert retest._resolve_numeric_tol(None, {}, policy) == 1.0
+    assert retest._resolve_numeric_tol(None, {}, policy) == (1.0, 'policy_uniform')
 
 
 def test_resolve_numeric_tol_cli_override_wins():
     policy = {'output_type': 'number', 'labels': [{'source_index': 3, 'value': 4.0, 'tolerance': 1.0}]}
-    assert retest._resolve_numeric_tol(0.25, {'numeric_tol': 2.0}, policy) == 0.25
+    assert retest._resolve_numeric_tol(0.25, {'numeric_tol': 2.0}, policy) == (0.25, 'cli')
 
 
 def test_resolve_numeric_tol_derives_the_default_from_the_scale():
     # Signal (a) normalizes by the declared range; signal (b) now matches, instead
     # of applying an absolute 0.5 that means half the scale on one judge and 0.5%
     # on another.
-    assert retest._resolve_numeric_tol(None, {}, None, [0.0, 1.0]) == pytest.approx(0.1)
-    assert retest._resolve_numeric_tol(None, {}, None, [0.0, 100.0]) == pytest.approx(10.0)
+    tol, source = retest._resolve_numeric_tol(None, {}, None, [0.0, 1.0])
+    assert tol == pytest.approx(0.1)
+    assert source == 'scale_derived'
+    tol, source = retest._resolve_numeric_tol(None, {}, None, [0.0, 100.0])
+    assert tol == pytest.approx(10.0)
+    assert source == 'scale_derived'
 
 
 def test_resolve_numeric_tol_configured_absolute_beats_the_derived_default():
-    assert retest._resolve_numeric_tol(None, {'numeric_tol': 2.0}, None, [0.0, 1.0]) == 2.0
+    assert retest._resolve_numeric_tol(None, {'numeric_tol': 2.0}, None, [0.0, 1.0]) == (2.0, 'configured')
 
 
 def test_resolve_numeric_tol_ignores_a_blank_config_key():
     # config.toml ships `numeric_tol = ""` to mean "derive it"; an empty string must
     # not float() into a crash or a 0.0 band that fails every point.
-    assert retest._resolve_numeric_tol(None, {'numeric_tol': ''}, None, [0.0, 10.0]) == pytest.approx(1.0)
+    tol, source = retest._resolve_numeric_tol(None, {'numeric_tol': ''}, None, [0.0, 10.0])
+    assert tol == pytest.approx(1.0)
+    assert source == 'scale_derived'
 
 
 def test_resolve_numeric_tol_honours_a_configured_fraction():
     cfg = {'numeric_tol': '', 'numeric_tol_fraction': 0.25}
-    assert retest._resolve_numeric_tol(None, cfg, None, [0.0, 4.0]) == pytest.approx(1.0)
+    tol, source = retest._resolve_numeric_tol(None, cfg, None, [0.0, 4.0])
+    assert tol == pytest.approx(1.0)
+    assert source == 'scale_derived'
+
+
+# --- IMPORTANT 2 — the 0.5 fallback is a distinct, named source ---------------
+
+
+def test_resolve_numeric_tol_names_the_fallback_when_nothing_is_declared():
+    # No --tol, no policy, no numeric_tol, no scale: the ONLY case where the
+    # returned band is arbitrary rather than derived from something the user
+    # actually said. `main` refuses on this source before judging (IMPORTANT 2).
+    tol, source = retest._resolve_numeric_tol(None, {}, None, None)
+    assert source == 'fallback'
+    from lib import agreement as agreement_lib
+    assert tol == agreement_lib.FALLBACK_TOL
+
+
+def test_resolve_numeric_tol_zero_width_scale_is_still_a_fallback():
+    tol, source = retest._resolve_numeric_tol(None, {}, None, [2.0, 2.0])
+    assert source == 'fallback'
 
 
 def test_varying_policy_bands_reach_the_metric_instead_of_being_dropped():
@@ -416,42 +442,76 @@ def test_rows_the_new_judge_cannot_measure_are_outside_the_comparison():
 
 
 # --- the success gate itself ---
+#
+# IMPORTANT 3: these used to run against a local `_gate()` that mirrored
+# `retest.main`'s own success expression verbatim — so a bug in the real `and`/`or`
+# wiring would have to be reproduced in the mirror to ever be caught, which is
+# exactly backwards. Replaced with real `main()`-level tests using
+# `_stub_stability_main`/`_seed_full_run` (defined below): they exercise the ACTUAL
+# `success = bool(instability_dropped and agreement_passed and comparable and not
+# regressed_vs_before)` line in `retest.py`, not a copy of it. No mirror of that
+# expression remains as a test oracle anywhere in this file.
 
 
-def _gate(
-    dropped: bool, agreement_passed: bool, comparable: bool = True,
-    regressed_vs_before: bool | None = None,
-) -> bool:
-    """The one line the whole skill turns on, mirrored from retest.main."""
-    return bool(dropped and agreement_passed and comparable and not regressed_vs_before)
+def test_success_true_when_both_signals_pass_and_nothing_regresses(tmp_path, monkeypatch):
+    n = 4
+    _seed_full_run(tmp_path, n=n, output_type='boolean')
+    _write(tmp_path / 'annotations.json', {str(i): {'value': True, 'reason': ''} for i in range(n)})
+    _stub_stability_main(monkeypatch, lambda row: True, output_type='boolean')
+
+    retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG)
+
+    rm = json.loads((tmp_path / 'retest_metrics.json').read_text(encoding='utf-8'))
+    assert rm['agreement']['passed'] is True
+    assert rm['instability']['dropped'] is True
+    assert rm['instability']['comparable'] is True
+    assert rm['agreement']['regressed_vs_before'] is not True
+    assert rm['success'] is True
 
 
-def test_success_requires_both_signals():
-    # This gate IS the answer to the stable-but-wrong blind spot, and nothing read
-    # it: flipping the `and` to an `or` left the whole suite green.
-    assert _gate(True, True) is True
-    assert _gate(True, False) is False, 'steadier but disagreeing with the human is not a win'
-    assert _gate(False, True) is False, 'agreeing while still wobbling is not a win'
-    assert _gate(False, False) is False
-
-
-def test_success_requires_a_comparable_measurement():
+def test_success_is_false_when_the_measurement_is_not_comparable(tmp_path, monkeypatch):
     # Fewer repeats than the original run under-estimate instability, so a "drop"
-    # can be the sample size alone.
-    assert _gate(True, True, comparable=False) is False
+    # can be the sample size alone — `comparable=False` must block `success` even
+    # when both signals individually look like a pass.
+    n = 4
+    _seed_full_run(tmp_path, n=n, output_type='boolean')
+    metrics = json.loads((tmp_path / 'metrics.json').read_text(encoding='utf-8'))
+    metrics['metadata']['n_repeats'] = 10  # the original run's recorded repeat count
+    _write(tmp_path / 'metrics.json', metrics)
+    _write(tmp_path / 'annotations.json', {str(i): {'value': True, 'reason': ''} for i in range(n)})
+    _stub_stability_main(monkeypatch, lambda row: True, output_type='boolean')
+
+    retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG, n_repeats=2)  # fewer than 10
+
+    rm = json.loads((tmp_path / 'retest_metrics.json').read_text(encoding='utf-8'))
+    assert rm['agreement']['passed'] is True  # the bar it would otherwise clear
+    assert rm['instability']['comparable'] is False
+    assert rm['success'] is False
 
 
-def test_success_is_blocked_by_a_regression_vs_before(): # §2.1
-    # today: `success` ignores `before` entirely — a rewrite that PASSES the
-    # accuracy bar but is WORSE than the judge it replaced still reports PASS.
-    assert _gate(True, True, regressed_vs_before=True) is False
+def test_success_is_forced_false_by_a_regression_vs_before(tmp_path, monkeypatch): # §2.1
+    # A real end-to-end proof, not a mirrored expression: a rewrite that clears
+    # the accuracy bar but is WORSE than the judge it replaces must not report
+    # PASS. The original judge agreed with every label (before accuracy 1.0); the
+    # new judge disagrees on 1 of 4 (after accuracy 0.75) — above the 0.7 bar on
+    # its own, but a regression against `before`.
+    n = 4
+    _seed_full_run(tmp_path, n=n, output_type='boolean')
+    _write(tmp_path / 'annotations.json', {str(i): {'value': True, 'reason': ''} for i in range(n)})
 
+    def verdict_fn(row: dict) -> bool:
+        idx = int(row['query'][1:])  # 'q0' -> 0
+        return idx != 0  # disagree on row 0 only
 
-def test_success_is_not_blocked_by_an_unmeasured_regression():
-    # A `before` that could not be computed (no original stability.json, no
-    # overlapping pairs) must not silently fail every retest.
-    assert _gate(True, True, regressed_vs_before=None) is True
-    assert _gate(True, True, regressed_vs_before=False) is True
+    _stub_stability_main(monkeypatch, verdict_fn, output_type='boolean')
+    retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG)
+
+    rm = json.loads((tmp_path / 'retest_metrics.json').read_text(encoding='utf-8'))
+    assert rm['agreement']['accuracy'] == pytest.approx(0.75)
+    assert rm['agreement']['before']['accuracy'] == pytest.approx(1.0)
+    assert rm['agreement']['passed'] is True  # 0.75 clears the 0.7 bar on its own
+    assert rm['agreement']['regressed_vs_before'] is True
+    assert rm['success'] is False
 
 
 # --- signal (b)'s gate must respect the `before` score (§2.1) ---
@@ -626,6 +686,33 @@ def test_string_pairs_are_blind_not_labelled_by_judge(tmp_path): # §4.3
             assert entry['answer_a'] == expected_original and entry['answer_b'] == expected_new
 
 
+def test_blind_assignment_uses_a_per_run_salt_not_a_bare_hash_of_the_index(tmp_path): # MINOR 6
+    # today: `a_is_new = sha256(str(idx))[0] % 2` is a pure function of the
+    # PUBLIC `source_index` — recomputable by anyone who reads string_pairs.json
+    # (which carries source_index in the open) using the formula sitting right in
+    # this file's source, defeating the blind. A per-run salt, stored ONLY in
+    # string_pairs_key.json, is required so the key file stays the sole way to
+    # unblind — matching how tests already read the key rather than recompute.
+    labels = {str(i): {'value': 'x'} for i in range(30)}
+    new_by_idx = {i: 'new' for i in range(30)}
+    old_by_idx = {i: 'old' for i in range(30)}
+    pairs, _tols, indices = retest._pair_with_labels(labels, new_by_idx)
+
+    dir_a, dir_b = tmp_path / 'a', tmp_path / 'b'
+    dir_a.mkdir()
+    dir_b.mkdir()
+    retest._write_string_pairs(dir_a, pairs, indices, old_by_idx, None)
+    retest._write_string_pairs(dir_b, pairs, indices, old_by_idx, None)
+    key_a = json.loads((dir_a / retest.STRING_PAIRS_KEY_FILE).read_text(encoding='utf-8'))
+    key_b = json.loads((dir_b / retest.STRING_PAIRS_KEY_FILE).read_text(encoding='utf-8'))
+
+    assert key_a.get('_salt') and key_b.get('_salt')
+    assert key_a['_salt'] != key_b['_salt']  # a fresh salt every run
+    # With a fresh salt, the same index need not land in the same slot across two
+    # runs — the old bare-hash formula made this assertion fail every time.
+    assert any(key_a[str(i)]['a'] != key_b[str(i)]['a'] for i in range(30))
+
+
 def test_blind_verdicts_round_trip_to_the_correct_accuracy(tmp_path):
     # A reader scoring match_a/match_b blind must unblind to the SAME accuracy a
     # non-blind match_new/match_original scoring would have produced.
@@ -744,6 +831,48 @@ def test_string_retest_round_trips_through_the_blind_reader_handshake(tmp_path, 
     rm = json.loads((tmp_path / 'retest_metrics.json').read_text(encoding='utf-8'))
     assert rm['agreement']['accuracy'] == 1.0
     assert rm['agreement']['scored_by'] == 'conductor'
+
+
+def test_string_retest_refuses_a_missing_pairs_key_file(tmp_path, monkeypatch): # MINOR 5
+    # today: `runner.read_json(out_dir / STRING_PAIRS_KEY_FILE)` is a bare read
+    # with no existence check — a missing string_pairs_key.json crashes with an
+    # unguided FileNotFoundError instead of the SystemExit-with-guidance every
+    # other artifact check in this file gives.
+    n = 1
+    _write(tmp_path / 'evaluator.json', {
+        'id': 'src', 'prompt': 'Judge: {{log.output}}', 'judge_model': 'm',
+        'output_type': 'string', 'categorical_labels': [], 'scale': None, 'variables': [],
+    })
+    _write(tmp_path / 'new_evaluator.json', {
+        'id': 'new', 'key': 'k', 'prompt': 'Judge better: {{log.output}}', 'judge_model': 'm',
+        'output_type': 'string', 'categorical_labels': [], 'scale': None,
+    })
+    (tmp_path / 'traces.jsonl').write_text(json.dumps({'query': 'q0', 'output': 'o0'}) + '\n', encoding='utf-8')
+    _write(tmp_path / 'stability.json', {
+        'metadata': {'output_type': 'string'},
+        'rows': [{'source_index': 0, 'aggregate_value': 'original answer', 'reference': ''}],
+    })
+    _write(tmp_path / 'metrics.json', {
+        'metadata': {'output_type': 'string', 'evaluator_id': 'src'},
+        'scores': {'mean_instability': 0.5},
+        'per_row': [{'source_index': 0, 'instability': 0.5}],
+    })
+    _write(tmp_path / 'annotations.json', {'0': {'value': 'the human answer'}})
+    _stub_stability_main(monkeypatch, lambda row: 'new answer', output_type='string')
+
+    with pytest.raises(SystemExit, match='needs a reader'):
+        retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG)  # writes pairs + the key
+
+    pairs_payload = json.loads((tmp_path / retest.STRING_PAIRS_FILE).read_text(encoding='utf-8'))
+    _write(tmp_path / retest.STRING_VERDICTS_FILE, {
+        'scored_by': 'conductor',
+        'pairs_fingerprint': pairs_payload['metadata']['pairs_fingerprint'],
+        'verdicts': [{'source_index': 0, 'match_a': True, 'match_b': True}],
+    })
+    (tmp_path / retest.STRING_PAIRS_KEY_FILE).unlink()  # simulate the missing key
+
+    with pytest.raises(SystemExit, match=retest.STRING_PAIRS_KEY_FILE):
+        retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG)
 
 
 def test_string_retest_refuses_an_unrecognised_scored_by(tmp_path, monkeypatch):
@@ -902,6 +1031,10 @@ def test_provenance_denominator_is_the_scored_pairs_not_the_merged_count():
 
 
 def test_build_provenance_counts_only_scored_pairs_on_the_policy_path():
+    # MINOR 8: EVERY count is rescoped to `pair_indices`, not just
+    # dataset_reference — 5 policy labels are `human_confirmed`, but only 3 of
+    # them (0, 1, 2) were among the scored pairs, so `human_confirmed` must read
+    # 3, not the policy-wide 5.
     policy = {'labels': [
         {'source_index': i, 'value': True, 'label_source': 'human_confirmed'} for i in range(5)
     ]}
@@ -911,8 +1044,8 @@ def test_build_provenance_counts_only_scored_pairs_on_the_policy_path():
         **{str(i): {'value': True, 'label_source': 'dataset_reference'} for i in range(5, 10)},
     }
     provenance = retest._build_provenance(policy, [0, 1, 2, 5], labels)
-    assert provenance['dataset_reference'] == 1  # only index 5 was among the scored pairs
-    assert provenance['human_confirmed'] == 5  # unaffected: the policy path's own count
+    assert provenance == {'derived': 0, 'human_confirmed': 3, 'dataset_reference': 1}
+    assert sum(provenance.values()) == 4  # == len(pair_indices), never the policy-wide total
 
 
 def test_build_provenance_on_the_annotations_path_names_both_sources():
@@ -1047,3 +1180,225 @@ def test_selection_bias_controlled_reflects_baseline_rerun(tmp_path, monkeypatch
     rm = json.loads((tmp_path / 'retest_metrics.json').read_text(encoding='utf-8'))
     assert rm['instability']['selection_bias_controlled'] is True
     assert not any('unreliable without --baseline_rerun' in c for c in rm['caveats'])
+
+
+def test_selection_bias_controlled_reflects_the_outcome_not_just_the_flag(tmp_path, monkeypatch): # MINOR 7
+    # today: `selection_bias_controlled` is `bool(baseline_rerun)` — the FLAG —
+    # so a `--baseline_rerun` that finds no rows measurable on both sides (falls
+    # back to the original-run comparison, `baseline_mean is None`) still claims
+    # `true`. It must track the OUTCOME instead.
+    n = 3
+    _seed_full_run(tmp_path, n=n, output_type='boolean')
+    _write(tmp_path / 'annotations.json', {str(i): {'value': True, 'reason': ''} for i in range(n)})
+
+    import stability
+
+    def fake_main(*, run_dir, config, n_repeats=None, temperature=None, metrics=True):
+        rd = Path(run_dir)
+        rows = retest.runner.read_jsonl(rd / 'traces.jsonl')
+        is_baseline = rd.name == 'retest_baseline'
+        stab_rows, per_row = [], []
+        for i, _row in enumerate(rows):
+            stab_rows.append({'source_index': i, 'aggregate_value': True, 'reference': ''})
+            per_row.append({
+                'source_index': i,
+                # The baseline sub-run measures NOTHING — forces baseline_mean to
+                # None even though --baseline_rerun was passed and ran.
+                'instability': None if is_baseline else 0.0,
+                'band': 'unmeasurable' if is_baseline else 'stable',
+            })
+        retest.runner.write_json(rd / 'stability.json', {
+            'metadata': {'output_type': 'boolean', 'n_repeats': n_repeats, 'temperature': temperature},
+            'rows': stab_rows,
+        })
+        retest.runner.write_json(rd / 'metrics.json', {
+            'metadata': {'output_type': 'boolean', 'n_repeats': n_repeats, 'temperature': temperature},
+            'scores': {'mean_instability': None},
+            'per_row': per_row,
+        })
+
+    monkeypatch.setattr(stability, 'main', fake_main)
+
+    retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG, baseline_rerun=True)
+
+    rm = json.loads((tmp_path / 'retest_metrics.json').read_text(encoding='utf-8'))
+    assert rm['instability']['baseline_rerun_mean'] is None
+    assert rm['instability']['selection_bias_controlled'] is False  # not True, despite the flag
+    assert any('unreliable without --baseline_rerun' in c for c in rm['caveats'])
+
+
+# --- CRITICAL 1 — resuming a string retest must not re-judge -----------------
+
+
+def test_string_retest_resume_does_not_rejudge(tmp_path, monkeypatch):
+    # A judge at temperature 1 will not reproduce byte-identical modal strings, so
+    # re-judging on resume regenerates string_pairs.json's fingerprint every time
+    # and a string_verdicts.json written against the FIRST pass can never match —
+    # a permanent "delete and redo" SystemExit loop, spending a full retest of
+    # judge calls per iteration. The fix: the second call (string_verdicts.json
+    # now present) must reuse the first call's judged sub-run rather than
+    # re-judge. A call counter proves it directly — no re-judge, however subtle.
+    n = 2
+    _write(tmp_path / 'evaluator.json', {
+        'id': 'src', 'prompt': 'Judge: {{log.output}}', 'judge_model': 'm',
+        'output_type': 'string', 'categorical_labels': [], 'scale': None, 'variables': [],
+    })
+    _write(tmp_path / 'new_evaluator.json', {
+        'id': 'new', 'key': 'k', 'prompt': 'Judge better: {{log.output}}', 'judge_model': 'm',
+        'output_type': 'string', 'categorical_labels': [], 'scale': None,
+    })
+    (tmp_path / 'traces.jsonl').write_text(
+        '\n'.join(json.dumps({'query': f'q{i}', 'output': f'o{i}'}) for i in range(n)) + '\n',
+        encoding='utf-8',
+    )
+    _write(tmp_path / 'stability.json', {
+        'metadata': {'output_type': 'string'},
+        'rows': [{'source_index': i, 'aggregate_value': 'original answer', 'reference': ''} for i in range(n)],
+    })
+    _write(tmp_path / 'metrics.json', {
+        'metadata': {'output_type': 'string', 'evaluator_id': 'src'},
+        'scores': {'mean_instability': 0.5},
+        'per_row': [{'source_index': i, 'instability': 0.5} for i in range(n)],
+    })
+    _write(tmp_path / 'annotations.json', {str(i): {'value': 'the human answer'} for i in range(n)})
+
+    import stability
+
+    calls = {'n': 0}
+
+    def counting_fake_main(*, run_dir, config, n_repeats=None, temperature=None, metrics=True):
+        calls['n'] += 1
+        # A DIFFERENT answer on every call: if the fix regresses and re-judges on
+        # resume, the pairs (and their fingerprint) change too — the round trip
+        # would fail on the fingerprint mismatch alone even without the counter.
+        answer = f'answer take {calls["n"]}'
+        rd = Path(run_dir)
+        rows = retest.runner.read_jsonl(rd / 'traces.jsonl')
+        stab_rows = [{'source_index': i, 'aggregate_value': answer, 'reference': ''} for i in range(len(rows))]
+        per_row = [{'source_index': i, 'instability': 0.0, 'band': 'stable'} for i in range(len(rows))]
+        retest.runner.write_json(rd / 'stability.json', {
+            'metadata': {'output_type': 'string', 'n_repeats': n_repeats, 'temperature': temperature},
+            'rows': stab_rows,
+        })
+        retest.runner.write_json(rd / 'metrics.json', {
+            'metadata': {'output_type': 'string', 'n_repeats': n_repeats, 'temperature': temperature},
+            'scores': {'mean_instability': 0.0},
+            'per_row': per_row,
+        })
+
+    monkeypatch.setattr(stability, 'main', counting_fake_main)
+
+    with pytest.raises(SystemExit, match='needs a reader'):
+        retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG)
+    assert calls['n'] == 1
+
+    pairs_payload = json.loads((tmp_path / retest.STRING_PAIRS_FILE).read_text(encoding='utf-8'))
+    verdicts = {
+        'scored_by': 'conductor',
+        'pairs_fingerprint': pairs_payload['metadata']['pairs_fingerprint'],
+        'verdicts': [
+            {'source_index': e['source_index'], 'match_a': True, 'match_b': True}
+            for e in pairs_payload['pairs']
+        ],
+    }
+    _write(tmp_path / retest.STRING_VERDICTS_FILE, verdicts)
+
+    retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG)  # resume — must reuse, not re-judge
+
+    assert calls['n'] == 1  # the judge was NOT called a second time
+    rm = json.loads((tmp_path / 'retest_metrics.json').read_text(encoding='utf-8'))
+    assert rm['agreement']['accuracy'] == 1.0
+    assert rm['agreement']['scored_by'] == 'conductor'
+
+
+def test_string_retest_rejudge_flag_forces_a_fresh_pass(tmp_path, monkeypatch):
+    # The escape hatch: --rejudge must call the judge again even on the resume
+    # path (and then legitimately invalidate stale verdicts via the fingerprint —
+    # a DIFFERENT answer changes the pairs, so the carried-over verdicts file no
+    # longer matches and is refused, which is the correct outcome for a forced
+    # re-judge with no fresh verdicts to match it).
+    n = 1
+    _write(tmp_path / 'evaluator.json', {
+        'id': 'src', 'prompt': 'Judge: {{log.output}}', 'judge_model': 'm',
+        'output_type': 'string', 'categorical_labels': [], 'scale': None, 'variables': [],
+    })
+    _write(tmp_path / 'new_evaluator.json', {
+        'id': 'new', 'key': 'k', 'prompt': 'Judge better: {{log.output}}', 'judge_model': 'm',
+        'output_type': 'string', 'categorical_labels': [], 'scale': None,
+    })
+    (tmp_path / 'traces.jsonl').write_text(json.dumps({'query': 'q0', 'output': 'o0'}) + '\n', encoding='utf-8')
+    _write(tmp_path / 'stability.json', {
+        'metadata': {'output_type': 'string'},
+        'rows': [{'source_index': 0, 'aggregate_value': 'original answer', 'reference': ''}],
+    })
+    _write(tmp_path / 'metrics.json', {
+        'metadata': {'output_type': 'string', 'evaluator_id': 'src'},
+        'scores': {'mean_instability': 0.5},
+        'per_row': [{'source_index': 0, 'instability': 0.5}],
+    })
+    _write(tmp_path / 'annotations.json', {'0': {'value': 'the human answer'}})
+
+    import stability
+
+    calls = {'n': 0}
+
+    def counting_fake_main(*, run_dir, config, n_repeats=None, temperature=None, metrics=True):
+        calls['n'] += 1
+        answer = f'answer take {calls["n"]}'
+        rd = Path(run_dir)
+        retest.runner.write_json(rd / 'stability.json', {
+            'metadata': {'output_type': 'string', 'n_repeats': n_repeats, 'temperature': temperature},
+            'rows': [{'source_index': 0, 'aggregate_value': answer, 'reference': ''}],
+        })
+        retest.runner.write_json(rd / 'metrics.json', {
+            'metadata': {'output_type': 'string', 'n_repeats': n_repeats, 'temperature': temperature},
+            'scores': {'mean_instability': 0.0},
+            'per_row': [{'source_index': 0, 'instability': 0.0, 'band': 'stable'}],
+        })
+
+    monkeypatch.setattr(stability, 'main', counting_fake_main)
+
+    with pytest.raises(SystemExit, match='needs a reader'):
+        retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG)
+    assert calls['n'] == 1
+
+    pairs_payload = json.loads((tmp_path / retest.STRING_PAIRS_FILE).read_text(encoding='utf-8'))
+    _write(tmp_path / retest.STRING_VERDICTS_FILE, {
+        'scored_by': 'conductor',
+        'pairs_fingerprint': pairs_payload['metadata']['pairs_fingerprint'],
+        'verdicts': [{'source_index': 0, 'match_a': True, 'match_b': True}],
+    })
+
+    # --rejudge re-judges even though a matching sub-run exists; the fresh answer
+    # changes the pairs, so the carried-over (now stale) verdicts are refused.
+    with pytest.raises(SystemExit, match='different set of pairs'):
+        retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG, rejudge=True)
+    assert calls['n'] == 2  # the judge WAS called again
+
+
+# --- IMPORTANT 2 — the numeric fallback tolerance refuses before judging -----
+
+
+def test_numeric_fallback_tolerance_refuses_before_any_judging(tmp_path, monkeypatch):
+    # No --tol, no grey-zone policy, no configured numeric_tol, no declared
+    # scale: gate (b)'s band would be the arbitrary FALLBACK_TOL. Must refuse
+    # BEFORE the retest sub-run is judged (money spent), not after.
+    n = 3
+    _seed_full_run(tmp_path, n=n, output_type='number')
+    _write(tmp_path / 'annotations.json', {str(i): {'value': 3.0, 'reason': ''} for i in range(n)})
+
+    import stability
+
+    calls = {'n': 0}
+    monkeypatch.setattr(stability, 'main', lambda **kwargs: calls.__setitem__('n', calls['n'] + 1))
+
+    with pytest.raises(SystemExit, match=r'--tol|numeric_tol|scale'):
+        retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG)
+    assert calls['n'] == 0  # refused before any judging
+
+    # An explicit --tol resolves the fallback and the run proceeds normally.
+    _stub_stability_main(monkeypatch, lambda row: 3.0, output_type='number')
+    retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG, tol=0.1)
+
+    rm = json.loads((tmp_path / 'retest_metrics.json').read_text(encoding='utf-8'))
+    assert rm['agreement']['within_tolerance_rate'] == 1.0

@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -128,6 +129,57 @@ def _materialize_subrun(
     runner.write_jsonl(sub_dir / 'traces.jsonl', [row for _i, row in selected])
     runner.write_json(sub_dir / 'index_map.json', {str(k): v for k, v in index_map.items()})
     return sub_dir, index_map
+
+
+def _read_json_if_exists(path: Path) -> Any | None:
+    return runner.read_json(path) if path.exists() else None
+
+
+def _subrun_reusable(
+    sub_dir: Path, index_map: dict[int, int], resolved_n: int, resolved_temp: float | None,
+    prior_evaluator: dict[str, Any] | None, prior_index_map: dict[str, Any] | None,
+    current_evaluator: dict[str, Any],
+) -> bool:
+    """Whether `sub_dir` already held a JUDGED sub-run BEFORE this call's
+    `_materialize_subrun`, matching what this call just (re)materialized — so
+    `stability_main` can be skipped (CRITICAL 1 — the string-retest resume
+    livelock).
+
+    On a free-text judge, `main` writes `string_pairs.json`/`string_pairs_key.json`
+    and exits after the FIRST judging pass; the conductor answers into
+    `string_verdicts.json`, carrying that pass's `pairs_fingerprint`. A judge at
+    temperature 1 will not reproduce byte-identical modal strings, so if the
+    second invocation re-judges, the pairs (and their fingerprint) change and
+    `string_verdicts.json` — scored against the FIRST pass — can never match:
+    `_check_pairs_fingerprint` refuses with "delete and redo" forever, spending a
+    full retest of judge calls every iteration.
+
+    `_materialize_subrun` unconditionally OVERWRITES `evaluator.json` and
+    `index_map.json` with THIS call's values before this function ever runs, so
+    comparing the sub-run's on-disk `evaluator.json`/`index_map.json` AFTER that
+    write would trivially always match (it would be comparing this call's own
+    write to itself) — the caller must snapshot them *before* calling
+    `_materialize_subrun` and pass those snapshots in as `prior_evaluator` /
+    `prior_index_map`. Reuse requires `stability.json` + `metrics.json` to already
+    exist (the actual judged output, which materialize never touches), the PRIOR
+    `evaluator.json`/`index_map.json` to equal what this call just materialized
+    (same evaluator content, same row selection — i.e. nothing actually changed
+    between calls), and `metrics.json`'s own recorded `n_repeats`/`temperature` to
+    match what this invocation resolved. Any mismatch — a different evaluator, a
+    different selection, a different `--n_repeats`/`--temperature`, or no prior
+    sub-run at all — means the existing `stability.json` is not an answer to what
+    THIS call is asking, so it falls through to judging rather than reusing a
+    stale (or nonexistent) measurement.
+    """
+    stability_path, metrics_path = sub_dir / 'stability.json', sub_dir / 'metrics.json'
+    if not (stability_path.exists() and metrics_path.exists()):
+        return False
+    if prior_evaluator != current_evaluator:
+        return False
+    if prior_index_map != {str(k): v for k, v in index_map.items()}:
+        return False
+    recorded = runner.read_json(metrics_path).get('metadata', {})
+    return recorded.get('n_repeats') == resolved_n and recorded.get('temperature') == resolved_temp
 
 
 def _select_rows(
@@ -379,15 +431,31 @@ def _build_wanted(
     return wanted
 
 
+# `_resolve_numeric_tol`'s second return value, in priority order. 'fallback' is the
+# one that matters: it means NONE of the real sources fired, so the number it
+# returns (`lib.agreement.FALLBACK_TOL`) is arbitrary rather than derived — half the
+# range on a 0–1 scale, 0.5% on a 0–100 one — which is exactly the case metrics.py's
+# `_correctness` already refuses (`reason_omitted`). `main` refuses on it too, before
+# any judging, instead of letting `tol_source: 'uniform'` in the payload describe a
+# band nobody actually chose (MINOR 2).
+_TOL_SOURCES = frozenset({'cli', 'policy_uniform', 'configured', 'scale_derived', 'fallback'})
+
+
 def _resolve_numeric_tol(
     cli_tol: float | None,
     cfg: dict[str, Any],
     policy: dict[str, Any] | None,
     scale: Sequence[float] | None = None,
-) -> float:
+) -> tuple[float, str]:
     """The run-wide numeric band, in priority order: explicit `--tol` → a *uniform*
     per-point band from the grey-zone policy → configured `numeric_tol` → a band
     derived from the evaluator's declared scale.
+
+    Returns `(tol, source)`. `source` is one of `_TOL_SOURCES`, so the caller can
+    tell a genuinely resolved band from the `'fallback'` case — an absolute
+    `FALLBACK_TOL` with nothing behind it — and refuse on that case rather than
+    silently score against it (§1's numeric gate (b) exists precisely so gate (a)
+    can't be gamed; going vacuous defeats the point).
 
     Per-point *varying* bands are no longer dropped here: they are passed through to
     `agreement.numeric_agreement` as `tols`, and this value is what a point without
@@ -400,19 +468,25 @@ def _resolve_numeric_tol(
     matches.
     """
     if cli_tol is not None:
-        return float(cli_tol)
+        return float(cli_tol), 'cli'
     if policy is not None:
         bands = {lbl.get('tolerance') for lbl in policy.get('labels', []) if lbl.get('tolerance') is not None}
         if len(bands) == 1:
-            return float(next(iter(bands)))
+            return float(next(iter(bands))), 'policy_uniform'
     configured = cfg.get('numeric_tol')
     if configured not in (None, ''):
-        return float(configured)
+        return float(configured), 'configured'
     from lib import agreement as agreement_lib  # noqa: PLC0415 — pure stdlib module
 
-    return agreement_lib.default_tolerance(
-        scale, fraction=float(cfg.get('numeric_tol_fraction', agreement_lib.DEFAULT_TOL_FRACTION))
-    )
+    fraction = float(cfg.get('numeric_tol_fraction', agreement_lib.DEFAULT_TOL_FRACTION))
+    if isinstance(scale, (list, tuple)) and len(scale) == 2:
+        try:
+            span = float(scale[1]) - float(scale[0])
+        except (TypeError, ValueError):
+            span = None
+        if span and span > 0:
+            return fraction * span, 'scale_derived'
+    return agreement_lib.default_tolerance(scale, fraction=fraction), 'fallback'
 
 
 def _comparable_measurement(
@@ -581,20 +655,26 @@ def _write_string_pairs(
     the conductor decides, code consumes the decision — rather than a new mechanism.
 
     §4.3: the two answers are anonymised as `answer_a`/`answer_b`, shuffled per
-    entry by a deterministic hash of `source_index` — the reader is never told
-    which judge wrote which answer, so knowing the rewrite is under test cannot
-    nudge the read toward it. `string_pairs_key.json` records which slot held
-    which judge's answer; `_unblind_string_verdicts` reverses it AFTER the reader
-    has already committed to match_a/match_b.
+    entry by a hash of `source_index` MIXED WITH a per-run random salt — the reader
+    is never told which judge wrote which answer, so knowing the rewrite is under
+    test cannot nudge the read toward it. A bare `sha256(idx)` (no salt) would be
+    recomputable by anyone who reads `string_pairs.json` (which carries
+    `source_index` in the open, and the formula is right here in this file's
+    source) — the salt is written ONLY to `string_pairs_key.json`, so that file
+    stays the sole way to unblind, matching how `_unblind_string_verdicts` already
+    treats it. `string_pairs_key.json` records which slot held which judge's
+    answer; `_unblind_string_verdicts` reverses it AFTER the reader has already
+    committed to match_a/match_b.
 
     The OLD judge's answer rides along so one pass produces both the score and its
     `before`, exactly as the other three types get for free.
     """
+    salt = secrets.token_hex(16)
     entries = []
-    key: dict[str, dict[str, str]] = {}
+    key: dict[str, Any] = {'_salt': salt}
     for (human, judge), idx in zip(pairs, indices):
         original = old_by_idx.get(idx)
-        a_is_new = hashlib.sha256(f'{idx}'.encode()).digest()[0] % 2 == 0
+        a_is_new = hashlib.sha256(f'{salt}:{idx}'.encode()).digest()[0] % 2 == 0
         entries.append({
             'source_index': idx,
             'human_value': human,
@@ -797,27 +877,46 @@ def _metadata_label_source(label_source: str, n_from_dataset: int) -> str:
 def _build_provenance(
     policy: dict[str, Any] | None, pair_indices: list[int], labels: dict[str, Any],
 ) -> dict[str, int]:
-    """How many of the SCORED pairs trace to each label source (§4.6).
+    """How many of the SCORED pairs trace to each label source (§4.6 / MINOR 8).
 
-    `grey_zone.label_provenance(policy)` counts every label the POLICY carries,
-    whether or not it was ever re-judged — a dataset label merged in but excluded
-    from this retest (no --with_dataset_labels) inflated the dataset-reference
-    count with rows that were never actually part of `pairs`. Rescoped here to
-    `pair_indices`, the rows agreement was actually computed over, on both label
-    sources: the grey-zone-policy path (which already separates
-    derived/human_confirmed/dataset_reference) and the annotations-UI path, which
-    previously reported no human count at all once any dataset label was merged.
+    EVERY count here — `derived`, `human_confirmed`, `dataset_reference` on the
+    policy path; `annotations`, `dataset_reference` on the UI-fallback path — is
+    rescoped to `pair_indices`: the rows agreement was ACTUALLY computed over, not
+    every label the policy carries. `grey_zone.label_provenance(policy)` counts
+    policy-wide, so a label whose row was merged (or derived) but never re-judged —
+    no `--with_dataset_labels`, or simply never selected — inflated a source's count
+    with rows that were never actually part of `pairs`: "15 of 20 labels were
+    derived" on a run that scored 1 pair. The caveat text's denominator (`n_pairs`)
+    and this function's now agree by construction, because both are `pair_indices`.
+
+    A pair's source is read from `labels` first (`label_source == 'dataset_reference'`
+    marks a merged row regardless of type) and only then from the policy's own
+    per-label `label_source` — a dataset-merged row is never present in the policy's
+    `labels` list at all, so skipping that check would silently mis-source it as
+    `'derived'`.
     """
+    if policy is not None:
+        # Mirrors grey_zone.label_provenance's own default: an unlabelled
+        # `label_source` on a policy point is the conductor's derivation, not a
+        # human confirmation.
+        policy_source_by_idx = {
+            lbl.get('source_index'): lbl.get('label_source', 'derived')
+            for lbl in policy.get('labels', [])
+        }
+        provenance = {source: 0 for source in sorted(grey_zone.LABEL_SOURCES)}
+        for idx in pair_indices:
+            ann = labels.get(str(idx))
+            if isinstance(ann, dict) and ann.get('label_source') == 'dataset_reference':
+                source = 'dataset_reference'
+            else:
+                source = policy_source_by_idx.get(idx, 'derived')
+            provenance[source] = provenance.get(source, 0) + 1
+        return provenance
     n_dataset = sum(
         1 for idx in pair_indices
         if isinstance(labels.get(str(idx)), dict) and labels[str(idx)].get('label_source') == 'dataset_reference'
     )
-    if policy is not None:
-        provenance = grey_zone.label_provenance(policy)
-    else:
-        provenance = {'annotations': len(pair_indices) - n_dataset}
-    provenance['dataset_reference'] = n_dataset
-    return provenance
+    return {'annotations': len(pair_indices) - n_dataset, 'dataset_reference': n_dataset}
 
 
 def main(
@@ -831,6 +930,7 @@ def main(
     with_low_flip: bool = False,
     with_dataset_labels: bool = False,
     baseline_rerun: bool = False,
+    rejudge: bool = False,
 ) -> str:
     """Retest the new evaluator over the confusers and score both signals.
 
@@ -863,7 +963,18 @@ def main(
         tol: Numeric within-tolerance band, in the judge's own units. Defaults to a
             uniform band from the grey-zone policy, then `numeric_tol`, then a
             fraction of the evaluator's declared scale. Points the policy banded
-            individually keep their own band regardless of this.
+            individually keep their own band regardless of this. On a numeric judge
+            with none of those AND no declared scale, refuses before any judging
+            rather than silently falling back to an arbitrary absolute band (§1.2).
+        rejudge: Force a fresh judging pass even when an already-judged retest (and
+            --baseline_rerun) sub-run matches this invocation (§1.1). Off by
+            default: on a free-text judge the second call — after
+            string_verdicts.json is written — reuses the FIRST call's judged
+            sub-run instead of re-judging, because a judge at temperature 1 will
+            not reproduce byte-identical modal strings, so re-judging on resume
+            regenerates string_pairs.json's fingerprint and the verdicts (scored
+            against the FIRST pass) can never match — a permanent "delete and
+            redo" loop that spends a full retest of judge calls per iteration.
     """
     cfg = runner.load_config(config)
     out_dir = runner.resolve_run_dir(run_dir) if run_dir else runner.latest_run_dir(cfg.get('runs_dir', 'runs'))
@@ -917,6 +1028,30 @@ def main(
     #    and re-judging the rest costs money for a number nothing reads.
     labels, label_source, policy = _load_labels(out_dir)
     labels_before_merge = labels
+
+    # IMPORTANT 2 / §1.2: refuse a numeric judge with no way to size gate (b)'s
+    # tolerance BEFORE any judging happens (money spent) — no --tol, no uniform
+    # grey-zone policy band, no configured numeric_tol, and no declared scale on
+    # the evaluator all bottom out at `lib.agreement.FALLBACK_TOL` (0.5), which
+    # `metrics.py::_correctness` already refuses the same situation on
+    # (`reason_omitted`) rather than compute against. Resolved once, here, and
+    # reused below — the source name also keeps `tol_source` in the payload
+    # truthful (it must never read `'uniform'`/etc. for a band nobody chose).
+    resolved_tol, resolved_tol_source = _resolve_numeric_tol(
+        tol, cfg, policy, retest_evaluator_config.get('scale')
+    )
+    if output_type in ('number', 'numeric') and resolved_tol_source == 'fallback':
+        raise SystemExit(
+            f'Numeric judge with no way to size the agreement tolerance for gate (b): no '
+            f'--tol, no uniform grey-zone policy band, no configured numeric_tol, and no '
+            f'declared scale on the evaluator. Scoring against the arbitrary fallback band '
+            f'({_DEFAULT_NUMERIC_TOL}) would make the gate that exists to stop signal (a) '
+            'being gamed vacuous — refusing before any judging happens rather than after. '
+            'Pass --tol, set numeric_tol in config.toml, declare the evaluator\'s scale '
+            '(fetch_evaluator.py --scale_min/--scale_max), or band the grey-zone points '
+            'individually, then re-run this command.'
+        )
+
     # Dataset ground truth fills rows the human never answered about (§3d), parsed
     # into THIS judge's verdict space first so an unreadable reference is skipped
     # and counted rather than crashing later (§1.1). Kept strictly separate in the
@@ -937,6 +1072,13 @@ def main(
         _low_flip_indices(out_dir),
     )
     selected = _select_rows(out_dir, wanted, num_samples)
+    # Snapshotted BEFORE _materialize_subrun overwrites them — the only way
+    # _subrun_reusable can tell "this call's inputs match the sub-run that's
+    # already been judged" from "this call just wrote a fresh evaluator.json/
+    # index_map.json seconds ago and is now comparing them to themselves".
+    retest_dir_path = out_dir / 'retest'
+    prior_retest_evaluator = _read_json_if_exists(retest_dir_path / 'evaluator.json')
+    prior_retest_index_map = _read_json_if_exists(retest_dir_path / 'index_map.json')
     retest_dir, index_map = _materialize_subrun(out_dir, 'retest', retest_evaluator_config, selected)
 
     scope = set(index_map.values())
@@ -952,13 +1094,27 @@ def main(
     #    Heavy import guarded inside the function to keep this module import-safe.
     from stability import main as stability_main  # noqa: PLC0415
 
-    stability_main(
-        run_dir=str(retest_dir),
-        config=config,
-        n_repeats=resolved_n,
-        temperature=resolved_temp,
-        metrics=True,  # stability.main chains metrics.main when metrics=True
-    )
+    # CRITICAL 1: on the resume path — string_verdicts.json already written, this
+    # is a repeat call — reuse the sub-run this call would otherwise re-judge,
+    # rather than spending a fresh retest of judge calls for pairs the conductor
+    # already scored. Scoped to that path deliberately: boolean/categorical/numeric
+    # never stop-and-resume mid-command, so there is no scenario there where
+    # "already judged" could mean anything other than a stale prior attempt.
+    resume = (out_dir / STRING_VERDICTS_FILE).exists()
+    allow_reuse = (not rejudge) and output_type == 'string' and resume
+    if allow_reuse and _subrun_reusable(
+        retest_dir, index_map, resolved_n, resolved_temp,
+        prior_retest_evaluator, prior_retest_index_map, retest_evaluator_config,
+    ):
+        logger.info(f'✓ Reusing existing retest sub-run ({retest_dir}); pass --rejudge to re-judge.')
+    else:
+        stability_main(
+            run_dir=str(retest_dir),
+            config=config,
+            n_repeats=resolved_n,
+            temperature=resolved_temp,
+            metrics=True,  # stability.main chains metrics.main when metrics=True
+        )
     retest_metrics = runner.read_json(retest_dir / 'metrics.json')
     retest_inst = _instability_by_index(retest_metrics, index_map)
     retest_stability = runner.read_json(retest_dir / 'stability.json')
@@ -967,14 +1123,23 @@ def main(
     # 2b) Optional true A/B: the OLD judge over the SAME rows, in the same pass.
     baseline_inst: dict[int, float] = {}
     if baseline_rerun:
-        logger.info('  Re-running the ORIGINAL judge over the same rows (--baseline_rerun).')
+        baseline_dir_path = out_dir / 'retest_baseline'
+        prior_baseline_evaluator = _read_json_if_exists(baseline_dir_path / 'evaluator.json')
+        prior_baseline_index_map = _read_json_if_exists(baseline_dir_path / 'index_map.json')
         baseline_dir, baseline_map = _materialize_subrun(
             out_dir, 'retest_baseline', source_eval, selected
         )
-        stability_main(
-            run_dir=str(baseline_dir), config=config, n_repeats=resolved_n,
-            temperature=resolved_temp, metrics=True,
-        )
+        if allow_reuse and _subrun_reusable(
+            baseline_dir, baseline_map, resolved_n, resolved_temp,
+            prior_baseline_evaluator, prior_baseline_index_map, source_eval,
+        ):
+            logger.info(f'✓ Reusing existing baseline sub-run ({baseline_dir}); pass --rejudge to re-judge.')
+        else:
+            logger.info('  Re-running the ORIGINAL judge over the same rows (--baseline_rerun).')
+            stability_main(
+                run_dir=str(baseline_dir), config=config, n_repeats=resolved_n,
+                temperature=resolved_temp, metrics=True,
+            )
         baseline_inst = _instability_by_index(
             runner.read_json(baseline_dir / 'metrics.json'), baseline_map
         )
@@ -1024,9 +1189,9 @@ def main(
         instability_dropped = retest_mean < compare_against
 
     # 3b) Signal (b): the new evaluator agrees with the human labels — and, for
-    #     free, what the OLD one scored on the same labels. output_type was
-    #     already resolved once, above (before the merge) — not re-derived here.
-    resolved_tol = _resolve_numeric_tol(tol, cfg, policy, retest_evaluator_config.get('scale'))
+    #     free, what the OLD one scored on the same labels. output_type AND
+    #     resolved_tol were already resolved once, above (before the merge, and
+    #     before any judging) — not re-derived here.
     pairs, pair_tols, pair_indices = _pair_with_labels(labels, new_by_idx)
     if not pairs:
         raise SystemExit(
@@ -1078,8 +1243,21 @@ def main(
         _validate_string_scored_by(string_verdicts.get('scored_by', 'conductor'))
         # §4.3: the reader decided match_a/match_b blind; unblind via the shuffle
         # key written alongside the pairs before anything reads match_new/
-        # match_original off this file.
-        pairs_key = runner.read_json(out_dir / STRING_PAIRS_KEY_FILE)
+        # match_original off this file. MINOR 5: the key is written in the same
+        # call as string_pairs.json, so its absence means the run dir was tampered
+        # with (or the pairs file is from a version that predates the key) —
+        # fail loud with the same guidance the other artifact checks give, not a
+        # bare FileNotFoundError.
+        pairs_key_path = out_dir / STRING_PAIRS_KEY_FILE
+        if not pairs_key_path.exists():
+            raise SystemExit(
+                f'{STRING_PAIRS_KEY_FILE} is missing from {out_dir}. {STRING_VERDICTS_FILE} exists '
+                f'but the blind-shuffle key that unblinds it does not, so match_a/match_b cannot be '
+                f'read back into match_new/match_original. Delete {STRING_VERDICTS_FILE} and '
+                f'{STRING_PAIRS_FILE} and re-run this command to regenerate the pairs (and the key) '
+                'together.'
+            )
+        pairs_key = runner.read_json(pairs_key_path)
         string_verdicts = _unblind_string_verdicts(string_verdicts, pairs_key)
 
     matches = _string_matches(string_verdicts, pair_indices, 'match_new') if string_verdicts else None
@@ -1168,12 +1346,17 @@ def main(
             'drop': drop,
             'dropped': instability_dropped,
             'comparable': comparable,
-            # §2.2: without a baseline rerun, an UNCHANGED judge reads as "dropped"
-            # almost every time (the rows were selected for extreme observed
-            # instability, so re-measuring them regresses toward the mean on its
-            # own) — this says outright whether THIS run isolated the rewrite from
-            # that, rather than leaving it implied by the --baseline_rerun flag.
-            'selection_bias_controlled': bool(baseline_rerun),
+            # §2.2 / MINOR 7: without a baseline rerun, an UNCHANGED judge reads as
+            # "dropped" almost every time (the rows were selected for extreme
+            # observed instability, so re-measuring them regresses toward the mean
+            # on its own) — this says outright whether THIS run isolated the
+            # rewrite from that. Keyed on the OUTCOME (`baseline_mean is not None`),
+            # not the flag: a `--baseline_rerun` that found no rows measurable on
+            # both sides falls back to the original-run comparison a few lines up
+            # (`compare_against = baseline_mean if baseline_mean is not None else
+            # original_mean`) while still claiming the flag was passed, which is
+            # not what this field is supposed to report.
+            'selection_bias_controlled': baseline_mean is not None,
             # Both means are over these rows and no others. `n_lost_unmeasurable`
             # is the rows the old judge measured and the new one could not — they
             # are outside the comparison, so the drop says nothing about them.
@@ -1278,7 +1461,7 @@ def _caveats(
     )
     if provenance and provenance.get('derived'):
         out.append(
-            f'{provenance["derived"]} of {sum(provenance.values())} labels were derived by '
+            f'{provenance["derived"]} of {n_pairs} labels were derived by '
             'applying the rule rather than confirmed by the user, so agreement partly '
             'measures whether the new judge matches that reading of the rule.'
         )
