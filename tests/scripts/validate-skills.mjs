@@ -14,6 +14,10 @@
 //   5. no tracked SKILL.md outside skills/
 //   6. spec §4.1 — every tracked symlink resolves inside the plugin root
 //   7. the repo root is the only Agent Plugins root
+//   8. agents/AGENTS.md <-> skills/ directories — path list and
+//      <available_skills> both cover every skill, bidirectionally
+//   9. README.md skills table <-> skills/ directories — the table
+//      between BEGIN/END_SKILLS_TABLE markers covers every skill
 // Errors fail the run; warnings don't. Run from anywhere in the repo.
 
 import { createHash } from "node:crypto";
@@ -414,6 +418,70 @@ for (const f of tracked) {
   const m = manifestEntries.has(f) ? manifestEntries.get(f) : readJson(join(root, f));
   if (m && typeof m === "object" && m.$schema === SPEC_SCHEMA)
     err(`nested Agent Plugins manifest: ${f} — the repo root must be the only plugin root`);
+}
+
+// ---------- 8. AGENTS.md <-> skills/ ----------
+// Claude Code, Codex and Gemini CLI read AGENTS.md at runtime. A skill
+// missing from the path list is undiscoverable; one missing from the
+// <available_skills> block is never routed to. Cursor doesn't read this
+// file (npx skills copies SKILL.md into .cursor/rules/), so this check
+// guards the three agents that do.
+const agentsPath = join(root, "agents", "AGENTS.md");
+let agentsText;
+try { agentsText = readFileSync(agentsPath, "utf8"); } catch { agentsText = null; }
+
+if (agentsText !== null) {
+  const pathListRe = /^\s*-\s+(\S+)\s+->\s+"skills\//gm;
+  const pathListNames = new Set();
+  let agM;
+  while ((agM = pathListRe.exec(agentsText)) !== null) pathListNames.add(agM[1]);
+
+  for (const name of skillDirs)
+    if (!pathListNames.has(name))
+      err(`agents/AGENTS.md path list is missing '${name}' — Claude Code/Codex/Gemini CLI won't find it`);
+  for (const name of pathListNames)
+    if (!skillDirs.includes(name))
+      err(`agents/AGENTS.md path list references '${name}' but skills/${name} does not exist`);
+
+  const availBlock = agentsText.match(/<available_skills>([\s\S]*?)<\/available_skills>/);
+  if (availBlock) {
+    const availRe = /^(\S+):\s*`/gm;
+    const availNames = new Set();
+    while ((agM = availRe.exec(availBlock[1])) !== null) availNames.add(agM[1]);
+
+    for (const name of skillDirs)
+      if (!availNames.has(name))
+        err(`agents/AGENTS.md <available_skills> is missing '${name}' — the agent won't route to it`);
+    for (const name of availNames)
+      if (!skillDirs.includes(name))
+        err(`agents/AGENTS.md <available_skills> references '${name}' but skills/${name} does not exist`);
+  } else {
+    warn(`agents/AGENTS.md has no <available_skills> block`);
+  }
+}
+
+// ---------- 9. README.md skills table <-> skills/ ----------
+// The table between BEGIN/END_SKILLS_TABLE markers is what humans see on
+// GitHub. A missing row means the skill is invisible in documentation.
+const readmePath = join(root, "README.md");
+let readmeText;
+try { readmeText = readFileSync(readmePath, "utf8"); } catch { readmeText = null; }
+
+if (readmeText !== null) {
+  const tableMatch = readmeText.match(/<!-- BEGIN_SKILLS_TABLE -->([\s\S]*?)<!-- END_SKILLS_TABLE -->/);
+  if (tableMatch) {
+    const tableRe = /\|\s*\*\*(\S+?)\*\*/g;
+    const tableNames = new Set();
+    let rdM;
+    while ((rdM = tableRe.exec(tableMatch[1])) !== null) tableNames.add(rdM[1]);
+
+    for (const name of skillDirs)
+      if (!tableNames.has(name))
+        err(`README.md skills table is missing '${name}'`);
+    for (const name of tableNames)
+      if (!skillDirs.includes(name))
+        err(`README.md skills table references '${name}' but skills/${name} does not exist`);
+  }
 }
 
 // ---------- result ----------

@@ -46,6 +46,39 @@ EOF
   done
   printf '{\n  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",\n  "name": "orq",\n  "version": "0.0.0"\n}\n' > "$d/plugin.json"
 
+  # agents/AGENTS.md — path list + available_skills for the fixture skill.
+  mkdir -p "$d/agents"
+  cat > "$d/agents/AGENTS.md" <<'AGENTS'
+---
+name: test-agent
+description: test agent
+---
+
+<skills>
+
+These skills are:
+ - example-skill -> "skills/example-skill/SKILL.md"
+
+<available_skills>
+
+example-skill: `Fixture skill used for validation tests.`
+
+</available_skills>
+
+</skills>
+AGENTS
+
+  # README.md — skills table between markers for the fixture skill.
+  cat > "$d/README.md" <<'README'
+# Test
+
+<!-- BEGIN_SKILLS_TABLE -->
+| Skill | What It Does |
+|-------|-------------|
+| **example-skill** | Test skill |
+<!-- END_SKILLS_TABLE -->
+README
+
   # The checkout has to exist before --fix runs: lock hashes are computed from
   # the git index, so regenerating them in a bare directory would fall back to
   # the working tree and produce hashes that don't match the ones validation
@@ -304,6 +337,48 @@ mkdir -p "$d/plugins/other-plugin/.claude-plugin"
 printf '{\n  "name": "other",\n  "version": "1.0.0"\n}\n' > "$d/plugins/other-plugin/.claude-plugin/plugin.json"
 git -C "$d" add -A
 expect_pass "nested client-specific manifest is allowed" "$d"
+
+# --- 8. AGENTS.md <-> skills/ ---
+# A skill directory that exists but isn't in AGENTS.md: the agent runtime
+# can't find or route to it.
+d=$(build_fixture skill-missing-from-agents)
+mkdir -p "$d/skills/second-skill"
+cp "$d/skills/example-skill/SKILL.md" "$d/skills/second-skill/SKILL.md"
+sed -i.bak 's/^name: example-skill/name: second-skill/' "$d/skills/second-skill/SKILL.md"
+rm -f "$d/skills/second-skill/SKILL.md.bak"
+relock "$d"
+expect_fail "skill missing from AGENTS.md path list" "$d" "path list is missing 'second-skill'"
+
+# A phantom entry in the path list references a skill that doesn't exist.
+d=$(build_fixture phantom-agents-pathlist)
+sed -i.bak '/example-skill.*SKILL.md/a\ - phantom-skill -> "skills/phantom-skill/SKILL.md"' "$d/agents/AGENTS.md"
+rm -f "$d/agents/AGENTS.md.bak"
+expect_fail "phantom in AGENTS.md path list" "$d" "path list references 'phantom-skill' but skills/phantom-skill does not exist"
+
+# A phantom entry in <available_skills> references a skill that doesn't exist.
+d=$(build_fixture phantom-available-skills)
+sed -i.bak '/<\/available_skills>/i\phantom-skill: `Does not exist.`' "$d/agents/AGENTS.md"
+rm -f "$d/agents/AGENTS.md.bak"
+expect_fail "phantom in AGENTS.md available_skills" "$d" "<available_skills> references 'phantom-skill' but skills/phantom-skill does not exist"
+
+# --- 9. README.md skills table <-> skills/ ---
+d=$(build_fixture skill-missing-from-readme)
+mkdir -p "$d/skills/second-skill"
+cp "$d/skills/example-skill/SKILL.md" "$d/skills/second-skill/SKILL.md"
+sed -i.bak 's/^name: example-skill/name: second-skill/' "$d/skills/second-skill/SKILL.md"
+rm -f "$d/skills/second-skill/SKILL.md.bak"
+# Add the new skill to AGENTS.md so only the README check fires.
+sed -i.bak '/example-skill.*SKILL.md/a\ - second-skill -> "skills/second-skill/SKILL.md"' "$d/agents/AGENTS.md"
+rm -f "$d/agents/AGENTS.md.bak"
+sed -i.bak '/<\/available_skills>/i\second-skill: `Second test skill.`' "$d/agents/AGENTS.md"
+rm -f "$d/agents/AGENTS.md.bak"
+relock "$d"
+expect_fail "skill missing from README table" "$d" "README.md skills table is missing 'second-skill'"
+
+d=$(build_fixture phantom-readme-table)
+sed -i.bak '/<!-- END_SKILLS_TABLE -->/i\| **phantom-skill** | Does not exist |' "$d/README.md"
+rm -f "$d/README.md.bak"
+expect_fail "phantom in README skills table" "$d" "README.md skills table references 'phantom-skill' but skills/phantom-skill does not exist"
 
 # --- the git-failure path: skipping sections 5-7 must not report success ---
 # A non-git tree legitimately skips them; a checkout whose git is broken must
