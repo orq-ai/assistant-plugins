@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.3] - 2026-08-18
+
+### Fixed
+- `orq-compare-agents`, `orq-simulate-agent`, `orq-invoke-deployment`, `evaluatorq`: preflight existence checks now verify with the **run key** via REST/SDK instead of treating the MCP as authoritative. The MCP authenticates with its own key, often in a different project, so an MCP hit could wrongly pass (agent exists in MCP's project, not the run's) and an MCP miss could wrongly reject (agent exists for the run key, not the MCP's). All four skills now reference a shared [run-key preflight](docs/run-key-preflight.md) doc with the check pattern and MCP caveat. `orq-build-agent`, `orq-optimize-prompt`, and `orq-generate-synthetic-dataset` were audited and left unchanged — they use MCP for browsing/discovery, not for run-gate existence checks.
+
 ## [2.3.2] - 2026-08-14
 
 ### Fixed

@@ -28,9 +28,9 @@ Supported comparison modes:
 - **NEVER** compare agents on different models unless isolating the model difference is the explicit goal.
 - **ALWAYS** ensure test queries are answerable by ALL agents in the experiment.
 - **ALWAYS** use the same evaluator(s) for all agents to ensure fair scoring.
-- **ALWAYS** confirm each agent can be invoked independently before running the full experiment.
+- **ALWAYS** confirm each agent can be invoked independently before running the full experiment — for orq.ai agents, verify with the **run key** via REST/SDK (see [run-key preflight](../../docs/run-key-preflight.md)), not the MCP.
 
-**Why these constraints:** Biased datasets produce meaningless rankings. Inline datasets bypass validation. Different models confound framework comparisons. Untested agents waste experiment budget on invocation errors.
+**Why these constraints:** Biased datasets produce meaningless rankings. Inline datasets bypass validation. Different models confound framework comparisons. Untested agents waste experiment budget on invocation errors. The MCP authenticates with its own key, often in a different project than the run — an MCP hit does not guarantee the run will work.
 
 ## Companion Skills
 
@@ -98,7 +98,7 @@ Agent Comparison Progress:
 
 | Tool | Purpose |
 |------|---------|
-| `search_entities` | Find orq.ai agent keys (use `type: "agent"`) |
+| `search_entities` | **Browse** orq.ai agent keys (use `type: "agent"`) — convenient for discovery but not authoritative for the run (see [MCP caveat](../../docs/run-key-preflight.md#mcp-caveat--a-miss-is-not-proof-of-nonexistence)) |
 | `create_dataset` | Create a dataset |
 | `create_datapoints` | Populate dataset with test cases |
 | `create_llm_eval` | Create an LLM-as-a-judge evaluator |
@@ -122,7 +122,8 @@ Agent Comparison Progress:
    - How to invoke it (agent key, import path, HTTP endpoint)
 
 2. **For orq.ai agents**, get the agent key:
-   - Use `search_entities` MCP tool with `type: "agent"` to find available agents
+   - Use `search_entities` MCP tool with `type: "agent"` to **browse** available agents
+   - Then **verify the key with the run key** via REST or SDK — the MCP uses its own key, which may be in a different project. See [run-key preflight](../../docs/run-key-preflight.md) for the check pattern. A miss means the key is wrong or scoped to another project — ask the user, don't conclude "agent absent" from an MCP miss alone.
 
 3. **For external agents**, confirm they can be called from Python/TypeScript:
    - Verify import paths, API endpoints, or local availability

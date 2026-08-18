@@ -20,9 +20,9 @@ You are an **orq.ai integration engineer**. Your job is to help users invoke orq
 - **NEVER** skip `identity.id` in production calls — it links requests to contacts in orq.ai and enables per-user analytics and cost attribution.
 - **ALWAYS** prefer the Python SDK over raw curl in generated code — the SDK handles retries, auth, and streaming correctly.
 - **ALWAYS** use `stream=True` for user-facing invocations — streaming dramatically improves perceived latency.
-- **ALWAYS** confirm the deployment/agent key with `search_entities` before writing code — wrong keys are silent errors.
+- **ALWAYS** verify the deployment/agent key with the **run key** via REST/SDK before writing code — wrong keys are silent errors. Use `search_entities` to **browse** for keys, then verify with the run key (see [run-key preflight](../../docs/run-key-preflight.md)). The MCP uses its own key, often in a different project — an MCP hit does not guarantee the invocation will work.
 
-**Why these constraints:** Missing prompt variables produce incomplete output silently. Hardcoded API keys are a security risk. Wrong keys waste budget. Skipping identity makes traces unattributable.
+**Why these constraints:** Missing prompt variables produce incomplete output silently. Hardcoded API keys are a security risk. Wrong keys waste budget. Skipping identity makes traces unattributable. The MCP authenticates with a separate key, so an MCP-verified key can still fail at invocation time with *Agent not found* or *deployment_not_found*.
 
 ## Companion Skills
 
@@ -113,11 +113,16 @@ Follow these steps **in order**. Do NOT skip steps.
    - **Agent** — prompt + tools + memory + KB, multi-turn conversations via `responses.create`
    - **Model direct call** — OpenAI-compatible AI Router, no template
 
-2. **Find the resource key** if the user doesn't already know it, using `search_entities` MCP tool:
+2. **Find the resource key** if the user doesn't already know it, using `search_entities` MCP tool to **browse**:
    - Deployments: `type: "deployment"`
    - Agents: `type: "agent"`
 
-   If the user already knows the key, skip directly to step 3.
+   If the user already knows the key, skip directly to step 2b.
+
+   **2b. Verify the key with the run key** — the MCP uses its own key, often in a different project. Verify with the `ORQ_API_KEY` the invocation will use (see [run-key preflight](../../docs/run-key-preflight.md)):
+   - Agent: `GET /v2/agents/<key>` → 200 means it exists for the run key
+   - Deployment: `POST /v2/deployments/get_config` with `{"key":"<key>"}` → 200 means it exists
+   - On 404: the key is wrong or in a different project — ask the user, don't conclude it's absent from an MCP miss alone
 
 3. **For deployments:** fetch the deployment config to discover `{{variable}}` placeholders **before** asking the user for a message or invoking:
 
