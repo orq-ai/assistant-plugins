@@ -117,18 +117,17 @@ Follow these steps **in order**. Do NOT skip steps.
    - Deployments: `type: "deployment"`
    - Agents: `type: "agent"`
 
-   If the user already knows the key, skip directly to step 2b.
-
-   **2b. Verify the key with the run key** — the MCP uses its own key, often in a different project. Verify with the `ORQ_API_KEY` the invocation will use (see [run-key preflight](../../docs/run-key-preflight.md)):
+3. **Verify the key with the run key** — whether the key came from MCP browsing or the user provided it directly. The MCP uses its own key, often in a different project. Verify with the `ORQ_API_KEY` the invocation will use (see [run-key preflight](../../docs/run-key-preflight.md)):
    - Agent: `GET /v2/agents/<key>` → 200 means it exists for the run key
-   - Deployment: `POST /v2/deployments/get_config` with `{"key":"<key>"}` → 200 means it exists
+   - Deployment: `POST /v2/deployments/get_config` with `{"key":"<key>"}` → 200 means it exists (and the response contains the full config including the prompt template — save it for step 4)
    - On 404: the key is wrong or in a different project — ask the user, don't conclude it's absent from an MCP miss alone
 
-3. **For deployments:** fetch the deployment config to discover `{{variable}}` placeholders **before** asking the user for a message or invoking:
+4. **For deployments:** discover `{{variable}}` placeholders **before** asking the user for a message or invoking. If step 3's `get_config` returned the prompt template, use that response. Otherwise fetch it:
 
    ```bash
    curl -s -H "Authorization: Bearer $ORQ_API_KEY" \
-     "https://api.orq.ai/v2/deployments/<key>/config"
+     -X POST "https://api.orq.ai/v2/deployments/get_config" \
+     -H "Content-Type: application/json" -d '{"key":"<key>"}'
    ```
 
    Scan the returned prompt template for `{{variable_name}}` patterns. These are the required `inputs` keys.
@@ -146,7 +145,7 @@ Follow these steps **in order**. Do NOT skip steps.
 
 ### Phase 2: Configure the Invocation
 
-4. **For deployments — determine the invocation pattern.**
+5. **For deployments — determine the invocation pattern.**
 
    | Pattern | When | What to pass |
    |---|---|---|
@@ -161,21 +160,21 @@ Follow these steps **in order**. Do NOT skip steps.
    | `{{customer_name}}` | `customer_name` | `"Jane Doe"` |
    | `{{issue}}` | `issue` | `"Payment failed"` |
 
-5. **Determine `identity`** (deployments and agents).
+6. **Determine `identity`** (deployments and agents).
 
    Always include at minimum `id` in production:
    ```json
    { "id": "user_<unique_id>", "display_name": "Jane Doe", "email": "jane@example.com" }
    ```
 
-6. **Choose streaming vs. non-streaming.**
+7. **Choose streaming vs. non-streaming.**
 
    | Use case | Mode |
    |---|---|
    | User-facing UI, chatbot | `stream=True` |
    | Background job, batch, eval | `stream=False` |
 
-7. **Determine additional options as needed.**
+8. **Determine additional options as needed.**
 
    | Option | Resource | Purpose |
    |---|---|---|
@@ -193,20 +192,20 @@ Follow these steps **in order**. Do NOT skip steps.
 
 ### Phase 3: Invoke
 
-8. **Invoke the resource.** See [resources/api-reference.md](resources/api-reference.md) for full API details.
+9. **Invoke the resource.** See [resources/api-reference.md](resources/api-reference.md) for full API details.
 
-9. **Verify the response:**
+10. **Verify the response:**
    - Deployment: check `choices[0].message.content` for the output text
    - Agent: check `response.output[0].parts[0].text` for the output text; save `response.task_id` for multi-turn
    - If wrong output: check for missing inputs, wrong key, or prompt issues
 
-10. **Find the trace** — direct user to [my.orq.ai](https://my.orq.ai/) → Traces, or use `response.telemetry.trace_id`.
+11. **Find the trace** — direct user to [my.orq.ai](https://my.orq.ai/) → Traces, or use `response.telemetry.trace_id`.
 
 ### Phase 4: Generate Integration Code
 
-11. **Ask for the user's language** if not already clear: Python or curl.
+12. **Ask for the user's language** if not already clear: Python or curl.
 
-12. **Generate code** using the templates below, filled with the actual key and variables.
+13. **Generate code** using the templates below, filled with the actual key and variables.
 
 ---
 
