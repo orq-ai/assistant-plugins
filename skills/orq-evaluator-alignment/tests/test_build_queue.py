@@ -153,3 +153,37 @@ def test_low_flip_item_carries_judge_correct(tmp_path):
     item = q['items'][0]
     assert item['reason'] == 'low_flip'
     assert item['judge_correct'] is True
+
+
+# ── MINOR 10a — an omitted correctness block never produces wrong_vs_reference ──
+
+
+def test_omitted_correctness_yields_no_wrong_vs_reference_and_judge_correct_none(tmp_path):
+    # metrics.json's `correctness` can be the OMISSION shape (n_labelled=0 +
+    # reason_omitted — a string judge, a reference-family variable, or an
+    # undeclared numeric scale) rather than either a real correctness dict or
+    # absent entirely. build_queue reads `wrong_source_indices` /
+    # `labelled_source_indices` off it with `.get(...) or []`/`or set()`, which
+    # already degrades gracefully on that shape (both keys are simply missing) —
+    # pinned here so a future change to either field's default can't regress it
+    # silently.
+    d = tmp_path / 'run'
+    d.mkdir()
+    _write(d / 'evaluator.json', {'prompt': 'judge', 'output_type': 'string'})
+    _write(d / 'metrics.json', {
+        'metadata': {'output_type': 'string'},
+        'per_row': [_stable_row(0), _flipped_row(1)],
+        'correctness': {
+            'n_labelled': 0,
+            'reason_omitted': 'string verdicts are not comparable with ==',
+        },
+    })
+    _seed_stability(d, [0, 1])
+
+    build_queue.main(run_dir=str(d), config=_CONFIG, count=-1, low_flip_sample_size=1)
+
+    q = json.loads((d / 'queue.json').read_text(encoding='utf-8'))
+    assert q['items']  # the instability confuser still queues normally
+    assert all(it['reason'] != 'wrong_vs_reference' for it in q['items'])
+    assert all(it['judge_correct'] is None for it in q['items'])
+    assert q['meta']['n_wrong_vs_reference'] == 0

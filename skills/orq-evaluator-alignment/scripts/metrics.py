@@ -390,9 +390,19 @@ def _correctness_lines(c: dict[str, Any] | None) -> list[str]:
     speaks for the band: `n >= 10` (not a handful of rows) AND labelled coverage
     `>= 90%` of the band. Below that floor it is a partial view, not a measurement
     of the blind spot, and is captioned as such (§4.1).
+
+    MINOR 9: an omitted block (`n_labelled: 0` with a `reason_omitted` — a
+    reference-family variable, a string judge, or an undeclared numeric scale, per
+    `_correctness`) still earns ONE line here. Returning `[]` for it wrote the
+    `reason_omitted` explanation to `metrics.json` but never into the report the
+    conductor actually reads out (SKILL.md), so the omission — and why — was
+    invisible at the one place a reader would see it.
     """
-    if not c or not c.get('n_labelled'):
+    if not c:
         return []
+    if not c.get('n_labelled'):
+        reason = c.get('reason_omitted')
+        return [f'  - correctness vs dataset labels: not measured — {reason}'] if reason else []
     lines = [
         f"  - correctness vs dataset labels: {c['n_correct']}/{c['n_labelled']} "
         f"({c['accuracy']:.0%}) — labels are `dataset_reference`, not the user's verdict."

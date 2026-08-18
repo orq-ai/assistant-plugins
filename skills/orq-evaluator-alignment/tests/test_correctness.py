@@ -16,6 +16,7 @@ Pure stdlib; no orq/evaluatorq import.
 
 from __future__ import annotations
 
+import json
 import sys
 from collections import Counter
 from pathlib import Path
@@ -148,6 +149,19 @@ def test_report_calls_out_the_stable_row_accuracy():
 def test_report_is_silent_without_labels():
     assert metrics._correctness_lines(None) == []
     assert metrics._correctness_lines({'n_labelled': 0}) == []
+
+
+def test_report_states_the_omission_reason_when_correctness_was_omitted():
+    # MINOR 9: the omission block (n_labelled=0 + reason_omitted, produced by a
+    # reference-family variable, a string judge, or an undeclared numeric scale)
+    # was written to metrics.json but never surfaced in `report` — the text
+    # SKILL.md tells the conductor to read out loud — so it was invisible at the
+    # one place a reader would actually see it.
+    c = {'n_labelled': 0, 'reason_omitted': 'string verdicts are not comparable with =='}
+    lines = metrics._correctness_lines(c)
+    assert len(lines) == 1
+    assert 'not measured' in lines[0]
+    assert 'string verdicts are not comparable' in lines[0]
 
 
 # ── §1.2 — reference declared as a judge input is not ground truth ───────────
@@ -318,3 +332,35 @@ def test_correctness_requires_variables_categorical_labels_tol_derivable():
             _rows((0, 'true', True)), _per_row((0, 'stable')), 'boolean', 0.5,
             variables=[], categorical_labels=[],
         )
+
+
+# ── MINOR 10b — main() actually wires evaluator.json's `variables` through ───
+# Every test above calls `_correctness` directly, so none of them could catch a
+# wiring mistake in `main` itself (the kwarg dropped, or bound to the wrong
+# value). Pinned at the `main()` level: a reference-declaring evaluator run
+# through the real pipeline must land on the SAME omission block a direct call
+# with `variables=['reference']` produces.
+
+
+def test_main_wires_evaluator_variables_into_correctness(tmp_path):
+    (tmp_path / 'stability.json').write_text(json.dumps({
+        'metadata': {'output_type': 'boolean', 'n_repeats': 2},
+        'rows': [
+            {'source_index': 0, 'repetitions': [True, True], 'reference': 'true'},
+            {'source_index': 1, 'repetitions': [False, False], 'reference': 'false'},
+        ],
+    }), encoding='utf-8')
+    (tmp_path / 'evaluator.json').write_text(json.dumps({
+        'output_type': 'boolean', 'categorical_labels': [], 'scale': None,
+        'variables': ['reference'],  # declares the reference-family variable
+    }), encoding='utf-8')
+
+    metrics.main(
+        run_dir=str(tmp_path),
+        config=str(Path(__file__).resolve().parents[1] / 'tests' / 'config_fake.toml'),
+    )
+
+    mx = json.loads((tmp_path / 'metrics.json').read_text(encoding='utf-8'))
+    assert mx['correctness']['n_labelled'] == 0
+    assert 'reference-family variable' in mx['correctness']['reason_omitted']
+    assert 'not measured' in mx['report']  # MINOR 9: the omission reaches the report too
