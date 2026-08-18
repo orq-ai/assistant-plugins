@@ -82,7 +82,7 @@ Pick one of the three target shapes that `simulate()` accepts:
 | `target=fn` | Agent is a local function or third-party SDK | Wrap with `from_chat_completions(...)` or write a `Callable[[list[Message]], str]` |
 | `target=AgentTarget(...)` | Full control over memory, clone, agent context, or building a custom agent on top of the orq.ai Responses API | Implement the `AgentTarget` protocol from `evaluatorq.contracts`, or use the bundled `OrqResponsesTarget(config=LLMCallConfig(...))`. See [resources/simulation-loop.md](resources/simulation-loop.md) for the full signature |
 
-If the user wants to drive an existing orq agent, use `search_entities` with `type: "agent"` to **browse** available agents. Then **verify the key with the run key** via REST or SDK before proceeding — the MCP uses its own key, which may be in a different project. See [run-key preflight](../../docs/run-key-preflight.md) for the check pattern and MCP caveat. After the key is verified, confirm it answers one turn end-to-end before wrapping it in a loop.
+If the user wants to drive an existing orq agent, use `search_entities` with `type: "agent"` to **browse** available agents. Then **verify the key with the run key** via REST or SDK (see [run-key preflight](../../docs/run-key-preflight.md)). After the key is verified, confirm it answers one turn end-to-end before wrapping it in a loop.
 
 The framework ships `from_orq_deployment(agent_key)` and `from_chat_completions(fn)` adapters in `evaluatorq.simulation.adapters`. For Vercel AI SDK or LangChain agents, write a small callable and pass it as `target=` — it calls your agent's generate/invoke method and returns the assistant text.
 

@@ -54,7 +54,11 @@ curl -s -w '\nHTTP %{http_code}\n' -X POST "https://api.orq.ai/v2/deployments/ge
 Python SDK equivalent:
 
 ```python
-orq.deployments.get_config(key="<key>")  # raises if not found
+import os
+from orq_ai_sdk import Orq
+
+with Orq(api_key=os.environ["ORQ_API_KEY"]) as orq:
+    orq.deployments.get_config(key="<key>")  # raises if not found
 ```
 
 ## On a miss (404)
@@ -69,23 +73,3 @@ The orq MCP (`get_agent`, `search_entities`) is convenient for *browsing* and **
 - **MCP hit ≠ run will work** — it may see the agent in a project the run key can't reach; the run still dies with *Agent not found*.
 
 Use the MCP as a **browse aid** to help the user find entity names and keys. Then **verify with the run key** before proceeding to the run.
-
-## Skills referencing this doc
-
-Fixed (verify with run key, MCP as browse aid):
-
-| Skill | What changed |
-|-------|-------------|
-| `orq-red-team` | Original fix (PR #45) — full pattern inline |
-| `orq-compare-agents` | Phase 1 agent discovery + constraint |
-| `orq-simulate-agent` | Phase 1 agent target resolution |
-| `orq-invoke-deployment` | Phase 1 key confirmation + constraint |
-| `evaluatorq` | Phase 1 agent key discovery |
-
-Audited, no change needed:
-
-| Skill | Reason |
-|-------|--------|
-| `orq-build-agent` | MCP used for KB browsing (`search_entities type: "knowledge"`) and post-creation verification (`get_agent`) — same project, no cross-project run |
-| `orq-optimize-prompt` | MCP used for prompt discovery (`search_entities type: "prompt"`) — read-only, no run that could fail with a different key |
-| `orq-generate-synthetic-dataset` | MCP used for dataset browsing (`search_entities type: "dataset"`) — no agent/deployment invocation |

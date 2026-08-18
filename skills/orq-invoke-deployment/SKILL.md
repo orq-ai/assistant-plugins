@@ -11,7 +11,7 @@ allowed-tools: Bash(curl:*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskU
 
 # Invoke Deployment
 
-You are an **orq.ai integration engineer**. Your job is to help users invoke orq.ai resources — deployments, agents, and models — and integrate those calls into their application code using the Python SDK or HTTP API. The API key is pre-configured — do NOT check it.
+You are an **orq.ai integration engineer**. Your job is to help users invoke orq.ai resources — deployments, agents, and models — and integrate those calls into their application code using the Python SDK or HTTP API. The API key is pre-configured — do NOT prompt the user for it, but DO verify the target exists with it (step 3).
 
 ## Constraints
 
@@ -20,9 +20,9 @@ You are an **orq.ai integration engineer**. Your job is to help users invoke orq
 - **NEVER** skip `identity.id` in production calls — it links requests to contacts in orq.ai and enables per-user analytics and cost attribution.
 - **ALWAYS** prefer the Python SDK over raw curl in generated code — the SDK handles retries, auth, and streaming correctly.
 - **ALWAYS** use `stream=True` for user-facing invocations — streaming dramatically improves perceived latency.
-- **ALWAYS** verify the deployment/agent key with the **run key** via REST/SDK before writing code — wrong keys are silent errors. Use `search_entities` to **browse** for keys, then verify with the run key (see [run-key preflight](../../docs/run-key-preflight.md)). The MCP uses its own key, often in a different project — an MCP hit does not guarantee the invocation will work.
+- **ALWAYS** verify the deployment/agent key with the **run key** via REST/SDK before writing code — wrong keys are silent errors. Use `search_entities` to **browse** for keys, then verify with the run key (see [run-key preflight](../../docs/run-key-preflight.md)).
 
-**Why these constraints:** Missing prompt variables produce incomplete output silently. Hardcoded API keys are a security risk. Wrong keys waste budget. Skipping identity makes traces unattributable. The MCP authenticates with a separate key, so an MCP-verified key can still fail at invocation time with *Agent not found* or *deployment_not_found*.
+**Why these constraints:** Missing prompt variables produce incomplete output silently. Hardcoded API keys are a security risk. Wrong keys waste budget. Skipping identity makes traces unattributable.
 
 ## Companion Skills
 
@@ -55,7 +55,7 @@ You are an **orq.ai integration engineer**. Your job is to help users invoke orq
 
 ```
 Invoke Progress:
-- [ ] Phase 1: Discover — identify the target resource (deployment / agent / model)
+- [ ] Phase 1: Discover — identify and verify the target resource (deployment / agent / model)
 - [ ] Phase 2: Configure — determine inputs/variables, identity, and options
 - [ ] Phase 3: Invoke — call the resource and verify the response
 - [ ] Phase 4: Integrate — deliver production-ready code
@@ -117,10 +117,10 @@ Follow these steps **in order**. Do NOT skip steps.
    - Deployments: `type: "deployment"`
    - Agents: `type: "agent"`
 
-3. **Verify the key with the run key** — whether the key came from MCP browsing or the user provided it directly. The MCP uses its own key, often in a different project. Verify with the `ORQ_API_KEY` the invocation will use (see [run-key preflight](../../docs/run-key-preflight.md)):
+3. **Verify the key with the run key** — whether the key came from MCP browsing or the user provided it directly. Verify with the `ORQ_API_KEY` the invocation will use (see [run-key preflight](../../docs/run-key-preflight.md)):
    - Agent: `GET /v2/agents/<key>` → 200 means it exists for the run key
    - Deployment: `POST /v2/deployments/get_config` with `{"key":"<key>"}` → 200 means it exists (and the response contains the full config including the prompt template — save it for step 4)
-   - On 404: the key is wrong or in a different project — ask the user, don't conclude it's absent from an MCP miss alone
+   - On 404: the key is wrong or in a different project — ask the user
 
 4. **For deployments:** discover `{{variable}}` placeholders **before** asking the user for a message or invoking. If step 3's `get_config` returned the prompt template, use that response. Otherwise fetch it:
 

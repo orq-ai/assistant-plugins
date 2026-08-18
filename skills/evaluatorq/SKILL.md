@@ -91,7 +91,7 @@ Since v1.10 the library also exports **LLM-jury and pairwise judging**: `llm_jur
 - What is the agent key (orq.ai) or the function/endpoint to call?
 - What language — Python or TypeScript?
 
-For orq.ai agents, use `search_entities` MCP tool with `type: "agent"` to **browse** available agent keys. Then **verify the key with the run key** via REST or SDK — the MCP uses its own key, which may be in a different project. See [run-key preflight](../../docs/run-key-preflight.md) for the check pattern and MCP caveat.
+For orq.ai agents, use `search_entities` MCP tool with `type: "agent"` to **browse** available agent keys. Then **verify the key with the run key** via REST or SDK (see [run-key preflight](../../docs/run-key-preflight.md)).
 
 **For CLI** (`eq redteam` or `eq sim`): orient the user, then hand off to the appropriate companion skill — `orq-red-team` for adversarial testing, `orq-simulate-agent` for user simulation.
 
