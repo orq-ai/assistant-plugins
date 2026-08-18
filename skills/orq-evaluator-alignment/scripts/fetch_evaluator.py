@@ -21,7 +21,8 @@ stored so step 9a can enforce variable preservation on the rewrite.
 Usage:
     cd skills/orq-evaluator-alignment
     uv run scripts/fetch_evaluator.py --evaluator_id <24-hex-id>
-    # if the judge model can't be auto-resolved (run dir shows model-unknown):
+    # if the judge model can't be auto-resolved (evaluator.json's judge_model still
+    # equals judge_model_id — the opaque config id, unresolved against /v2/models):
     uv run scripts/fetch_evaluator.py --evaluator_id <id> --judge_model mistral-large-latest
 """
 
