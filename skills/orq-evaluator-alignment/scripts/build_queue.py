@@ -244,9 +244,10 @@ def main(
     Args:
         run_dir: Run directory (defaults to most recent).
         config: TOML config path.
-        count: How many top-ambiguous (flipped) items to annotate. -1 = all
-            flipped items; 0 = none (low-flip sanity sample only). Choose this
-            after reading the step-5 flip report.
+        count: How many top-ambiguous items to annotate — caps the COMBINED
+            confuser list (flipped, then cross-model, then wrong-vs-reference).
+            -1 = all; 0 = none (low-flip sanity sample only). Choose this after
+            reading the step-4 flip report.
         low_flip_sample_size: Random low-flip items to append as a sanity check
             (overrides config `low_flip_sample_size`; 0 disables).
     """

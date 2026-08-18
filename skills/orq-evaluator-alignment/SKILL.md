@@ -35,7 +35,9 @@ what you're about to do and why, then do it. Offer options as short lists they c
 answer in a few words.
 
 Mechanically: you run small independent scripts under `scripts/`, each writing one
-file into a per-run working directory (`runs/<key>_<ts>_<model>_<N>dp/`).
+file into a per-run working directory (`runs/<key>_<ts>/`, renamed to
+`runs/<key>_<ts>_<model>_<N>dp/` only once a trace scan has resolved the judge model
+and datapoint count).
 
 Each script under `scripts/` is self-contained: it declares its own dependencies
 via PEP 723 inline metadata, so `uv run scripts/<name>.py ...` builds an isolated,
@@ -78,14 +80,17 @@ bypasses the inline metadata).
   - **No ground-truth labels** (the usual trace-scanned run): state the limitation
     in the final summary every time, and offer the stable spot-check sample (config
     `low_flip_sample_size`) as the cheap partial check.
-  - **Rows carried a `reference` label** (a dataset with `expected_output`):
-    `metrics.json` has a `correctness` block and the limitation **does not apply to
-    the rows it covers**. Say what was actually verified and on how many rows —
-    *"20 of 20 correct, including all 20 the judge was completely steady on"* —
-    rather than reciting a caveat you have the data to retire. `by_band.stable` is
-    the number that matters: it is the blind spot, measured. Still name the labels
-    as `dataset_reference` (§ step 8) — they are someone's prior judgement, not the
-    user's verdict — and keep the caveat for whatever rows were unlabelled.
+  - **Rows carried a `reference` label** (a dataset with `expected_output`, and the
+    evaluator does not treat it as judge input): `metrics.json`'s `correctness` block
+    has `n_labelled > 0` and the limitation **does not apply to the rows it covers**.
+    Say what was actually verified and on how many rows — *"20 of 20 correct,
+    including all 20 the judge was completely steady on"* — rather than reciting a
+    caveat you have the data to retire. `by_band.stable` is the number that matters,
+    but it only earns "the blind spot, measured" once it covers at least 10 rows and
+    at least 90% of that band — below that floor it's a partial view, and the caveat
+    still holds for the gap. Still name the labels as `dataset_reference` (§ step 8)
+    — they are someone's prior judgement, not the user's verdict — and keep the
+    caveat for whatever rows were unlabelled.
 
 ## The flow
 
@@ -123,7 +128,8 @@ it is the user's call, not a default. Tell the user, in their words, what came b
   shows up, mention it — a judge whose model changed over time looks more erratic
   than it is.
 
-  **If the model comes back unresolved** (the run dir is named `…_model-unknown_…`):
+  **If the model comes back unresolved** (`evaluator.json`'s `judge_model` still
+  equals `judge_model_id` — the opaque config id, unresolved against `/v2/models`):
   the config id wasn't in `/v2/models` *and* the spans don't record
   `gen_ai.request.model` — common, because evaluator spans store the judge's input
   and output but not always which model produced them. Ask the user which model the
@@ -137,7 +143,9 @@ The command prints a run directory — **pass that `--run_dir` to every later st
 It starts as `<key>_<ts>` and is renamed to `<key>_<ts>_<model>_<N>dp` once the model
 and example count are known, so always use the **printed** path. If the judge's
 output type isn't boolean, categorical, number, or string, it stops here — tell the
-user those four are what's supported.
+user those four are what's supported. It also hard-exits if `--scale_min`/
+`--scale_max` are passed one without the other — the numeric scale override is
+both-or-neither, so a partial pair is a user error rather than something to guess at.
 
 ### 1a. Ask where the examples should come from  ⟵ GATE
 **Always ask. There is no default source.** The judge is fetched; nothing has been
@@ -228,9 +236,10 @@ Confirm the second model with the user.
 uv run scripts/cross_model.py --run_dir <run_dir> --model <provider/model>
 ```
 
-**If the judge model came back unresolved** (`…_model-unknown_…`) and they picked a
-non-trace source, ask for the model now — production spans were the fallback that
-would have supplied it, and step 3 cannot re-run a judge it cannot name.
+**If the judge model came back unresolved** (`evaluator.json`'s `judge_model` still
+equals `judge_model_id`) and they picked a non-trace source, ask for the model now —
+production spans were the fallback that would have supplied it, and step 3 cannot
+re-run a judge it cannot name.
 
 **Say this in the final summary whenever options 2–4 contributed:** examples that
 didn't come from production test what the rubric *says*, not what the judge actually
@@ -279,15 +288,24 @@ Say plainly what this does **not** tell them: consistency is not correctness. A 
 that is wrong the same way every time scores perfectly here. That caveat belongs in
 this message, not only in the final summary.
 
-**Unless `metrics.json` has a `correctness` block** — then it *does* tell them, for
-the rows it covers, and burying that would waste the most valuable number in the run.
-It appears when the examples carried ground truth (a dataset with `expected_output`).
-Lead with the accuracy and, specifically, the accuracy on rows the judge was **stable**
-on: *"and on the 20 it was completely steady about, it was right on all 20 — so this
-isn't consistent-but-wrong, it's consistent-and-right."* That sentence is the one the
-rest of the method cannot produce. If instead it reads *"steady on 20, right on 12"*,
-say that just as plainly: the judge is reliably wrong, and no amount of rewriting for
-consistency will help.
+**Unless `metrics.json`'s `correctness` block has `n_labelled > 0`** — then it *does*
+tell them, for the rows it covers, and burying that would waste the most valuable
+number in the run. The block itself is present whenever the examples carried ground
+truth, but a present block isn't the same as a populated one: when the evaluator
+declares a reference-family variable (`reference` was judge input, not ground truth),
+the judge is string, or it's numeric with no derivable scale, it comes back with
+`n_labelled: 0` and a `reason_omitted` naming which — read that out, don't report an
+accuracy number. When it *is* populated, lead with the accuracy and, specifically, the
+accuracy on rows the judge was **stable** on — but check `by_band.stable`'s coverage
+first: only once it covers at least 10 rows and at least 90% of that band does the
+line earn *"the consistently-wrong blind spot, measured"*, and only then say *"and on
+the 20 it was completely steady about, it was right on all 20 — so this isn't
+consistent-but-wrong, it's consistent-and-right."* Below that floor `metrics.py`
+captions the same line "partial view — do not conclude 'consistent-and-right' from
+this", and say exactly that instead of the stronger claim. If the accuracy itself
+reads *"steady on 20, right on 12"* — whatever the coverage — say that just as
+plainly: the judge is reliably wrong, and no amount of rewriting for consistency will
+help.
 
 `wrong_vs_reference` rows enter the queue as their own class — stable, and disagreeing
 with the label. Before any of them drives a rewrite, **ask the user to confirm the
@@ -481,8 +499,10 @@ uv run scripts/create_eval.py --run_dir <run_dir>          # shows the diff, cre
 ```
 The rewrite is guarded: it can't change which fields the judge reads, drop a label, or
 move the scale. The second command **shows** what would change — the guidance it drew
-on, the before/after prompt diff, and whether those guards held. Walk the user through
-it: what changed, and which of their answers drove it.
+on, the before/after prompt diff, and whether those guards held — and `create_eval.py
+--approve` actually enforces all three (variable set, verdict space, preservation),
+refusing to create unless every one passed. Walk the user through it: what changed,
+and which of their answers drove it.
 
 **Only after they say yes:**
 ```
@@ -497,6 +517,21 @@ from. **The original is never touched.** If they say no, stop; nothing is create
 Runs the same examples past the **new** judge and writes `retest_metrics.json`. It
 uses the answers from `grey_zone_policy.json`, falling back to `annotations.json`.
 
+**Ask before including dataset-only labels.**  ⟵ GATE
+If any labelled row's *only* label is `label_source: dataset_reference` — the
+dataset's own `expected_output`, merged in because the human never answered about
+that row — it sits out of the retest by default: someone else's prior judgement
+isn't the user's verdict on this rubric, and including it silently would let
+"agreement" quietly cover rows nobody actually confirmed. Mirror the `--all_rows`
+ask:
+
+> *"3 of the labelled rows are only labelled from the dataset, not something you
+> confirmed directly — include those in the retest too, or leave them out?"*
+
+```
+uv run scripts/retest.py --run_dir <run_dir> --with_dataset_labels
+```
+
 **Two things both have to be true** for this to count as an improvement: the new
 judge has to stop changing its mind, **and** its answers have to match what the user
 said they should be. Steadiness alone is worthless — a judge that's wrong the same
@@ -505,8 +540,10 @@ user, report exactly that; don't call it a win.
 
 **Agreement comes with a `before`.** The original run already judged these same
 rows, so `retest_metrics.json` carries what the *old* judge scored against the same
-labels, for free. Quote both. A new score of 0.78 that passes the 0.7 bar is a
-regression if the old judge was at 0.85, and the pass/fail flag alone won't show it.
+labels, for free. Quote both — and note `agreement.regressed_vs_before` already does
+the arithmetic: a new score of 0.78 that clears the 0.7 bar still forces
+`success: false` if the old judge was at 0.85, so the pass/fail flag on its own is no
+longer blind to a regression the way it used to be.
 
 **Say what the numbers can't be.** `retest_metrics.json` carries a `caveats` list;
 read it out rather than summarising it away. They all point the same way — the result
@@ -514,7 +551,9 @@ is softer than it looks:
 - these rows were chosen for being the *most* unstable, so re-measuring them drifts
   toward the middle on its own. `--baseline_rerun` re-runs the **old** judge over the
   same rows in the same pass, which is the only version of gate (a) that isolates the
-  rewrite. It costs the same again — offer it, don't assume it;
+  rewrite — `instability.selection_bias_controlled` in `retest_metrics.json` says
+  outright whether *this* run did that, rather than leaving it implied by whether the
+  flag was passed. It costs the same again — offer it, don't assume it;
 - the same examples produced the rewrite guidance *and* the labels that score it.
   There's no holdout, so the agreement number is an upper bound;
 - any label the user didn't confirm at step 6 is your reading of their rule, not
@@ -527,18 +566,26 @@ is softer than it looks:
 
 **Free-text judges need you to score gate (b).** `==` is the wrong comparison for
 free text, so on a string evaluator the retest writes `string_pairs.json` and stops.
-Each entry carries the human's answer, the new judge's answer, and the old judge's,
-plus the grey-zone rules the user settled. Decide **match / no-match against that
-rule** — same meaning, not same wording — write `string_verdicts.json` with a
-`match_new` (and `match_original`, which gets you the `before` number for free) per
-`source_index`, then re-run the same command. Cover every example: a partial file is
-refused rather than scored as if it covered the set.
+Each entry carries the human's target value plus the new and old judges' answers,
+anonymised and shuffled per entry as `answer_a`/`answer_b` — the reader is never told
+which judge wrote which, so knowing the rewrite is under test can't nudge the read —
+alongside the grey-zone rules the user settled; `string_pairs_key.json` records the
+shuffle so it can be reversed after the read. Decide **match / no-match against that
+rule** — same meaning, not same wording — write `string_verdicts.json` with
+`match_a`/`match_b` (not `match_new`/`match_original` — those come from unblinding
+afterward) per `source_index`, plus the `pairs_fingerprint` copied verbatim from
+`string_pairs.json` (a stale verdicts file from an earlier rewrite is refused, not
+silently scored), then re-run the same command. Cover every example: a partial file
+is refused rather than scored as if it covered the set.
 
 Two things to say out loud when you report it. You are judging work you just wrote,
 so gate (b) here is a sanity check, not evidence — read a sample back to the user and
-mark those `"scored_by": "human_confirmed"` once they agree. And gate (a) is
-unaffected: exact-match self-consistency is a valid stability test even though it is
-an invalid correctness test, which is the whole reason the two are split.
+mark those `"scored_by": "human_confirmed"` once they agree (`"conductor"` is the
+other allowed value, and the default; anything else is refused). And gate (a) is
+unaffected: string self-consistency is exact-match over canonical text — paraphrased
+same-meaning answers count as disagreement, so treat it as an upper bound — and that's
+still a valid *stability* test even though `==` is an invalid *correctness* test,
+which is the whole reason the two are split.
 
 **Check what happened outside the grey zone — and ask how wide to check.**  ⟵ GATE
 The examples you worked on are *supposed* to change. The question a new evaluator
@@ -577,15 +624,18 @@ everything, if they want a run-wide re-measure.)
 
 Repeats and temperature **default to whatever the step-3 run actually used**, read
 back from `metrics.json`, so the comparison is like-for-like without anyone having to
-remember. Overriding to a *lower* repeat count marks the comparison not comparable
-(fewer samples under-estimate instability, which reads as a win), and gate (a) fails
-rather than claiming one.
+remember. Overriding to a *lower* repeat count, or to a *different* temperature,
+marks the comparison not comparable — fewer samples under-estimate instability, and a
+different temperature changes how often the judge flips in the first place, so either
+reads as a win it didn't earn — and gate (a) fails rather than claiming one.
 ```
 uv run scripts/retest.py --run_dir <run_dir>
 uv run scripts/retest.py --run_dir <run_dir> --baseline_rerun --with_low_flip
 ```
-(`--tol` is how close a score has to be to count as agreeing, default 0.5 on the raw
-scale; `--num_samples` caps the rows, for a smoke test — it narrows both sides of the
+(`--tol` is how close a score has to be to count as agreeing; it resolves, in order, a
+uniform grey-zone policy band → `numeric_tol` → `numeric_tol_fraction` × the declared
+scale, falling back to an absolute 0.5 when no scale is declared — see Configuration.
+`--num_samples` caps the rows, for a smoke test — it narrows both sides of the
 comparison, so the before/after stays over the same rows.)
 
 **Quote the cost before running it**, there's no estimator for this step: it's
@@ -616,7 +666,7 @@ Tell them, in plain terms:
 
 | Key | Default | What it does |
 |---|---|---|
-| `retest_min_accuracy` | 0.7 | boolean + categorical: minimum exact-match rate for gate (b) |
+| `retest_min_accuracy` | 0.7 | boolean + categorical: minimum exact-match rate for gate (b); string: minimum rate over the reader's match/no-match decisions |
 | `retest_min_tpr` / `retest_min_tnr` | 0.7 | boolean only; each is skipped when the labels hold no positives / no negatives |
 | `retest_min_within_tol` | 0.7 | numeric: minimum share of points inside the band |
 | `numeric_tol` | blank → derived | the numeric agreement band in the judge's own units. **One key**, shared by the retest gate, the recommend step's disagreement extraction, and the cross-model probe |
@@ -684,33 +734,39 @@ resolve to the config value shown; overriding a flag beats `config.toml`.
 
 | Script | Overridable flags (default) |
 |---|---|
-| `fetch_evaluator.py` | `--evaluator_id` (req/config), `--with_traces` (**False** — the input source is step 1a's question; pass it to scan in the same command), `--trace_limit` (200, with `--with_traces`), `--judge_model` (slug override when the config id can't be resolved) |
+| `fetch_evaluator.py` | `--evaluator_id` (req/config), `--with_traces` (**False** — the input source is step 1a's question; pass it to scan in the same command), `--trace_limit` (200, with `--with_traces`), `--judge_model` (slug override when the config id can't be resolved), `--scale_min` / `--scale_max` (numeric evaluators only; override-only, both-or-neither — leave blank and numeric rows report `unmeasurable` until set) |
 | `fetch_traces.py` | `--trace_limit` (200), `--replace` (False — required to overwrite rows another input source appended, since the scan rewrites `traces.jsonl` wholesale), `--force` / `--dedup` |
 | `estimate_cost.py` | `--n_repeats` (cfg 8), `--num_samples` (cfg -1 = all) |
-| `stability.py` | `--num_samples` (cfg -1), `--n_repeats` (cfg 8), `--max_concurrency` (cfg 8), `--temperature` (cfg 1), `--metrics` (True; skip with `--metrics False` — **not** `--no-metrics`, which fire rejects *after* the run completes, making a finished run look failed) |
+| `stability.py` | `--num_samples` (cfg -1), `--n_repeats` (cfg 8), `--max_concurrency` (cfg 8), `--temperature` (cfg 1), `--metrics` (True; skip with `--metrics False` — **not** `--no-metrics`, which fire rejects *after* the run completes, making a finished run look failed), `--include_degraded` (False — keep degraded/hollow rows instead of skipping them) |
 | `metrics.py` | — (run_dir/config only) |
 | `build_queue.py` | `--count` (-1 = all), `--low_flip_sample_size` (cfg 5). Also projects the step-6 context budget into `queue.json` `meta.grey_zone_projection` |
 | `dataset_inputs.py list` | `--limit` (100) |
 | `dataset_inputs.py pull` | `--dataset_id` (req), `--limit` (200), `--map "<var>=<source>"` (repeatable; sources: `inputs.<key>`, `messages.<role>.last\|first`, `messages.all`, `expected_output`) |
 | `seed_inputs.py convert` | — (run_dir/config only) |
 | `seed_inputs.py save` | `--dataset_name` (new) OR `--dataset_id` (append) |
-| `cross_model.py` | `--model` (req; 2nd judge slug), `--num_samples`, `--n_repeats`, `--tol` (0.5) |
+| `cross_model.py` | `--model` (req; 2nd judge slug), `--num_samples`, `--n_repeats`, `--tol` (resolves `numeric_tol` → `numeric_tol_fraction` × the declared scale → 0.5 fallback; no grey-zone policy exists yet at this stage) |
 | `grey_zone.py assemble` | `--top_k` (cfg `grey_zone_top_k`; -1 = all, 0 = none), `--max_chars` (cfg `grey_zone_max_chars`; 600 — per-example input budget, fair-shared across `{{variables}}`), `--max_tokens` (cfg `grey_zone_max_tokens`; 60000 — payload ceiling, clamps to the fitting prefix), `--include_low_flip` (False — bring the stable spot-check rows into the payload too) |
 | `grey_zone.py apply` | — (run_dir/config only) |
 | `serve_annotation.py` | `--port` (8765) — the interactive UI fallback |
 | `recommend.py` | `--backend`, `--backend_model`, `--backend_base_url` (each: flag → config → env → default) |
 | `aggregate.py` | — |
 | `rewrite_eval.py` | `--max_attempts` (3), `--backend`, `--backend_model`, `--backend_base_url` |
-| `create_eval.py` | `--approve` (False), `--edits <file>` (None), `--force` (False; bypass create-side guards, e.g. non-routable judge slug) |
-| `retest.py` | `--n_repeats` / `--temperature` (default: whatever the step-3 run used), `--num_samples` (cap rows, smoke test — narrows both sides of the comparison), `--tol` (numeric within-tolerance band; default derived from the declared scale, see Configuration), `--all_rows` (False — by default only the **labelled** rows are re-judged), `--with_low_flip` (False — also re-judge the stable spot-check rows as a regression check), `--baseline_rerun` (False — re-run the OLD judge over the same rows for a true A/B; doubles the cost) |
+| `create_eval.py` | `--approve` (False), `--edits <file>` (None), `--force` (False; bypasses the variable-set AND verdict-space/preservation checks — unsafe; there is no judge-slug guard) |
+| `retest.py` | `--n_repeats` / `--temperature` (default: whatever the step-3 run used — a lower `--n_repeats` or a different `--temperature` marks the comparison not comparable), `--num_samples` (cap rows, smoke test — narrows both sides of the comparison), `--tol` (numeric within-tolerance band; resolves policy band → `numeric_tol` → `numeric_tol_fraction` × scale → 0.5, see Configuration), `--all_rows` (False — by default only the **labelled** rows are re-judged), `--with_dataset_labels` (False — also re-judge rows whose only label is `dataset_reference`), `--with_low_flip` (False — also re-judge the stable spot-check rows as a regression check), `--baseline_rerun` (False — re-run the OLD judge over the same rows for a true A/B; doubles the cost) |
 
 ## Run directory contract
-Every artifact lives in `runs/<key>_<ts>_<model>_<N>dp/`: `evaluator.json` (with
-`output_type` + `categorical_labels`/`scale`), `traces.jsonl`, `scan.json` (what the
-trace scan covered, and whether it hit its cap), `stability.json` (rows carry
-`reference` when the source supplied ground truth), `metrics.json` (+ a `correctness`
-block when labels were present), `queue.json` (each confuser carries its
-`verdict_space` + a `reason` of instability/cross_model/wrong_vs_reference/low_flip),
+Every artifact lives in one run directory, born `runs/<key>_<ts>/` at step 1 and
+renamed to `runs/<key>_<ts>_<model>_<N>dp/` only once a trace scan (step 1a option 1)
+has resolved the judge model and datapoint count — a run built entirely from a
+dataset, bring-your-own, or generated examples never gets that suffix, so always pass
+the **printed** path rather than assuming the renamed form. It holds: `evaluator.json`
+(with `output_type` + `categorical_labels`/`scale`), `traces.jsonl`, `scan.json` (what
+the trace scan covered, and whether it hit its cap), `hollow_debug.json` (a sample of
+the raw span shape, written only when the hollow ratio trips the abort — the
+extraction shape-gap diagnostic), `stability.json` (rows carry `reference` when the
+source supplied ground truth), `metrics.json` (+ a `correctness` block when labels
+were present), `queue.json` (each confuser carries its `verdict_space` + a `reason` of
+instability/cross_model/wrong_vs_reference/low_flip),
 `dataset_inventory.json` + `input_mapping.json` (what a dataset held and how its
 fields were mapped, written only when rows were skipped or `--map` was used),
 `synthetic_datapoints.json`
@@ -720,8 +776,10 @@ a starved run was seeded, `grey_zone_payload.json` (the conductor's bounded conf
 labels with their `label_source` — the default feedback artifact),
 `annotations.json` (typed values — the UI fallback), `recommendations.json`,
 `aggregated.md` + `aggregated.json`, `new_prompt.md`, `rewrite_status.json`,
-`approval.json`, `new_evaluator.json`, `retest_metrics.json`, `string_pairs.json` +
-`string_verdicts.json` (free-text judges only — the pairs handed to a reader and the
+`approval.json` (records `forced_checks` — which create-side guards `--force`
+overrode, empty when none did), `new_evaluator.json`, `retest_metrics.json`,
+`string_pairs.json` + `string_pairs_key.json` + `string_verdicts.json` (free-text
+judges only — the blinded pairs handed to a reader, the shuffle key, and the
 match/no-match decisions handed back), and the retest's own
 sub-runs `retest/` (+ `retest_baseline/` with `--baseline_rerun`), each holding the
 filtered `traces.jsonl` and the `index_map.json` that pairs its positional

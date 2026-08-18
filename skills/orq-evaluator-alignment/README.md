@@ -49,8 +49,11 @@ as late and as narrowly as possible:
 ## Pipeline at a glance
 
 Step numbers are the conductor steps in `SKILL.md`. Every artifact lives in one
-run directory `runs/<key>_<ts>_<model>_<N>dp/`; any step is re-runnable in
-isolation against an existing run directory.
+run directory, born `runs/<key>_<ts>/` at step 1 and renamed to
+`runs/<key>_<ts>_<model>_<N>dp/` only once a trace scan (step 1a option 1) has
+resolved the judge model and datapoint count — a run built entirely from a
+dataset, bring-your-own, or generated examples never gets that suffix. Any step
+is re-runnable in isolation against an existing run directory.
 
 | Step | Script | Reads | Writes |
 |---|---|---|---|
@@ -59,13 +62,13 @@ isolation against an existing run directory.
 | 1a | `fetch_traces.py` | `evaluator.json` | `traces.jsonl` + `scan.json` — **input source 1**, production traces (overwrites; run it first) |
 | 1a | `dataset_inputs.py list\|pull` | orq dataset | **input source 2** — appends to `traces.jsonl` |
 | 1a | `seed_inputs.py convert\|save` | datapoints | **input sources 3 + 4** (bring your own / generated) — appends; `save` writes back to orq |
-| 1a | `cross_model.py` | `traces.jsonl` | `cross_model.json` — second-judge disagreers, for a flat profile |
 | 2 | `estimate_cost.py` | `traces.jsonl` | _(prints call + token projection; gate)_ |
 | 3 | `stability.py` | `traces.jsonl`, `evaluator.json` | `stability.json` (carries `reference` when the source had ground truth) |
 | 4 | `metrics.py` | `stability.json` | `metrics.json` (auto-run by `stability.py`) — instability, plus a `correctness` block when rows carried labels |
+| 4 | `cross_model.py` | `stability.json` (+ `traces.jsonl`) | `cross_model.json` — second-judge disagreers; a step-4 remedy for a judge that never wavers, not an input source |
 | 5 | `build_queue.py` | `metrics.json` | `queue.json` — confusers by `reason`: instability / cross_model / wrong_vs_reference |
 | 6 | `grey_zone.py assemble` | `queue.json` | `grey_zone_payload.json` — the bounded confuser payload |
-| 6 | `grey_zone.py apply` | `grey_zone_policy.json` | per-point labels from the user's answers |
+| 6 | `grey_zone.py apply` | `grey_zone_policy.json` (already carries the per-point labels) | `aggregated.md` — rewrite guidance |
 | 6 | `serve_annotation.py` | `queue.json` | `annotations.json` — the per-row UI fallback |
 | 6 | `recommend.py` | labels, `stability.json`, `evaluator.json` | `recommendations.json` |
 | 6 | `aggregate.py` | `recommendations.json` | `aggregated.md` + `aggregated.json` |
@@ -79,12 +82,16 @@ isolation against an existing run directory.
 cd skills/orq-evaluator-alignment
 
 uv run scripts/fetch_evaluator.py --evaluator_id <id>          # the judge only; prints the run dir
-RUN=runs/<key>_<ts>_<model>_<N>dp
+RUN=runs/<key>_<ts>                                             # printed path — not renamed yet
 # Then pick an input source (ask the user — there is no default). Traces:
 uv run scripts/fetch_traces.py     --run_dir $RUN                      # 200 most recent
 uv run scripts/fetch_traces.py     --run_dir $RUN --trace_limit 2000   # deeper
+# fetch_traces renames the dir to embed the model + datapoint count once both are
+# known — re-capture the PRINTED path before the next command:
+RUN=runs/<key>_<ts>_<model>_<N>dp
 # …or an orq dataset / your own examples / generated ones — see step 1a. Those
-# append, the scan overwrites, so run the scan first if you are combining them.
+# append and never rename the dir (it stays runs/<key>_<ts>/), so run the trace
+# scan first if you are combining sources.
 uv run scripts/estimate_cost.py    --run_dir $RUN              # cost gate
 uv run scripts/stability.py        --run_dir $RUN --num_samples 2      # smoke
 uv run scripts/stability.py        --run_dir $RUN              # full run (+metrics)

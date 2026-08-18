@@ -166,7 +166,7 @@ def main(
             ``mistral-large-latest``). Use this when the evaluator's config
             model can't be resolved to a routable slug AND production spans
             don't record one — otherwise ``judge_model`` stays an opaque id and
-            step 4 (stability) can't route the judge. See "Judge-model
+            step 3 (stability) can't route the judge. See "Judge-model
             resolution" below. Normally unnecessary: the config UUID is resolved
             automatically via GET /v2/models.
 
@@ -184,7 +184,7 @@ def main(
         ``gen_ai.request.model`` (common — evaluator spans record the judge's
         input/output but not always the resolved model). In that case rerun with
         ``--judge_model <slug>``, or set ``evaluator.json["judge_model"]`` to a
-        real slug before step 4.
+        real slug before step 3.
 
     Returns:
         The run directory path (printed for the conductor / next step).

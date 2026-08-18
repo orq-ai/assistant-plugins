@@ -5,13 +5,27 @@
 # ── Step 1: evaluator under audit ────────────────────────────────────────────
 # orq evaluator id (24-hex). Set on the CLI with `--evaluator_id <id>` or here.
 evaluator_id = ""
+# Numeric evaluators carry NO scale in their orq record: fetch_evaluator.py needs
+# BOTH scale_min and scale_max (override-only, both-or-neither — one without the
+# other is a hard error) to normalize instability and the retest tolerance band.
+# Leave both KEYS ABSENT (not `""` — unlike numeric_tol below, a present-but-empty
+# value is not treated as blank here and will fail to parse as a float) and numeric
+# rows report `unmeasurable` until set. Also settable per run via
+# --scale_min/--scale_max. Uncomment both together to set a workspace default:
+# scale_min = 1
+# scale_max = 5
 
-# ── Step 1 (cont.): trace retrieval (v3oql + v3spans) ───────────────────────
+# ── Step 1a: trace retrieval (v3oql + v3spans) ───────────────────────────────
 # Epoch-ms window for the v3oql query. 0 = unbounded on that side.
 trace_start_date = 0
 trace_end_date = 0
 # Max traces to pull (paginated by the client). Caps the candidate pool.
 trace_limit = 200
+# Abort threshold (fetch_traces.py): if span-detail failures + empty-extraction
+# rows exceed this fraction of the scan, the fetch aborts rather than persisting
+# mostly-hollow datapoints that would then read as perfectly stable. --force
+# discounts only the auth/rate-limit (span-detail-failure) share of it.
+hollow_abort_ratio = 0.2
 
 # ── Step 3: stability run (evaluatorq, repetitions=N) ────────────────────────
 # Repeated judge invocations per datapoint. The whole flip analysis rests on
@@ -106,7 +120,7 @@ recommend_concurrency = 4
 # The retest calls a rewrite a success only when BOTH signals hold: instability
 # dropped AND the new verdicts agree with the human labels. These are signal (b)'s
 # bars — the type-native minimum agreement. Raising them makes the retest stricter.
-retest_min_accuracy = 0.7      # boolean + categorical: overall exact-match rate
+retest_min_accuracy = 0.7      # boolean + categorical + string: overall accuracy (string: reader's match/no-match rate)
 retest_min_tpr = 0.7           # boolean only; skipped when no human label is True
 retest_min_tnr = 0.7           # boolean only; skipped when no human label is False
 retest_min_within_tol = 0.7    # numeric: share of points inside the band below
