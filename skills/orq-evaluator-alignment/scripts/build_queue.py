@@ -278,11 +278,9 @@ def main(
     verdict_space = _verdict_space(output_type, labels, scale)
 
     flipped = [e for e in per_row if _is_confuser(e)]  # already most-unstable-first
-    # -1 (or any negative) = all; count >= 0 = take exactly that many (0 → none, so
-    # the queue is the low-flip sanity sample only). `if count and count > 0` used to
-    # fold 0 into "all", an undocumented trap.
-    if count >= 0:
-        flipped = flipped[:count]
+    # Uncapped: cross-model/wrong-vs-reference dedup and the "no confusers" check
+    # both need the FULL flipped set, not whatever --count later keeps. The cap
+    # applies once, to the combined confuser list, below.
     flipped_idx = {e.get('source_index') for e in flipped}
 
     # Cross-model disagreers (§11.3 opt 4): datapoints two models split on are
@@ -309,6 +307,14 @@ def main(
         + [(e, 'cross_model') for e in cross_only]
         + [(e, 'wrong_vs_reference') for e in wrong_only]
     )
+    # -1 (or any negative) = all; count >= 0 = take exactly that many (0 → none, so
+    # the queue is the low-flip sanity sample only). Caps the WHOLE confuser list
+    # (flipped, then cross-model, then wrong-vs-reference — the cap trims the
+    # tail), not just `flipped`, so a large wrong-vs-reference tail can't sneak
+    # past a user-chosen count.
+    if count >= 0:
+        confusers = confusers[:count]
+
     # Correct / wrong / unlabelled, per row, from the correctness block metrics
     # already computed — so the queue never re-derives what "wrong" means.
     correctness = metrics.get('correctness') or {}
@@ -327,7 +333,10 @@ def main(
         for i, (e, reason) in enumerate(confusers)
     ]
 
-    low_pool = [e for e in per_row if _is_low_instability(e)]
+    # Never re-offer a row already queued as a confuser (any reason) as a
+    # low-flip sanity item too — one row, one queue entry.
+    queued_idx = flipped_idx | cross_idx | wrong_idx
+    low_pool = [e for e in per_row if _is_low_instability(e) and e.get('source_index') not in queued_idx]
     sampled_low: list[dict[str, Any]] = []
     if low_n > 0 and low_pool:
         rng = random.Random(seed)
@@ -335,9 +344,17 @@ def main(
         start = len(items)
         items.extend(
             _display_item(start + i + 1, e, True, template, verdict_space,
-                          inputs_by_idx.get(e.get('source_index'), {}), 'low_flip')
+                          inputs_by_idx.get(e.get('source_index'), {}), 'low_flip',
+                          _correct(e.get('source_index')))
             for i, e in enumerate(sampled_low)
         )
+
+    # What actually entered the queue post-cap, per reason — not the uncapped
+    # source lists, so these agree with `len(items)` even when --count trimmed
+    # the confuser list.
+    n_flipped_in_queue = sum(1 for _, reason in confusers if reason == 'instability')
+    n_cross_in_queue = sum(1 for _, reason in confusers if reason == 'cross_model')
+    n_wrong_in_queue = sum(1 for _, reason in confusers if reason == 'wrong_vs_reference')
 
     queue = {
         'meta': {
@@ -350,8 +367,9 @@ def main(
             'traces_fingerprint': _traces_fingerprint(out_dir, metrics),
             'verdict_space': verdict_space,  # the judge's own verdict space (per type)
             'eval_prompt': template,  # shown in the UI for context on how variables are used
-            'n_flipped_items': len(flipped),
-            'n_cross_model': len(cross_only),
+            'n_flipped_items': n_flipped_in_queue,
+            'n_cross_model': n_cross_in_queue,
+            'n_wrong_vs_reference': n_wrong_in_queue,
             'n_low_flip_sample': len(sampled_low),
             'n_items': len(items),
         },
@@ -360,11 +378,14 @@ def main(
     queue['meta']['grey_zone_projection'] = _project_grey_zone(queue, cfg)
     runner.write_json(out_dir / 'queue.json', queue)
     logger.info(
-        f'✓ Wrote {out_dir / "queue.json"}: {len(flipped)} flipped + '
-        f'{len(cross_only)} cross-model + {len(sampled_low)} low-flip sanity items = {len(items)} to annotate'
+        f'✓ Wrote {out_dir / "queue.json"}: {n_flipped_in_queue} flipped + '
+        f'{n_cross_in_queue} cross-model + {n_wrong_in_queue} wrong-vs-reference + '
+        f'{len(sampled_low)} low-flip sanity items = {len(items)} to annotate'
     )
     _log_projection(queue['meta']['grey_zone_projection'], len(items))
-    if not flipped and not cross_only:
+    # Uncapped lists on purpose: whether confusers EXIST is a property of the run,
+    # not of the --count the user happened to pass this time.
+    if not flipped and not cross_only and not wrong_only:
         logger.warning(
             '⚠ No confusers. The judge was unanimous everywhere at this temperature '
             'and no cross-model disagreements were found — the flip queue is empty. '
