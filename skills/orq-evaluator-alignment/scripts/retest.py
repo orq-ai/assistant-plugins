@@ -179,7 +179,9 @@ def _subrun_reusable(
     if prior_index_map != {str(k): v for k, v in index_map.items()}:
         return False
     recorded = runner.read_json(metrics_path).get('metadata', {})
-    return recorded.get('n_repeats') == resolved_n and recorded.get('temperature') == resolved_temp
+    n_ok = recorded.get('n_repeats') == resolved_n
+    temp_ok = resolved_temp is None or recorded.get('temperature') == resolved_temp
+    return n_ok and temp_ok
 
 
 def _select_rows(
@@ -438,7 +440,7 @@ def _build_wanted(
 # `_correctness` already refuses (`reason_omitted`). `main` refuses on it too, before
 # any judging, instead of letting `tol_source: 'uniform'` in the payload describe a
 # band nobody actually chose (MINOR 2).
-_TOL_SOURCES = frozenset({'cli', 'policy_uniform', 'configured', 'scale_derived', 'fallback'})
+_TOL_SOURCES = frozenset({'cli', 'policy_uniform', 'policy_median', 'configured', 'scale_derived', 'fallback'})
 
 
 def _resolve_numeric_tol(
@@ -473,6 +475,9 @@ def _resolve_numeric_tol(
         bands = {lbl.get('tolerance') for lbl in policy.get('labels', []) if lbl.get('tolerance') is not None}
         if len(bands) == 1:
             return float(next(iter(bands))), 'policy_uniform'
+        if bands:
+            median = float(sorted(bands)[len(bands) // 2])
+            return median, 'policy_median'
     configured = cfg.get('numeric_tol')
     if configured not in (None, ''):
         return float(configured), 'configured'
@@ -757,7 +762,13 @@ def _string_matches(
     }
     if any(by_idx.get(i) is None for i in indices):
         return None
-    return [bool(by_idx[i]) for i in indices]
+    def _as_match(v: Any) -> bool:
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            return v.strip().lower() in ('true', 'yes', '1')
+        return bool(v)
+    return [_as_match(by_idx[i]) for i in indices]
 
 
 def _evaluate_agreement(
@@ -853,7 +864,11 @@ def _regression_report(
     Returns None when no row in `indices` was answered by both judges — there is
     nothing to compare, which is reported as absent rather than as zero changes.
     """
-    compared = [i for i in sorted(indices) if i in old_by_idx and i in new_by_idx]
+    compared = [
+        i for i in sorted(indices)
+        if i in old_by_idx and i in new_by_idx
+        and not (old_by_idx[i] is None and new_by_idx[i] is None)
+    ]
     if not compared:
         return None
     changed = [i for i in compared if old_by_idx[i] != new_by_idx[i]]
@@ -1275,13 +1290,26 @@ def main(
 
     agreement_before: dict[str, Any] | None = None
     if old_scoped:
-        before_pairs, before_tols, before_indices = _pair_with_labels(labels, old_scoped)
+        before_pairs_raw, before_tols_raw, before_indices_raw = _pair_with_labels(labels, old_scoped)
+        # Scope the before-side to the SAME rows the after-side covers. Without
+        # this, a new judge that can't answer some rows (None verdict → filtered by
+        # _pair_with_labels) compares its smaller set against the old judge's larger
+        # set — a regression check over two different populations.
+        after_set = set(pair_indices)
+        aligned = [
+            (p, t, i) for p, t, i in zip(before_pairs_raw, before_tols_raw, before_indices_raw)
+            if i in after_set
+        ]
+        if aligned:
+            before_pairs = [a[0] for a in aligned]
+            before_tols = [a[1] for a in aligned]
+            before_indices = [a[2] for a in aligned]
+        else:
+            before_pairs, before_tols, before_indices = [], [], []
         before_matches = (
             _string_matches(string_verdicts, before_indices, 'match_original')
             if string_verdicts else None
         )
-        # A string `before` is optional: the reader may have scored only the new
-        # answers. Omit it rather than fabricate one.
         if before_pairs and not (output_type == 'string' and before_matches is None):
             agreement_before, _ = _evaluate_agreement(
                 before_pairs, output_type, resolved_tol, *bars,

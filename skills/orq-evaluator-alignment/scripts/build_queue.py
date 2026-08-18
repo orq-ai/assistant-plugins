@@ -301,9 +301,10 @@ def main(
         if e.get('source_index') in wrong_idx
         and e.get('source_index') not in flipped_idx
         and e.get('source_index') not in cross_idx
+        and e.get('band') != 'unmeasurable'
     ]
 
-    confusers = (
+    all_confusers = (
         [(e, 'instability') for e in flipped]
         + [(e, 'cross_model') for e in cross_only]
         + [(e, 'wrong_vs_reference') for e in wrong_only]
@@ -313,8 +314,8 @@ def main(
     # (flipped, then cross-model, then wrong-vs-reference — the cap trims the
     # tail), not just `flipped`, so a large wrong-vs-reference tail can't sneak
     # past a user-chosen count.
-    if count >= 0:
-        confusers = confusers[:count]
+    n_dropped_by_count = max(0, len(all_confusers) - count) if count >= 0 else 0
+    confusers = all_confusers[:count] if count >= 0 else all_confusers
 
     # Correct / wrong / unlabelled, per row, from the correctness block metrics
     # already computed — so the queue never re-derives what "wrong" means.
@@ -335,8 +336,11 @@ def main(
     ]
 
     # Never re-offer a row already queued as a confuser (any reason) as a
-    # low-flip sanity item too — one row, one queue entry.
-    queued_idx = flipped_idx | cross_idx | wrong_idx
+    # low-flip sanity item too — one row, one queue entry. Built from the CAPPED
+    # confuser list, not the uncapped source sets — a wrong row trimmed by --count
+    # should remain eligible for the low-flip pool rather than disappearing from
+    # both the queue and the pool with no disclosure.
+    queued_idx = {e.get('source_index') for e, _ in confusers}
     low_pool = [e for e in per_row if _is_low_instability(e) and e.get('source_index') not in queued_idx]
     sampled_low: list[dict[str, Any]] = []
     if low_n > 0 and low_pool:
@@ -371,6 +375,7 @@ def main(
             'n_flipped_items': n_flipped_in_queue,
             'n_cross_model': n_cross_in_queue,
             'n_wrong_vs_reference': n_wrong_in_queue,
+            'n_dropped_by_count': n_dropped_by_count,
             'n_low_flip_sample': len(sampled_low),
             'n_items': len(items),
         },
@@ -384,6 +389,11 @@ def main(
         f'{len(sampled_low)} low-flip sanity items = {len(items)} to annotate'
     )
     _log_projection(queue['meta']['grey_zone_projection'], len(items))
+    if n_dropped_by_count:
+        logger.info(
+            f'  --count {count} trimmed {n_dropped_by_count} confuser(s) from the tail; '
+            'rows trimmed by --count remain eligible for the low-flip pool.'
+        )
     # Uncapped lists on purpose: whether confusers EXIST is a property of the run,
     # not of the --count the user happened to pass this time.
     if not flipped and not cross_only and not wrong_only:

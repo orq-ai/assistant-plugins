@@ -127,7 +127,7 @@ def test_meta_prompt_renders_with_context():
 def test_guard_passes_on_clean_boolean_rewrite():
     ev = {'output_type': 'boolean', 'categorical_labels': [], 'scale': None, 'variables': ['log.output']}
     proposed = 'Judge harder. Return True if abusive, False otherwise. <output>{{log.output}}</output>'
-    ok, reason = rw.check_preservation(ev, proposed)
+    ok, reason, _fc = rw.check_preservation(ev, proposed)
     assert ok, reason
 
 
@@ -140,7 +140,7 @@ def test_guard_rejects_dropped_categorical_label():
     }
     # "spam" dropped from the rubric.
     proposed = 'Classify as safe or abuse. <output>{{log.output}}</output>'
-    ok, reason = rw.check_preservation(ev, proposed)
+    ok, reason, _fc = rw.check_preservation(ev, proposed)
     assert not ok
     assert 'spam' in reason
 
@@ -154,7 +154,7 @@ def test_guard_rejects_moved_numeric_scale():
     }
     # Rescaled to 1-10: the max moved.
     proposed = 'Rate safety 1-10. <output>{{log.output}}</output>'
-    ok, reason = rw.check_preservation(ev, proposed)
+    ok, reason, _fc = rw.check_preservation(ev, proposed)
     assert not ok
     assert '5' in reason  # the missing declared endpoint is named
 
@@ -170,7 +170,7 @@ def test_guard_passes_when_numeric_scale_endpoints_kept():
         'Rate how safe on a 1 to 5 scale (1 = clearly unsafe, 3 = borderline, '
         '5 = clearly safe). <output>{{log.output}}</output>'
     )
-    ok, reason = rw.check_preservation(ev, proposed)
+    ok, reason, _fc = rw.check_preservation(ev, proposed)
     assert ok, reason
 
 
@@ -179,7 +179,7 @@ def test_guard_still_enforces_variable_set():
     # {{log.input}} dropped -> variable-set check must fail even though the
     # (boolean) verdict space is otherwise fine.
     proposed = 'Return True or False. <output>{{log.output}}</output>'
-    ok, reason = rw.check_preservation(ev, proposed)
+    ok, reason, _fc = rw.check_preservation(ev, proposed)
     assert not ok
     assert 'log.input' in reason
 
@@ -187,7 +187,7 @@ def test_guard_still_enforces_variable_set():
 def test_guard_rejects_added_variable():
     ev = {'output_type': 'boolean', 'categorical_labels': [], 'scale': None, 'variables': ['log.output']}
     proposed = 'Return True or False. <extra>{{sneaky}}</extra> <output>{{log.output}}</output>'
-    ok, reason = rw.check_preservation(ev, proposed)
+    ok, reason, _fc = rw.check_preservation(ev, proposed)
     assert not ok
     assert 'sneaky' in reason
 
@@ -197,7 +197,7 @@ def test_guard_numeric_no_scale_skips_scale_check():
     # set is enforced — a rewrite must not be blocked for a scale it never had.
     ev = {'output_type': 'number', 'categorical_labels': [], 'scale': None, 'variables': ['log.output']}
     proposed = 'Rate safety on the same scale as before. <output>{{log.output}}</output>'
-    ok, reason = rw.check_preservation(ev, proposed)
+    ok, reason, _fc = rw.check_preservation(ev, proposed)
     assert ok, reason
 
 
@@ -210,7 +210,7 @@ def test_moved_scale_is_rejected_even_though_the_digits_still_appear():
     # passed on a verdict space that had, in fact, moved.
     ev = {'variables': ['log.output'], 'output_type': 'number', 'scale': [1, 5]}
     proposed = 'Score {{log.output}} from 1 to 10. Use 10 for a perfect answer.'
-    ok, reason = rw.check_preservation(ev, proposed)
+    ok, reason, _fc = rw.check_preservation(ev, proposed)
     assert ok is False
     assert 'MOVED the numeric scale' in reason
 
@@ -219,14 +219,14 @@ def test_scale_endpoint_inside_a_longer_number_does_not_count():
     ev = {'variables': ['log.output'], 'output_type': 'number', 'scale': [1, 5]}
     # '5' appears only as part of '15' and '0.5'.
     proposed = 'Score {{log.output}} from 1 to 15, and treat 0.5 increments as invalid.'
-    ok, _reason = rw.check_preservation(ev, proposed)
+    ok, _reason, _fc = rw.check_preservation(ev, proposed)
     assert ok is False
 
 
 def test_unmoved_scale_still_passes():
     ev = {'variables': ['log.output'], 'output_type': 'number', 'scale': [1, 5]}
     proposed = 'Score {{log.output}} on a 1 to 5 scale, where 5 is fully grounded.'
-    ok, reason = rw.check_preservation(ev, proposed)
+    ok, reason, _fc = rw.check_preservation(ev, proposed)
     assert ok is True
     assert reason == ''
 
@@ -237,7 +237,7 @@ def test_dropped_label_is_rejected_when_only_a_longer_word_contains_it():
     ev = {'variables': ['log.output'], 'output_type': 'categorical',
           'categorical_labels': ['safe', 'spam']}
     proposed = 'Classify {{log.output}} as safe, or flag spammy content as promotional.'
-    ok, reason = rw.check_preservation(ev, proposed)
+    ok, reason, _fc = rw.check_preservation(ev, proposed)
     assert ok is False
     assert 'spam' in reason
 
@@ -246,7 +246,7 @@ def test_label_with_punctuation_still_matches_itself():
     ev = {'variables': ['log.output'], 'output_type': 'categorical',
           'categorical_labels': ['abuse (severe)', 'safe']}
     proposed = 'Classify {{log.output}} as abuse (severe) or safe.'
-    ok, _reason = rw.check_preservation(ev, proposed)
+    ok, _reason, _fc = rw.check_preservation(ev, proposed)
     assert ok is True
 
 
@@ -276,9 +276,9 @@ def test_string_preservation_still_enforces_the_variable_set():
     # The one guard that DOES apply to string: a rewrite that drops {{log.output}}
     # leaves a judge scoring nothing.
     ev = {'output_type': 'string', 'variables': ['log.output'], 'categorical_labels': [], 'scale': None}
-    ok, _reason = rw.check_preservation(ev, 'Summarise the answer: {{log.output}}')
+    ok, _reason, _fc = rw.check_preservation(ev, 'Summarise the answer: {{log.output}}')
     assert ok is True
-    ok, reason = rw.check_preservation(ev, 'Summarise the answer.')
+    ok, reason, _fc = rw.check_preservation(ev, 'Summarise the answer.')
     assert ok is False
     assert 'log.output' in reason
 

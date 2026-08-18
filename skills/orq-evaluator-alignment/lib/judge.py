@@ -296,19 +296,27 @@ _SCALE_MENTION = re.compile(
 def _verdict_number_token(text: str) -> tuple[str | None, str]:
     """The numeric token a free-text judge emitted as its verdict.
 
-    Reads the verdict the way `parse_categorical` does — `_freetext_candidate`,
-    i.e. after the last `Value:`/`Score:` label or on the last non-empty line —
-    rather than taking the first number anywhere in the completion.
-    `'On a scale of 1 to 5, I give this a 4'` used to parse as **1.0** with status
-    `ok`: inside the declared scale, so nothing downstream re-checked it, and the
-    wrong score entered `mean`, `stdev` and the instability band.
+    Checks three sources in priority order:
 
-    Scale mentions are scrubbed first, then the remaining token is the verdict.
-    Returns ``(token, reason)``; on failure `token` is None and `reason` says why.
+    1. A bare number on the first non-empty line (score-first pattern).  Judges
+       that emit ``4\nOnly 2 of 3 claims supported.`` put the verdict on line 1
+       and the explanation below.  Without this check, ``_freetext_candidate``
+       picked the last line, ``_SCALE_MENTION`` scrubbed ``of 3``, and the
+       surviving ``2`` was returned as the verdict — silently wrong and inside
+       the declared scale, so nothing downstream caught it.
+    2. ``_freetext_candidate`` — the text after the last ``Value:``/``Score:``
+       label, or the last non-empty line when no label exists.
+    3. The full text as a last resort.
+
+    Scale mentions are scrubbed before reading tokens from sources 2 and 3.
     A verdict line still carrying two different numbers after scrubbing is
     **ambiguous** and surfaced as off-contract — guessing between them is exactly
     how a wrong score gets scored silently.
     """
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if lines and _NUM_TOKEN.fullmatch(lines[0]):
+        return lines[0], ''
+
     for source in (_freetext_candidate(text), text):
         if not source:
             continue

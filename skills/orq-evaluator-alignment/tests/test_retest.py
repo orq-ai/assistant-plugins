@@ -514,6 +514,42 @@ def test_success_is_forced_false_by_a_regression_vs_before(tmp_path, monkeypatch
     assert rm['success'] is False
 
 
+def test_success_is_false_when_instability_did_not_drop(tmp_path, monkeypatch):
+    # Agreement passes, measurement is comparable, but instability did not improve
+    # (original was already 0.0, retest is also 0.0). `success` must be False: both
+    # signals required (AND), not either one (OR).
+    n = 4
+    _seed_full_run(tmp_path, n=n, output_type='boolean')
+    metrics = json.loads((tmp_path / 'metrics.json').read_text(encoding='utf-8'))
+    metrics['scores']['mean_instability'] = 0.0
+    for row in metrics.get('per_row', []):
+        row['instability'] = 0.0
+    _write(tmp_path / 'metrics.json', metrics)
+    _write(tmp_path / 'annotations.json', {str(i): {'value': True, 'reason': ''} for i in range(n)})
+    _stub_stability_main(monkeypatch, lambda row: True, output_type='boolean')
+
+    retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG)
+
+    rm = json.loads((tmp_path / 'retest_metrics.json').read_text(encoding='utf-8'))
+    assert rm['agreement']['passed'] is True
+    assert rm['instability']['dropped'] is False
+    assert rm['success'] is False
+
+
+def test_success_is_false_when_agreement_fails(tmp_path, monkeypatch):
+    n = 4
+    _seed_full_run(tmp_path, n=n, output_type='boolean')
+    _write(tmp_path / 'annotations.json', {str(i): {'value': True, 'reason': ''} for i in range(n)})
+    _stub_stability_main(monkeypatch, lambda row: False, output_type='boolean')
+
+    retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG)
+
+    rm = json.loads((tmp_path / 'retest_metrics.json').read_text(encoding='utf-8'))
+    assert rm['instability']['dropped'] is True
+    assert rm['agreement']['passed'] is False
+    assert rm['success'] is False
+
+
 # --- signal (b)'s gate must respect the `before` score (§2.1) ---
 
 
@@ -623,6 +659,15 @@ def test_regression_report_counts_changed_verdicts():
 
 def test_regression_report_is_none_without_overlap():
     assert retest._regression_report({1: True}, {2: True}, {1, 2}) is None
+
+
+def test_regression_report_excludes_rows_where_both_judges_are_none():
+    report = retest._regression_report(
+        {1: True, 2: None, 3: None}, {1: True, 2: None, 3: False}, {1, 2, 3}
+    )
+    assert report['n_compared'] == 2  # row 2 excluded (both None)
+    assert report['n_changed'] == 1   # row 3: None → False
+    assert report['changed_source_indices'] == [3]
 
 
 def test_low_flip_indices_come_from_the_queue(tmp_path):
@@ -928,6 +973,16 @@ def test_string_matches_is_none_when_a_pair_is_unscored():
 
 def test_string_matches_is_none_on_an_empty_verdicts_file():
     assert retest._string_matches({'verdicts': []}, [3], 'match_new') is None
+
+
+def test_string_matches_coerces_string_false_correctly():
+    verdicts = {'verdicts': [
+        {'source_index': 1, 'match_new': 'false'},
+        {'source_index': 2, 'match_new': 'true'},
+        {'source_index': 3, 'match_new': False},
+    ]}
+    result = retest._string_matches(verdicts, [1, 2, 3], 'match_new')
+    assert result == [False, True, False]
 
 
 def test_string_gate_uses_the_accuracy_bar():

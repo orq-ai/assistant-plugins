@@ -289,19 +289,21 @@ def _mentions_token(text: str, token: str) -> bool:
     return re.search(rf'(?<!\w){re.escape(token)}(?!\w)', text) is not None
 
 
-def check_preservation(evaluator: dict[str, Any], proposed: str) -> tuple[bool, str]:
+def check_preservation(evaluator: dict[str, Any], proposed: str) -> tuple[bool, str, str]:
     """Check a proposed rewrite preserves BOTH the variable set and verdict space.
 
-    Returns ``(ok, reason)``. ``reason`` is empty on success and, on failure,
-    names exactly what broke (a dropped label / moved scale bound / changed
-    variable) so it can be fed straight back to the meta prompt as a fix note.
+    Returns ``(ok, reason, failed_check)``. ``reason`` is empty on success and, on
+    failure, names exactly what broke so it can be fed back to the meta prompt.
+    ``failed_check`` is ``'variables'``, ``'verdict_space'``, or ``''`` — so the
+    caller can name the check that actually failed rather than attributing a
+    variable violation to the verdict space (which was never examined in that case).
     Order: the `{{...}}` variable-set check first (a scored-against-nothing judge
     is the worst failure), then the verdict-space check.
     """
     source_vars = set(evaluator.get('variables') or [])
     got_vars = set(extract_template_variables(proposed))
     if got_vars != source_vars:
-        return False, _var_violation_note(source_vars, got_vars)
+        return False, _var_violation_note(source_vars, got_vars), 'variables'
 
     output_type = (evaluator.get('output_type') or '').strip().lower()
     if output_type == 'categorical':
@@ -312,7 +314,7 @@ def check_preservation(evaluator: dict[str, Any], proposed: str) -> tuple[bool, 
             return False, (
                 f'The rewrite DROPPED declared categorical label(s): {named}. Every declared '
                 f'label must appear in the rubric: {", ".join("`" + lbl + "`" for lbl in labels)}.'
-            )
+            ), 'verdict_space'
     elif output_type in _NUMERIC_TYPES:
         scale = evaluator.get('scale')
         if scale and len(scale) == 2:
@@ -324,9 +326,9 @@ def check_preservation(evaluator: dict[str, Any], proposed: str) -> tuple[bool, 
                 return False, (
                     f'The rewrite MOVED the numeric scale: endpoint(s) {", ".join(missing)} no '
                     f'longer appear. Keep the scale exactly [{_fmt_num(scale[0])}, {_fmt_num(scale[1])}].'
-                )
+                ), 'verdict_space'
 
-    return True, ''
+    return True, '', ''
 
 
 def _var_violation_note(source: set[str], got: set[str]) -> str:
@@ -382,11 +384,12 @@ async def _rewrite(out_dir: Path, cfg: dict[str, Any], max_attempts: int) -> dic
         res = await backend.complete(_user_message(current_instructions, judge_prompt), system=system)
         proposed = res.text.strip()
         total_cost += res.cost_usd
-        ok, reason = check_preservation(evaluator, proposed)
+        ok, reason, failed_check = check_preservation(evaluator, proposed)
         attempts.append(
             {
                 'attempt': attempt,
                 'preservation_ok': ok,
+                'failed_check': failed_check,
                 'got_vars': sorted(extract_template_variables(proposed)),
                 'reason': reason,
             }
@@ -399,10 +402,12 @@ async def _rewrite(out_dir: Path, cfg: dict[str, Any], max_attempts: int) -> dic
         current_instructions = instructions + '\n\n## CRITICAL FIX\n' + reason
 
     got_vars = sorted(extract_template_variables(proposed))
+    var_check_passed = set(got_vars) == set(evaluator.get('variables') or [])
+    verdict_space_ok = ok if failed_check != 'variables' else var_check_passed
     return {
         'proposed_prompt': proposed,
-        'var_check_passed': set(got_vars) == set(evaluator.get('variables') or []),
-        'verdict_space_ok': ok,
+        'var_check_passed': var_check_passed,
+        'verdict_space_ok': verdict_space_ok,
         'preservation_ok': ok,
         'reason': reason,
         'output_type': (evaluator.get('output_type') or '').strip().lower(),

@@ -179,14 +179,16 @@ def _numeric_tol(cfg: dict[str, Any], scale: tuple[float, float] | None) -> floa
 def _reference_matches(
     reference: Any, verdict: Any, output_type: str, tol: float,
     categorical_labels: list[str] | None = None,
+    scale: tuple[float, float] | None = None,
 ) -> bool | None:
     """Whether a judge verdict matches a ground-truth label, type-natively.
 
     Returns None when the label cannot be read into the judge's verdict space —
     excluded from the count and warned about once, never coerced into a False that
     would read as the judge being wrong. For categorical this includes a reference
-    that is not one of the judge's own declared labels: comparing it anyway would
-    score the dataset's vocabulary mismatch as the judge being wrong.
+    that is not one of the judge's own declared labels; for numeric, a reference
+    outside the judge's declared scale: a 1–5 dataset label against a 0–1 judge is
+    a scale mismatch, not a wrong answer.
     """
     if verdict is None or reference in (None, ''):
         return None
@@ -200,7 +202,13 @@ def _reference_matches(
         return norm_ref == str(verdict).strip().lower()
     if output_type in _NUMERIC_TYPES:
         try:
-            return abs(float(reference) - float(verdict)) <= tol
+            ref_f = float(reference)
+        except (TypeError, ValueError):
+            return None
+        if scale is not None and not (scale[0] <= ref_f <= scale[1]):
+            return None
+        try:
+            return abs(ref_f - float(verdict)) <= tol
         except (TypeError, ValueError):
             return None
     return None  # string: `==` is the wrong comparison; the conductor reads those
@@ -209,6 +217,7 @@ def _reference_matches(
 def _correctness(
     rows: list[dict[str, Any]], per_row: list[dict[str, Any]], output_type: str, tol: float,
     *, variables: list[str], categorical_labels: list[str], tol_derivable: bool,
+    scale: tuple[float, float] | None = None,
 ) -> dict[str, Any] | None:
     """Accuracy against `reference`, overall and **by instability band**.
 
@@ -268,46 +277,48 @@ def _correctness(
     confusion: Counter = Counter()
     by_band: dict[str, dict[str, int]] = {}
     n_correct = n_labelled = 0
+    n_unmeasurable_labelled = 0
     wrong_indices: list[int] = []
     labelled_indices: list[int] = []
     for row in rows:
         idx = row.get('source_index')
-        match = _reference_matches(row.get('reference'), verdicts.get(idx), output_type, tol, categorical_labels)
+        match = _reference_matches(row.get('reference'), verdicts.get(idx), output_type, tol, categorical_labels, scale)
         if match is None:
             if row.get('reference') not in (None, '') and verdicts.get(idx) is not None:
                 n_unreadable += 1
             continue
-        n_labelled += 1
-        n_correct += int(match)
+        band = bands.get(idx, 'unmeasurable')
+        slot = by_band.setdefault(band, {'n': 0, 'n_correct': 0})
+        slot['n'] += 1
+        slot['n_correct'] += int(match)
         labelled_indices.append(idx)
         if not match:
             wrong_indices.append(idx)
         confusion[f'{row.get("reference")}→{verdicts.get(idx)}'] += 1
-        slot = by_band.setdefault(bands.get(idx, 'unmeasurable'), {'n': 0, 'n_correct': 0})
-        slot['n'] += 1
-        slot['n_correct'] += int(match)
-    if not n_labelled:
+        if band == 'unmeasurable':
+            n_unmeasurable_labelled += 1
+            continue
+        n_labelled += 1
+        n_correct += int(match)
+    if not n_labelled and not n_unmeasurable_labelled:
         return None
     for band_name, slot in by_band.items():
         slot['accuracy'] = slot['n_correct'] / slot['n']
-        # Total rows in this band (labelled or not) — the denominator for how much
-        # of the band the labelled subset actually speaks for (§4.1).
         slot['n_band_total'] = band_totals.get(band_name, slot['n'])
-    return {
+    result: dict[str, Any] = {
         'n_labelled': n_labelled,
         'n_correct': n_correct,
-        'accuracy': n_correct / n_labelled,
+        'accuracy': (n_correct / n_labelled) if n_labelled else None,
         'confusion': dict(confusion),
-        # Never laundered into a human verdict: a dataset label is someone's prior
-        # judgement, possibly stale, possibly from a different rubric version.
         'label_source': 'dataset_reference',
         'by_band': by_band,
         'wrong_source_indices': sorted(wrong_indices),
-        # Which rows carried a readable label at all, so downstream can tell
-        # "judge was right" from "nobody said" without re-deriving the comparison.
         'labelled_source_indices': sorted(labelled_indices),
         'n_unreadable_labels': n_unreadable,
     }
+    if n_unmeasurable_labelled:
+        result['n_unmeasurable_labelled'] = n_unmeasurable_labelled
+    return result
 
 
 def _row_bools(row: dict[str, Any]) -> list[bool]:
@@ -403,10 +414,17 @@ def _correctness_lines(c: dict[str, Any] | None) -> list[str]:
     if not c.get('n_labelled'):
         reason = c.get('reason_omitted')
         return [f'  - correctness vs dataset labels: not measured — {reason}'] if reason else []
+    acc = c['accuracy']
+    acc_str = f'{acc:.0%}' if acc is not None else 'n/a'
     lines = [
         f"  - correctness vs dataset labels: {c['n_correct']}/{c['n_labelled']} "
-        f"({c['accuracy']:.0%}) — labels are `dataset_reference`, not the user's verdict."
+        f"({acc_str}) — labels are `dataset_reference`, not the user's verdict."
     ]
+    if c.get('n_unmeasurable_labelled'):
+        lines.append(
+            f"      ({c['n_unmeasurable_labelled']} labelled rows excluded — "
+            f"reference outside scale range)"
+        )
     stable = c.get('by_band', {}).get('stable')
     if stable:
         n_band_total = stable.get('n_band_total', stable['n'])
@@ -497,7 +515,14 @@ def main(run_dir: str | None = None, config: str = 'config.toml') -> str:
     # Verdict space (output_type / K / scale) is authoritative in evaluator.json;
     # fall back to stability metadata's output_type for older runs.
     ev_path = out_dir / 'evaluator.json'
-    ev = runner.read_json(ev_path) if ev_path.exists() else {}
+    if ev_path.exists():
+        ev = runner.read_json(ev_path)
+    else:
+        ev = {}
+        logger.warning(
+            '⚠ evaluator.json not found — correctness guards (circularity, '
+            'string skip, scale-less numeric) run without evaluator metadata'
+        )
     output_type = (ev.get('output_type') or meta.get('output_type') or 'boolean').strip().lower()
     labels = ev.get('categorical_labels') or []
     k = len(labels) if labels else None
@@ -512,6 +537,7 @@ def main(run_dir: str | None = None, config: str = 'config.toml') -> str:
     correctness = _correctness(
         rows, per_row, output_type, _numeric_tol(cfg, scale),
         variables=ev.get('variables', []), categorical_labels=labels, tol_derivable=tol_derivable,
+        scale=scale,
     )
     if correctness and correctness.get('n_unreadable_labels'):
         logger.warning(
