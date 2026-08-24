@@ -291,13 +291,13 @@ def _correctness(
         slot = by_band.setdefault(band, {'n': 0, 'n_correct': 0})
         slot['n'] += 1
         slot['n_correct'] += int(match)
-        labelled_indices.append(idx)
-        if not match:
-            wrong_indices.append(idx)
         confusion[f'{row.get("reference")}→{verdicts.get(idx)}'] += 1
         if band == 'unmeasurable':
             n_unmeasurable_labelled += 1
             continue
+        labelled_indices.append(idx)
+        if not match:
+            wrong_indices.append(idx)
         n_labelled += 1
         n_correct += int(match)
     if not n_labelled and not n_unmeasurable_labelled:
@@ -423,7 +423,7 @@ def _correctness_lines(c: dict[str, Any] | None) -> list[str]:
     if c.get('n_unmeasurable_labelled'):
         lines.append(
             f"      ({c['n_unmeasurable_labelled']} labelled rows excluded — "
-            f"reference outside scale range)"
+            f"verdict unmeasurable, not in headline)"
         )
     stable = c.get('by_band', {}).get('stable')
     if stable:

@@ -1289,16 +1289,20 @@ def main(
         agreement_scores['scored_by'] = string_verdicts.get('scored_by', 'conductor')
 
     agreement_before: dict[str, Any] | None = None
+    agreement_after_shared: dict[str, Any] | None = None
+    before_after_scope_info: tuple[int, int, int] | None = None
     if old_scoped:
         before_pairs_raw, before_tols_raw, before_indices_raw = _pair_with_labels(labels, old_scoped)
-        # Scope the before-side to the SAME rows the after-side covers. Without
-        # this, a new judge that can't answer some rows (None verdict → filtered by
-        # _pair_with_labels) compares its smaller set against the old judge's larger
-        # set — a regression check over two different populations.
-        after_set = set(pair_indices)
+        # The intersection of rows both sides can score — the only population
+        # where a before/after comparison is like-for-like. A new judge that
+        # answers rows the old one couldn't (the common case for a rewrite that
+        # makes previously unanswerable rows answerable) must not inflate the
+        # after-side of the regression check with those extra rows, and vice
+        # versa for rows the old judge answered but the new one can't.
+        shared = set(pair_indices) & set(before_indices_raw)
         aligned = [
             (p, t, i) for p, t, i in zip(before_pairs_raw, before_tols_raw, before_indices_raw)
-            if i in after_set
+            if i in shared
         ]
         if aligned:
             before_pairs = [a[0] for a in aligned]
@@ -1316,6 +1320,29 @@ def main(
                 tols=before_tols, matches=before_matches,
             )
             agreement_before['n_pairs'] = len(before_pairs)
+        # When the after side covers rows the old judge couldn't answer,
+        # agreement_scores (all after-rows) is over a different population than
+        # agreement_before (shared rows only). Compute the after-side score on
+        # the shared subset so _regressed_vs_before compares like-for-like.
+        if shared and shared != set(pair_indices):
+            aligned_after = [
+                (p, t, i) for p, t, i in zip(pairs, pair_tols, pair_indices)
+                if i in shared
+            ]
+            after_shared_pairs = [a[0] for a in aligned_after]
+            after_shared_tols = [a[1] for a in aligned_after]
+            after_shared_indices = [a[2] for a in aligned_after]
+            after_shared_matches = (
+                _string_matches(string_verdicts, after_shared_indices, 'match_new')
+                if string_verdicts else None
+            )
+            if after_shared_pairs and not (output_type == 'string' and after_shared_matches is None):
+                agreement_after_shared, _ = _evaluate_agreement(
+                    after_shared_pairs, output_type, resolved_tol, *bars,
+                    tols=after_shared_tols, matches=after_shared_matches,
+                )
+                agreement_after_shared['n_pairs'] = len(after_shared_pairs)
+                before_after_scope_info = (len(before_indices_raw), len(pair_indices), len(shared))
 
     # Two regression views over rows nobody labelled. The narrow one is the stable
     # spot-check sample (~5 rows) the queue held back; the wide one is every
@@ -1332,7 +1359,10 @@ def main(
     # §2.1: a passing accuracy bar can still be WORSE than the judge it replaces —
     # `before` is computed above for free, and until now nothing read it. A `None`
     # regression (no before-score) must not block success; only a measured one may.
-    regressed_vs_before = _regressed_vs_before(output_type, agreement_scores, agreement_before)
+    # Use the shared-row after score when the after side covers rows the old judge
+    # couldn't — otherwise the headline over all after-rows is already like-for-like.
+    after_for_regression = agreement_after_shared if agreement_after_shared is not None else agreement_scores
+    regressed_vs_before = _regressed_vs_before(output_type, after_for_regression, agreement_before)
     if regressed_vs_before:
         before_value = agreement_before.get(_primary_metric(output_type))
         after_value = agreement_scores.get(_primary_metric(output_type))
@@ -1396,6 +1426,7 @@ def main(
             **agreement_scores,
             'passed': agreement_passed,
             'before': agreement_before,
+            'after_on_shared_rows': agreement_after_shared,
             'regressed_vs_before': regressed_vs_before,
         },
         'regression_on_stable_rows': regression,
@@ -1415,10 +1446,11 @@ def main(
             agreement_scores.get('scored_by') if output_type == 'string' else None,
             covers_original=covers_original_dataset, n_rejudged=len(scope), n_original=n_total_rows,
             regression_before_after=(
-                (agreement_before.get(_primary_metric(output_type)), agreement_scores.get(_primary_metric(output_type)))
+                (agreement_before.get(_primary_metric(output_type)), after_for_regression.get(_primary_metric(output_type)))
                 if regressed_vs_before else None
             ),
             regression_wide=regression_wide, n_pairs=len(pairs),
+            before_after_scope=before_after_scope_info,
         ),
     }
     runner.write_json(out_dir / 'retest_metrics.json', payload)
@@ -1431,7 +1463,16 @@ def main(
         f'{"DROPPED" if instability_dropped else "NOT dropped"}'
         + ('' if comparable else '  [NOT COMPARABLE: fewer repeats than the original run]')
     )
-    before_txt = f' (before: {agreement_before})' if agreement_before else ' (no before-score available)'
+    if agreement_after_shared is not None and agreement_before:
+        shared_key = _primary_metric(output_type)
+        before_txt = (
+            f' (before: {agreement_before.get(shared_key)} over {agreement_before["n_pairs"]} shared row(s), '
+            f'after on same: {agreement_after_shared.get(shared_key)})'
+        )
+    elif agreement_before:
+        before_txt = f' (before: {agreement_before})'
+    else:
+        before_txt = ' (no before-score available)'
     logger.info(
         f'  (b) agreement ({output_type}, n={len(pairs)}): {agreement_scores}{before_txt} → '
         f'{"PASS" if agreement_passed else "FAIL"}'
@@ -1461,6 +1502,7 @@ def _caveats(
     covers_original: bool = True, n_rejudged: int = 0, n_original: int = 0,
     regression_before_after: tuple[Any, Any] | None = None,
     regression_wide: dict[str, Any] | None = None, n_pairs: int = 0,
+    before_after_scope: tuple[int, int, int] | None = None,
 ) -> list[str]:
     """The limits of the two gates, in the words the conductor should use.
 
@@ -1473,6 +1515,13 @@ def _caveats(
         out.append(
             f'Agreement regressed vs the original judge ({before_v} → {after_v}); success is '
             'forced False even though gate (a) and/or the accuracy bar individually passed.'
+        )
+    if before_after_scope is not None:
+        n_before, n_after, n_shared = before_after_scope
+        out.append(
+            f'The before/after regression check compared {n_shared} shared row(s) '
+            f'(old judge scored {n_before}, new judge scored {n_after}). Rows only one '
+            'side could answer are outside that comparison.'
         )
     if not has_baseline:
         out.append(

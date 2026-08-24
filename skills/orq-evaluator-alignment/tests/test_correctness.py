@@ -258,6 +258,32 @@ def test_numeric_with_derivable_tol_computes_correctness():
     assert 'accuracy' in c
 
 
+# ── unmeasurable rows excluded from headline, wrong_indices, labelled_indices ─
+
+
+def test_unmeasurable_row_excluded_from_wrong_and_labelled_indices():
+    c = metrics._correctness(
+        _rows((0, 'true', True), (1, 'true', False)),
+        _per_row((0, 'stable'), (1, 'unmeasurable')), 'boolean', 0.5, **_NEUTRAL,
+    )
+    assert c['n_labelled'] == 1
+    assert c['n_correct'] == 1
+    assert c['accuracy'] == pytest.approx(1.0)
+    assert c['labelled_source_indices'] == [0]
+    assert c['wrong_source_indices'] == []
+    assert c['n_unmeasurable_labelled'] == 1
+
+
+def test_unmeasurable_row_report_caption_says_unmeasurable():
+    c = metrics._correctness(
+        _rows((0, 'true', True), (1, 'true', False)),
+        _per_row((0, 'stable'), (1, 'unmeasurable')), 'boolean', 0.5, **_NEUTRAL,
+    )
+    lines = '\n'.join(metrics._correctness_lines(c))
+    assert 'unmeasurable' in lines
+    assert 'outside scale range' not in lines
+
+
 # ── §4.1 — by_band coverage + floor before the "blind spot, measured" claim ──
 
 

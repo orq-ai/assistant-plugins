@@ -1218,6 +1218,47 @@ def test_agreement_before_is_scoped_to_the_retested_rows(tmp_path, monkeypatch):
     assert rm['agreement']['before']['n_pairs'] == 1
 
 
+def test_gate_b_regression_uses_shared_rows_in_both_directions(tmp_path, monkeypatch):
+    # Mirror direction: old judge silent on rows 5-11, new judge answers all 12.
+    # The new judge is WORSE on the 5 shared rows (2/5 = 40% vs 3/5 = 60%) but
+    # better overall (9/12 = 75%) because it picks up 7 new rows. Without the
+    # intersection fix, _regressed_vs_before compares 75% vs 60% and reports an
+    # improvement. With the fix, it compares 40% vs 60% on the shared rows and
+    # correctly reports a regression.
+    n = 12
+    _seed_full_run(tmp_path, n=n, output_type='boolean')
+    stab = json.loads((tmp_path / 'stability.json').read_text(encoding='utf-8'))
+    for row in stab['rows']:
+        idx = row['source_index']
+        if idx <= 2:
+            row['aggregate_value'] = True
+        elif idx <= 4:
+            row['aggregate_value'] = False
+        else:
+            row['aggregate_value'] = None
+    _write(tmp_path / 'stability.json', stab)
+    _write(tmp_path / 'annotations.json', {str(i): {'value': True, 'reason': ''} for i in range(n)})
+
+    def verdict_fn(row):
+        idx = int(row['query'][1:])
+        return idx not in (2, 3, 4)
+
+    _stub_stability_main(monkeypatch, verdict_fn, output_type='boolean')
+
+    retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG)
+
+    rm = json.loads((tmp_path / 'retest_metrics.json').read_text(encoding='utf-8'))
+    assert rm['agreement']['accuracy'] == pytest.approx(9 / 12)
+    assert rm['agreement']['before']['n_pairs'] == 5
+    assert rm['agreement']['before']['accuracy'] == pytest.approx(3 / 5)
+    assert rm['agreement']['after_on_shared_rows'] is not None
+    assert rm['agreement']['after_on_shared_rows']['n_pairs'] == 5
+    assert rm['agreement']['after_on_shared_rows']['accuracy'] == pytest.approx(2 / 5)
+    assert rm['agreement']['regressed_vs_before'] is True
+    assert rm['success'] is False
+    assert any('shared row' in c for c in rm['caveats'])
+
+
 def test_selection_bias_controlled_reflects_baseline_rerun(tmp_path, monkeypatch):
     # §2.2 honesty: the field must say whether THIS run actually isolated the
     # rewrite from selection bias, not just restate the --baseline_rerun flag.
