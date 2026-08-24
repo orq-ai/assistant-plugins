@@ -804,6 +804,35 @@ def _primary_metric(output_type: str) -> str:
     return 'accuracy' if output_type in ('boolean', 'categorical', 'string') else 'within_tolerance_rate'
 
 
+def _agreement_on_subset(
+    all_pairs: list[tuple[Any, Any]], all_tols: list[float | None],
+    all_indices: list[int], keep: set[int], match_key: str,
+    string_verdicts: dict[str, Any] | None, output_type: str,
+    tol: float, bars: tuple[float, ...],
+) -> dict[str, Any] | None:
+    """Filter a paired population down to `keep` indices and score agreement."""
+    aligned = [
+        (p, t, i) for p, t, i in zip(all_pairs, all_tols, all_indices)
+        if i in keep
+    ]
+    if not aligned:
+        return None
+    sub_pairs = [a[0] for a in aligned]
+    sub_tols = [a[1] for a in aligned]
+    sub_indices = [a[2] for a in aligned]
+    matches = (
+        _string_matches(string_verdicts, sub_indices, match_key)
+        if string_verdicts else None
+    )
+    if not sub_pairs or (output_type == 'string' and matches is None):
+        return None
+    scores, _ = _evaluate_agreement(
+        sub_pairs, output_type, tol, *bars, tols=sub_tols, matches=matches,
+    )
+    scores['n_pairs'] = len(sub_pairs)
+    return scores
+
+
 def _regressed_vs_before(
     output_type: str, after: dict[str, Any], before: dict[str, Any] | None
 ) -> bool | None:
@@ -1300,48 +1329,20 @@ def main(
         # after-side of the regression check with those extra rows, and vice
         # versa for rows the old judge answered but the new one can't.
         shared = set(pair_indices) & set(before_indices_raw)
-        aligned = [
-            (p, t, i) for p, t, i in zip(before_pairs_raw, before_tols_raw, before_indices_raw)
-            if i in shared
-        ]
-        if aligned:
-            before_pairs = [a[0] for a in aligned]
-            before_tols = [a[1] for a in aligned]
-            before_indices = [a[2] for a in aligned]
-        else:
-            before_pairs, before_tols, before_indices = [], [], []
-        before_matches = (
-            _string_matches(string_verdicts, before_indices, 'match_original')
-            if string_verdicts else None
+        agreement_before = _agreement_on_subset(
+            before_pairs_raw, before_tols_raw, before_indices_raw, shared,
+            'match_original', string_verdicts, output_type, resolved_tol, bars,
         )
-        if before_pairs and not (output_type == 'string' and before_matches is None):
-            agreement_before, _ = _evaluate_agreement(
-                before_pairs, output_type, resolved_tol, *bars,
-                tols=before_tols, matches=before_matches,
-            )
-            agreement_before['n_pairs'] = len(before_pairs)
         # When the after side covers rows the old judge couldn't answer,
         # agreement_scores (all after-rows) is over a different population than
         # agreement_before (shared rows only). Compute the after-side score on
         # the shared subset so _regressed_vs_before compares like-for-like.
         if shared and shared != set(pair_indices):
-            aligned_after = [
-                (p, t, i) for p, t, i in zip(pairs, pair_tols, pair_indices)
-                if i in shared
-            ]
-            after_shared_pairs = [a[0] for a in aligned_after]
-            after_shared_tols = [a[1] for a in aligned_after]
-            after_shared_indices = [a[2] for a in aligned_after]
-            after_shared_matches = (
-                _string_matches(string_verdicts, after_shared_indices, 'match_new')
-                if string_verdicts else None
+            agreement_after_shared = _agreement_on_subset(
+                pairs, pair_tols, pair_indices, shared,
+                'match_new', string_verdicts, output_type, resolved_tol, bars,
             )
-            if after_shared_pairs and not (output_type == 'string' and after_shared_matches is None):
-                agreement_after_shared, _ = _evaluate_agreement(
-                    after_shared_pairs, output_type, resolved_tol, *bars,
-                    tols=after_shared_tols, matches=after_shared_matches,
-                )
-                agreement_after_shared['n_pairs'] = len(after_shared_pairs)
+            if agreement_after_shared is not None:
                 before_after_scope_info = (len(before_indices_raw), len(pair_indices), len(shared))
 
     # Two regression views over rows nobody labelled. The narrow one is the stable
@@ -1365,7 +1366,7 @@ def main(
     regressed_vs_before = _regressed_vs_before(output_type, after_for_regression, agreement_before)
     if regressed_vs_before:
         before_value = agreement_before.get(_primary_metric(output_type))
-        after_value = agreement_scores.get(_primary_metric(output_type))
+        after_value = after_for_regression.get(_primary_metric(output_type))
         logger.warning(
             f'⚠ agreement regressed vs the original judge ({before_value} → {after_value}); '
             'success forced False'
