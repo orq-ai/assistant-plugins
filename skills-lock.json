@@ -44,7 +44,7 @@
     "orq-invoke-deployment": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "d2091b2a305a9a1d16f2f0880e1c9e2f9ff5bb64d69a11cb930dc677bbc7b674"
+      "computedHash": "787e25b14306f11dce6677769cd7fc028c63d293697f9a09f05e2f5dccb9ffb6"
     },
     "orq-manage-skills": {
       "source": "orq-ai/assistant-plugins",
@@ -59,7 +59,7 @@
     "orq-red-team": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "4ab8288dc3acc0c1512d9831af5be3ec57ee2909256bdee7403981e5996f0929"
+      "computedHash": "611e4f518c27a6a10ffbf8bb30b2505811c1466b6a783807a22679ec951cb871"
     },
     "orq-run-experiment": {
       "source": "orq-ai/assistant-plugins",

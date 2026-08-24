@@ -155,7 +155,7 @@ A wrong `--target agent:<key>` (or `deployment:<key>`) does **not** fail fast �
 - Resolve `ORQ_API_KEY` and check in **one shell block** (each Bash call is a fresh shell).
 - **Export** the resolved key so `eq` sees the same key the check used — `eq` does NOT auto-read `.env`.
 - Agent: `GET /v2/agents/<key>` — confirm `"status":"live"`. Deployment: `POST /v2/deployments/get_config` with `{"key":"<key>"}`.
-- On 404: ask the user for the right key. On no key at all: stop and ask.
+- On 404 (or 204 for deployments): ask the user for the right key or to publish the deployment. On no key at all: stop and ask.
 - MCP (`get_agent`, `search_entities`) is a **browse aid** only — its key is often in a different project. If REST and MCP disagree, see the `Agent not found` row in [Troubleshooting](#troubleshooting-common-failures).
 
 ## Plan the run — decide parameters with the user

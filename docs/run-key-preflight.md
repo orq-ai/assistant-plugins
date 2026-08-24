@@ -40,7 +40,7 @@ with Orq(api_key=os.environ["ORQ_API_KEY"]) as orq:
 
 ## Check deployment existence
 
-Deployments have no single-retrieve endpoint; use [`get_config`](https://docs.orq.ai/reference/deployments/get-config). No additional state check is needed beyond the HTTP status (unlike agents, which require `"status":"live"`) — deployment creation always publishes at least version 1.0, so a 200 means the deployment is invokable.
+Deployments have no single-retrieve endpoint; use [`get_config`](https://docs.orq.ai/reference/deployments/get-config). No additional state check is needed beyond the HTTP status (unlike agents, which require `"status":"live"`) — a 200 means the deployment has a published config and is invokable. A deployment with only draft versions (no published version) returns 204.
 
 ```bash
 KEY="${ORQ_API_KEY:-$(set -a; . ./.env 2>/dev/null; printf %s "$ORQ_API_KEY")}"
@@ -54,7 +54,7 @@ curl -s -w '\nHTTP %{http_code}\n' -X POST "https://api.orq.ai/v2/deployments/ge
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
   -d '{"key":"<key>"}'
 # 200 → exists and invokable
-# 204 → deployment exists but returned no config (see API reference)
+# 204 → deployment exists but has no published version — treat as a miss (stop and ask the user to publish)
 # 404 → deployment_not_found or not in this key's project
 # 401 → bad key
 ```
@@ -69,9 +69,10 @@ with Orq(api_key=os.environ["ORQ_API_KEY"]) as orq:
     orq.deployments.get_config(key="<key>")  # raises if not found
 ```
 
-## On a miss (404)
+## On a miss (404 or 204)
 
-The key is wrong or scoped to another project. If the MCP shows the target but REST 404s, the run key is in the wrong project — **ask the user for the right key** (or its `.env`/path). Then re-check.
+- **404** — the key is wrong or scoped to another project. If the MCP shows the target but REST 404s, the run key is in the wrong project — **ask the user for the right key** (or its `.env`/path). Then re-check.
+- **204** (deployments only) — the deployment exists but has no published version (only drafts). The agent cannot proceed without a config. **Stop and ask the user** to publish a version of the deployment, then re-check.
 
 ## MCP caveat — a miss is not proof of nonexistence
 

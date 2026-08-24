@@ -117,7 +117,7 @@ Follow these steps **in order**. Do NOT skip steps.
    - Deployments: `type: "deployment"`
    - Agents: `type: "agent"`
 
-3. **Verify the key with the run key** — whether the key came from MCP browsing or the user provided it directly. Follow the [run-key preflight](../../docs/run-key-preflight.md) using the `ORQ_API_KEY` the invocation will use. For deployments, save the `get_config` response — it contains the prompt template needed in step 4.
+3. **Verify the key with the run key** — whether the key came from MCP browsing or the user provided it directly. Follow the [run-key preflight](../../docs/run-key-preflight.md) using the `ORQ_API_KEY` the invocation will use. For deployments, save the `get_config` response — it contains the prompt template needed in step 4. If `get_config` returns 204, the deployment has no published version — stop and ask the user to publish it before proceeding.
 
 4. **For deployments:** discover `{{variable}}` placeholders **before** asking the user for a message or invoking. If step 3's `get_config` returned the prompt template, use that response. Otherwise fetch it:
 
