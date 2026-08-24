@@ -40,7 +40,7 @@ with Orq(api_key=os.environ["ORQ_API_KEY"]) as orq:
 
 ## Check deployment existence
 
-Deployments have no single-retrieve endpoint; use `get_config`. A 200 means the deployment has a published version and is invokable — `get_config` returns the active published config, so an unpublished deployment returns 404, not 200. No additional state check is needed (unlike agents, which require `"status":"live"`).
+Deployments have no single-retrieve endpoint; use [`get_config`](https://docs.orq.ai/reference/deployments/get-config). A 200 means the deployment has a published version and is invokable — `get_config` returns the active published config, so an unpublished deployment returns 404, not 200. No additional state check is needed (unlike agents, which require `"status":"live"`).
 
 ```bash
 KEY="${ORQ_API_KEY:-$(set -a; . ./.env 2>/dev/null; printf %s "$ORQ_API_KEY")}"
