@@ -117,10 +117,7 @@ Follow these steps **in order**. Do NOT skip steps.
    - Deployments: `type: "deployment"`
    - Agents: `type: "agent"`
 
-3. **Verify the key with the run key** — whether the key came from MCP browsing or the user provided it directly. Verify with the `ORQ_API_KEY` the invocation will use (see [run-key preflight](../../docs/run-key-preflight.md)):
-   - Agent: `GET /v2/agents/<key>` → 200 means it exists for the run key
-   - Deployment: `POST /v2/deployments/get_config` with `{"key":"<key>"}` → 200 means it exists (and the response contains the full config including the prompt template — save it for step 4)
-   - On 404: the key is wrong or in a different project — ask the user
+3. **Verify the key with the run key** — whether the key came from MCP browsing or the user provided it directly. Follow the [run-key preflight](../../docs/run-key-preflight.md) using the `ORQ_API_KEY` the invocation will use. For deployments, save the `get_config` response — it contains the prompt template needed in step 4.
 
 4. **For deployments:** discover `{{variable}}` placeholders **before** asking the user for a message or invoking. If step 3's `get_config` returned the prompt template, use that response. Otherwise fetch it:
 
