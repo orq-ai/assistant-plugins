@@ -279,6 +279,12 @@ def _mentions_number(text: str, number: str) -> bool:
     return re.search(rf'(?<![\d.]){re.escape(number)}(?![\d.])', text) is not None
 
 
+_TRANSITION_MARKERS = re.compile(
+    r'\b(?:previously|before|instead\s+of|no\s+longer|formerly|used\s+to|was\s+(?:answering|using|labelled))\b',
+    re.IGNORECASE,
+)
+
+
 def _mentions_token(text: str, token: str) -> bool:
     """Whether `token` appears in `text` on its own word boundaries.
 
@@ -287,6 +293,21 @@ def _mentions_token(text: str, token: str) -> bool:
     preserved. Case-sensitive on purpose — the declared spelling is the contract.
     """
     return re.search(rf'(?<!\w){re.escape(token)}(?!\w)', text) is not None
+
+
+def _label_actively_preserved(text: str, token: str) -> bool:
+    """Whether `token` appears in at least one sentence that is not purely
+    transitional (e.g. "Previously answer good or bad. From now on...").
+
+    A rewrite that mentions old labels only to discard them passes
+    ``_mentions_token`` but is NOT preserving them.
+    """
+    pat = re.compile(rf'(?<!\w){re.escape(token)}(?!\w)')
+    sentences = re.split(r'(?<=[.!?])\s+|\n', text)
+    for sent in sentences:
+        if pat.search(sent) and not _TRANSITION_MARKERS.search(sent):
+            return True
+    return False
 
 
 def check_preservation(evaluator: dict[str, Any], proposed: str) -> tuple[bool, str, str]:
@@ -308,7 +329,7 @@ def check_preservation(evaluator: dict[str, Any], proposed: str) -> tuple[bool, 
     output_type = (evaluator.get('output_type') or '').strip().lower()
     if output_type == 'categorical':
         labels = list(evaluator.get('categorical_labels') or [])
-        dropped = [lbl for lbl in labels if not _mentions_token(proposed, lbl)]
+        dropped = [lbl for lbl in labels if not _label_actively_preserved(proposed, lbl)]
         if dropped:
             named = ', '.join('`' + lbl + '`' for lbl in dropped)
             return False, (
@@ -403,11 +424,12 @@ async def _rewrite(out_dir: Path, cfg: dict[str, Any], max_attempts: int) -> dic
 
     got_vars = sorted(extract_template_variables(proposed))
     var_check_passed = set(got_vars) == set(evaluator.get('variables') or [])
-    verdict_space_ok = ok if failed_check != 'variables' else var_check_passed
+    verdict_space_ok = ok if failed_check != 'variables' else None
     return {
         'proposed_prompt': proposed,
         'var_check_passed': var_check_passed,
         'verdict_space_ok': verdict_space_ok,
+        'failed_check': failed_check,
         'preservation_ok': ok,
         'reason': reason,
         'output_type': (evaluator.get('output_type') or '').strip().lower(),

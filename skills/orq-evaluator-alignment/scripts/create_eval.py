@@ -63,7 +63,7 @@ def _enforce_create_guards(status: dict[str, Any], force: bool) -> list[str]:
     """
     checks = [
         ('var_check_passed', bool(status.get('var_check_passed', True))),
-        ('verdict_space_ok', bool(status.get('verdict_space_ok', True))),
+        ('verdict_space_ok', status.get('verdict_space_ok', True) is not False),
         ('preservation_ok', bool(status.get('preservation_ok', True))),
     ]
     failed = [name for name, ok in checks if not ok]

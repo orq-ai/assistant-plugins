@@ -112,11 +112,15 @@ def pull(run_dir: str | None = None, config: str = 'config.toml',
     existing = runner.read_jsonl(traces_path) if traces_path.exists() else []
     runner.write_jsonl(traces_path, existing + rows)
     if mapping:
+        n_hit = seed.count_mapping_hits(datapoints, mapping)
         runner.write_json(
             out_dir / 'input_mapping.json',
-            {'dataset_id': dataset_id, 'mapping': mapping, 'n_rows': len(rows)},
+            {'dataset_id': dataset_id, 'mapping': mapping, 'n_rows': len(rows), 'n_hit': n_hit},
         )
-        logger.info(f'✓ Applied --map {mapping} (recorded in input_mapping.json)')
+        if n_hit:
+            logger.info(f'✓ Applied --map {mapping} to {n_hit}/{len(datapoints)} datapoints (recorded in input_mapping.json)')
+        else:
+            logger.warning(f'⚠ --map {mapping} matched no datapoints — every row used the automatic value (recorded in input_mapping.json)')
     logger.info(
         f'✓ Added {len(rows)} dataset rows to traces.jsonl '
         f'({len(existing) + len(rows)} total); {len(skipped)} skipped (unmappable).'

@@ -414,11 +414,15 @@ def _correctness_lines(c: dict[str, Any] | None) -> list[str]:
     if not c.get('n_labelled'):
         reason = c.get('reason_omitted')
         return [f'  - correctness vs dataset labels: not measured — {reason}'] if reason else []
+    metadata_caveat = (
+        ' (⚠ evaluator.json missing — circularity and vocabulary guards disabled)'
+        if c.get('metadata_missing') else ''
+    )
     acc = c['accuracy']
     acc_str = f'{acc:.0%}' if acc is not None else 'n/a'
     lines = [
         f"  - correctness vs dataset labels: {c['n_correct']}/{c['n_labelled']} "
-        f"({acc_str}) — labels are `dataset_reference`, not the user's verdict."
+        f"({acc_str}) — labels are `dataset_reference`, not the user's verdict.{metadata_caveat}"
     ]
     if c.get('n_unmeasurable_labelled'):
         lines.append(
@@ -534,11 +538,14 @@ def main(run_dir: str | None = None, config: str = 'config.toml') -> str:
     # explicit override) — with neither, "correct within 0.5" is an arbitrary
     # number dressed up as a measurement (§3.5).
     tol_derivable = (cfg.get('numeric_tol') not in (None, '')) or scale is not None
+    ev_missing = not ev
     correctness = _correctness(
         rows, per_row, output_type, _numeric_tol(cfg, scale),
         variables=ev.get('variables', []), categorical_labels=labels, tol_derivable=tol_derivable,
         scale=scale,
     )
+    if correctness is not None and ev_missing:
+        correctness['metadata_missing'] = True
     if correctness and correctness.get('n_unreadable_labels'):
         logger.warning(
             f"⚠ {correctness['n_unreadable_labels']} row(s) carry a ground-truth label this "

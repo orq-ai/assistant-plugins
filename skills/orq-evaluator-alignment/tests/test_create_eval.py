@@ -305,3 +305,12 @@ def test_enforce_create_guards_passes_when_everything_is_true():
 
     status = {'var_check_passed': True, 'verdict_space_ok': True, 'preservation_ok': True}
     assert create_eval._enforce_create_guards(status, force=False) == []
+
+
+def test_enforce_create_guards_treats_none_verdict_space_as_passing():
+    import create_eval
+
+    status = {'var_check_passed': False, 'verdict_space_ok': None, 'preservation_ok': True}
+    forced = create_eval._enforce_create_guards(status, force=True)
+    assert 'verdict_space_ok' not in forced
+    assert 'var_check_passed' in forced

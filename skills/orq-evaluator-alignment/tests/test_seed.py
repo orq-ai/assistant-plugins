@@ -261,6 +261,16 @@ def test_map_source_resolves_each_grammar_term():
     assert seed.resolve_map_source({'inputs': {}}, 'messages.assistant.last') == ''
 
 
+def test_count_mapping_hits_counts_only_nonempty_sources():
+    dps = [
+        {'inputs': {'category': 'x'}, 'expected_output': 'true'},
+        {'inputs': {}, 'expected_output': ''},
+        {'inputs': {'category': 'y'}, 'expected_output': 'false'},
+    ]
+    assert seed.count_mapping_hits(dps, {'log.reference': 'expected_output'}) == 2
+    assert seed.count_mapping_hits(dps, {'log.reference': 'inputs.missing'}) == 0
+
+
 # --- §2.3: the inventory replaces N identical skip lines ---
 
 

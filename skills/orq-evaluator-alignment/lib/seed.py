@@ -267,6 +267,17 @@ def format_inventory(inv: dict[str, Any], n_mapped: int, missing_fields: list[st
     return '\n'.join(lines)
 
 
+def count_mapping_hits(datapoints: list[dict[str, Any]], mapping: dict[str, str]) -> int:
+    """How many datapoints have a non-empty value for at least one mapped source."""
+    n = 0
+    for dp in datapoints:
+        for source in mapping.values():
+            if resolve_map_source(dp, source) not in (None, ''):
+                n += 1
+                break
+    return n
+
+
 def rows_from_datapoints(
     datapoints: list[dict[str, Any]], variables: list[str], *, tag: dict[str, Any] | None = None,
     mapping: dict[str, str] | None = None,

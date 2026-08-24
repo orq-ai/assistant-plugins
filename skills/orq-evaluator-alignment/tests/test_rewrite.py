@@ -250,6 +250,33 @@ def test_label_with_punctuation_still_matches_itself():
     assert ok is True
 
 
+def test_transition_mention_counts_as_dropped():
+    ev = {'variables': ['log.output'], 'output_type': 'categorical',
+          'categorical_labels': ['good', 'bad']}
+    proposed = (
+        'Previously this judge answered good or bad. '
+        'From now on, answer only yes or no. {{log.output}}'
+    )
+    ok, reason, _fc = rw.check_preservation(ev, proposed)
+    assert ok is False
+    assert 'good' in reason or 'bad' in reason
+
+
+def test_verdict_space_ok_is_none_when_variables_failed():
+    ev = {'output_type': 'categorical', 'categorical_labels': ['a', 'b'],
+          'scale': None, 'variables': ['log.output']}
+    proposed = 'No variables at all. Answer a or b.'
+    _ok, _reason, fc = rw.check_preservation(ev, proposed)
+    assert fc == 'variables'
+    result = {
+        'var_check_passed': False,
+        'verdict_space_ok': None if fc == 'variables' else True,
+        'failed_check': fc,
+    }
+    assert result['verdict_space_ok'] is None
+    assert result['failed_check'] == 'variables'
+
+
 def test_context_string_pins_the_format_not_a_verdict_set():
     # Free text has no label set and no scale, so the preservation rule has to be
     # about the SHAPE of the answer. Without one there is nothing holding the

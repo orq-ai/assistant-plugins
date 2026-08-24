@@ -284,6 +284,16 @@ def test_unmeasurable_row_report_caption_says_unmeasurable():
     assert 'outside scale range' not in lines
 
 
+def test_metadata_missing_caveat_in_correctness_lines():
+    c = metrics._correctness(
+        _rows((0, 'true', True), (1, 'true', False)),
+        _per_row((0, 'stable'), (1, 'stable')), 'boolean', 0.5, **_NEUTRAL,
+    )
+    c['metadata_missing'] = True
+    lines = '\n'.join(metrics._correctness_lines(c))
+    assert 'guards disabled' in lines
+
+
 # ── §4.1 — by_band coverage + floor before the "blind spot, measured" claim ──
 
 
