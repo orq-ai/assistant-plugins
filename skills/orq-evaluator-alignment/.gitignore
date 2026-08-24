@@ -5,6 +5,5 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# Live workspace ids from `create_testcase.py create` — machine-local teardown
-# state, regenerated per provisioning run.
-testcases/*/created.json
+# Python caches in docs/.
+docs/__pycache__/

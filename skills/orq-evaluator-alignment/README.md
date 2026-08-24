@@ -190,11 +190,12 @@ suites per module. `tests/fixtures/responses_api_trace.json` is a **captured
 production trace**, kept so the Responses-API span shape is pinned against the
 real thing rather than a hand-rolled guess.
 
-`testcases/rag-groundedness/` is different in kind: a live end-to-end test case
-that provisions a real orq dataset and four judges, exercises the real API, and
-grades a finished run against an answer key. It answers what unit tests cannot —
-does the skill find the ambiguity that is there, and does it admit what it cannot
-see. It reproduces the consistently-wrong blind spot below on demand.
+`tests/live/evaluator-alignment/rag-groundedness/` (repo root) is different in
+kind: a live end-to-end test case that provisions a real orq dataset and four
+judges, exercises the real API, and grades a finished run against an answer key.
+It answers what unit tests cannot — does the skill find the ambiguity that is
+there, and does it admit what it cannot see. It reproduces the consistently-wrong
+blind spot below on demand.
 
 > **Windows note.** Only in a fully extra'd research monorepo: an autoloaded
 > third-party pytest plugin there imports the SSL stack, which aborts the process

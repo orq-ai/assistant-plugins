@@ -5,10 +5,10 @@ A live end-to-end exercise for the **evaluator-alignment** skill: one orq datase
 all read the same datapoints, and an answer key that says what the skill *should*
 surface.
 
-It is not a unit test. `../../tests/` covers the plumbing offline with
-`backend = "fake"`; this exercises the real thing — real judge calls, real cost, real
-workspace objects — and answers a question the unit tests cannot: *does the skill find
-the ambiguity that is actually there, and does it admit what it cannot see?*
+It is not a unit test. The skill's own `tests/` directory covers the plumbing offline
+with `backend = "fake"`; this exercises the real thing — real judge calls, real cost,
+real workspace objects — and answers a question the unit tests cannot: *does the skill
+find the ambiguity that is actually there, and does it admit what it cannot see?*
 
 ## Files
 
@@ -33,7 +33,7 @@ uv run create_testcase.py delete             # remove everything in created.json
 
 ## Running the skill against it
 
-From the skill root (`../..`):
+From the skill root (`skills/orq-evaluator-alignment/`):
 
 ```bash
 # 1. Confirm the evaluator. The trace scan returns 0 by construction —
@@ -61,7 +61,7 @@ override-only by design — supply it here or in `config.toml`.
 Then score it:
 
 ```bash
-uv run testcases/rag-groundedness/score_run.py --run_dir <run_dir>
+uv run tests/live/evaluator-alignment/rag-groundedness/score_run.py --run_dir <run_dir>
 ```
 
 ### The judge model is the main knob
