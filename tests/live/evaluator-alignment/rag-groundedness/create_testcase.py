@@ -42,7 +42,7 @@ DATASET_NAME = 'RAG Groundedness — evaluator-alignment test case'
 DATASET_DESCRIPTION = (
     'TEST CASE for the evaluator-alignment skill. 24 datapoints: 8 stable anchors, '
     '12 grey-zone cases across 4 engineered ambiguities, 4 consistently-wrong traps. '
-    'See testcases/rag-groundedness/answer_key.json. Not production data.'
+    'See tests/live/evaluator-alignment/rag-groundedness/answer_key.json. Not production data.'
 )
 
 load_dotenv(find_dotenv(usecwd=True))

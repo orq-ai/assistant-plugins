@@ -4,7 +4,10 @@
 # ///
 """Score an evaluator-alignment run against this test case's answer key.
 
-    uv run score_run.py --run_dir ../../runs/<key>_<ts>_<model>_<N>dp
+    uv run tests/live/evaluator-alignment/rag-groundedness/score_run.py \
+        --run_dir skills/orq-evaluator-alignment/runs/<key>_<ts>_<model>_<N>dp
+
+Run from the repo root.
 
 Joins `stability.json` back onto `answer_key.json` on the ANSWER TEXT, because
 `dataset_inputs.py pull` does not preserve the authoring order of datapoints.json

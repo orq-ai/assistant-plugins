@@ -1218,8 +1218,8 @@ def test_agreement_before_is_scoped_to_the_retested_rows(tmp_path, monkeypatch):
     assert rm['agreement']['before']['n_pairs'] == 1
 
 
-def test_gate_b_regression_uses_shared_rows_in_both_directions(tmp_path, monkeypatch):
-    # Mirror direction: old judge silent on rows 5-11, new judge answers all 12.
+def test_gate_b_regression_new_judge_covers_more_rows(tmp_path, monkeypatch):
+    # Old judge silent on rows 5-11, new judge answers all 12.
     # The new judge is WORSE on the 5 shared rows (2/5 = 40% vs 3/5 = 60%) but
     # better overall (9/12 = 75%) because it picks up 7 new rows. Without the
     # intersection fix, _regressed_vs_before compares 75% vs 60% and reports an
@@ -1257,6 +1257,36 @@ def test_gate_b_regression_uses_shared_rows_in_both_directions(tmp_path, monkeyp
     assert rm['agreement']['regressed_vs_before'] is True
     assert rm['success'] is False
     assert any('shared row' in c for c in rm['caveats'])
+
+
+def test_gate_b_regression_old_judge_covers_more_rows(tmp_path, monkeypatch):
+    # Forward direction: old judge answers all 8, new judge silent on rows 5-7.
+    # The new judge is WORSE on the 5 shared rows (3/5 = 60% vs 4/5 = 80%) but
+    # this direction was already handled by the one-way scoping in the original
+    # code. Verify the intersection helper preserves it.
+    n = 8
+    _seed_full_run(tmp_path, n=n, output_type='boolean')
+    _write(tmp_path / 'annotations.json', {str(i): {'value': True, 'reason': ''} for i in range(n)})
+
+    def verdict_fn(row):
+        idx = int(row['query'][1:])
+        if idx >= 5:
+            return None  # new judge can't answer these rows
+        return idx != 0  # wrong on row 0 only among shared
+
+    _stub_stability_main(monkeypatch, verdict_fn, output_type='boolean')
+
+    retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG)
+
+    rm = json.loads((tmp_path / 'retest_metrics.json').read_text(encoding='utf-8'))
+    # After side: only 5 rows paired (5-7 have None verdict, skipped)
+    assert rm['agreement']['n'] == 5
+    # Before has all 8 labelled, but scoped to shared (5 rows)
+    assert rm['agreement']['before']['n_pairs'] == 5
+    # No after_on_shared_rows needed — after already equals shared
+    assert rm['agreement']['after_on_shared_rows'] is None
+    # Before was 100% (all True), after on shared is 4/5 = 80% → regressed
+    assert rm['agreement']['regressed_vs_before'] is True
 
 
 def test_selection_bias_controlled_reflects_baseline_rerun(tmp_path, monkeypatch):
