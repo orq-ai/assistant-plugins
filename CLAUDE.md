@@ -43,7 +43,7 @@ Only `name`, `description`, `license`, `compatibility`, `metadata`, `allowed-too
 uvx --from "git+https://github.com/agentskills/agentskills.git#subdirectory=skills-ref" skills-ref validate skills/<name>
 ```
 
-A typo'd field name is the realistic version of this mistake, so the validator reports any unindented frontmatter line it cannot read as a key — `allowed_tools:` is not a harmless annotation, it is `allowed-tools` costing the skill.
+A typo'd field name is the realistic version of this mistake. The validator catches it in two ways: the widened key pattern reads identifier-ish keys like `allowed_tools:` as fields, and the closed-field-set check then rejects them as unknown; anything still unreadable (quoted or non-ASCII keys) is reported separately. Either way, `allowed_tools:` is not a harmless annotation — it is `allowed-tools` costing the skill.
 
 **Skill names** additionally must not contain `anthropic` or `claude` as a whole segment. That is Anthropic's naming rule rather than a spec constraint, so `skills-ref` will not tell you; `validate-skills.mjs` does.
 

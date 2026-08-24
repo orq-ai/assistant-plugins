@@ -227,8 +227,14 @@ if (fixMode) {
 // is invisible to them. Say so rather than letting a clean run imply the working
 // tree is what got hashed.
 if (isCheckout) {
-  const dirty = execFileSync("git", ["diff", "--name-only", "-z", "--", "skills"],
-    { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).split("\0").filter(Boolean);
+  // Hashes come from the index, so only worktree-dirty entries matter: the
+  // second character (Y) of `git status --porcelain` is the worktree status.
+  // M = modified, D = deleted, ? = untracked.  Staged-only entries (Y=' ')
+  // ARE reflected in the index and should not warn.
+  const dirty = execFileSync("git", ["status", "--porcelain", "-z", "--", "skills"],
+    { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
+    .split("\0").filter(Boolean)
+    .filter((e) => e.length >= 2 && e[1] !== " ");
   if (dirty.length)
     warn(`${dirty.length} unstaged change(s) under skills/ are not reflected in the lock hashes — \`git add\` them first`);
 }
@@ -426,9 +432,16 @@ for (const f of tracked) {
 // <available_skills> block is never routed to. Cursor doesn't read this
 // file (npx skills copies SKILL.md into .cursor/rules/), so this check
 // guards the three agents that do.
+//
+// The file is required, not opportunistic: a missing or unreadable
+// AGENTS.md turns the drift check off while CI stays green — the same
+// failure class the git-probe hardening above was written to close.
 const agentsPath = join(root, "agents", "AGENTS.md");
 let agentsText;
-try { agentsText = readFileSync(agentsPath, "utf8"); } catch { agentsText = null; }
+try { agentsText = readFileSync(agentsPath, "utf8"); } catch {
+  err(`agents/AGENTS.md is missing or unreadable — the registration drift check cannot run`);
+  agentsText = null;
+}
 
 if (agentsText !== null) {
   const pathListRe = /^\s*-\s+(\S+)\s+->\s+"skills\//gm;
@@ -456,16 +469,20 @@ if (agentsText !== null) {
       if (!skillDirs.includes(name))
         err(`agents/AGENTS.md <available_skills> references '${name}' but skills/${name} does not exist`);
   } else {
-    warn(`agents/AGENTS.md has no <available_skills> block`);
+    err(`agents/AGENTS.md has no <available_skills> block — the agent won't route to any skill`);
   }
 }
 
 // ---------- 9. README.md skills table <-> skills/ ----------
 // The table between BEGIN/END_SKILLS_TABLE markers is what humans see on
 // GitHub. A missing row means the skill is invisible in documentation.
+// Same policy as section 8: the file and markers are required inputs.
 const readmePath = join(root, "README.md");
 let readmeText;
-try { readmeText = readFileSync(readmePath, "utf8"); } catch { readmeText = null; }
+try { readmeText = readFileSync(readmePath, "utf8"); } catch {
+  err(`README.md is missing or unreadable — the skills-table drift check cannot run`);
+  readmeText = null;
+}
 
 if (readmeText !== null) {
   const tableMatch = readmeText.match(/<!-- BEGIN_SKILLS_TABLE -->([\s\S]*?)<!-- END_SKILLS_TABLE -->/);
@@ -481,6 +498,8 @@ if (readmeText !== null) {
     for (const name of tableNames)
       if (!skillDirs.includes(name))
         err(`README.md skills table references '${name}' but skills/${name} does not exist`);
+  } else {
+    err(`README.md has no <!-- BEGIN_SKILLS_TABLE --> / <!-- END_SKILLS_TABLE --> markers — the skills-table drift check cannot run`);
   }
 }
 

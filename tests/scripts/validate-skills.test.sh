@@ -16,9 +16,20 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 validator="$repo_root/tests/scripts/validate-skills.mjs"
 tmp_root="$(mktemp -d)"
-trap 'rm -rf "$tmp_root"' EXIT
 failures=0
 skipped=0
+run_count=0
+expected_count=36
+
+cleanup_and_report() {
+  rm -rf "$tmp_root"
+  if [ "$run_count" -lt "$((expected_count - skipped))" ]; then
+    echo
+    echo "ABORT: only $run_count of $((expected_count - skipped)) expected cases ran (harness died early)"
+    exit 1
+  fi
+}
+trap cleanup_and_report EXIT
 
 # A fixture that passes clean: one real skill, a lock regenerated from it, the
 # four manifests on one version, and a git checkout so sections 5-7 run. Each
@@ -109,6 +120,7 @@ relock() {
 # Both halves matter: an exit code alone does not prove the intended check fired.
 expect_fail() {
   local label="$1" dir="$2" pattern="$3" rc=0 out
+  run_count=$((run_count + 1))
   out=$(node "$validator" "$dir" 2>&1) || rc=$?
   if [ "$rc" -eq 0 ]; then
     echo "FAIL [$label]: expected a non-zero exit, got 0"
@@ -127,6 +139,7 @@ expect_fail() {
 
 expect_pass() {
   local label="$1" dir="$2" rc=0 out
+  run_count=$((run_count + 1))
   out=$(node "$validator" "$dir" 2>&1) || rc=$?
   if [ "$rc" -ne 0 ]; then
     echo "FAIL [$label]: expected exit 0, got $rc"
@@ -344,41 +357,77 @@ expect_pass "nested client-specific manifest is allowed" "$d"
 d=$(build_fixture skill-missing-from-agents)
 mkdir -p "$d/skills/second-skill"
 cp "$d/skills/example-skill/SKILL.md" "$d/skills/second-skill/SKILL.md"
-sed -i.bak 's/^name: example-skill/name: second-skill/' "$d/skills/second-skill/SKILL.md"
-rm -f "$d/skills/second-skill/SKILL.md.bak"
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace("example-skill","second-skill"))' \
+  "$d/skills/second-skill/SKILL.md"
 relock "$d"
 expect_fail "skill missing from AGENTS.md path list" "$d" "path list is missing 'second-skill'"
 
 # A phantom entry in the path list references a skill that doesn't exist.
 d=$(build_fixture phantom-agents-pathlist)
-sed -i.bak '/example-skill.*SKILL.md/a\ - phantom-skill -> "skills/phantom-skill/SKILL.md"' "$d/agents/AGENTS.md"
-rm -f "$d/agents/AGENTS.md.bak"
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(/(example-skill.*SKILL\.md")/,"$1\n - phantom-skill -> \"skills/phantom-skill/SKILL.md\""))' \
+  "$d/agents/AGENTS.md"
 expect_fail "phantom in AGENTS.md path list" "$d" "path list references 'phantom-skill' but skills/phantom-skill does not exist"
 
 # A phantom entry in <available_skills> references a skill that doesn't exist.
 d=$(build_fixture phantom-available-skills)
-sed -i.bak '/<\/available_skills>/i\phantom-skill: `Does not exist.`' "$d/agents/AGENTS.md"
-rm -f "$d/agents/AGENTS.md.bak"
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace("</available_skills>","phantom-skill: \x60Does not exist.\x60\n\n</available_skills>"))' \
+  "$d/agents/AGENTS.md"
 expect_fail "phantom in AGENTS.md available_skills" "$d" "<available_skills> references 'phantom-skill' but skills/phantom-skill does not exist"
+
+# Missing AGENTS.md entirely must error, not silently skip.
+d=$(build_fixture missing-agents-md)
+rm -rf "$d/agents"
+expect_fail "missing AGENTS.md" "$d" "AGENTS.md is missing or unreadable"
+
+# Missing <available_skills> block must error.
+d=$(build_fixture missing-available-skills-block)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(/<available_skills>[\s\S]*<\/available_skills>/,""))' \
+  "$d/agents/AGENTS.md"
+expect_fail "missing available_skills block" "$d" "has no <available_skills> block"
 
 # --- 9. README.md skills table <-> skills/ ---
 d=$(build_fixture skill-missing-from-readme)
 mkdir -p "$d/skills/second-skill"
 cp "$d/skills/example-skill/SKILL.md" "$d/skills/second-skill/SKILL.md"
-sed -i.bak 's/^name: example-skill/name: second-skill/' "$d/skills/second-skill/SKILL.md"
-rm -f "$d/skills/second-skill/SKILL.md.bak"
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace("example-skill","second-skill"))' \
+  "$d/skills/second-skill/SKILL.md"
 # Add the new skill to AGENTS.md so only the README check fires.
-sed -i.bak '/example-skill.*SKILL.md/a\ - second-skill -> "skills/second-skill/SKILL.md"' "$d/agents/AGENTS.md"
-rm -f "$d/agents/AGENTS.md.bak"
-sed -i.bak '/<\/available_skills>/i\second-skill: `Second test skill.`' "$d/agents/AGENTS.md"
-rm -f "$d/agents/AGENTS.md.bak"
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(/(example-skill.*SKILL\.md")/,"$1\n - second-skill -> \"skills/second-skill/SKILL.md\"")
+    .replace("</available_skills>","second-skill: \x60Second test skill.\x60\n\n</available_skills>"))' \
+  "$d/agents/AGENTS.md"
 relock "$d"
 expect_fail "skill missing from README table" "$d" "README.md skills table is missing 'second-skill'"
 
 d=$(build_fixture phantom-readme-table)
-sed -i.bak '/<!-- END_SKILLS_TABLE -->/i\| **phantom-skill** | Does not exist |' "$d/README.md"
-rm -f "$d/README.md.bak"
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace("<!-- END_SKILLS_TABLE -->","| **phantom-skill** | Does not exist |\n<!-- END_SKILLS_TABLE -->"))' \
+  "$d/README.md"
 expect_fail "phantom in README skills table" "$d" "README.md skills table references 'phantom-skill' but skills/phantom-skill does not exist"
+
+# Missing README.md entirely must error, not silently skip.
+d=$(build_fixture missing-readme)
+rm "$d/README.md"
+git -C "$d" add -A
+expect_fail "missing README.md" "$d" "README.md is missing or unreadable"
+
+# Missing table markers must error, not silently skip.
+d=$(build_fixture missing-table-markers)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(/<!-- BEGIN_SKILLS_TABLE -->[\s\S]*<!-- END_SKILLS_TABLE -->/,""))' \
+  "$d/README.md"
+expect_fail "missing table markers" "$d" "has no <!-- BEGIN_SKILLS_TABLE -->"
 
 # --- the git-failure path: skipping sections 5-7 must not report success ---
 # A non-git tree legitimately skips them; a checkout whose git is broken must
