@@ -110,7 +110,7 @@ def _evaluator_body(ev: dict[str, Any], *, model: str, path_prefix: str) -> dict
     elif kind == 'number':
         if ev.get('scale'):
             body['scale'] = ev['scale']
-    elif kind != 'boolean':
+    else:
         raise ValueError(f'Unsupported output_type {kind!r}.')
     return body
 
@@ -131,7 +131,7 @@ def _save(created: dict[str, Any]) -> None:
 
 
 def create(dry_run: bool = False, dataset_id: str | None = None) -> None:
-    """Create the dataset, its datapoints, and the four evaluators.
+    """Create the dataset, its datapoints, and the three evaluators.
 
     Pass `--dataset_id` to reuse a dataset a previous partial run already created
     (its id is in created.json) instead of leaving an orphan behind.

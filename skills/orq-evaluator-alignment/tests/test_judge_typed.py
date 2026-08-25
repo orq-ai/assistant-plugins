@@ -103,7 +103,3 @@ def test_numeric_out_of_scale_abstains(monkeypatch):
     pred = _run(fn)
     assert pred.abstained is True
     assert pred.error is None
-
-
-# --- string: value from JSON or whole completion, canonicalized; empty abstains ---
-

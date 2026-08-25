@@ -62,9 +62,13 @@ def test_input_type_number_scale_may_be_absent():
     assert spec['scale'] is None
 
 
-def test_input_type_defaults_to_boolean_when_missing():
+def test_input_type_defaults_to_boolean_when_missing_or_unknown():
     assert sa.input_type_for({})['type'] == 'boolean'
     assert sa.input_type_for(None)['type'] == 'boolean'
+    # A type this build does not support — e.g. a queue.json written by an older
+    # version that still had free-form `string` — renders as boolean rather than
+    # crashing the UI on an unknown widget spec.
+    assert sa.input_type_for({'type': 'string'})['type'] == 'boolean'
 
 
 # --- coerce_value / validate_value: typed value per output type --------------
@@ -110,10 +114,6 @@ def test_coerce_boolean_rejects_non_bool():
     with pytest.raises(ValueError):
         sa.coerce_value({'type': 'boolean'}, 'true')
 
-
-def test_coerce_string_rejects_empty():
-    with pytest.raises(ValueError):
-        sa.coerce_value({'type': 'string'}, '   ')
 
 
 # --- build_annotation_record: the pinned annotations.json entry ---------------

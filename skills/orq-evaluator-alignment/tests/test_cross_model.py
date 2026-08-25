@@ -2,7 +2,7 @@
 
 When a single judge is unanimous everywhere (flat instability), a second model's
 different verdicts surface the grey zones the first hides. Disagreement is
-type-native: boolean/categorical/string differ on value; numeric on |Δ| > tol.
+type-native: boolean/categorical differ on value; numeric on |Δ| > tol.
 
 Pure stdlib — safe to import directly on Windows.
 """

@@ -112,10 +112,6 @@ def test_numeric_out_of_scale_spread_clamps_to_1():
     # the raw ratio would be > 1. Must saturate at 1.0.
     assert instability.numeric([-50.0, 50.0], 1.0, 10.0) == pytest.approx(1.0)
 
-
-# --- string: exact-match normalized entropy H/ln(n_requested) ---
-
-
 # --- classify bands: <0.1 stable | 0.1–0.3 noisy | >0.3 unreliable ---
 
 

@@ -145,15 +145,15 @@ def test_report_is_silent_without_labels():
 
 def test_report_states_the_omission_reason_when_correctness_was_omitted():
     # MINOR 9: the omission block (n_labelled=0 + reason_omitted, produced by a
-    # reference-family variable, a string judge, or an undeclared numeric scale)
-    # was written to metrics.json but never surfaced in `report` — the text
-    # SKILL.md tells the conductor to read out loud — so it was invisible at the
-    # one place a reader would actually see it.
-    c = {'n_labelled': 0, 'reason_omitted': 'string verdicts are not comparable with =='}
+    # reference-family variable or an undeclared numeric scale) was written to
+    # metrics.json but never surfaced in `report` — the text SKILL.md tells the
+    # conductor to read out loud — so it was invisible at the one place a reader
+    # would actually see it.
+    c = {'n_labelled': 0, 'reason_omitted': 'no declared scale and no configured numeric_tol'}
     lines = metrics._correctness_lines(c)
     assert len(lines) == 1
     assert 'not measured' in lines[0]
-    assert 'string verdicts are not comparable' in lines[0]
+    assert 'no declared scale' in lines[0]
 
 
 # ── §1.2 — reference declared as a judge input is not ground truth ───────────
@@ -311,7 +311,7 @@ def test_by_band_full_coverage_earns_the_blind_spot_claim():
     assert 'blind spot, measured' in lines
 
 
-# ── §4.2 — string instability report states its exact-match ceiling ──────────
+# ── §4.2 — report wording per output type ────────────────────────────────────
 
 
 def test_boolean_report_wording_unchanged():

@@ -271,7 +271,3 @@ def test_misaligned_per_point_bands_raise():
 def test_agreement_dispatch_forwards_per_point_bands():
     r = agreement.agreement('number', [(3.0, 3.4)], tol=0.5, tols=[0.1])
     assert r['within_tolerance_rate'] == pytest.approx(0.0)
-
-
-# --- string: scored by a reader, because == is the wrong comparison ---
-

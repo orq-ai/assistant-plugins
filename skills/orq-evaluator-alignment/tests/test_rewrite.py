@@ -282,16 +282,6 @@ def test_context_unknown_type_still_raises():
         rw.build_verdict_space_context({'output_type': 'tensor'})
 
 
-def test_string_preservation_still_enforces_the_variable_set():
-    # The one guard that DOES apply to string: a rewrite that drops {{log.output}}
-    # leaves a judge scoring nothing.
-    ev = {'output_type': 'string', 'variables': ['log.output'], 'categorical_labels': [], 'scale': None}
-    ok, _reason, _fc = rw.check_preservation(ev, 'Summarise the answer: {{log.output}}')
-    assert ok is True
-    ok, reason, _fc = rw.check_preservation(ev, 'Summarise the answer.')
-    assert ok is False
-    assert 'log.output' in reason
-
 
 # --- _read_guidance: warn (not refuse) when the labels moved after aggregation ---
 

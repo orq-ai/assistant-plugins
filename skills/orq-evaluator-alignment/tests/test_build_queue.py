@@ -160,22 +160,24 @@ def test_low_flip_item_carries_judge_correct(tmp_path):
 
 def test_omitted_correctness_yields_no_wrong_vs_reference_and_judge_correct_none(tmp_path):
     # metrics.json's `correctness` can be the OMISSION shape (n_labelled=0 +
-    # reason_omitted — a string judge, a reference-family variable, or an
-    # undeclared numeric scale) rather than either a real correctness dict or
-    # absent entirely. build_queue reads `wrong_source_indices` /
-    # `labelled_source_indices` off it with `.get(...) or []`/`or set()`, which
-    # already degrades gracefully on that shape (both keys are simply missing) —
-    # pinned here so a future change to either field's default can't regress it
-    # silently.
+    # reason_omitted — a reference-family variable, or an undeclared numeric
+    # scale) rather than either a real correctness dict or absent entirely.
+    # build_queue reads `wrong_source_indices` / `labelled_source_indices` off it
+    # with `.get(...) or []`/`or set()`, which already degrades gracefully on that
+    # shape (both keys are simply missing) — pinned here so a future change to
+    # either field's default can't regress it silently.
     d = tmp_path / 'run'
     d.mkdir()
-    _write(d / 'evaluator.json', {'prompt': 'judge', 'output_type': 'string'})
+    _write(d / 'evaluator.json', {'prompt': 'judge', 'output_type': 'number'})
     _write(d / 'metrics.json', {
-        'metadata': {'output_type': 'string'},
+        'metadata': {'output_type': 'number'},
         'per_row': [_stable_row(0), _flipped_row(1)],
         'correctness': {
             'n_labelled': 0,
-            'reason_omitted': 'string verdicts are not comparable with ==',
+            'reason_omitted': (
+                'no declared scale and no configured numeric_tol — a fixed absolute band '
+                'would be arbitrary (0.5 is half of a 0-1 scale)'
+            ),
         },
     })
     _seed_stability(d, [0, 1])

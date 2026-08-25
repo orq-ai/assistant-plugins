@@ -146,7 +146,9 @@ When ≥1 row has a non-empty `reference` that parses into the evaluator's verdi
 ```
 `by_band` is the point: **accuracy among the *stable* rows is the blind-spot measurement.** A judge that is 100% stable and 60% correct on stable rows is the exact failure this skill otherwise cannot see, and it becomes a headline number.
 
-Type handling: boolean/categorical by equality; numeric by the shared `numeric_tol` (§Configuration in `SKILL.md`); string is **excluded** for the same `==` reason `recommend.py` refuses it — the conductor scores those by reading, as it already does at step 8.
+Type handling: boolean/categorical by equality; numeric by the shared `numeric_tol` (§Configuration in `SKILL.md`).
+
+> **Superseded:** this design also specified a free-form `string` output type, excluded from `correctness` because `==` is the wrong comparison for prose. `string` was subsequently dropped from the skill entirely — the supported set is `boolean | categorical | number`. The string clauses below are kept only as a record of the design as written.
 
 **b) `build_queue.py`** gains a third confuser `reason`, ranked *after* instability and cross-model:
 `reason: "wrong_vs_reference"` — rows where the judge was **stable and wrong**. These are the highest-information rows in the whole run and today they are invisible.
@@ -167,7 +169,7 @@ A dataset label is **not** the user's verdict. It is someone's prior judgement, 
 - Labelled dataset, judge stable-but-wrong on 3 rows → those 3 appear as `wrong_vs_reference`, `by_band.stable.accuracy < 1`.
 - Mixed labelled/unlabelled → `n_labelled` counts only the labelled.
 - Unparseable label (`"maybe"`) → excluded from `n_labelled`, warned once, never coerced.
-- String evaluator → `correctness` block omitted with an explicit reason field.
+- ~~String evaluator → `correctness` block omitted with an explicit reason field.~~ (superseded: `string` is no longer a supported output type)
 
 ---
 

@@ -1022,9 +1022,6 @@ def test_selection_bias_controlled_reflects_the_outcome_not_just_the_flag(tmp_pa
     assert any('unreliable without --baseline_rerun' in c for c in rm['caveats'])
 
 
-# --- CRITICAL 1 — resuming a string retest must not re-judge -----------------
-
-
 # --- IMPORTANT 2 — the numeric fallback tolerance refuses before judging -----
 
 

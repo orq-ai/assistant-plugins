@@ -151,7 +151,3 @@ def test_reason_falls_back_to_explanation_key():
     ann = {'value': False, 'explanation': 'legacy key'}
     d = recommend._disagreement(row, ann, 'boolean', labels=None)
     assert d['reason'] == 'legacy key'
-
-
-# --- string judges stop before the money is spent ----------------------------
-
