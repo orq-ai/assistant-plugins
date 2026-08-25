@@ -15,18 +15,16 @@ Formulas (RES-978 §4), each returning 0.0 = perfectly stable, 1.0 = maximal:
   - boolean:      2·min(yes, N−yes) / N
   - categorical:  H / ln(k)   with H = −Σ p·ln p  over observed labels
   - numeric:      population stdev / (scale_max − scale_min)
-  - string:       H / ln(n_requested) — exact-match entropy over free-form strings
 
 Every denominator is fixed by something the run declares — the label set, the
-scale, the requested repeat count — and never by what the judge happened to
-return. A denominator that moves with the sample makes the score move when the
-behaviour has not, which is a ranking bug, not a rounding one.
+scale — and never by what the judge happened to return. A denominator that moves
+with the sample makes the score move when the behaviour has not, which is a
+ranking bug, not a rounding one.
 
-The string type has no declared label set and no scale, so its denominator is
-ln(n_requested) (the entropy of n_requested all-distinct outputs) rather than
-ln(k). Comparison is exact-match on the canonical string (parse_verdict casefolds
-+ collapses whitespace); semantic/paraphrase-aware matching is intentionally out
-of scope.
+Free-form `string` evaluators are out of scope: exact-match entropy over prose
+scores nearly every row as maximally unstable, so it cannot rank confusers, and
+the retest has no mechanical way to score agreement. See
+`orq_client.SUPPORTED_OUTPUT_TYPES`.
 """
 
 from __future__ import annotations
@@ -114,45 +112,6 @@ def numeric(values: Sequence[float], scale_min: float, scale_max: float) -> floa
     return min(1.0, pstdev(values) / scale_range)
 
 
-def string(values: Sequence[str], n_requested: int | None = None) -> float:
-    """Exact-match normalized entropy `H / ln(n_requested)` over string verdicts.
-
-    Free-form strings have no declared label set (unlike categorical) and no scale
-    (unlike numeric), so the max-entropy denominator is the entropy of all-distinct
-    outputs. The denominator is the number of repetitions REQUESTED, not the number
-    that came back: `repetitions_failed` varies per row, so normalizing by the
-    observed count made the score move when the judge's behaviour had not, and it
-    moved the wrong way. Two rows with the same 50/50 split at `n_repeats = 10`,
-    one of which lost 5 repetitions to errors, scored 0.418 and 0.301 — the row we
-    knew *least* about ranked above the row we knew most about, and `build_queue`
-    ranks on this number. Against a fixed `n_requested` both score 0.301. The other
-    three types never had this: their denominators are fixed by the contract.
-
-    Clamped to `[0, 1]` because `n_requested` is an upper bound the observed count
-    can equal but not exceed. 0.0 when the judge agrees with itself every run (or
-    when there is at most one repetition to compare).
-
-    Known limit, shared with any entropy normalization: the *band* still depends on
-    the configured `n_repeats`. An evenly-split judge reads `unreliable` at N ≤ 10
-    and `noisy` from N = 12, because `ln 2 / ln N` falls as N grows. Compare string
-    instability within a run, not across runs configured differently.
-
-    Inputs are already canonical (casefold + whitespace-collapsed in
-    `parse_verdict`), so counting is exact-match.
-    """
-    n = len(values)
-    if n == 0:
-        raise ValueError('string instability needs at least one value')
-    denominator_n = max(n, int(n_requested)) if n_requested else n
-    if denominator_n <= 1:
-        return 0.0
-    entropy = 0.0
-    for count in Counter(values).values():
-        p = count / n
-        entropy -= p * math.log(p)
-    return min(1.0, entropy / math.log(denominator_n))
-
-
 def classify(x: float) -> str:
     """Band a 0..1 instability score: `stable` | `noisy` | `unreliable` (§2)."""
     if x < _STABLE_MAX:
@@ -168,7 +127,6 @@ def row_instability(
     *,
     k: int | None = None,
     scale: tuple[float, float] | None = None,
-    n_requested: int | None = None,
 ) -> float | None:
     """Dispatch one row's canonical verdicts to its type's formula.
 
@@ -189,8 +147,4 @@ def row_instability(
         if scale is None:
             return None  # unmeasurable: no scale to normalize by (§4a)
         return numeric(verdicts, scale[0], scale[1])
-    if t == 'string':
-        # No k / scale: the denominator is ln(n_requested), the repetitions ASKED
-        # for, so a row that lost repetitions to errors is not scored as noisier.
-        return string(verdicts, n_requested)
-    raise ValueError(f'unknown output_type {output_type!r} (expected boolean | categorical | number | string)')
+    raise ValueError(f'unknown output_type {output_type!r} (expected boolean | categorical | number)')

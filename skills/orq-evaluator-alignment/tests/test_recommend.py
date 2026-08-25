@@ -155,21 +155,3 @@ def test_reason_falls_back_to_explanation_key():
 
 # --- string judges stop before the money is spent ----------------------------
 
-
-def test_string_evaluator_is_refused_before_any_backend_call(tmp_path):
-    # `rewrite_eval` and `create_eval` both refuse string, but `recommend` did not —
-    # so a free-text judge burned one meta-prompt call per annotation producing
-    # guidance that the next step would reject. The fail-fast belongs at the front.
-    import asyncio
-    import json
-
-    for name, obj in (
-        ('evaluator.json', {'id': 'e', 'prompt': 'p', 'judge_model': 'm', 'output_type': 'string'}),
-        ('metrics.json', {'metadata': {'output_type': 'string'}, 'per_row': []}),
-        ('stability.json', {'rows': []}),
-        ('annotations.json', {'0': {'value': 'some free text', 'reason': ''}}),
-    ):
-        (tmp_path / name).write_text(json.dumps(obj), encoding='utf-8')
-
-    with pytest.raises(SystemExit, match='does not support free-text'):
-        asyncio.run(recommend._run(tmp_path, {}))

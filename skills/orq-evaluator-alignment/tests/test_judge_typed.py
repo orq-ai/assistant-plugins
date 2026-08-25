@@ -41,14 +41,6 @@ def test_response_format_numeric_is_number():
     assert rf['json_schema']['schema']['properties']['value']['type'] == 'number'
 
 
-def test_response_format_string_is_value_only_no_explanation():
-    # String evaluators emit ONLY `value` (a free-form string), no explanation.
-    schema = judge.build_response_format('string')['json_schema']['schema']
-    assert schema['properties']['value']['type'] == 'string'
-    assert 'explanation' not in schema['properties']
-    assert schema['required'] == ['value']
-
-
 # --- _count_off_contract: n_wrong = (#None) − repetitions_failed ---
 
 
@@ -115,27 +107,3 @@ def test_numeric_out_of_scale_abstains(monkeypatch):
 
 # --- string: value from JSON or whole completion, canonicalized; empty abstains ---
 
-
-def test_string_ok_from_json_value(monkeypatch):
-    monkeypatch.setattr(judge, 'execute_chat_completion', _fake_exec('{"value":"Refund Request"}'))
-    fn = judge.build_judge_fn(_SPEC, client=object(), output_type='string')
-    pred = _run(fn)
-    assert pred.value == 'refund request'  # casefold + whitespace-collapsed
-    assert pred.abstained is False
-
-
-def test_string_ok_from_free_text(monkeypatch):
-    # No JSON — the entire completion is the value.
-    monkeypatch.setattr(judge, 'execute_chat_completion', _fake_exec('  billing   issue \n'))
-    fn = judge.build_judge_fn(_SPEC, client=object(), output_type='string')
-    pred = _run(fn)
-    assert pred.value == 'billing issue'
-
-
-def test_string_empty_abstains(monkeypatch):
-    monkeypatch.setattr(judge, 'execute_chat_completion', _fake_exec('   '))
-    fn = judge.build_judge_fn(_SPEC, client=object(), output_type='string')
-    pred = _run(fn)
-    assert pred.abstained is True
-    assert pred.value is None
-    assert pred.error is None

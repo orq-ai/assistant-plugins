@@ -9,18 +9,18 @@
 # ///
 """Provision (and tear down) the RAG-groundedness test case in an orq workspace.
 
-Creates one dataset of 24 datapoints plus four judge evaluators (boolean,
-categorical, numeric, string) that all read the same datapoints, then records
-every created id in `created.json` so teardown is exact.
+Creates one dataset of 24 datapoints plus three judge evaluators (boolean,
+categorical, numeric) that all read the same datapoints, then records every
+created id in `created.json` so teardown is exact.
 
     uv run create_testcase.py create --dry_run   # print what would be sent
     uv run create_testcase.py create             # provision for real
     uv run create_testcase.py delete             # remove everything in created.json
 
 Deliberately standalone: it posts to `/v2/evaluators` directly rather than going
-through `lib.orq_client.build_create_body`, because that builder rejects
-`output_type='string'` (only boolean/categorical/number are creatable there) and
-this test case needs the string judge too.
+through `lib.orq_client.build_create_body`. This fixture exists to exercise the
+skill's own create path, so provisioning it must not depend on that path being
+correct — a shared builder would let one bug hide itself.
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ def _evaluator_body(ev: dict[str, Any], *, model: str, path_prefix: str) -> dict
     elif kind == 'number':
         if ev.get('scale'):
             body['scale'] = ev['scale']
-    elif kind != 'string':
+    elif kind != 'boolean':
         raise ValueError(f'Unsupported output_type {kind!r}.')
     return body
 
@@ -176,8 +176,8 @@ def create(dry_run: bool = False, dataset_id: str | None = None) -> None:
             try:
                 data = _post(client, '/v2/evaluators', body)
             except httpx.HTTPStatusError:
-                # A verdict type the workspace refuses (string is the likely one)
-                # must not lose the ids already created — record and continue.
+                # A verdict type this workspace refuses must not lose the ids
+                # already created — record and continue.
                 logger.warning(f"⚠ skipped {ev['key']} ({ev['output_type']}) — see error above")
                 created['evaluators'].append({'key': ev['key'], 'output_type': ev['output_type'], 'id': None})
                 _save(created)

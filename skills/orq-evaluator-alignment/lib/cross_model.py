@@ -16,17 +16,11 @@ from typing import Any
 _NUMERIC_TYPES = frozenset({'number', 'numeric'})
 
 
-def _canonical(value: Any) -> str:
-    """casefold + whitespace-collapse — the same canonical form parse_string uses."""
-    return ' '.join(str(value).casefold().split())
-
-
 def disagrees(output_type: str, a: Any, b: Any, *, tol: float = 0.5) -> bool:
     """Do model-A and model-B verdicts disagree on one datapoint, per type?
 
     - boolean → unequal values.
     - categorical → unequal after casefold+strip (mirrors `lib.agreement`).
-    - string → unequal canonical form (casefold + whitespace-collapse).
     - numeric → `|a − b| > tol` (reuses the retest within-tolerance band).
     """
     t = (output_type or 'boolean').strip().lower()
@@ -36,8 +30,6 @@ def disagrees(output_type: str, a: Any, b: Any, *, tol: float = 0.5) -> bool:
         return bool(a) != bool(b)
     if t == 'categorical':
         return str(a).casefold().strip() != str(b).casefold().strip()
-    if t == 'string':
-        return _canonical(a) != _canonical(b)
     raise ValueError(f'unsupported output_type {output_type!r} for cross-model comparison')
 
 

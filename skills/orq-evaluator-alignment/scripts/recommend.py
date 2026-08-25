@@ -364,19 +364,6 @@ async def _run(out_dir: Path, cfg: dict[str, Any]) -> tuple[list[dict[str, Any]]
     annotations = runner.read_json(out_dir / 'annotations.json')
 
     output_type = (evaluator.get('output_type') or metrics.get('metadata', {}).get('output_type') or 'boolean').strip().lower()
-    if output_type == 'string':
-        # String is detect + annotate only: `rewrite_eval` and `create_eval` both
-        # refuse it. Refusing here too means the user finds out BEFORE paying for
-        # one meta-prompt call per annotation — the fail-fast used to sit two steps
-        # downstream, after the money was spent.
-        raise SystemExit(
-            'recommend does not support free-text (string) evaluators. Its per-datapoint '
-            'disagreement extraction compares the human label to the judge verdict with ==, '
-            'which is the wrong comparison for free text: two correct answers worded '
-            'differently read as a disagreement. Use the grey-zone path instead '
-            '(grey_zone.py assemble → apply → rewrite_eval), which reads the answers rather '
-            'than comparing them. This is the fallback path, so nothing is lost by it.'
-        )
     labels = evaluator.get('categorical_labels') or []
     tolerance = _resolve_tolerance(cfg, evaluator.get('scale'))
 

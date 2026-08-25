@@ -117,14 +117,6 @@ def test_numeric_uses_the_shared_tolerance_band():
     assert metrics._correctness(rows, per_row, 'number', 1.0, **_NEUTRAL)['n_correct'] == 2
 
 
-def test_string_is_omitted_with_a_stated_reason():
-    c = metrics._correctness(
-        _rows((0, 'refund request', 'refund')), _per_row((0, 'stable')), 'string', 0.5, **_NEUTRAL,
-    )
-    assert c['n_labelled'] == 0
-    assert 'wording' in c['reason_omitted']
-
-
 def test_confusion_records_the_direction_of_the_error():
     c = metrics._correctness(
         _rows((0, 'true', False), (1, 'true', False)),
@@ -320,15 +312,6 @@ def test_by_band_full_coverage_earns_the_blind_spot_claim():
 
 
 # ── §4.2 — string instability report states its exact-match ceiling ──────────
-
-
-def test_string_report_upper_bound():
-    per_row = [{
-        'source_index': 0, 'instability': 0.2, 'band': 'noisy', 'n_wrong_output_type': 0,
-        'n_successful_repeats': 5, 'n_failed': 0, 'counts': {'a': 3, 'b': 2}, 'n_distinct': 2,
-    }]
-    report = metrics._report(per_row, 'string', 0.2, Counter({'noisy': 1}), 1, 1, 0, 0)
-    assert 'upper bound' in report
 
 
 def test_boolean_report_wording_unchanged():

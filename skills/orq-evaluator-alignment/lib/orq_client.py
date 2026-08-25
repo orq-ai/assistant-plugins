@@ -35,6 +35,38 @@ def default_base_url() -> str:
     """The API host to use: `ORQ_API_BASE_URL` if set, else the hosted default."""
     return os.environ.get('ORQ_API_BASE_URL', DEFAULT_BASE_URL).rstrip('/') or DEFAULT_BASE_URL
 
+
+#: The evaluator output types this skill supports, end to end. Single source of
+#: truth: the step-1 fetch gate and the step-7 create path both resolve through
+#: `normalise_output_type`, so a type that cannot be created can never be accepted
+#: at step 1. That split is what let a `string` evaluator pay for a whole run and
+#: then fail at `create_eval --approve`, after `approval.json` was written.
+SUPPORTED_OUTPUT_TYPES = frozenset({'boolean', 'categorical', 'number'})
+
+#: Spellings orq's own records use interchangeably. `numeric` is the alias the
+#: evaluator record sometimes carries for `number` (§8.1); it is normalised on the
+#: way in so exactly one spelling reaches the request body.
+_OUTPUT_TYPE_ALIASES = {'numeric': 'number'}
+
+
+def normalise_output_type(output_type: str) -> str:
+    """Lower-case, de-alias and validate an evaluator output type.
+
+    Returns one of `boolean | categorical | number`; raises ``ValueError`` for
+    anything else so the caller can stop with guidance. Free-form `string`
+    evaluators are deliberately not supported: exact-match entropy is a weak
+    instability signal on prose, and the retest cannot score agreement without a
+    human reading the answers.
+    """
+    t = (output_type or '').strip().lower()
+    t = _OUTPUT_TYPE_ALIASES.get(t, t)
+    if t not in SUPPORTED_OUTPUT_TYPES:
+        raise ValueError(
+            f'output_type={output_type!r} is not supported. This skill handles '
+            'boolean | categorical | number evaluators only.'
+        )
+    return t
+
 # Matches `{{ var.path }}` template tokens in a judge prompt. The captured group
 # is the trimmed variable path (e.g. `log.input`, `query`, `output`).
 _VAR_TOKEN = re.compile(r'\{\{\s*([^}]+?)\s*\}\}')
@@ -168,6 +200,10 @@ def build_create_body(
     Any other `output_type` is rejected: only the three supported verdict spaces
     can be created.
     """
+    # Resolve through the shared gate so `numeric` never reaches the request body
+    # as an unrecognised spelling and an unsupported type fails here the same way
+    # it fails at step 1.
+    output_type = normalise_output_type(output_type)
     body: dict[str, Any] = {
         'type': 'llm_eval',
         'mode': 'single',
@@ -227,10 +263,10 @@ def build_create_body(
                 f'numeric scale {scale} not sent: /v2/evaluators has no scale field. '
                 'The scale is preserved in the rubric text instead.'
             )
-    else:
+    else:  # pragma: no cover — unreachable while every supported type has a branch
         raise ValueError(
-            f'Unsupported output_type {output_type!r}: expected one of '
-            "'boolean', 'categorical', 'number'."
+            f'output_type {output_type!r} passed the gate but has no request shape: '
+            'SUPPORTED_OUTPUT_TYPES and build_create_body have drifted apart.'
         )
     return body
 

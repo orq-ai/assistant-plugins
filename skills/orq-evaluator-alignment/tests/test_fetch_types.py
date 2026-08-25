@@ -59,9 +59,66 @@ def test_check_type_accepts_and_normalizes():
     assert fe._check_output_type('number') == 'number'
 
 
+def test_check_type_normalises_the_numeric_alias_to_number():
+    # An evaluator record can spell the numeric type either way (§8.1). Only one
+    # spelling may leave this gate: `numeric` used to pass here and then be
+    # rejected by `build_create_body`, which turned a supported type into a
+    # step-7 failure after the whole run had been paid for.
+    assert fe._check_output_type('numeric') == 'number'
+    assert fe._check_output_type('  NUMERIC ') == 'number'
+
+
 def test_check_type_rejects_unknown():
     with pytest.raises(ValueError):
         fe._check_output_type('freeform')
+
+
+def test_check_type_rejects_string():
+    # orq's API accepts a `string` output_type; this skill deliberately does not.
+    # Exact-match entropy cannot rank free text and the retest has no mechanical
+    # way to score agreement on it, so it is refused at step 1 rather than
+    # measured with a number that does not mean anything.
+    with pytest.raises(ValueError):
+        fe._check_output_type('string')
+
+
+# --- the fetch gate and the create path must accept the SAME set ---
+
+
+def test_every_accepted_type_can_actually_be_created():
+    """Whatever passes step 1 must have a request shape at step 7.
+
+    These two lists living apart is what shipped a `string` evaluator that could
+    be fetched, measured, queued, annotated and rewritten — and then failed at
+    `create_eval --approve`, after `approval.json` was written. Asserting the
+    round trip here is cheaper than discovering it at the end of a paid run.
+    """
+    for output_type in sorted(orq_client.SUPPORTED_OUTPUT_TYPES):
+        assert fe._check_output_type(output_type) == output_type
+        body = orq_client.build_create_body(
+            key='k', path='p', prompt='x', model='m', description=None,
+            output_type=output_type,
+            categorical_labels=['a', 'b'] if output_type == 'categorical' else None,
+        )
+        assert body['output_type'] == output_type
+
+
+def test_create_rejects_what_the_fetch_gate_rejects():
+    for output_type in ('string', 'freeform'):
+        with pytest.raises(ValueError):
+            fe._check_output_type(output_type)
+        with pytest.raises(ValueError):
+            orq_client.build_create_body(
+                key='k', path='p', prompt='x', model='m', description=None,
+                output_type=output_type,
+            )
+
+
+def test_create_accepts_the_numeric_alias():
+    body = orq_client.build_create_body(
+        key='k', path='p', prompt='x', model='m', description=None, output_type='numeric',
+    )
+    assert body['output_type'] == 'number'
 
 
 # --- _resolve_scale: override-only (flags > config), both-or-neither ---

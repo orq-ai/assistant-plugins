@@ -1,8 +1,7 @@
 # Evaluator Alignment skill
 
 A standalone, human-in-the-loop skill that realigns an existing **LLM-judge
-evaluator** (boolean, categorical, numeric, or free-form string) to human
-judgment. Given an orq evaluator id and its production traces, it measures the
+evaluator** (boolean, categorical, or numeric) to human judgment. Given an orq evaluator id and its production traces, it measures the
 judge's self-consistency, finds the examples it is least sure about, works out
 *why* those examples are hard, asks the user a handful of questions that each
 settle a whole group of them, turns the answers into a rewritten judge prompt,
@@ -74,7 +73,7 @@ is re-runnable in isolation against an existing run directory.
 | 6 | `aggregate.py` | `recommendations.json` | `aggregated.md` + `aggregated.json` |
 | 7 | `rewrite_eval.py` | `aggregated.md`, `evaluator.json` | `new_prompt.md`, `rewrite_status.json` |
 | 7 | `create_eval.py` | `new_prompt.md`, `evaluator.json` | `approval.json`, `new_evaluator.json` |
-| 8 | `retest.py` | `new_prompt.md`, `grey_zone_policy.json` | `retest_metrics.json`; free-text judges round-trip via `string_pairs.json` → `string_verdicts.json` |
+| 8 | `retest.py` | `new_prompt.md`, `grey_zone_policy.json` | `retest_metrics.json` |
 
 ## Quick start
 
@@ -204,20 +203,20 @@ blind spot below on demand.
 
 ## Scope & limitations
 
-- **Multi-type.** Measurement (stability → instability → confuser ranking)
-  supports **boolean, categorical, numeric, and free-form string** judges on one
-  0..1 instability scale. The **improve** half (grey zone → recommend → rewrite →
-  create → retest) supports **boolean, categorical, and numeric** (RES-978 /
-  RES-980); the rewrite preserves the verdict space (label set / numeric scale)
-  and numeric rewriting is deliberately shallow (anchor-nudge, not calibration).
-  **String runs the whole flow with one difference at step 8** — agreement is
-  scored by *reading* the answers rather than by `==`, because two correct
-  free-text answers worded differently would otherwise score as a disagreement
-  and reject every rewrite. The retest writes `string_pairs.json`, the conductor
-  (or the user) decides match/no-match per example against the grey-zone rule, and
-  the run resumes from `string_verdicts.json`. `recommend.py` — the fallback path
-  only — still refuses string for that same `==` reason. Step 1 accepts all four
-  types and fails fast on anything else.
+- **Multi-type.** The whole flow — measurement (stability → instability → confuser
+  ranking) and the improve half (grey zone → recommend → rewrite → create → retest)
+  — supports **boolean, categorical, and numeric** judges on one 0..1 instability
+  scale (RES-978 / RES-980). The rewrite preserves the verdict space (label set /
+  numeric scale), and numeric rewriting is deliberately shallow (anchor-nudge, not
+  calibration). Step 1 accepts those three types and fails fast on anything else.
+- **No free-form `string` judges.** orq's API accepts a `string` output type; this
+  skill refuses it. Instability over prose is exact-match entropy, which scores
+  nearly every row as maximally unstable and therefore ranks nothing, and gate (b)
+  has no mechanical way to tell a correct answer from one merely worded
+  differently. The alternative — a human reading every pair — is the manual
+  labelling this skill exists to remove. One list
+  (`orq_client.SUPPORTED_OUTPUT_TYPES`) gates both step 1 and step 7, so a type
+  that cannot be created can never be accepted.
 - **Self-consistency ≠ validity.** Instability localises where the judge is
   unstable; it cannot prove the judge is correct.
 - **Consistently-wrong blind spot.** Instability-ranking never surfaces items the

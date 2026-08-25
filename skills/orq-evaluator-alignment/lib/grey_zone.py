@@ -38,8 +38,6 @@ def _verdict_split(output_type: str, votes: dict[str, Any]) -> dict[str, Any]:
         return {'counts': votes.get('counts')}
     if output_type in {'number', 'numeric'}:
         return {'mean': votes.get('mean'), 'stdev': votes.get('stdev')}
-    if output_type == 'string':
-        return {'counts': votes.get('counts')}
     raise ValueError(f'unsupported output_type {output_type!r} for verdict split')
 
 

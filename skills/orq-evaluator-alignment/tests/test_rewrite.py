@@ -277,23 +277,6 @@ def test_verdict_space_ok_is_none_when_variables_failed():
     assert result['failed_check'] == 'variables'
 
 
-def test_context_string_pins_the_format_not_a_verdict_set():
-    # Free text has no label set and no scale, so the preservation rule has to be
-    # about the SHAPE of the answer. Without one there is nothing holding the
-    # rewrite to the contract the human labelled against.
-    ev = {'output_type': 'string', 'categorical_labels': [], 'scale': None}
-    ctx = rw.build_verdict_space_context(ev)
-    assert 'free-form string' in ctx['verdict_space']
-    assert 'format IS the contract' in ctx['preservation_rule']
-
-
-def test_context_string_forbids_turning_it_into_another_type():
-    # Adding a label set or a scale is not a rewrite — it is a different evaluator,
-    # and every measurement taken of the old one stops applying.
-    ctx = rw.build_verdict_space_context({'output_type': 'string'})
-    assert 'do not add an enumerated' in ctx['type_guidance'].lower()
-
-
 def test_context_unknown_type_still_raises():
     with pytest.raises(ValueError):
         rw.build_verdict_space_context({'output_type': 'tensor'})

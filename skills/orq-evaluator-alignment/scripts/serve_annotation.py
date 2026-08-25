@@ -12,8 +12,8 @@ auto-save: a reload or crash resumes exactly where you left off).
 
 Each queue item carries its own `verdict_space` (Part 1 → Part 2 boundary, §5.6),
 so the UI renders a **type-native** input per item — boolean → Pass/Fail,
-categorical → one button per declared label, numeric → a bounded number input,
-string → a free-text box — plus one optional one-line "why". The human's typed value is therefore directly
+categorical → one button per declared label, numeric → a bounded number input —
+plus one optional one-line "why". The human's typed value is therefore directly
 comparable to the judge's verdicts in the recommend/aggregate step (§2.2) with no
 Pass/Fail remapping to get wrong.
 
@@ -87,7 +87,6 @@ def input_type_for(verdict_space: dict[str, Any] | None) -> dict[str, Any]:
       - boolean     -> {'type': 'boolean'}
       - categorical -> {'type': 'categorical', 'labels': [...]}
       - number      -> {'type': 'number', 'scale': [min, max] | None}
-      - string      -> {'type': 'string'}   (free-text, no label set / scale)
 
     Anything missing/unknown falls back to boolean (the safe default and the
     historical behaviour of this UI).
@@ -98,8 +97,6 @@ def input_type_for(verdict_space: dict[str, Any] | None) -> dict[str, Any]:
         return {'type': 'categorical', 'labels': list(vs.get('labels') or [])}
     if vtype in _NUMBER_TYPES:
         return {'type': 'number', 'scale': _normalize_scale(vs.get('scale'))}
-    if vtype == 'string':
-        return {'type': 'string'}
     return {'type': 'boolean'}
 
 
@@ -107,10 +104,10 @@ def coerce_value(verdict_space: dict[str, Any] | None, value: Any) -> bool | str
     """Turn a raw posted value into the typed `annotations.json` value.
 
     Type follows the output type: boolean -> bool, categorical -> one of the
-    declared labels (str), numeric -> float within scale (if a scale is set),
-    string -> non-empty free-text (str, trimmed). Raises ValueError on a value
-    that does not fit the verdict space so a bad label / out-of-range score /
-    empty string is rejected at the door rather than silently persisted.
+    declared labels (str), numeric -> float within scale (if a scale is set).
+    Raises ValueError on a value that does not fit the verdict space so a bad
+    label or out-of-range score is rejected at the door rather than silently
+    persisted.
     """
     spec = input_type_for(verdict_space)
     vtype = spec['type']
@@ -125,13 +122,6 @@ def coerce_value(verdict_space: dict[str, Any] | None, value: Any) -> bool | str
         sval = value if isinstance(value, str) else str(value)
         if labels and sval not in labels:
             raise ValueError(f'{sval!r} is not a declared label {labels}')
-        return sval
-
-    if vtype == 'string':
-        # Free-form: any non-empty string is valid (no label set, no scale).
-        sval = (value if isinstance(value, str) else str(value)).strip()
-        if not sval:
-            raise ValueError('string value must be a non-empty string')
         return sval
 
     # numeric

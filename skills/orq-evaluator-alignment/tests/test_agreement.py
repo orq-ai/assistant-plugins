@@ -275,39 +275,3 @@ def test_agreement_dispatch_forwards_per_point_bands():
 
 # --- string: scored by a reader, because == is the wrong comparison ---
 
-
-def test_string_agreement_counts_reader_decisions():
-    pairs = [('refund request', 'refund'), ('billing', 'billing question'), ('spam', 'spam')]
-    r = agreement.string_agreement(pairs, [True, True, False])
-    assert r['accuracy'] == pytest.approx(2 / 3)
-    assert r['n_match'] == 2
-    assert r['n'] == 3
-
-
-def test_string_agreement_is_labelled_as_read_not_measured():
-    # The report must never present a judgment as a measurement.
-    assert agreement.string_agreement([('a', 'b')], [True])['scored_by'] == 'reader'
-
-
-def test_string_agreement_rejects_a_short_match_list():
-    # Scoring a subset and reporting it as the whole set is the failure this refuses.
-    with pytest.raises(ValueError):
-        agreement.string_agreement([('a', 'a'), ('b', 'b')], [True])
-
-
-def test_string_agreement_would_reject_a_good_judge_under_exact_match():
-    # Why this metric exists: every pair below is a correct answer worded differently,
-    # so `==` scores 0.0 and the retest would reject a rewrite that improved things.
-    pairs = [('refund request', 'refund'), ('billing question', 'billing issue')]
-    assert sum(1 for h, j in pairs if h == j) == 0
-    assert agreement.string_agreement(pairs, [True, True])['accuracy'] == pytest.approx(1.0)
-
-
-def test_agreement_dispatch_string_requires_matches():
-    with pytest.raises(ValueError, match='matches'):
-        agreement.agreement('string', [('a', 'b')])
-
-
-def test_agreement_dispatch_string():
-    r = agreement.agreement('string', [('a', 'b'), ('c', 'd')], matches=[True, False])
-    assert r['accuracy'] == pytest.approx(0.5)

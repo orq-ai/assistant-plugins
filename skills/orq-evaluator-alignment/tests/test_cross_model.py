@@ -35,11 +35,6 @@ def test_disagrees_numeric_within_tol():
     assert cross_model.disagrees('number', 3.0, 4.0, tol=0.5) is True
 
 
-def test_disagrees_string_canonical_exact():
-    assert cross_model.disagrees('string', 'Hello  World', 'hello world') is False
-    assert cross_model.disagrees('string', 'a', 'b') is True
-
-
 def test_cross_model_rows_flags_disagreements_and_skips_none():
     a = {0: True, 1: False, 2: None}
     b = {0: False, 1: False, 2: True}

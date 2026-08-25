@@ -38,31 +38,21 @@ from loguru import logger
 
 import _bootstrap  # noqa: F401  (path setup)
 from lib import runner
-from lib.orq_client import EvaluatorNotFound, OrqClient
+from lib.orq_client import EvaluatorNotFound, OrqClient, normalise_output_type
 
 load_dotenv()
 
 _UUID_RE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', re.IGNORECASE)
 
-# RES-978: the orq output types Part 1 measures (`numeric` tolerated as an alias
-# of `number`, §8.1; `string` = free-form text, exact-match entropy). Anything
-# else is out of scope and fails the gate.
-_ACCEPTED_OUTPUT_TYPES = frozenset({'boolean', 'categorical', 'number', 'numeric', 'string'})
-
 
 def _check_output_type(output_type: str) -> str:
     """Normalise + validate the evaluator output type (§5.2 type gate).
 
-    Returns the lower-cased type for `boolean | categorical | number`; raises
-    ``ValueError`` for anything else so the caller can stop with guidance.
+    Delegates to `orq_client.normalise_output_type` so this gate and the step-7
+    create path share one list: a type that cannot be created is refused here,
+    before any judging is paid for, rather than at `create_eval --approve`.
     """
-    t = (output_type or '').strip().lower()
-    if t not in _ACCEPTED_OUTPUT_TYPES:
-        raise ValueError(
-            f'output_type={output_type!r} is not supported. RES-978 measures '
-            'boolean | categorical | number | string evaluators only.'
-        )
-    return t
+    return normalise_output_type(output_type)
 
 
 def _resolve_scale(

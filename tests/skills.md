@@ -152,7 +152,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 - Ask: "Align my evaluator — it disagrees with my labels"
 - Verify: asks whether they have a judge in orq at all before asking for an ID; hands off to `orq-build-evaluator` if they don't
-- Verify: accepts boolean, categorical, numeric and string judges (not just Pass/Fail), and fails fast on any other output type
+- Verify: accepts boolean, categorical and numeric judges (not just Pass/Fail), and fails fast at step 1 on any other output type — including orq's free-form `string` type, which is refused before any judging is paid for rather than at the create step
 - Verify: runs the repeated-judging step and reports one 0..1 instability score before proposing any rewrite
 - Verify: after fetching the judge it **asks where the examples should come from** — traces, an orq dataset, examples you bring, or generated ones — instead of scanning traces by default and treating the other three as recovery options
 - Verify: offers the deeper trace scan only when the scan hit its cap (there is more history), not when it came back under the cap (a deeper scan would re-read the same traces)
@@ -165,7 +165,6 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: when the examples carry ground truth it reports **accuracy, and accuracy on the rows the judge was stable on**, instead of reciting the consistently-wrong caveat it now has the data to retire — and still tags those labels `dataset_reference`, not the user's verdict
 - Verify: after the new evaluator exists it **asks whether to re-run the old datapoints** to check for regression, quotes what that costs, and states how many of the original rows the check actually covered rather than reporting a 5-row result as "nothing regressed"
 - Verify: before retesting, asks whether rows labelled only from the dataset's own ground truth (`label_source: dataset_reference`) should be included too, mirroring the `--all_rows` ask, rather than silently leaving them out of gate (b)
-- Verify: on a free-text judge, the retest's `string_pairs.json` anonymises the two judges' answers as `answer_a`/`answer_b` (never `new`/`original`) with the blind-shuffle key held only in `string_pairs_key.json`, and refuses a `string_verdicts.json` whose `pairs_fingerprint` doesn't match the current pairs
 - Verify: only creates the new evaluator after human approval (never auto-creates)
 - Verify: quotes the retest against what the **original** judge scored on the same labels, and reads out the `caveats` (selection effect, no holdout, derived labels) rather than reporting the drop alone
 - Verify: the final summary states the consistently-wrong blind spot even when the numbers are good

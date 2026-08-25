@@ -1,7 +1,7 @@
 # Test case — RAG groundedness
 
 A live end-to-end exercise for the **evaluator-alignment** skill: one orq dataset of
-24 datapoints plus four judge evaluators (boolean, categorical, numeric, string) that
+24 datapoints plus three judge evaluators (boolean, categorical, numeric) that
 all read the same datapoints, and an answer key that says what the skill *should*
 surface.
 
@@ -15,7 +15,7 @@ find the ambiguity that is actually there, and does it admit what it cannot see?
 | File | What it is |
 |---|---|
 | `datapoints.json` | The 24 datapoints, in orq's `{inputs: {input, output}}` shape. `_case_id` is local bookkeeping and is stripped before upload. |
-| `evaluators.json` | The four judge rubrics, all deliberately underspecified. |
+| `evaluators.json` | The three judge rubrics, all deliberately underspecified. |
 | `create_testcase.py` | Provisions and tears down the dataset + evaluators. |
 | `answer_key.json` | **Spoiler.** Reference policy, per-case truth, measured baseline, pass criteria. |
 | `score_run.py` | Joins a finished run back onto the answer key and reports PC1 / PC3. |

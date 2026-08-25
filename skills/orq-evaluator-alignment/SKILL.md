@@ -2,9 +2,7 @@
 name: orq-evaluator-alignment
 description: >-
   Align, calibrate, or improve an existing LLM-as-a-judge (orq evaluator) so its
-  verdicts match human judgment — boolean, categorical, numeric, or free-form
-  string judges (string agreement is scored by reading the answers, not by exact
-  match). Use when
+  verdicts match human judgment — boolean, categorical, or numeric judges. Use when
   the user wants to "align my evaluator", "improve my eval", "my judge keeps
   changing its mind", "find ambiguous cases", or "annotate an evaluator" — i.e.
   they have an LLM judge that disagrees with human labels or is inconsistent.
@@ -54,22 +52,19 @@ bypasses the inline metadata).
 
 ## Constraints
 
-- **Multi-type.** Measurement (stability → instability metrics → confuser ranking)
-  supports **boolean, categorical, numeric, and free-form string** judges; the
-  improve half (score → recommend → rewrite → create → retest) supports **boolean,
-  categorical, and numeric** (RES-978 Part 1 + Part 2 / RES-980). Instability is one
-  0..1 scale (boolean flip-rate, categorical label entropy, numeric score spread,
-  string exact-match entropy `H/ln(n_repeats)`); the rewrite preserves the evaluator's
-  verdict space (label set / numeric scale). Numeric rewriting is deliberately
-  shallow — it nudges the scale's anchor descriptions, not a calibration model.
-  **String runs the whole flow, with one difference at step 8**: agreement cannot be
-  computed by `==`, because two correct free-text answers worded differently would
-  score as a disagreement and reject every rewrite. So the retest writes the pairs
-  out, you decide match/no-match per example against the user's own rule, and it
-  resumes from your verdicts — assemble → decide → consume, the same split the
-  grey-zone stage uses. `recommend.py` (the fallback path only) still refuses string
-  for exactly the `==` reason. Step 1 accepts all four output types and fails fast on
-  anything else.
+- **Multi-type.** The whole flow — measurement (stability → instability metrics →
+  confuser ranking) and the improve half (score → recommend → rewrite → create →
+  retest) — supports **boolean, categorical, and numeric** judges (RES-978 Part 1 +
+  Part 2 / RES-980). Instability is one 0..1 scale (boolean flip-rate, categorical
+  label entropy, numeric score spread); the rewrite preserves the evaluator's verdict
+  space (label set / numeric scale). Numeric rewriting is deliberately shallow — it
+  nudges the scale's anchor descriptions, not a calibration model. Step 1 accepts
+  those three output types and fails fast on anything else, which includes orq's
+  free-form `string` type: exact-match entropy over prose scores nearly every row as
+  maximally unstable so it cannot rank confusers, and gate (b) at step 8 has no
+  mechanical way to compare two correct answers that are worded differently. Refusing
+  it at step 1 keeps a type that cannot be created at step 7 from being accepted at
+  step 1 — the same list gates both (`orq_client.SUPPORTED_OUTPUT_TYPES`).
 - **Consistency is a ceiling, not proof.** A steady judge is *reproducible*, not
   *right* — it can be wrong the same way every time. You find the examples it's
   unsure about; only the user can say what the answer should be.
@@ -142,8 +137,11 @@ it is the user's call, not a default. Tell the user, in their words, what came b
 The command prints a run directory — **pass that `--run_dir` to every later step.**
 It starts as `<key>_<ts>` and is renamed to `<key>_<ts>_<model>_<N>dp` once the model
 and example count are known, so always use the **printed** path. If the judge's
-output type isn't boolean, categorical, number, or string, it stops here — tell the
-user those four are what's supported. It also hard-exits if `--scale_min`/
+output type isn't boolean, categorical, or number, it stops here — tell the user
+those three are what's supported. orq's free-form `string` type is deliberately
+among the refusals: instability over prose is exact-match entropy, which scores
+nearly every row as maximally unstable and so cannot rank anything, and gate (b)
+at step 8 has no way to compare two correct answers worded differently. It also hard-exits if `--scale_min`/
 `--scale_max` are passed one without the other — the numeric scale override is
 both-or-neither, so a partial pair is a user error rather than something to guess at.
 
@@ -293,7 +291,7 @@ tell them, for the rows it covers, and burying that would waste the most valuabl
 number in the run. The block itself is present whenever the examples carried ground
 truth, but a present block isn't the same as a populated one: when the evaluator
 declares a reference-family variable (`reference` was judge input, not ground truth),
-the judge is string, or it's numeric with no derivable scale, it comes back with
+or it's numeric with no derivable scale, it comes back with
 `n_labelled: 0` and a `reason_omitted` naming which — read that out, don't report an
 accuracy number. When it *is* populated, lead with the accuracy and, specifically, the
 accuracy on rows the judge was **stable** on — but check `by_band.stable`'s coverage
@@ -450,19 +448,13 @@ one by one, open the scoring UI instead of doing the chat Q&A:
 ```
 uv run scripts/serve_annotation.py --run_dir <run_dir>
 ```
-They get the right control for the judge's type — Pass/Fail, one button per label, a
-number on the scale, or a text box — plus an optional one-line "why". It saves as
-they go and can be resumed. Then, **for boolean / categorical / numeric judges only**:
+They get the right control for the judge's type — Pass/Fail, one button per label, or
+a number on the scale — plus an optional one-line "why". It saves as they go and can
+be resumed. Then:
 ```
 uv run scripts/recommend.py --run_dir <run_dir>
 uv run scripts/aggregate.py --run_dir <run_dir>
 ```
-**Free-text (string) judges take the grey-zone route, not this one.** `recommend.py`
-refuses string because its disagreement extraction compares the human label to the
-judge verdict with `==`, which reads two correctly-worded-differently answers as a
-disagreement. The grey-zone path reads the answers instead, so it handles string
-fine — go there and carry on to steps 7 and 8 as normal.
-
 Both routes end at `aggregated.md`; steps 7 and 8 read whichever of
 `grey_zone_policy.json` / `annotations.json` is **newer**, so if you switch to the UI
 after starting the grey-zone route, the labels you just collected are the ones used.
@@ -564,34 +556,6 @@ is softer than it looks:
   `instability.n_lost_unmeasurable` counts the rest. A non-zero count is the one that
   matters: dropping the hardest rows out of the average reads exactly like a drop.
 
-**Free-text judges need you to score gate (b).** `==` is the wrong comparison for
-free text, so on a string evaluator the retest writes `string_pairs.json` and stops.
-Each entry carries the human's target value plus the new and old judges' answers,
-anonymised and shuffled per entry as `answer_a`/`answer_b` — the reader is never told
-which judge wrote which, so knowing the rewrite is under test can't nudge the read —
-alongside the grey-zone rules the user settled; `string_pairs_key.json` records the
-shuffle so it can be reversed after the read. Decide **match / no-match against that
-rule** — same meaning, not same wording — write `string_verdicts.json` with
-`match_a`/`match_b` (not `match_new`/`match_original` — those come from unblinding
-afterward) per `source_index`, plus the `pairs_fingerprint` copied verbatim from
-`string_pairs.json` (a stale verdicts file from an earlier rewrite is refused, not
-silently scored), then re-run the same command. Cover every example: a partial file
-is refused rather than scored as if it covered the set. That re-run **reuses** the
-first pass's judged sub-run rather than calling the judge again — a free-text judge
-at temperature 1 won't reproduce the same modal strings twice, so re-judging on
-resume would regenerate the fingerprint every time and the verdicts you just wrote
-could never match it. `--rejudge` forces a fresh pass if you actually want one (a
-new rewrite, say); the fingerprint check still fires normally after that.
-
-Two things to say out loud when you report it. You are judging work you just wrote,
-so gate (b) here is a sanity check, not evidence — read a sample back to the user and
-mark those `"scored_by": "human_confirmed"` once they agree (`"conductor"` is the
-other allowed value, and the default; anything else is refused). And gate (a) is
-unaffected: string self-consistency is exact-match over canonical text — paraphrased
-same-meaning answers count as disagreement, so treat it as an upper bound — and that's
-still a valid *stability* test even though `==` is an invalid *correctness* test,
-which is the whole reason the two are split.
-
 **Check what happened outside the grey zone — and ask how wide to check.**  ⟵ GATE
 The examples you worked on are *supposed* to change. The question a new evaluator
 raises is what happened to everything else, and by default the answer covers only the
@@ -675,7 +639,7 @@ Tell them, in plain terms:
 
 | Key | Default | What it does |
 |---|---|---|
-| `retest_min_accuracy` | 0.7 | boolean + categorical: minimum exact-match rate for gate (b); string: minimum rate over the reader's match/no-match decisions |
+| `retest_min_accuracy` | 0.7 | boolean + categorical: minimum exact-match rate for gate (b) |
 | `retest_min_tpr` / `retest_min_tnr` | 0.7 | boolean only; each is skipped when the labels hold no positives / no negatives |
 | `retest_min_within_tol` | 0.7 | numeric: minimum share of points inside the band |
 | `numeric_tol` | blank → derived | the numeric agreement band in the judge's own units. **One key**, shared by the retest gate, the recommend step's disagreement extraction, and the cross-model probe |
@@ -761,7 +725,7 @@ resolve to the config value shown; overriding a flag beats `config.toml`.
 | `aggregate.py` | — |
 | `rewrite_eval.py` | `--max_attempts` (3), `--backend`, `--backend_model`, `--backend_base_url` |
 | `create_eval.py` | `--approve` (False), `--edits <file>` (None), `--force` (False; bypasses the variable-set AND verdict-space/preservation checks — unsafe; there is no judge-slug guard) |
-| `retest.py` | `--n_repeats` / `--temperature` (default: whatever the step-3 run used — a lower `--n_repeats` or a different `--temperature` marks the comparison not comparable), `--num_samples` (cap rows, smoke test — narrows both sides of the comparison), `--tol` (numeric within-tolerance band; resolves policy band → `numeric_tol` → `numeric_tol_fraction` × scale; refuses before any judging if none of those and no declared scale, see Configuration), `--all_rows` (False — by default only the **labelled** rows are re-judged), `--with_dataset_labels` (False — also re-judge rows whose only label is `dataset_reference`), `--with_low_flip` (False — also re-judge the stable spot-check rows as a regression check), `--baseline_rerun` (False — re-run the OLD judge over the same rows for a true A/B; doubles the cost), `--rejudge` (False — force a fresh judging pass even when a matching already-judged sub-run exists; the normal resume path for a string retest reuses it instead) |
+| `retest.py` | `--n_repeats` / `--temperature` (default: whatever the step-3 run used — a lower `--n_repeats` or a different `--temperature` marks the comparison not comparable), `--num_samples` (cap rows, smoke test — narrows both sides of the comparison), `--tol` (numeric within-tolerance band; resolves policy band → `numeric_tol` → `numeric_tol_fraction` × scale; refuses before any judging if none of those and no declared scale, see Configuration), `--all_rows` (False — by default only the **labelled** rows are re-judged), `--with_dataset_labels` (False — also re-judge rows whose only label is `dataset_reference`), `--with_low_flip` (False — also re-judge the stable spot-check rows as a regression check), `--baseline_rerun` (False — re-run the OLD judge over the same rows for a true A/B; doubles the cost) |
 
 ## Run directory contract
 Every artifact lives in one run directory, born `runs/<key>_<ts>/` at step 1 and
@@ -787,9 +751,7 @@ labels with their `label_source` — the default feedback artifact),
 `aggregated.md` + `aggregated.json`, `new_prompt.md`, `rewrite_status.json`,
 `approval.json` (records `forced_checks` — which create-side guards `--force`
 overrode, empty when none did), `new_evaluator.json`, `retest_metrics.json`,
-`string_pairs.json` + `string_pairs_key.json` + `string_verdicts.json` (free-text
-judges only — the blinded pairs handed to a reader, the shuffle key, and the
-match/no-match decisions handed back), and the retest's own
+and the retest's own
 sub-runs `retest/` (+ `retest_baseline/` with `--baseline_rerun`), each holding the
 filtered `traces.jsonl` and the `index_map.json` that pairs its positional
 `source_index` back to the parent's. Any step is re-runnable in isolation against an

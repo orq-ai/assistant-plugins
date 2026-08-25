@@ -44,8 +44,6 @@
   button.ghost { color:var(--muted); }
   input[type=number] { width:120px; background:#0c0e13; color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; }
   input[type=number].sel { border-color:var(--accent); }
-  input[type=text].strin { flex:1; min-width:200px; background:#0c0e13; color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; }
-  input[type=text].strin.sel { border-color:var(--accent); }
   .scale-hint { color:var(--muted); font-size:12px; }
   textarea { flex:1; min-width:200px; min-height:38px; background:#0c0e13; color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; }
   .nav { display:flex; gap:8px; align-items:center; }
@@ -95,7 +93,6 @@ function inputTypeFor(vs) {
     const s = Array.isArray(vs.scale) && vs.scale.length === 2 ? [Number(vs.scale[0]), Number(vs.scale[1])] : null;
     return { type: 'number', scale: s };
   }
-  if (t === 'string') return { type: 'string' };
   return { type: 'boolean' };
 }
 function verdictSpace(it) { return (it && it.verdict_space) || meta.verdict_space || { type: 'boolean' }; }
@@ -161,13 +158,6 @@ function judgeSpread(it) {
       : 'n/a';
     return `<span class="badge">judge votes: ${parts} · N=${amb.n_repeats ?? '?'}</span>`;
   }
-  if (spec.type === 'string') {
-    const counts = jv.counts || {};
-    const parts = Object.keys(counts).length
-      ? Object.entries(counts).map(([k,v]) => `${esc(k)}:${v}`).join(' · ')
-      : 'n/a';
-    return `<span class="badge">judge outputs: ${parts} · N=${amb.n_repeats ?? '?'}</span>`;
-  }
   // number
   const mean = jv.mean, sd = jv.stdev;
   return `<span class="badge">judge mean ${mean==null?'?':(+mean).toFixed(2)} ± ${sd==null?'?':(+sd).toFixed(2)} · N=${amb.n_repeats ?? '?'}</span>`;
@@ -196,19 +186,6 @@ function renderScorebar(it) {
       b.classList.toggle('sel', cur === b.dataset.lab);
       b.onclick = () => label(b.dataset.lab);
     });
-  } else if (spec.type === 'string') {
-    bar.innerHTML =
-      `<input type="text" id="strIn" class="strin" placeholder="corrected string verdict" />` +
-      `<button class="t" id="btnSaveStr" title="Enter">save <kbd>↵</kbd></button>`;
-    const inp = $('#strIn');
-    if (cur !== undefined && cur !== null) { inp.value = cur; inp.classList.add('sel'); }
-    const submit = () => {
-      const raw = inp.value.trim();
-      if (raw === '') { alert('enter a string'); return; }
-      label(raw);
-    };
-    $('#btnSaveStr').onclick = submit;
-    inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } };
   } else { // number
     const s = spec.scale;
     const attrs = s ? `min="${s[0]}" max="${s[1]}" step="any"` : `step="any"`;

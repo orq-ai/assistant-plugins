@@ -18,10 +18,7 @@ a judge that is consistently wrong but never flips scores a perfect instability 
   (a) instability DROPPED  — new evaluator's mean instability < the baseline's, and
   (b) verdicts AGREE with the human labels — `lib.agreement` between the new
       evaluator's majority verdict and the human `value` per confuser
-      (boolean: TPR/TNR; categorical: accuracy; numeric: MAE / within-tolerance;
-      string: accuracy over match/no-match decisions a *reader* makes, because `==`
-      on free text rejects correct answers that are merely worded differently — the
-      run writes `string_pairs.json`, stops, and resumes from `string_verdicts.json`).
+      (boolean: TPR/TNR; categorical: accuracy; numeric: MAE / within-tolerance).
 
 Report success = (a) AND (b). (a) alone is gameable; (b) keeps it honest.
 
@@ -129,59 +126,6 @@ def _materialize_subrun(
     runner.write_jsonl(sub_dir / 'traces.jsonl', [row for _i, row in selected])
     runner.write_json(sub_dir / 'index_map.json', {str(k): v for k, v in index_map.items()})
     return sub_dir, index_map
-
-
-def _read_json_if_exists(path: Path) -> Any | None:
-    return runner.read_json(path) if path.exists() else None
-
-
-def _subrun_reusable(
-    sub_dir: Path, index_map: dict[int, int], resolved_n: int, resolved_temp: float | None,
-    prior_evaluator: dict[str, Any] | None, prior_index_map: dict[str, Any] | None,
-    current_evaluator: dict[str, Any],
-) -> bool:
-    """Whether `sub_dir` already held a JUDGED sub-run BEFORE this call's
-    `_materialize_subrun`, matching what this call just (re)materialized — so
-    `stability_main` can be skipped (CRITICAL 1 — the string-retest resume
-    livelock).
-
-    On a free-text judge, `main` writes `string_pairs.json`/`string_pairs_key.json`
-    and exits after the FIRST judging pass; the conductor answers into
-    `string_verdicts.json`, carrying that pass's `pairs_fingerprint`. A judge at
-    temperature 1 will not reproduce byte-identical modal strings, so if the
-    second invocation re-judges, the pairs (and their fingerprint) change and
-    `string_verdicts.json` — scored against the FIRST pass — can never match:
-    `_check_pairs_fingerprint` refuses with "delete and redo" forever, spending a
-    full retest of judge calls every iteration.
-
-    `_materialize_subrun` unconditionally OVERWRITES `evaluator.json` and
-    `index_map.json` with THIS call's values before this function ever runs, so
-    comparing the sub-run's on-disk `evaluator.json`/`index_map.json` AFTER that
-    write would trivially always match (it would be comparing this call's own
-    write to itself) — the caller must snapshot them *before* calling
-    `_materialize_subrun` and pass those snapshots in as `prior_evaluator` /
-    `prior_index_map`. Reuse requires `stability.json` + `metrics.json` to already
-    exist (the actual judged output, which materialize never touches), the PRIOR
-    `evaluator.json`/`index_map.json` to equal what this call just materialized
-    (same evaluator content, same row selection — i.e. nothing actually changed
-    between calls), and `metrics.json`'s own recorded `n_repeats`/`temperature` to
-    match what this invocation resolved. Any mismatch — a different evaluator, a
-    different selection, a different `--n_repeats`/`--temperature`, or no prior
-    sub-run at all — means the existing `stability.json` is not an answer to what
-    THIS call is asking, so it falls through to judging rather than reusing a
-    stale (or nonexistent) measurement.
-    """
-    stability_path, metrics_path = sub_dir / 'stability.json', sub_dir / 'metrics.json'
-    if not (stability_path.exists() and metrics_path.exists()):
-        return False
-    if prior_evaluator != current_evaluator:
-        return False
-    if prior_index_map != {str(k): v for k, v in index_map.items()}:
-        return False
-    recorded = runner.read_json(metrics_path).get('metadata', {})
-    n_ok = recorded.get('n_repeats') == resolved_n
-    temp_ok = resolved_temp is None or recorded.get('temperature') == resolved_temp
-    return n_ok and temp_ok
 
 
 def _select_rows(
@@ -322,7 +266,7 @@ def _parse_reference_label(
             return float(reference)
         except (TypeError, ValueError):
             return None
-    return str(reference)  # string: free text is accepted as-is
+    return str(reference)  # categorical: the label is compared as text
 
 
 def _merge_dataset_labels(
@@ -565,8 +509,8 @@ def _pair_with_labels(
     point's own numeric band when the human gave it one (`None` otherwise), so a
     policy that banded each point differently is scored against what the human
     actually said instead of against the run-wide default. `indices[i]` is the
-    `source_index` the pair came from, which the string path needs to pair the
-    conductor's per-example verdicts back onto the right row.
+    `source_index` the pair came from, so a scored subset can be traced back to
+    the rows it covered.
     """
     pairs: list[tuple[Any, Any]] = []
     tols: list[float | None] = []
@@ -588,156 +532,6 @@ def _pair_with_labels(
     return pairs, tols, indices
 
 
-STRING_PAIRS_FILE = 'string_pairs.json'
-STRING_PAIRS_KEY_FILE = 'string_pairs_key.json'
-STRING_VERDICTS_FILE = 'string_verdicts.json'
-
-# Mirrors `grey_zone.LABEL_SOURCES`' validation style: a closed set of values the
-# report knows how to caveat, checked loud rather than left to silently drop the
-# honesty caveat `scored_by` drives (§4.3).
-_STRING_SCORED_BY = frozenset({'conductor', 'human_confirmed'})
-
-
-def _validate_string_scored_by(scored_by: str) -> None:
-    if scored_by not in _STRING_SCORED_BY:
-        raise SystemExit(
-            f'{STRING_VERDICTS_FILE} scored_by must be one of {sorted(_STRING_SCORED_BY)}, '
-            f'got {scored_by!r}.'
-        )
-
-
-def _pairs_fingerprint(
-    pairs: list[tuple[Any, Any]], indices: list[int], old_by_idx: dict[int, Any]
-) -> str:
-    """SHA256 over the `[idx, human, new, original]` rows a `string_verdicts.json`
-    is scored against, sorted by idx for a stable hash regardless of dict/zip
-    ordering (§3.7). Computed from the semantically-labelled values, never the
-    blinded answer_a/answer_b a reader saw — this fingerprint's job is identifying
-    WHICH pairs were scored, not preserving the blind.
-    """
-    rows = sorted(
-        ([idx, human, judge, old_by_idx.get(idx)] for (human, judge), idx in zip(pairs, indices)),
-        key=lambda r: r[0],
-    )
-    canonical = json.dumps(rows, sort_keys=True, default=str)
-    return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
-
-
-def _check_pairs_fingerprint(
-    string_verdicts: dict[str, Any], pairs: list[tuple[Any, Any]], indices: list[int],
-    old_by_idx: dict[int, Any],
-) -> None:
-    """Refuse a `string_verdicts.json` scored against a different set of pairs (§3.7).
-
-    The file is free-form and hand-edited: a stale one from a previous rewrite
-    would score BRAND-NEW answers with OLD decisions, and nothing about its shape
-    would look wrong — same source_index values, same match_a/match_b keys, wrong
-    content underneath. Missing entirely counts as a mismatch, not a pass.
-    """
-    current = _pairs_fingerprint(pairs, indices, old_by_idx)
-    recorded = string_verdicts.get('pairs_fingerprint')
-    if recorded != current:
-        raise SystemExit(
-            f'{STRING_VERDICTS_FILE} was scored against a different set of pairs '
-            f'(recorded {recorded!r}, current {current!r}). Stale verdicts from a previous '
-            f'rewrite would score brand-new answers with old decisions. Delete '
-            f'{STRING_VERDICTS_FILE} and redo the read.'
-        )
-
-
-def _write_string_pairs(
-    out_dir: Path,
-    pairs: list[tuple[Any, Any]],
-    indices: list[int],
-    old_by_idx: dict[int, Any],
-    policy: dict[str, Any] | None,
-) -> Path:
-    """Hand the conductor the free-text pairs to score, blind, and stop.
-
-    Signal (b) for string cannot be computed here: `==` on free text reads near-zero
-    for a judge that is doing fine, so the comparison needs a reader. This is the
-    same shape the grey-zone stage already uses — code assembles a bounded payload,
-    the conductor decides, code consumes the decision — rather than a new mechanism.
-
-    §4.3: the two answers are anonymised as `answer_a`/`answer_b`, shuffled per
-    entry by a hash of `source_index` MIXED WITH a per-run random salt — the reader
-    is never told which judge wrote which answer, so knowing the rewrite is under
-    test cannot nudge the read toward it. A bare `sha256(idx)` (no salt) would be
-    recomputable by anyone who reads `string_pairs.json` (which carries
-    `source_index` in the open, and the formula is right here in this file's
-    source) — the salt is written ONLY to `string_pairs_key.json`, so that file
-    stays the sole way to unblind, matching how `_unblind_string_verdicts` already
-    treats it. `string_pairs_key.json` records which slot held which judge's
-    answer; `_unblind_string_verdicts` reverses it AFTER the reader has already
-    committed to match_a/match_b.
-
-    The OLD judge's answer rides along so one pass produces both the score and its
-    `before`, exactly as the other three types get for free.
-    """
-    salt = secrets.token_hex(16)
-    entries = []
-    key: dict[str, Any] = {'_salt': salt}
-    for (human, judge), idx in zip(pairs, indices):
-        original = old_by_idx.get(idx)
-        a_is_new = hashlib.sha256(f'{salt}:{idx}'.encode()).digest()[0] % 2 == 0
-        entries.append({
-            'source_index': idx,
-            'human_value': human,
-            'answer_a': judge if a_is_new else original,
-            'answer_b': original if a_is_new else judge,
-        })
-        key[str(idx)] = {'a': 'new' if a_is_new else 'original'}
-    fingerprint = _pairs_fingerprint(pairs, indices, old_by_idx)
-    payload = {
-        'metadata': {
-            'output_type': 'string',
-            'n_pairs': len(entries),
-            'rule': _policy_rules(policy),
-            'pairs_fingerprint': fingerprint,
-            'instructions': (
-                'For each entry decide whether answer_a means the same thing as the '
-                "human's value under the rule above, and whether answer_b does — not "
-                'whether the wording matches. answer_a/answer_b are anonymised and '
-                'randomly ordered per entry so the read cannot be nudged toward either '
-                f'judge. Write {STRING_VERDICTS_FILE} next to this file: '
-                '{"scored_by": "conductor"|"human_confirmed", '
-                f'"pairs_fingerprint": {fingerprint!r}, "verdicts": '
-                '[{"source_index": N, "match_a": true|false, "match_b": true|false, '
-                '"reason": "..."}]}. Cover every source_index listed here.'
-            ),
-        },
-        'pairs': entries,
-    }
-    path = out_dir / STRING_PAIRS_FILE
-    runner.write_json(path, payload)
-    runner.write_json(out_dir / STRING_PAIRS_KEY_FILE, key)
-    return path
-
-
-def _unblind_string_verdicts(verdicts: dict[str, Any], pairs_key: dict[str, Any]) -> dict[str, Any]:
-    """Translate the reader's blind `match_a`/`match_b` decisions back to
-    `match_new`/`match_original`, using the per-entry shuffle `string_pairs_key.json`
-    recorded (§4.3). The reader never sees which slot held which judge's answer;
-    this is the one place that reverses it, after the decision is already on paper.
-    Entries the key does not cover (or `source_index` missing) pass through
-    unchanged — `_string_matches` already treats a missing match_new/match_original
-    as "not scored" and refuses a subset.
-    """
-    out_verdicts = []
-    for v in verdicts.get('verdicts', []):
-        if not isinstance(v, dict):
-            continue
-        idx = v.get('source_index')
-        slot_a = pairs_key.get(str(idx), {}).get('a')
-        entry = dict(v)
-        if slot_a == 'new':
-            entry['match_new'], entry['match_original'] = v.get('match_a'), v.get('match_b')
-        elif slot_a == 'original':
-            entry['match_new'], entry['match_original'] = v.get('match_b'), v.get('match_a')
-        out_verdicts.append(entry)
-    return {**verdicts, 'verdicts': out_verdicts}
-
-
 def _policy_rules(policy: dict[str, Any] | None) -> list[str]:
     """The resolved grey-zone rules, so the reader scores against what the user said
     rather than against their own idea of a good answer."""
@@ -750,37 +544,15 @@ def _policy_rules(policy: dict[str, Any] | None) -> list[str]:
     ]
 
 
-def _string_matches(
-    verdicts: dict[str, Any], indices: list[int], key: str
-) -> list[bool] | None:
-    """Line the reader's per-example decisions up with the pairs, or None if any is
-    missing — a short list would score the rewrite on a subset and report the number
-    as though it covered the set."""
-    by_idx = {
-        v.get('source_index'): v.get(key)
-        for v in verdicts.get('verdicts', []) if isinstance(v, dict)
-    }
-    if any(by_idx.get(i) is None for i in indices):
-        return None
-    def _as_match(v: Any) -> bool:
-        if isinstance(v, bool):
-            return v
-        if isinstance(v, str):
-            return v.strip().lower() in ('true', 'yes', '1')
-        return bool(v)
-    return [_as_match(by_idx[i]) for i in indices]
-
-
 def _evaluate_agreement(
     pairs: list[tuple[Any, Any]], output_type: str, tol: float,
     min_accuracy: float, min_tpr: float, min_tnr: float, min_within_tol: float,
     tols: list[float | None] | None = None,
-    matches: list[bool] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Compute signal (b) and its pass/fail against the type-native bar."""
     from lib import agreement as agreement_lib
 
-    scores = agreement_lib.agreement(output_type, pairs, tol=tol, tols=tols, matches=matches)
+    scores = agreement_lib.agreement(output_type, pairs, tol=tol, tols=tols)
     if output_type == 'boolean':
         # A None rate (no positives / no negatives among labels) does not fail the
         # gate on its own — accuracy still must clear the bar, and any present rate
@@ -791,7 +563,7 @@ def _evaluate_agreement(
             and (tpr is None or tpr >= min_tpr)
             and (tnr is None or tnr >= min_tnr)
         )
-    elif output_type in ('categorical', 'string'):
+    elif output_type == 'categorical':
         passed = scores['accuracy'] >= min_accuracy
     else:  # numeric
         passed = scores['within_tolerance_rate'] >= min_within_tol
@@ -801,13 +573,12 @@ def _evaluate_agreement(
 def _primary_metric(output_type: str) -> str:
     """The single number `_evaluate_agreement` gates each type on — the same key
     `_regressed_vs_before` compares before vs. after."""
-    return 'accuracy' if output_type in ('boolean', 'categorical', 'string') else 'within_tolerance_rate'
+    return 'accuracy' if output_type in ('boolean', 'categorical') else 'within_tolerance_rate'
 
 
 def _agreement_on_subset(
     all_pairs: list[tuple[Any, Any]], all_tols: list[float | None],
-    all_indices: list[int], keep: set[int], match_key: str,
-    string_verdicts: dict[str, Any] | None, output_type: str,
+    all_indices: list[int], keep: set[int], output_type: str,
     tol: float, bars: tuple[float, ...],
 ) -> dict[str, Any] | None:
     """Filter a paired population down to `keep` indices and score agreement."""
@@ -819,16 +590,9 @@ def _agreement_on_subset(
         return None
     sub_pairs = [a[0] for a in aligned]
     sub_tols = [a[1] for a in aligned]
-    sub_indices = [a[2] for a in aligned]
-    matches = (
-        _string_matches(string_verdicts, sub_indices, match_key)
-        if string_verdicts else None
-    )
-    if not sub_pairs or (output_type == 'string' and matches is None):
+    if not sub_pairs:
         return None
-    scores, _ = _evaluate_agreement(
-        sub_pairs, output_type, tol, *bars, tols=sub_tols, matches=matches,
-    )
+    scores, _ = _evaluate_agreement(sub_pairs, output_type, tol, *bars, tols=sub_tols)
     scores['n_pairs'] = len(sub_pairs)
     return scores
 
@@ -974,7 +738,6 @@ def main(
     with_low_flip: bool = False,
     with_dataset_labels: bool = False,
     baseline_rerun: bool = False,
-    rejudge: bool = False,
 ) -> str:
     """Retest the new evaluator over the confusers and score both signals.
 
@@ -1010,15 +773,6 @@ def main(
             individually keep their own band regardless of this. On a numeric judge
             with none of those AND no declared scale, refuses before any judging
             rather than silently falling back to an arbitrary absolute band (§1.2).
-        rejudge: Force a fresh judging pass even when an already-judged retest (and
-            --baseline_rerun) sub-run matches this invocation (§1.1). Off by
-            default: on a free-text judge the second call — after
-            string_verdicts.json is written — reuses the FIRST call's judged
-            sub-run instead of re-judging, because a judge at temperature 1 will
-            not reproduce byte-identical modal strings, so re-judging on resume
-            regenerates string_pairs.json's fingerprint and the verdicts (scored
-            against the FIRST pass) can never match — a permanent "delete and
-            redo" loop that spends a full retest of judge calls per iteration.
     """
     cfg = runner.load_config(config)
     out_dir = runner.resolve_run_dir(run_dir) if run_dir else runner.latest_run_dir(cfg.get('runs_dir', 'runs'))
@@ -1116,13 +870,6 @@ def main(
         _low_flip_indices(out_dir),
     )
     selected = _select_rows(out_dir, wanted, num_samples)
-    # Snapshotted BEFORE _materialize_subrun overwrites them — the only way
-    # _subrun_reusable can tell "this call's inputs match the sub-run that's
-    # already been judged" from "this call just wrote a fresh evaluator.json/
-    # index_map.json seconds ago and is now comparing them to themselves".
-    retest_dir_path = out_dir / 'retest'
-    prior_retest_evaluator = _read_json_if_exists(retest_dir_path / 'evaluator.json')
-    prior_retest_index_map = _read_json_if_exists(retest_dir_path / 'index_map.json')
     retest_dir, index_map = _materialize_subrun(out_dir, 'retest', retest_evaluator_config, selected)
 
     scope = set(index_map.values())
@@ -1138,27 +885,13 @@ def main(
     #    Heavy import guarded inside the function to keep this module import-safe.
     from stability import main as stability_main  # noqa: PLC0415
 
-    # CRITICAL 1: on the resume path — string_verdicts.json already written, this
-    # is a repeat call — reuse the sub-run this call would otherwise re-judge,
-    # rather than spending a fresh retest of judge calls for pairs the conductor
-    # already scored. Scoped to that path deliberately: boolean/categorical/numeric
-    # never stop-and-resume mid-command, so there is no scenario there where
-    # "already judged" could mean anything other than a stale prior attempt.
-    resume = (out_dir / STRING_VERDICTS_FILE).exists()
-    allow_reuse = (not rejudge) and output_type == 'string' and resume
-    if allow_reuse and _subrun_reusable(
-        retest_dir, index_map, resolved_n, resolved_temp,
-        prior_retest_evaluator, prior_retest_index_map, retest_evaluator_config,
-    ):
-        logger.info(f'✓ Reusing existing retest sub-run ({retest_dir}); pass --rejudge to re-judge.')
-    else:
-        stability_main(
-            run_dir=str(retest_dir),
-            config=config,
-            n_repeats=resolved_n,
-            temperature=resolved_temp,
-            metrics=True,  # stability.main chains metrics.main when metrics=True
-        )
+    stability_main(
+        run_dir=str(retest_dir),
+        config=config,
+        n_repeats=resolved_n,
+        temperature=resolved_temp,
+        metrics=True,  # stability.main chains metrics.main when metrics=True
+    )
     retest_metrics = runner.read_json(retest_dir / 'metrics.json')
     retest_inst = _instability_by_index(retest_metrics, index_map)
     retest_stability = runner.read_json(retest_dir / 'stability.json')
@@ -1167,23 +900,14 @@ def main(
     # 2b) Optional true A/B: the OLD judge over the SAME rows, in the same pass.
     baseline_inst: dict[int, float] = {}
     if baseline_rerun:
-        baseline_dir_path = out_dir / 'retest_baseline'
-        prior_baseline_evaluator = _read_json_if_exists(baseline_dir_path / 'evaluator.json')
-        prior_baseline_index_map = _read_json_if_exists(baseline_dir_path / 'index_map.json')
         baseline_dir, baseline_map = _materialize_subrun(
             out_dir, 'retest_baseline', source_eval, selected
         )
-        if allow_reuse and _subrun_reusable(
-            baseline_dir, baseline_map, resolved_n, resolved_temp,
-            prior_baseline_evaluator, prior_baseline_index_map, source_eval,
-        ):
-            logger.info(f'✓ Reusing existing baseline sub-run ({baseline_dir}); pass --rejudge to re-judge.')
-        else:
-            logger.info('  Re-running the ORIGINAL judge over the same rows (--baseline_rerun).')
-            stability_main(
-                run_dir=str(baseline_dir), config=config, n_repeats=resolved_n,
-                temperature=resolved_temp, metrics=True,
-            )
+        logger.info('  Re-running the ORIGINAL judge over the same rows (--baseline_rerun).')
+        stability_main(
+            run_dir=str(baseline_dir), config=config, n_repeats=resolved_n,
+            temperature=resolved_temp, metrics=True,
+        )
         baseline_inst = _instability_by_index(
             runner.read_json(baseline_dir / 'metrics.json'), baseline_map
         )
@@ -1252,7 +976,7 @@ def main(
     # The "before" side of (b) costs nothing: the original run already judged these
     # very rows. Without it a passing score can still be worse than what the judge
     # did before the rewrite, and nothing in the report would show it. Read first,
-    # because the string path hands both sides to the reader in a single pass.
+    # so the report can show both sides of the comparison.
     original_stability_path = out_dir / 'stability.json'
     old_by_idx: dict[int, Any] = {}
     if original_stability_path.exists():
@@ -1263,59 +987,9 @@ def main(
     # reports a comparison that never happened on either side.
     old_scoped = {i: v for i, v in old_by_idx.items() if i in scope}
 
-    string_verdicts: dict[str, Any] | None = None
-    if output_type == 'string':
-        # Free text is the one type `==` cannot score: two correct answers differ in
-        # wording, so exact-match would reject every rewrite including the good ones.
-        # The comparison is handed to a reader instead of skipped — the same
-        # assemble → decide → consume split the grey-zone stage already runs on.
-        verdicts_path = out_dir / STRING_VERDICTS_FILE
-        if not verdicts_path.exists():
-            written = _write_string_pairs(out_dir, pairs, pair_indices, old_scoped, policy)
-            raise SystemExit(
-                f'Free-text judge: signal (b) needs a reader, not a string compare.\n'
-                f'Wrote {written} — {len(pairs)} pair(s) to score.\n'
-                f'Decide match/no-match per example against the grey-zone rule, write '
-                f'{verdicts_path}, then re-run this command. Instructions are in the file.'
-            )
-        string_verdicts = runner.read_json(verdicts_path)
-        # §3.7: refuse verdicts scored against a DIFFERENT set of pairs before
-        # trusting anything else in the file — a stale file from a previous
-        # rewrite looks identical in shape and would silently score new answers
-        # with old decisions.
-        _check_pairs_fingerprint(string_verdicts, pairs, pair_indices, old_scoped)
-        _validate_string_scored_by(string_verdicts.get('scored_by', 'conductor'))
-        # §4.3: the reader decided match_a/match_b blind; unblind via the shuffle
-        # key written alongside the pairs before anything reads match_new/
-        # match_original off this file. MINOR 5: the key is written in the same
-        # call as string_pairs.json, so its absence means the run dir was tampered
-        # with (or the pairs file is from a version that predates the key) —
-        # fail loud with the same guidance the other artifact checks give, not a
-        # bare FileNotFoundError.
-        pairs_key_path = out_dir / STRING_PAIRS_KEY_FILE
-        if not pairs_key_path.exists():
-            raise SystemExit(
-                f'{STRING_PAIRS_KEY_FILE} is missing from {out_dir}. {STRING_VERDICTS_FILE} exists '
-                f'but the blind-shuffle key that unblinds it does not, so match_a/match_b cannot be '
-                f'read back into match_new/match_original. Delete {STRING_VERDICTS_FILE} and '
-                f'{STRING_PAIRS_FILE} and re-run this command to regenerate the pairs (and the key) '
-                'together.'
-            )
-        pairs_key = runner.read_json(pairs_key_path)
-        string_verdicts = _unblind_string_verdicts(string_verdicts, pairs_key)
-
-    matches = _string_matches(string_verdicts, pair_indices, 'match_new') if string_verdicts else None
-    if output_type == 'string' and matches is None:
-        raise SystemExit(
-            f'{STRING_VERDICTS_FILE} does not cover every pair (need a match_new for each of '
-            f'{len(pair_indices)} source_index values). Scoring a subset and reporting it as '
-            'the whole set is the failure this refuses to make.'
-        )
     agreement_scores, agreement_passed = _evaluate_agreement(
-        pairs, output_type, resolved_tol, *bars, tols=pair_tols, matches=matches
+        pairs, output_type, resolved_tol, *bars, tols=pair_tols
     )
-    if string_verdicts is not None:
-        agreement_scores['scored_by'] = string_verdicts.get('scored_by', 'conductor')
 
     agreement_before: dict[str, Any] | None = None
     agreement_after_shared: dict[str, Any] | None = None
@@ -1331,7 +1005,7 @@ def main(
         shared = set(pair_indices) & set(before_indices_raw)
         agreement_before = _agreement_on_subset(
             before_pairs_raw, before_tols_raw, before_indices_raw, shared,
-            'match_original', string_verdicts, output_type, resolved_tol, bars,
+            output_type, resolved_tol, bars,
         )
         # When the after side covers rows the old judge couldn't answer,
         # agreement_scores (all after-rows) is over a different population than
@@ -1340,7 +1014,7 @@ def main(
         if shared and shared != set(pair_indices):
             agreement_after_shared = _agreement_on_subset(
                 pairs, pair_tols, pair_indices, shared,
-                'match_new', string_verdicts, output_type, resolved_tol, bars,
+                output_type, resolved_tol, bars,
             )
             if agreement_after_shared is not None:
                 before_after_scope_info = (len(before_indices_raw), len(pair_indices), len(shared))
@@ -1444,7 +1118,6 @@ def main(
         # the two gates overstate the result, and none is visible in the scores.
         'caveats': _caveats(
             baseline_mean is not None, provenance, regression, n_lost_unmeasurable,
-            agreement_scores.get('scored_by') if output_type == 'string' else None,
             covers_original=covers_original_dataset, n_rejudged=len(scope), n_original=n_total_rows,
             regression_before_after=(
                 (agreement_before.get(_primary_metric(output_type)), after_for_regression.get(_primary_metric(output_type)))
@@ -1499,7 +1172,7 @@ def main(
 
 def _caveats(
     has_baseline: bool, provenance: dict[str, int] | None, regression: dict[str, Any] | None,
-    n_lost_unmeasurable: int = 0, string_scored_by: str | None = None,
+    n_lost_unmeasurable: int = 0,
     covers_original: bool = True, n_rejudged: int = 0, n_original: int = 0,
     regression_before_after: tuple[Any, Any] | None = None,
     regression_wide: dict[str, Any] | None = None, n_pairs: int = 0,
@@ -1572,19 +1245,6 @@ def _caveats(
             f'{n_lost_unmeasurable} row(s) the old judge could measure are unmeasurable under the '
             'new one, so they sit outside gate (a) entirely. A rewrite that answers off-contract '
             'on the hardest rows removes them from the mean, which reads as a drop.'
-        )
-    if string_scored_by == 'conductor':
-        out.append(
-            'Agreement on this free-text judge was scored by reading the answers, not by '
-            'comparing them — and by the same model that wrote the rewrite. That is a judgment '
-            'about its own work, so treat gate (b) as a sanity check rather than evidence. '
-            'Confirm a sample with the user and mark those `human_confirmed`.'
-        )
-    elif string_scored_by == 'human_confirmed':
-        out.append(
-            'Agreement on this free-text judge was scored by reading the answers rather than '
-            'comparing them. The user confirmed the decisions, which is the strongest form '
-            'this signal takes — it is still a judgment, not a measurement.'
         )
     return out
 

@@ -73,8 +73,6 @@ def _clean_verdicts(reps: list[Any], output_type: str) -> list[Any]:
                 out.append(float(v))
             except (TypeError, ValueError):
                 pass
-        elif output_type == 'string':
-            out.append(str(v))
         else:
             out.append(v)
     return out
@@ -99,9 +97,6 @@ def _type_detail(output_type: str, clean: list[Any], k: int | None, scale: tuple
         return detail
     if output_type == 'categorical':
         return {'counts': dict(Counter(clean)), 'k': k}
-    if output_type == 'string':
-        # No declared K — report observed distinct count (denominator is ln(N)).
-        return {'counts': dict(Counter(clean)), 'n_distinct': len(set(clean))}
     if output_type in _NUMERIC_TYPES:
         return {
             'mean': (fmean(clean) if clean else None),
@@ -140,9 +135,7 @@ def _per_row(
             entry.update({'instability': None, 'band': 'unmeasurable'})
         else:
             try:
-                inst = instability.row_instability(
-                    output_type, clean, k=k, scale=scale, n_requested=n_req
-                )
+                inst = instability.row_instability(output_type, clean, k=k, scale=scale)
             except ValueError:
                 inst = None
             if inst is None:
@@ -211,7 +204,7 @@ def _reference_matches(
             return abs(ref_f - float(verdict)) <= tol
         except (TypeError, ValueError):
             return None
-    return None  # string: `==` is the wrong comparison; the conductor reads those
+    return None  # unknown output_type: no mechanical comparison to make
 
 
 def _correctness(
@@ -227,14 +220,13 @@ def _correctness(
     instability-ranking cannot surface, and here it becomes a headline number
     instead of a caveat.
 
-    Three cases omit accuracy outright rather than compute a number that looks
+    Two cases omit accuracy outright rather than compute a number that looks
     like a measurement and isn't (§1.2, §3.5):
       - `variables` declares a reference-family variable (`reference`/`expected`/
         `expected_output`) — `reference` was bound INTO the judge prompt by
         `lib.judge.make_replacements`, so grading the verdict against it is
         circular, not a correctness check. Checked first: it invalidates the
         whole run regardless of `output_type`.
-      - `output_type == 'string'` — `==` is the wrong comparison for free text.
       - numeric with no derivable tolerance band (`tol_derivable=False`) — a
         fixed absolute band would be arbitrary with no declared scale to size it.
 
@@ -252,14 +244,6 @@ def _correctness(
             'reason_omitted': (
                 f'the evaluator declares a reference-family variable ({", ".join(ref_vars)}), so '
                 '`reference` is input the judge is shown, not ground truth to grade it against'
-            ),
-        }
-    if output_type == 'string':
-        return {
-            'n_labelled': 0,
-            'reason_omitted': (
-                'string verdicts are not comparable with == (two correct answers differ in '
-                'wording), so correctness is scored by reading, at the retest step'
             ),
         }
     if output_type in _NUMERIC_TYPES and not tol_derivable:
@@ -372,8 +356,6 @@ def _detail_str(output_type: str, e: dict[str, Any]) -> str:
         detail = f"({e.get('n_true', '?')}T/{e.get('n_false', '?')}F)"
     elif output_type == 'categorical':
         detail = f"(counts={e.get('counts')}, k={e.get('k')})"
-    elif output_type == 'string':
-        detail = f"({e.get('n_distinct')} distinct / {e.get('n_successful_repeats', '?')} reps)"
     elif output_type in _NUMERIC_TYPES:
         detail = f"(mean={_num(e.get('mean'))}, stdev={_num(e.get('stdev'))} on scale {e.get('scale')})"
     else:
@@ -403,7 +385,7 @@ def _correctness_lines(c: dict[str, Any] | None) -> list[str]:
     of the blind spot, and is captioned as such (§4.1).
 
     MINOR 9: an omitted block (`n_labelled: 0` with a `reason_omitted` — a
-    reference-family variable, a string judge, or an undeclared numeric scale, per
+    reference-family variable or an undeclared numeric scale, per
     `_correctness`) still earns ONE line here. Returning `[]` for it wrote the
     `reason_omitted` explanation to `metrics.json` but never into the report the
     conductor actually reads out (SKILL.md), so the omission — and why — was
@@ -459,17 +441,7 @@ def _report(
     hist = f"{bands.get('stable', 0)} stable / {bands.get('noisy', 0)} noisy / {bands.get('unreliable', 0)} unreliable"
     if bands.get('unmeasurable'):
         hist += f" / {bands['unmeasurable']} unmeasurable"
-    # String instability is exact-match over canonical text (§4a has no reading
-    # step at this stage) — two paraphrased, equally-correct answers count as a
-    # disagreement, so the number can only overstate instability, never understate
-    # it. Every other type's scale is the real thing being measured.
-    if output_type == 'string':
-        inst_annotation = (
-            '(exact-match over canonical text: paraphrased same-meaning answers count as '
-            'disagreement, so treat this as an upper bound).'
-        )
-    else:
-        inst_annotation = '(0 = judge always agrees with itself, 1 = maximal).'
+    inst_annotation = '(0 = judge always agrees with itself, 1 = maximal).'
     lines = [
         f'Instability summary over {n_rows} datapoints ({n_measurable} measurable, type={output_type}):',
         f'  - mean instability: {_fmt(mean_inst)} {inst_annotation}',
@@ -525,7 +497,7 @@ def main(run_dir: str | None = None, config: str = 'config.toml') -> str:
         ev = {}
         logger.warning(
             '⚠ evaluator.json not found — correctness guards (circularity, '
-            'string skip, scale-less numeric) run without evaluator metadata'
+            'scale-less numeric) run without evaluator metadata'
         )
     output_type = (ev.get('output_type') or meta.get('output_type') or 'boolean').strip().lower()
     labels = ev.get('categorical_labels') or []
