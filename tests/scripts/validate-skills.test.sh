@@ -305,6 +305,26 @@ node -e 'const fs=require("fs"),f=process.argv[1];
 relock "$d"
 expect_pass "metadata as a flow string->string map is allowed" "$d"
 
+# A quoted value may hold the entry separator, and a quoted bracket nests
+# nothing. Both used to be read as structure and rejected a conformant map.
+d=$(build_fixture metadata-flow-map-with-a-quoted-comma)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(/^description: /m,"metadata: {note: \"a, b\", brace: \"a{b\"}\ndescription: "))' \
+  "$d/skills/example-skill/SKILL.md"
+relock "$d"
+expect_pass "metadata flow map with a quoted comma and brace is allowed" "$d"
+
+# Every scalar field takes the same shape check; cover one beyond the two the
+# suite already exercises, so the loop cannot lose a field unnoticed.
+d=$(build_fixture license-is-a-list)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(/^description: /m,"license:\n  - MIT\n  - Apache-2.0\ndescription: "))' \
+  "$d/skills/example-skill/SKILL.md"
+relock "$d"
+expect_fail "license as a list" "$d" "'license' is a list, but the spec defines it as a string"
+
 # allowed-tools is a comma-separated string here and in Claude Code's reader.
 d=$(build_fixture allowed-tools-is-a-list)
 node -e 'const fs=require("fs"),f=process.argv[1];

@@ -127,6 +127,23 @@ const unquote = (s) =>
 // key pattern: a nested map key may be quoted or start with a digit, and
 // rejecting those would report a valid map as a scalar.
 const MAP_ENTRY_RE = /^(?:"[^"]*"|'[^']*'|[^:\s]+):(\s|$)/;
+// A quoted scalar may hold the separator or a bracket: {note: "a, b"} is one
+// entry and {note: "a{b"} nests nothing. Splitting or scanning the raw string
+// rejects both, so quoted spans are stripped before the structural checks and
+// the split walks the string tracking whether it is inside quotes.
+const unquoteSpans = (s) => s.replace(/"[^"]*"|'[^']*'/g, "");
+const splitFlowEntries = (s) => {
+  const parts = [];
+  let buf = "", quote = null;
+  for (const ch of s) {
+    if (quote) { if (ch === quote) quote = null; buf += ch; }
+    else if (ch === '"' || ch === "'") { quote = ch; buf += ch; }
+    else if (ch === ",") { parts.push(buf); buf = ""; }
+    else buf += ch;
+  }
+  parts.push(buf);
+  return parts;
+};
 
 // Minimal frontmatter reader: { fields, shapes, blocks, unparsed } — scalars
 // with block-scalar continuation, plus unindented lines no check can see.
@@ -305,9 +322,9 @@ for (const name of skillDirs) {
         err(`skills/${name}: frontmatter 'metadata' opens a flow map that is never closed with '}'`);
       else {
         const inner = flow.slice(1, -1).trim();
-        if (/[[\]{}]/.test(inner))
+        if (/[[\]{}]/.test(unquoteSpans(inner)))
           err(`skills/${name}: frontmatter 'metadata' nests a collection — the spec defines it as a string->string map`);
-        else for (const part of inner ? inner.split(",") : [])
+        else for (const part of inner ? splitFlowEntries(inner) : [])
           if (!MAP_ENTRY_RE.test(part.trim())) badEntry(part.trim());
       }
     } else {
