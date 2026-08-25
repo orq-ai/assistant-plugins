@@ -4,7 +4,7 @@
     "evaluatorq": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "97873a44027a857aaada491acec81e4097671b910b8040de64fb4f3461ffc39a"
+      "computedHash": "acb2fba6b97aecf9203ce3993f6816d7ac024101ef4f1753c26edbf7a64061da"
     },
     "orq-analyze-trace-failures": {
       "source": "orq-ai/assistant-plugins",
@@ -44,7 +44,7 @@
     "orq-invoke-deployment": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "6b91ef584d34a0a798b1bd80530854d338e9c289d5bd6756ab316c864265e64c"
+      "computedHash": "cdda2d73925c65f9ff41938628eeef1c81e5202ade58bb6cedda054fb6c0739f"
     },
     "orq-manage-skills": {
       "source": "orq-ai/assistant-plugins",
@@ -59,7 +59,7 @@
     "orq-red-team": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "6b5fe6175015dbd6f9f50df6353de5cce79d02efabee942f9e2ac898681b89a6"
+      "computedHash": "b871d71e875ca247c9fd75ad21217fdf660eac99702be8cbea86bb8dcc1ec425"
     },
     "orq-run-experiment": {
       "source": "orq-ai/assistant-plugins",
@@ -74,7 +74,7 @@
     "orq-simulate-agent": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "c429f57c2c260b08193e05f15420e89881588d0ea109466c21e81b09eadf7a42"
+      "computedHash": "c4eb32783949d570bda5f42f863afd7b1e331931e81824f854570f7580be9824"
     }
   }
 }

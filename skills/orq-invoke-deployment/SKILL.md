@@ -113,23 +113,17 @@ Follow these steps **in order**. Do NOT skip steps.
    - **Agent** — prompt + tools + memory + KB, multi-turn conversations via `responses.create`
    - **Model direct call** — OpenAI-compatible AI Router, no template
 
-2. **Find the resource key** if the user doesn't already know it, using `search_entities` MCP tool to **browse**:
+2. **Find the resource key** (agents and deployments only — skip for model direct calls) if the user doesn't already know it, using `search_entities` MCP tool to **browse**:
    - Deployments: `type: "deployment"`
    - Agents: `type: "agent"`
 
-3. **Verify the key with the run key** — whether the key came from MCP browsing or the user provided it directly. Follow the [run-key preflight](../../docs/run-key-preflight.md) using the `ORQ_API_KEY` the invocation will use. For deployments, save the `get_config` response — it contains the prompt template needed in step 4. If `get_config` returns 204, the deployment has no published version — stop and ask the user to publish it before proceeding.
+3. **Verify the key with the run key** (agents and deployments only — skip for model direct calls) — whether the key came from MCP browsing or the user provided it directly. Follow the [run-key preflight](../../docs/run-key-preflight.md) using the `ORQ_API_KEY` the invocation will use. For deployments, save the `get_config` response — it contains the prompt template needed in step 4. If `get_config` returns 204, the deployment has no published version — stop and ask the user to publish it before proceeding.
 
-4. **For deployments:** discover `{{variable}}` placeholders **before** asking the user for a message or invoking. If step 3's `get_config` returned the prompt template, use that response. Otherwise fetch it:
-
-   ```bash
-   curl -s -H "Authorization: Bearer $ORQ_API_KEY" \
-     -X POST "https://api.orq.ai/v2/deployments/get_config" \
-     -H "Content-Type: application/json" -d '{"key":"<key>"}'
-   ```
+4. **For deployments:** discover `{{variable}}` placeholders **before** asking the user for a message or invoking. Use the `get_config` response from step 3 — it already contains the prompt template.
 
    Scan the returned prompt template for `{{variable_name}}` patterns. These are the required `inputs` keys.
 
-   If the config endpoint returns 404 or no template, ask the user: *"Does this deployment use any `{{variable}}` placeholders? If so, what are they?"*
+   If the template is empty or has no variables, ask the user: *"Does this deployment use any `{{variable}}` placeholders? If so, what are they?"*
 
    Then identify which invocation pattern applies:
    - **Variable substitution** — the prompt contains `{{variable}}` placeholders → pass values via `inputs`

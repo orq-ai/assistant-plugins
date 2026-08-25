@@ -58,7 +58,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 ### Scenario 1: Deployment invocation (happy path)
 
 - Ask: "Invoke my deployment `customer-support` with variable `customer_name` set to 'Jane'"
-- Verify Phase 1: calls `search_entities` with `type: "deployment"` to confirm key
+- Verify Phase 1: uses `search_entities` to browse, then verifies the key with the run key via the [run-key preflight](../docs/run-key-preflight.md)
 - Verify Phase 2: identifies `{{customer_name}}` as a required input, maps it
 - Verify Phase 3: generates Python SDK code using `client.deployments.invoke(key=..., inputs={...})`
 - Verify: code uses `os.environ["ORQ_API_KEY"]`, never hardcodes the key
@@ -90,7 +90,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 ### Scenario 1: Write a Python evaluation script
 
 - Ask: "Help me evaluate my agent `my-support-agent` using evaluatorq"
-- Verify Phase 1: asks for agent key or confirms via `search_entities`
+- Verify Phase 1: asks for agent key, browses via `search_entities`, then verifies with the run key via the [run-key preflight](../docs/run-key-preflight.md)
 - Verify Phase 3: generates a Python script with `@job`, `DataPoint`, `evaluatorq()`, and `await` call
 - Verify: uses `orq.evals.invoke_async()` (inside async scorers) or `orq.evals.invoke()` (sync), never `orq.evaluators.invoke()`
 - Verify: suggests `dataset_id` if dataset exists, inline only for quick tests
@@ -121,7 +121,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 ### Scenario 1: orq.ai vs orq.ai comparison
 
 - Ask: "Compare my two orq.ai agents `agent-gpt4o` and `agent-claude` head-to-head"
-- Verify Phase 1: identifies both agents, uses `search_entities` with `type: "agent"`
+- Verify Phase 1: identifies both agents, browses via `search_entities`, then verifies each key with the run key via the [run-key preflight](../docs/run-key-preflight.md)
 - Verify Phase 4: generates evaluatorq script with two `@job` functions, each using `agents.responses.create()` (not `agents.invoke()`)
 - Verify: script uses `from orq_ai_sdk import Orq` (not `from orq import ...`)
 - Verify: both jobs use the same evaluator for fair comparison
@@ -411,6 +411,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ## Critical Files
 
+- `docs/run-key-preflight.md`
 - `skills/orq-setup-observability/SKILL.md`
 - `skills/orq-setup-observability/resources/traced-decorator-guide.md`
 - `skills/orq-setup-observability/resources/framework-integrations.md`
