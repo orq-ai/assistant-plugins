@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.3] - 2026-08-25
+
+### Changed
+- `skills-lock.json`: folder hashes are computed over a byte-ordered file list instead of `localeCompare`, which is ICU- and locale-dependent. Byte order also matches upstream `computeSkillFolderHash`, whose default `.sort()` is UTF-16 code-unit order, so the lock now sits closer to what `npx skills` computes rather than merely being deterministic. No skill content changed; 13 of 15 hashes moved because every skill with a `resources/` directory sorted `resources/x.md` before `SKILL.md` under the old comparator. The hash is a skip-cache key and never an integrity check, so the only consumer-visible effect is one needless reinstall of those 13 skills on the next `npx skills sync`.
+- `install-sanity` compares the installed skill **name set** against the `skills-lock.json` keys instead of asserting `count >= expected`. Dropping one real skill while installing one phantom left the count unchanged and the job green.
+
+### Added
+- CI cross-checks all 15 skills against `skills-ref`, the Agent Skills reference validator. `validate-skills.mjs` is this repo's own reading of the spec; the spec's own implementation was the one check nobody automated, so a divergence between them surfaced through a consumer rather than a build. (`PYTHONUTF8=1` — `skills-ref` reads `SKILL.md` with the locale encoding.)
+- Frontmatter **value shapes** are validated, not just field names. A permitted name with a wrong value type makes a skill skippable under Agent Plugins §7.1 exactly as an unknown field does, and the value was previously never inspected: `metadata: [a, b]` passed. `metadata` must now be a map of `key: value` pairs, and `name`, `description`, `license`, `compatibility` and `allowed-tools` must each be a string.
+- `tests/skills.md` is enforced as the fifth registration surface. CLAUDE.md has always listed it; nothing checked it, so a skill could ship with nothing smoke-testing it and every job green.
+- Registration surfaces reject **duplicates**. All three collected names into a `Set`, which collapses a repeat, so "listed exactly once" was never enforced.
+- The `README.md` skills table is checked **label against link target**, matching the `AGENTS.md` path list. A row pointing at another skill's `SKILL.md` satisfied both name diffs while every harness loaded the wrong file; a row that has lost its link is reported rather than silently skipped.
+- The self-test suite asserts the **committed** `skills-lock.json` validates clean against the checkout. Nothing pinned this, so the hash-ordering change above went in stale and surfaced as a red pipeline instead of a failing test.
+
 ## [2.3.2] - 2026-08-14
 
 ### Fixed

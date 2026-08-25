@@ -26,6 +26,34 @@ jobs:
         run: npx -y ajv-cli@5 validate --spec=draft2020 -s tests/schemas/agent-plugins-1.0.0.plugin.schema.json -d plugin.json
       - name: Validate skills (frontmatter, lock invariants + hash freshness, version sync, content patterns)
         run: node tests/scripts/validate-skills.mjs
+      - uses: astral-sh/setup-uv@v5
+      - name: Cross-check every skill against the reference validator
+        # validate-skills.mjs is our own reading of the Agent Skills spec;
+        # skills-ref is the spec's own implementation and the only authority on
+        # conformance. CLAUDE.md told maintainers to run it by hand, which made
+        # the one check that can catch a misreading the one check nothing ran.
+        # PYTHONUTF8: skills-ref reads SKILL.md with the locale encoding, and
+        # several skills carry non-ASCII.
+        env:
+          PYTHONUTF8: "1"
+          # Pinned: unpinned, an upstream commit to agentskills turns unrelated
+          # PRs red. Bump deliberately when re-checking against a newer spec.
+          SKILLS_REF: "git+https://github.com/agentskills/agentskills.git@69ef37e9424c0a7ea9dd2293b559e43ec8176379#subdirectory=skills-ref"
+        run: |
+          set -uo pipefail
+          # Resolve once, then reuse the cached env: uvx inside the loop would
+          # do 15 git resolutions per run.
+          uvx --from "$SKILLS_REF" skills-ref --help > /dev/null
+          rc=0
+          for d in skills/*/; do
+            uvx --from "$SKILLS_REF" skills-ref validate "$d" || rc=1
+          done
+          # Report every non-conformant skill in one run: aborting on the first
+          # turns a shared frontmatter mistake into one CI round-trip per skill.
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::one or more skills failed the Agent Skills reference validator (see above)"
+            exit 1
+          fi
       - name: Self-test the validator (each invariant must fail the run when violated)
         run: bash tests/scripts/validate-skills.test.sh
       - name: PR title pattern lint
@@ -117,18 +145,26 @@ jobs:
           node-version: 20
       - name: Install the suite from this checkout via npx skills
         run: |
-          expected=$(jq -r '.skills | length' "$GITHUB_WORKSPACE/skills-lock.json")
+          set -euo pipefail
+          jq -r '.skills | keys[]' "$GITHUB_WORKSPACE/skills-lock.json" | sort > /tmp/expected.txt
           tmp=$(mktemp -d) && cd "$tmp"
-          # || true: a failed install is caught by the count assertion below,
+          # || true: a failed install is caught by the set comparison below,
           # which also surfaces install.log context.
           npx -y skills add "$GITHUB_WORKSPACE" -y 2>&1 | tee install.log || true
-          # Count unique skill names, not SKILL.md files — installers may write
-          # the same skill to several agent locations.
-          count=$(find . -name SKILL.md -exec dirname {} \; | xargs -n1 basename | sort -u | wc -l | tr -d ' ')
-          echo "unique skills installed: $count (expected >= $expected)"
-          if [ "$count" -lt "$expected" ]; then
+          # Unique skill names, not SKILL.md files — installers may write the
+          # same skill to several agent locations.
+          # -r: a zero-file install is the regression this step exists to
+          # report, and without it xargs runs basename on empty input, which
+          # exits 1 and kills the step under pipefail before the diff below.
+          find . -name SKILL.md -exec dirname {} \; | xargs -r -n1 basename | sort -u > /tmp/installed.txt
+          # Compare the name sets, not their sizes: a count assertion passes
+          # when one real skill is dropped and one phantom installed.
+          if ! diff -u /tmp/expected.txt /tmp/installed.txt > /tmp/setdiff.txt; then
+            echo "--- expected (skills-lock.json keys) vs installed ---"
+            cat /tmp/setdiff.txt
             echo "--- tail of install.log (registry blip vs real regression) ---"
             tail -n 30 install.log || true
-            echo "::error::expected >=$expected unique skills installed from this checkout, got $count (install.log tail above)"
+            echo "::error::the installed skill set does not match skills-lock.json (diff and install.log tail above)"
             exit 1
           fi
+          echo "installed skill set matches skills-lock.json ($(wc -l < /tmp/expected.txt) skills)"

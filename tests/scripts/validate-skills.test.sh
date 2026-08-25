@@ -71,11 +71,22 @@ AGENTS
 # Test
 
 <!-- BEGIN_SKILLS_TABLE -->
-| Skill | What It Does |
-|-------|-------------|
-| **example-skill** | Test skill |
+| Skill | What It Does | Documentation |
+|-------|-------------|---------------|
+| **example-skill** | Test skill | [SKILL.md](skills/example-skill/SKILL.md) |
 <!-- END_SKILLS_TABLE -->
 README
+
+  mkdir -p "$d/tests"
+  cat > "$d/tests/skills.md" <<'SMOKE'
+# Skill Smoke Tests
+
+## `example-skill`
+
+### Scenario 1: it does the thing
+- Ask: "do the thing"
+- Verify: it did the thing
+SMOKE
 
   # Pin core.autocrlf off so fixtures hash consistently across platforms.
   git -C "$d" init -q
@@ -129,6 +140,14 @@ expect_pass() {
 # --- the clean fixture must pass, or every case below proves nothing ---
 d=$(build_fixture baseline)
 expect_pass "clean fixture passes" "$d"
+
+# This repo's own lock, against this checkout. Nothing pinned it, so the
+# byte-order sort in 2.3.3 changed 13 hashes and the staleness surfaced as a red
+# pipeline instead of a failing test — a fixture cannot catch a change to the
+# algorithm the fixture itself uses, only the real tree can. Note the hashes come
+# from the git index, so this reads staged content, not HEAD: mid-edit, `git add`
+# your skill changes and re-run `--fix` before expecting it to pass.
+expect_pass "this repo's skills-lock.json is fresh for the staged tree" "$repo_root"
 
 # --- 1. lock <-> dirs ---
 d=$(build_fixture stale-hash)
@@ -206,6 +225,102 @@ sed -i.bak 's/^description: /"quoted key": x\ndescription: /' "$d/skills/example
 rm -f "$d/skills/example-skill/SKILL.md.bak"
 relock "$d"
 expect_fail "unreadable frontmatter line" "$d" "unreadable frontmatter line"
+
+# --- value shapes: a permitted field name with a wrong value type ---
+# metadata is a string->string map; a flow sequence flattens to a plausible
+# string and was accepted on the field name alone.
+d=$(build_fixture metadata-is-a-list)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(/^description: /m,"metadata: [a, b]\ndescription: "))' \
+  "$d/skills/example-skill/SKILL.md"
+relock "$d"
+expect_fail "metadata as a flow list" "$d" "'metadata' is a list, but the spec defines it as a string->string map"
+
+d=$(build_fixture metadata-is-a-block-list)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(/^description: /m,"metadata:\n  - a\n  - b\ndescription: "))' \
+  "$d/skills/example-skill/SKILL.md"
+relock "$d"
+expect_fail "metadata as a block list" "$d" "'metadata' is a list, but the spec defines it as a string->string map"
+
+d=$(build_fixture metadata-entry-not-a-pair)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(/^description: /m,"metadata:\n  good: value\n  bare-scalar\ndescription: "))' \
+  "$d/skills/example-skill/SKILL.md"
+relock "$d"
+expect_fail "metadata entry that is not key: value" "$d" "is not a 'key: value' pair"
+
+d=$(build_fixture metadata-is-a-map)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(/^description: /m,"metadata:\n  harness: claude-code\ndescription: "))' \
+  "$d/skills/example-skill/SKILL.md"
+relock "$d"
+expect_pass "metadata as a string->string map is allowed" "$d"
+
+# Valid maps that the shape probe must not misread as scalars. Each of these
+# reported "'metadata' is a scalar" before the probe was widened.
+d=$(build_fixture metadata-map-with-comments)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(/^description: /m,"metadata:\n  # which harness\n  harness: claude-code\n  # trailing note\ndescription: "))' \
+  "$d/skills/example-skill/SKILL.md"
+relock "$d"
+expect_pass "metadata map with comment lines is allowed" "$d"
+
+d=$(build_fixture metadata-map-quoted-and-numeric-keys)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(/^description: /m,"metadata:\n  \x27harness\x27: claude-code\n  2fa: enabled\ndescription: "))' \
+  "$d/skills/example-skill/SKILL.md"
+relock "$d"
+expect_pass "metadata map with a quoted and a digit-leading key is allowed" "$d"
+
+# A nested block scalar is an entry's value, not a sibling entry.
+d=$(build_fixture metadata-map-nested-block-scalar)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(/^description: /m,"metadata:\n  note: >-\n    a long note\n    continued\ndescription: "))' \
+  "$d/skills/example-skill/SKILL.md"
+relock "$d"
+expect_pass "metadata entry with a nested block scalar is allowed" "$d"
+
+# Flow form got a shape and no entry check at all.
+d=$(build_fixture metadata-flow-map-nested)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(/^description: /m,"metadata: {a: [1, 2], b: c}\ndescription: "))' \
+  "$d/skills/example-skill/SKILL.md"
+relock "$d"
+expect_fail "metadata flow map with a nested collection" "$d" "nests a collection"
+
+d=$(build_fixture metadata-flow-map-ok)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(/^description: /m,"metadata: {harness: claude-code, tier: beta}\ndescription: "))' \
+  "$d/skills/example-skill/SKILL.md"
+relock "$d"
+expect_pass "metadata as a flow string->string map is allowed" "$d"
+
+# allowed-tools is a comma-separated string here and in Claude Code's reader.
+d=$(build_fixture allowed-tools-is-a-list)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(/^description: /m,"allowed-tools:\n  - Read\n  - Write\ndescription: "))' \
+  "$d/skills/example-skill/SKILL.md"
+relock "$d"
+expect_fail "allowed-tools as a list" "$d" "'allowed-tools' is a list, but the spec defines it as a string"
+
+d=$(build_fixture description-is-a-list)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(/^description: .*$/m,"description: [a, b]"))' \
+  "$d/skills/example-skill/SKILL.md"
+relock "$d"
+expect_fail "description as a list" "$d" "'description' is a list, but the spec defines it as a string"
 
 # node, not python3: the Windows python3 shim rejects heredoc stdin under set -e.
 d=$(build_fixture long-description)
@@ -363,21 +478,41 @@ cp "$d/skills/example-skill/SKILL.md" "$d/skills/second-skill/SKILL.md"
 node -e 'const fs=require("fs"),f=process.argv[1];
   fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace(/^name: example-skill$/m,"name: second-skill"))' \
   "$d/skills/second-skill/SKILL.md"
-# Add to AGENTS.md so only the README check fires.
+# Add to AGENTS.md and the smoke tests so only the README check fires.
 node -e 'const fs=require("fs"),f=process.argv[1];
   fs.writeFileSync(f,fs.readFileSync(f,"utf8")
     .replace(/(example-skill.*SKILL\.md")/,"$1\n - second-skill -> \"skills/second-skill/SKILL.md\"")
     .replace("</available_skills>","second-skill: \x60Second test skill.\x60\n\n</available_skills>"))' \
   "$d/agents/AGENTS.md"
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")+"\n## \x60second-skill\x60\n\n### Scenario 1: it does the thing\n")' \
+  "$d/tests/skills.md"
 relock "$d"
 expect_fail "skill missing from README table" "$d" "README.md skills table is missing 'second-skill'"
 
 d=$(build_fixture phantom-readme-table)
 node -e 'const fs=require("fs"),f=process.argv[1];
   fs.writeFileSync(f,fs.readFileSync(f,"utf8")
-    .replace("<!-- END_SKILLS_TABLE -->","| **phantom-skill** | Does not exist |\n<!-- END_SKILLS_TABLE -->"))' \
+    .replace("<!-- END_SKILLS_TABLE -->","| **phantom-skill** | Does not exist | [SKILL.md](skills/phantom-skill/SKILL.md) |\n<!-- END_SKILLS_TABLE -->"))' \
   "$d/README.md"
 expect_fail "phantom in README skills table" "$d" "README.md skills table references 'phantom-skill' but skills/phantom-skill does not exist"
+
+# Row label and link target disagree — both name diffs pass, harnesses load the
+# wrong file.
+d=$(build_fixture readme-label-target-mismatch)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace("(skills/example-skill/SKILL.md)","(skills/wrong-dir/SKILL.md)"))' \
+  "$d/README.md"
+expect_fail "README row label/target mismatch" "$d" "row 'example-skill' links to skills/wrong-dir/"
+
+# Row lost its link entirely — the target check must report that, not skip.
+d=$(build_fixture readme-row-without-link)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(" [SKILL.md](skills/example-skill/SKILL.md) |"," |"))' \
+  "$d/README.md"
+expect_fail "README row without a SKILL.md link" "$d" "row 'example-skill' has no \[SKILL.md\]"
 
 # Missing README.md entirely.
 d=$(build_fixture missing-readme)
@@ -392,6 +527,76 @@ node -e 'const fs=require("fs"),f=process.argv[1];
     .replace(/<!-- BEGIN_SKILLS_TABLE -->[\s\S]*<!-- END_SKILLS_TABLE -->/,""))' \
   "$d/README.md"
 expect_fail "missing table markers" "$d" "has no <!-- BEGIN_SKILLS_TABLE -->"
+
+# --- duplicate registrations (a Set would collapse these) ---
+d=$(build_fixture duplicate-agents-pathlist)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(/(example-skill.*SKILL\.md")/,"$1\n - example-skill -> \"skills/example-skill/SKILL.md\""))' \
+  "$d/agents/AGENTS.md"
+expect_fail "duplicate in AGENTS.md path list" "$d" "path list lists 'example-skill' more than once"
+
+d=$(build_fixture duplicate-available-skills)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace("</available_skills>","example-skill: \x60Duplicate entry.\x60\n\n</available_skills>"))' \
+  "$d/agents/AGENTS.md"
+expect_fail "duplicate in AGENTS.md available_skills" "$d" "<available_skills> lists 'example-skill' more than once"
+
+d=$(build_fixture duplicate-readme-table)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace("<!-- END_SKILLS_TABLE -->","| **example-skill** | Duplicate row | [SKILL.md](skills/example-skill/SKILL.md) |\n<!-- END_SKILLS_TABLE -->"))' \
+  "$d/README.md"
+expect_fail "duplicate row in README skills table" "$d" "README.md skills table lists 'example-skill' more than once"
+
+# --- 10. tests/skills.md <-> skills/ ---
+d=$(build_fixture skill-missing-from-smoke-tests)
+mkdir -p "$d/skills/second-skill"
+cp "$d/skills/example-skill/SKILL.md" "$d/skills/second-skill/SKILL.md"
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace(/^name: example-skill$/m,"name: second-skill"))' \
+  "$d/skills/second-skill/SKILL.md"
+# Register everywhere else so only the smoke-test check fires.
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace(/(example-skill.*SKILL\.md")/,"$1\n - second-skill -> \"skills/second-skill/SKILL.md\"")
+    .replace("</available_skills>","second-skill: \x60Second test skill.\x60\n\n</available_skills>"))' \
+  "$d/agents/AGENTS.md"
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace("<!-- END_SKILLS_TABLE -->","| **second-skill** | Second test skill | [SKILL.md](skills/second-skill/SKILL.md) |\n<!-- END_SKILLS_TABLE -->"))' \
+  "$d/README.md"
+relock "$d"
+expect_fail "skill missing from tests/skills.md" "$d" "tests/skills.md is missing 'second-skill'"
+
+d=$(build_fixture phantom-smoke-tests)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")+"\n## \x60phantom-skill\x60\n\n### Scenario 1: nope\n")' \
+  "$d/tests/skills.md"
+expect_fail "phantom in tests/skills.md" "$d" "tests/skills.md references 'phantom-skill' but skills/phantom-skill does not exist"
+
+d=$(build_fixture duplicate-smoke-tests)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")+"\n## \x60example-skill\x60\n\n### Scenario 2: again\n")' \
+  "$d/tests/skills.md"
+expect_fail "duplicate heading in tests/skills.md" "$d" "tests/skills.md lists 'example-skill' more than once"
+
+# A heading whose backtick is unclosed must be reported as that skill missing.
+# When the name pattern spanned newlines it instead swallowed everything up to
+# the next backtick, naming a multi-line blob as the phantom.
+d=$(build_fixture smoke-tests-unclosed-backtick)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace("## \x60example-skill\x60","## \x60example-skill")
+    +"\n## \x60later-heading\x60\n")' \
+  "$d/tests/skills.md"
+expect_fail "unclosed backtick in a tests/skills.md heading" "$d" "tests/skills.md is missing 'example-skill'"
+
+d=$(build_fixture missing-smoke-tests)
+rm "$d/tests/skills.md"
+git -C "$d" add -A
+expect_fail "missing tests/skills.md" "$d" "tests/skills.md is missing or unreadable"
 
 # --- git-failure paths ---
 d=$(build_fixture no-git)

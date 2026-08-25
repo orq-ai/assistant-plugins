@@ -9,6 +9,7 @@
 //   7. the repo root is the only Agent Plugins root
 //   8. agents/AGENTS.md <-> skills/ (path list + <available_skills>)
 //   9. README.md skills table <-> skills/
+//  10. tests/skills.md <-> skills/
 // Errors fail the run; warnings don't. Run from anywhere in the repo.
 
 import { createHash } from "node:crypto";
@@ -122,12 +123,22 @@ const unquote = (s) =>
   (s.length > 1 && ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))))
     ? s.slice(1, -1) : s;
 
-// Minimal frontmatter reader: { fields, unparsed } — scalars with block-scalar
-// continuation, plus unindented lines no check can see.
+// One 'key: value' pair of a mapping. Deliberately wider than the frontmatter
+// key pattern: a nested map key may be quoted or start with a digit, and
+// rejecting those would report a valid map as a scalar.
+const MAP_ENTRY_RE = /^(?:"[^"]*"|'[^']*'|[^:\s]+):(\s|$)/;
+
+// Minimal frontmatter reader: { fields, shapes, blocks, unparsed } — scalars
+// with block-scalar continuation, plus unindented lines no check can see.
+// `shapes` records scalar/list/map so a value's type can be checked and not
+// just its field name: `metadata: [a, b]` is a list where the spec requires a
+// string->string map, and flattening every value to a string hides that.
 const readFrontmatter = (text) => {
   const lines = text.replace(/^﻿/, "").split(/\r?\n/);
   if (lines[0] !== "---") return null;
   const fields = {};
+  const shapes = {};
+  const blocks = {};
   const unparsed = [];
   let key = null;
   for (let i = 1; i < lines.length; i++) {
@@ -138,15 +149,34 @@ const readFrontmatter = (text) => {
       key = m[1];
       const raw = (m[2] ?? "").trim();
       // Block scalar opener (>-, |+, >2, etc.) carries no value of its own.
-      fields[key] = /^[>|][-+]?[0-9]*$/.test(raw) ? "" : unquote(raw);
+      const blockScalar = /^[>|][-+]?[0-9]*$/.test(raw);
+      fields[key] = blockScalar ? "" : unquote(raw);
+      blocks[key] = [];
+      // A flow collection is decided here, a block one by the indented lines
+      // below — which is why an empty value stays undecided for now.
+      if (blockScalar) shapes[key] = "scalar";
+      else if (raw === "") shapes[key] = "empty";
+      else if (raw.startsWith("[")) shapes[key] = "list";
+      else if (raw.startsWith("{")) shapes[key] = "map";
+      else shapes[key] = "scalar";
     } else if (key && /^\s+\S/.test(line)) {
       // Inside a block scalar the quotes are content, not delimiters.
       fields[key] = (fields[key] ? fields[key] + " " : "") + line.trim();
+      blocks[key].push(line);
+      // Only an undecided value is resolved from its indented lines: a block
+      // scalar's body may legitimately open with '- ' or carry a colon. A
+      // comment decides nothing, so the next real line still gets to.
+      if (shapes[key] === "empty" && !line.trimStart().startsWith("#"))
+        shapes[key] = /^\s+-(\s|$)/.test(line) ? "list"
+          : MAP_ENTRY_RE.test(line.trim()) ? "map"
+            : "scalar";
     } else if (line.trim() !== "" && !line.trimStart().startsWith("#")) {
       unparsed.push(line);
     }
   }
-  return { fields, unparsed };
+  // An empty value with no indented lines under it is an empty scalar.
+  for (const k of Object.keys(shapes)) if (shapes[k] === "empty") shapes[k] = "scalar";
+  return { fields, shapes, blocks, unparsed };
 };
 
 // ---------- 1. lock <-> dirs + hash freshness ----------
@@ -235,6 +265,11 @@ if (rootManifest !== null && (typeof rootManifest !== "object" || Array.isArray(
 // Agent Skills closed field set — an extra field costs the skill (Agent Plugins §7.1).
 const SKILL_FIELDS = new Set(["name", "description", "license", "compatibility",
   "metadata", "allowed-tools"]);
+// Every permitted field except `metadata` takes a string. `allowed-tools` is a
+// comma-separated string in this suite and in Claude Code's own reader, not a
+// YAML sequence.
+const SCALAR_SKILL_FIELDS = ["name", "description", "license", "compatibility",
+  "allowed-tools"];
 // 1-64 chars, lowercase alphanumeric and hyphens, no leading/trailing/consecutive hyphens.
 const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 // Anthropic reserves these segment names; matched whole-segment.
@@ -246,12 +281,46 @@ for (const name of skillDirs) {
   catch { err(`skills/${name}: missing SKILL.md`); continue; }
   const parsed = readFrontmatter(text);
   if (!parsed) { err(`skills/${name}: SKILL.md has no frontmatter block`); continue; }
-  const { fields: fm, unparsed } = parsed;
+  const { fields: fm, shapes, blocks, unparsed } = parsed;
   for (const line of unparsed)
     err(`skills/${name}: unreadable frontmatter line '${line.trim()}' — it is neither a key, a comment, nor a continuation, so no check can see it`);
   for (const key of Object.keys(fm))
     if (!SKILL_FIELDS.has(key))
       err(`skills/${name}: unknown frontmatter field '${key}' — the Agent Skills field set is closed, so a conformant client skips this skill entirely (Agent Plugins §7.1)`);
+  // A permitted field name is only half the spec: each value's type is fixed
+  // too, and a wrong one makes the skill skippable exactly like an unknown
+  // field does. Without this the value is never inspected at all.
+  for (const key of SCALAR_SKILL_FIELDS)
+    if (key in fm && shapes[key] !== "scalar")
+      err(`skills/${name}: frontmatter '${key}' is a ${shapes[key]}, but the spec defines it as a string`);
+  if ("metadata" in fm) {
+    const badEntry = (e) =>
+      err(`skills/${name}: frontmatter 'metadata' entry '${e}' is not a 'key: value' pair — the spec defines metadata as a string->string map`);
+    if (shapes.metadata !== "map") {
+      err(`skills/${name}: frontmatter 'metadata' is a ${shapes.metadata}, but the spec defines it as a string->string map`);
+    } else if (fm.metadata.startsWith("{")) {
+      // Flow form. Without this it got a shape and no entry check at all.
+      const flow = fm.metadata.trim();
+      if (!flow.endsWith("}"))
+        err(`skills/${name}: frontmatter 'metadata' opens a flow map that is never closed with '}'`);
+      else {
+        const inner = flow.slice(1, -1).trim();
+        if (/[[\]{}]/.test(inner))
+          err(`skills/${name}: frontmatter 'metadata' nests a collection — the spec defines it as a string->string map`);
+        else for (const part of inner ? inner.split(",") : [])
+          if (!MAP_ENTRY_RE.test(part.trim())) badEntry(part.trim());
+      }
+    } else {
+      // Block form. Entries sit at the shallowest indent; anything deeper
+      // belongs to an entry's own value (a nested block scalar), and a comment
+      // is not an entry at all.
+      const lines = blocks.metadata.filter((l) => !l.trimStart().startsWith("#"));
+      const depth = Math.min(...lines.map((l) => l.length - l.trimStart().length));
+      for (const line of lines)
+        if (line.length - line.trimStart().length === depth && !MAP_ENTRY_RE.test(line.trim()))
+          badEntry(line.trim());
+    }
+  }
   if (!("name" in fm)) err(`skills/${name}: missing required frontmatter field 'name'`);
   else if (fm.name !== name) err(`skills/${name}: frontmatter name '${fm.name}' != directory name`);
   else if (!SKILL_NAME_RE.test(name) || name.length > 64)
@@ -329,6 +398,34 @@ for (const f of tracked) {
     err(`nested Agent Plugins manifest: ${f} — the repo root must be the only plugin root`);
 }
 
+// ---------- registration-surface helpers (sections 8-10) ----------
+// A surface registers each skill exactly once. Collecting into a Set alone
+// would collapse a repeat, so duplicates are reported before deduping.
+const collectNames = (surface, names) => {
+  const seen = new Set();
+  for (const name of names) {
+    if (seen.has(name))
+      err(`${surface} lists '${name}' more than once — each skill must be registered exactly once`);
+    seen.add(name);
+  }
+  return seen;
+};
+
+// Bidirectional: every skill is registered, every registration is a real skill.
+const diffAgainstSkills = (surface, names, hint = "") => {
+  for (const name of skillDirs)
+    if (!names.has(name)) err(`${surface} is missing '${name}'${hint}`);
+  for (const name of names)
+    if (!skillDirs.includes(name)) err(`${surface} references '${name}' but skills/${name} does not exist`);
+};
+
+const allMatches = (re, text) => {
+  const out = [];
+  let m;
+  while ((m = re.exec(text)) !== null) out.push(m);
+  return out;
+};
+
 // ---------- 8. AGENTS.md <-> skills/ ----------
 // Required input: a missing AGENTS.md silently disables the drift check.
 const agentsPath = join(root, "agents", "AGENTS.md");
@@ -339,35 +436,22 @@ try { agentsText = readFileSync(agentsPath, "utf8"); } catch {
 }
 
 if (agentsText !== null) {
-  // Capture both label and target dir to detect label/target mismatches.
-  const pathListRe = /^\s*-\s+(\S+)\s+->\s+"skills\/([^/]+)\/SKILL\.md"/gm;
-  const pathListNames = new Set();
-  let agM;
-  while ((agM = pathListRe.exec(agentsText)) !== null) {
-    if (agM[1] !== agM[2])
-      err(`agents/AGENTS.md path list: label '${agM[1]}' points to skills/${agM[2]}/ — they must match`);
-    pathListNames.add(agM[1]);
-  }
-
-  for (const name of skillDirs)
-    if (!pathListNames.has(name))
-      err(`agents/AGENTS.md path list is missing '${name}' — Claude Code/Codex/Gemini CLI won't find it`);
-  for (const name of pathListNames)
-    if (!skillDirs.includes(name))
-      err(`agents/AGENTS.md path list references '${name}' but skills/${name} does not exist`);
+  // Both sides captured: an entry whose label and target disagree satisfies the
+  // name diff in both directions while every harness loads the wrong file.
+  const pathList = allMatches(/^\s*-\s+(\S+)\s+->\s+"skills\/([^/"]+)\/SKILL\.md"/gm, agentsText);
+  for (const [, label, target] of pathList)
+    if (label !== target)
+      err(`agents/AGENTS.md path list: label '${label}' points to skills/${target}/ — they must match`);
+  const pathListNames = collectNames("agents/AGENTS.md path list", pathList.map((m) => m[1]));
+  diffAgainstSkills("agents/AGENTS.md path list", pathListNames,
+    " — Claude Code/Codex/Gemini CLI won't find it");
 
   const availBlock = agentsText.match(/<available_skills>([\s\S]*?)<\/available_skills>/);
   if (availBlock) {
-    const availRe = /^(\S+):\s*`/gm;
-    const availNames = new Set();
-    while ((agM = availRe.exec(availBlock[1])) !== null) availNames.add(agM[1]);
-
-    for (const name of skillDirs)
-      if (!availNames.has(name))
-        err(`agents/AGENTS.md <available_skills> is missing '${name}' — the agent won't route to it`);
-    for (const name of availNames)
-      if (!skillDirs.includes(name))
-        err(`agents/AGENTS.md <available_skills> references '${name}' but skills/${name} does not exist`);
+    const availNames = collectNames("agents/AGENTS.md <available_skills>",
+      allMatches(/^(\S+):\s*`/gm, availBlock[1]).map((m) => m[1]));
+    diffAgainstSkills("agents/AGENTS.md <available_skills>", availNames,
+      " — the agent won't route to it");
   } else {
     err(`agents/AGENTS.md has no <available_skills> block — the agent won't route to any skill`);
   }
@@ -385,20 +469,50 @@ try { readmeText = readFileSync(readmePath, "utf8"); } catch {
 if (readmeText !== null) {
   const tableMatch = readmeText.match(/<!-- BEGIN_SKILLS_TABLE -->([\s\S]*?)<!-- END_SKILLS_TABLE -->/);
   if (tableMatch) {
-    const tableRe = /\|\s*\*\*(\S+?)\*\*/g;
-    const tableNames = new Set();
-    let rdM;
-    while ((rdM = tableRe.exec(tableMatch[1])) !== null) tableNames.add(rdM[1]);
-
-    for (const name of skillDirs)
-      if (!tableNames.has(name))
-        err(`README.md skills table is missing '${name}'`);
-    for (const name of tableNames)
-      if (!skillDirs.includes(name))
-        err(`README.md skills table references '${name}' but skills/${name} does not exist`);
+    // Row shape: | **name** | what it does | [SKILL.md](skills/name/SKILL.md) |
+    // The link is read per row rather than folded into the name regex, so a row
+    // that has lost it reports that, instead of vanishing from the name diff.
+    const rowNames = [];
+    for (const line of tableMatch[1].split(/\r?\n/)) {
+      const nameM = line.match(/\|\s*\*\*(\S+?)\*\*/);
+      if (!nameM) continue;
+      rowNames.push(nameM[1]);
+      // Anchored on the [SKILL.md] label, not the first skills/ link on the
+      // row: a description cell may cite another skill's file.
+      const linkM = line.match(/\[SKILL\.md\]\(skills\/([^/)]+)\/SKILL\.md\)/);
+      if (!linkM)
+        err(`README.md skills table: row '${nameM[1]}' has no [SKILL.md](skills/<name>/SKILL.md) link — its target cannot be checked`);
+      else if (linkM[1] !== nameM[1])
+        err(`README.md skills table: row '${nameM[1]}' links to skills/${linkM[1]}/ — they must match`);
+    }
+    const tableNames = collectNames("README.md skills table", rowNames);
+    diffAgainstSkills("README.md skills table", tableNames);
   } else {
     err(`README.md has no <!-- BEGIN_SKILLS_TABLE --> / <!-- END_SKILLS_TABLE --> markers — the skills-table drift check cannot run`);
   }
+}
+
+// ---------- 10. tests/skills.md <-> skills/ ----------
+// The fifth registration surface CLAUDE.md names, and the only one nothing
+// checked: a skill with no smoke-test entry ships with nothing exercising it
+// and every CI job green.
+const smokePath = join(root, "tests", "skills.md");
+let smokeText;
+try { smokeText = readFileSync(smokePath, "utf8"); } catch {
+  err(`tests/skills.md is missing or unreadable — the smoke-test drift check cannot run`);
+  smokeText = null;
+}
+
+if (smokeText !== null) {
+  // One "## `skill-name`" heading per skill. A reformat that breaks the shape
+  // empties the set, so the diff below reports every skill as missing rather
+  // than passing on nothing.
+  // [^`\n]: without the newline exclusion one unclosed backtick swallows the
+  // next heading, which then reports as a missing skill and a phantom whose
+  // name is several lines of the file.
+  const smokeNames = collectNames("tests/skills.md",
+    allMatches(/^##\s+`([^`\n]+)`/gm, smokeText).map((m) => m[1]));
+  diffAgainstSkills("tests/skills.md", smokeNames, " — nothing smoke-tests it");
 }
 
 // ---------- result ----------
