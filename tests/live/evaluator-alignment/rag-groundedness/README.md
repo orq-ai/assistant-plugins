@@ -61,7 +61,8 @@ override-only by design — supply it here or in `config.toml`.
 Then score it:
 
 ```bash
-uv run tests/live/evaluator-alignment/rag-groundedness/score_run.py --run_dir <run_dir>
+# still from the skill root, like the steps above — `<run_dir>` is relative to it
+uv run ../../tests/live/evaluator-alignment/rag-groundedness/score_run.py --run_dir <run_dir>
 ```
 
 ### The judge model is the main knob

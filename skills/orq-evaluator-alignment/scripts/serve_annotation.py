@@ -88,16 +88,32 @@ def input_type_for(verdict_space: dict[str, Any] | None) -> dict[str, Any]:
       - categorical -> {'type': 'categorical', 'labels': [...]}
       - number      -> {'type': 'number', 'scale': [min, max] | None}
 
-    Anything missing/unknown falls back to boolean (the safe default and the
-    historical behaviour of this UI).
+    A **missing** type falls back to boolean — the historical default, and the
+    right one for a queue item that never declared a verdict space.
+
+    An **unknown** type raises. Falling back there looked like graceful
+    degradation and was the opposite: a `queue.json` written by a build that
+    still had free-form `string` would render Pass/Fail, and `coerce_value`
+    would then store a boolean in `annotations.json` under a verdict space that
+    is not boolean. The POST handler turns this into a 400 naming the type, so
+    the failure is loud and the wrong answer is never persisted.
     """
     vs = verdict_space or {}
-    vtype = str(vs.get('type', 'boolean')).strip().lower()
+    if 'type' not in vs:
+        return {'type': 'boolean'}
+    vtype = str(vs.get('type')).strip().lower()
+    if vtype == 'boolean':
+        return {'type': 'boolean'}
     if vtype == 'categorical':
         return {'type': 'categorical', 'labels': list(vs.get('labels') or [])}
     if vtype in _NUMBER_TYPES:
         return {'type': 'number', 'scale': _normalize_scale(vs.get('scale'))}
-    return {'type': 'boolean'}
+    raise ValueError(
+        f'unsupported verdict_space type {vtype!r}: this build renders boolean, '
+        'categorical and number. A queue.json from an older build (free-form '
+        '`string`, say) must be regenerated with build_queue.py rather than '
+        'answered through a widget that cannot represent its verdicts.'
+    )
 
 
 def coerce_value(verdict_space: dict[str, Any] | None, value: Any) -> bool | str | float:

@@ -62,13 +62,24 @@ def test_input_type_number_scale_may_be_absent():
     assert spec['scale'] is None
 
 
-def test_input_type_defaults_to_boolean_when_missing_or_unknown():
+def test_input_type_defaults_to_boolean_when_type_is_missing():
     assert sa.input_type_for({})['type'] == 'boolean'
     assert sa.input_type_for(None)['type'] == 'boolean'
-    # A type this build does not support — e.g. a queue.json written by an older
-    # version that still had free-form `string` — renders as boolean rather than
-    # crashing the UI on an unknown widget spec.
-    assert sa.input_type_for({'type': 'string'})['type'] == 'boolean'
+
+
+def test_input_type_refuses_a_declared_but_unsupported_type():
+    """A queue.json from an older build must not be answered through the wrong widget.
+
+    Falling back to boolean here read as graceful degradation and was the
+    opposite: a `verdict_space` of `{'type': 'string'}` rendered Pass/Fail, and
+    `coerce_value` then stored a boolean in `annotations.json` under a verdict
+    space that is not boolean — a wrong answer, persisted, with nothing to show
+    for it. The POST handler already turns ValueError into a 400.
+    """
+    with pytest.raises(ValueError, match='string'):
+        sa.input_type_for({'type': 'string'})
+    with pytest.raises(ValueError, match='unsupported verdict_space type'):
+        sa.input_type_for({'type': 'freeform'})
 
 
 # --- coerce_value / validate_value: typed value per output type --------------

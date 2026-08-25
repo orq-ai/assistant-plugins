@@ -87,13 +87,18 @@ let items = [], meta = {}, ann = {}, i = 0;
 // --- verdict_space -> UI widget spec (mirrors serve_annotation.input_type_for)
 function inputTypeFor(vs) {
   vs = vs || {};
-  const t = String(vs.type || 'boolean').toLowerCase();
+  // A MISSING type defaults to boolean; a DECLARED but unknown one does not.
+  // Rendering Pass/Fail for, say, a queue.json that still says `string` would
+  // collect a boolean the server then rejects with a 400 — better to say so here.
+  if (vs.type === undefined || vs.type === null) return { type: 'boolean' };
+  const t = String(vs.type).toLowerCase();
+  if (t === 'boolean') return { type: 'boolean' };
   if (t === 'categorical') return { type: 'categorical', labels: (vs.labels || []).slice() };
   if (t === 'number' || t === 'numeric') {
     const s = Array.isArray(vs.scale) && vs.scale.length === 2 ? [Number(vs.scale[0]), Number(vs.scale[1])] : null;
     return { type: 'number', scale: s };
   }
-  return { type: 'boolean' };
+  return { type: 'unsupported', raw: t };
 }
 function verdictSpace(it) { return (it && it.verdict_space) || meta.verdict_space || { type: 'boolean' }; }
 
@@ -158,6 +163,7 @@ function judgeSpread(it) {
       : 'n/a';
     return `<span class="badge">judge votes: ${parts} · N=${amb.n_repeats ?? '?'}</span>`;
   }
+  if (spec.type === 'unsupported') return '';
   // number
   const mean = jv.mean, sd = jv.stdev;
   return `<span class="badge">judge mean ${mean==null?'?':(+mean).toFixed(2)} ± ${sd==null?'?':(+sd).toFixed(2)} · N=${amb.n_repeats ?? '?'}</span>`;
@@ -170,6 +176,12 @@ function renderScorebar(it) {
   const a = ann[String(it.source_index)] || {};
   const cur = a.status === 'labeled' ? a.value : undefined;
   const bar = $('#scorebar');
+  if (spec.type === 'unsupported') {
+    bar.innerHTML =
+      `<span class="scale-hint">This queue declares verdict type "${esc(spec.raw)}", which this build ` +
+      `cannot score. Regenerate queue.json with build_queue.py.</span>`;
+    return;
+  }
   if (spec.type === 'boolean') {
     bar.innerHTML =
       `<button class="f" id="btnFail" title="key 1">Fail <kbd>1</kbd></button>` +
