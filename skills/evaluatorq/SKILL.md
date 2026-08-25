@@ -21,7 +21,7 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 
 - **NEVER** write inline datasets of fewer than 5 datapoints without asking the user — small datasets produce misleading scores. Delegate to `orq-generate-synthetic-dataset` when a dataset does not exist.
 - **NEVER** use `orq.evaluators.invoke()` — use `orq.evals.invoke_async()` inside async scorers or `orq.evals.invoke()` for synchronous calls.
-- **NEVER** invent evaluator IDs — fetch them from the user or via `search_entities` MCP tool (`type: "evaluator"`).
+- **NEVER** invent evaluator IDs — fetch them from the user or **browse** via `search_entities` MCP tool (`type: "evaluator"`).
 - **ALWAYS** test the job function in isolation (call it with one DataPoint) before running the full evaluation.
 - **ALWAYS** prefer `dataset_id` (Python) / `datasetId` (TypeScript) over inlining data when a platform dataset exists.
 - **CLI only:** Check `ORQ_API_KEY` is set before running `eq redteam` or `eq sim`.
@@ -91,7 +91,7 @@ Since v1.10 the library also exports **LLM-jury and pairwise judging**: `llm_jur
 - What is the agent key (orq.ai) or the function/endpoint to call?
 - What language — Python or TypeScript?
 
-For orq.ai agents, use `search_entities` MCP tool with `type: "agent"` to find available agent keys.
+For orq.ai targets, use `search_entities` MCP tool to **browse** available keys (`type: "agent"` or `type: "deployment"`). Then **verify the key with the run key** via REST or SDK (see [run-key preflight](../../docs/run-key-preflight.md)) — agents via `GET /v2/agents/<key>` (confirm `"status":"live"`), deployments via `POST /v2/deployments/get_config` (200 = invokable; 204 = no published version, stop and ask).
 
 **For CLI** (`eq redteam` or `eq sim`): orient the user, then hand off to the appropriate companion skill — `orq-red-team` for adversarial testing, `orq-simulate-agent` for user simulation.
 
