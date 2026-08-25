@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
-# Negative tests for validate-skills.mjs: every invariant it enforces must
-# actually fail the run when violated. Plain bash, no framework — run with
-# `bash tests/scripts/validate-skills.test.sh`.
-#
-# Why this exists: the checks in sections 2b and 5-7 were verified by hand
-# during review, and two of them turned out to pass while not checking (a bare
-# `null` manifest, and a git failure that skipped three sections silently).
-# Hand-verification does not survive the next refactor; these do.
-#
-# Fixtures are built in a temp dir rather than committed: a tracked SKILL.md
-# outside skills/ would trip the validator's own stray-skill check, and skill
-# installers walk the whole repo, so it would ship to every consumer.
+# Negative tests for validate-skills.mjs: every enforced invariant must fail
+# the run when violated. Run: bash tests/scripts/validate-skills.test.sh
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -19,7 +9,8 @@ tmp_root="$(mktemp -d)"
 failures=0
 skipped=0
 run_count=0
-expected_count=36
+# Derived from the script itself so adding a case can't silently desync.
+expected_count=$(grep -cE '^\s*expect_(fail|pass) ' "${BASH_SOURCE[0]}")
 
 cleanup_and_report() {
   rm -rf "$tmp_root"
@@ -31,9 +22,7 @@ cleanup_and_report() {
 }
 trap cleanup_and_report EXIT
 
-# A fixture that passes clean: one real skill, a lock regenerated from it, the
-# four manifests on one version, and a git checkout so sections 5-7 run. Each
-# case starts from this and breaks exactly one thing.
+# A fixture that passes clean: one skill, a lock, four manifests, a git checkout.
 build_fixture() {
   local d="$tmp_root/$1"
   mkdir -p "$d/skills/example-skill"
@@ -57,7 +46,6 @@ EOF
   done
   printf '{\n  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",\n  "name": "orq",\n  "version": "0.0.0"\n}\n' > "$d/plugin.json"
 
-  # agents/AGENTS.md — path list + available_skills for the fixture skill.
   mkdir -p "$d/agents"
   cat > "$d/agents/AGENTS.md" <<'AGENTS'
 ---
@@ -79,7 +67,6 @@ example-skill: `Fixture skill used for validation tests.`
 </skills>
 AGENTS
 
-  # README.md — skills table between markers for the fixture skill.
   cat > "$d/README.md" <<'README'
 # Test
 
@@ -90,34 +77,23 @@ AGENTS
 <!-- END_SKILLS_TABLE -->
 README
 
-  # The checkout has to exist before --fix runs: lock hashes are computed from
-  # the git index, so regenerating them in a bare directory would fall back to
-  # the working tree and produce hashes that don't match the ones validation
-  # then computes from the index.
-  #
-  # core.autocrlf is pinned off so fixtures behave the same whatever the
-  # maintainer's global git config says — and so the crlf-worktree case below is
-  # the only place line endings vary.
+  # Pin core.autocrlf off so fixtures hash consistently across platforms.
   git -C "$d" init -q
   git -C "$d" -c core.autocrlf=false add -A
 
-  # --fix regenerates the lock from the staged files, so the fixture carries a
-  # correct hash without this test reimplementing the hash function.
+  # --fix regenerates the lock from staged files.
   node "$validator" "$d" --fix >/dev/null 2>&1
 
   echo "$d"
 }
 
-# Re-stage and re-lock a fixture after editing a skill: hashes come from the
-# index, so an unstaged edit isn't hashed, and a staged one makes the lock stale.
-# `|| true` because --fix still exits non-zero on whatever error is under test.
+# Re-stage and re-lock after editing a skill.
 relock() {
   git -C "$1" -c core.autocrlf=false add -A
   node "$validator" "$1" --fix >/dev/null 2>&1 || true
 }
 
-# expect_fail <label> <dir> <pattern> — non-zero exit AND a message matching pattern.
-# Both halves matter: an exit code alone does not prove the intended check fired.
+# expect_fail <label> <dir> <pattern> — non-zero exit AND matching message.
 expect_fail() {
   local label="$1" dir="$2" pattern="$3" rc=0 out
   run_count=$((run_count + 1))
@@ -166,27 +142,25 @@ mkdir -p "$d/skills/second-skill"
 cp "$d/skills/example-skill/SKILL.md" "$d/skills/second-skill/SKILL.md"
 sed -i.bak 's/^name: example-skill/name: second-skill/' "$d/skills/second-skill/SKILL.md"
 rm -f "$d/skills/second-skill/SKILL.md.bak"
-git -C "$d" -c core.autocrlf=false add -A   # tracked but unlocked, the real shape of this mistake
+git -C "$d" -c core.autocrlf=false add -A
 expect_fail "skill missing from the lock" "$d" "skills/second-skill has no entry"
 
-# An untracked skill folder hashes as if it were empty, so --fix would write a
-# hash for content nobody can fetch and CI would reject it.
+# Untracked skill: add it to the lock with a dummy hash so folderHash runs on it.
 d=$(build_fixture untracked-skill)
 mkdir -p "$d/skills/second-skill"
 cp "$d/skills/example-skill/SKILL.md" "$d/skills/second-skill/SKILL.md"
 sed -i.bak 's/^name: example-skill/name: second-skill/' "$d/skills/second-skill/SKILL.md"
 rm -f "$d/skills/second-skill/SKILL.md.bak"
-node "$validator" "$d" --fix >/dev/null 2>&1 || true
-expect_fail "untracked skill folder" "$d" "skills/second-skill has no tracked files"
+node -e 'const f=process.argv[1],j=JSON.parse(require("fs").readFileSync(f));
+  j.skills["second-skill"]={source:"orq-ai/assistant-plugins",sourceType:"github",computedHash:"0".repeat(64)};
+  require("fs").writeFileSync(f,JSON.stringify(j,null,2))' "$d/skills-lock.json"
+expect_fail "untracked skill folder" "$d" "has no tracked files"
 
-# --- the Windows case: a CRLF working tree must not make every hash stale ---
-# LF blobs with a CRLF checkout is exactly what core.autocrlf=true produces, and
-# it used to report all 15 skills stale — the validator could not pass at all on
-# a Windows machine, and --fix there wrote CRLF hashes for CI to reject.
+# LF blobs with a CRLF checkout is what core.autocrlf=true produces.
 d=$(build_fixture crlf-worktree)
 node -e 'const fs=require("fs"),f=process.argv[1];
   fs.writeFileSync(f, fs.readFileSync(f,"utf8").replace(/\r?\n/g,"\r\n"))' "$d/skills/example-skill/SKILL.md"
-git -C "$d" -c core.autocrlf=true add -A   # normalises the blob back to LF
+git -C "$d" -c core.autocrlf=true add -A
 expect_pass "CRLF working tree does not make hashes stale" "$d"
 
 # --- 2. manifest version sync ---
@@ -195,8 +169,6 @@ printf '{\n  "name": "orq",\n  "version": "9.9.9"\n}\n' > "$d/.codex-plugin/plug
 expect_fail "manifest version drift" "$d" "manifest version drift"
 
 # --- 2b. root plugin.json is a usable manifest ---
-# The bare-null case is the one that shipped green: it parses fine, is falsy,
-# and every readJson caller skipped its checks without a word.
 d=$(build_fixture null-manifest)
 echo "null" > "$d/plugin.json"
 expect_fail "root manifest is a bare null" "$d" "contains a bare null"
@@ -214,34 +186,28 @@ echo "{ nope" > "$d/plugin.json"
 expect_fail "root manifest is not JSON" "$d" "invalid JSON"
 
 # --- 3. Agent Skills conformance ---
-# The closed field set is the one that bit us: `disallowed-tools` sat in 14 of
-# 15 skills and made every one of them skippable under Agent Plugins §7.1,
-# while every check in this repo passed.
+# `disallowed-tools` sat in 14 of 15 skills, making them skippable under §7.1.
 d=$(build_fixture unknown-frontmatter-field)
 sed -i.bak 's/^description: /disallowed-tools: Bash\ndescription: /' "$d/skills/example-skill/SKILL.md"
 rm -f "$d/skills/example-skill/SKILL.md.bak"
 relock "$d"
 expect_fail "unknown frontmatter field" "$d" "unknown frontmatter field 'disallowed-tools'"
 
-# A field whose name isn't [A-Za-z-]+ was invisible to the reader, so the closed
-# field set passed on it. `allowed_tools` for `allowed-tools` is the typo that
-# costs the whole skill under Agent Plugins §7.1.
+# `allowed_tools:` (underscore) was invisible to the old key regex.
 d=$(build_fixture underscore-frontmatter-field)
 sed -i.bak 's/^description: /allowed_tools: Bash\ndescription: /' "$d/skills/example-skill/SKILL.md"
 rm -f "$d/skills/example-skill/SKILL.md.bak"
 relock "$d"
 expect_fail "frontmatter field with an underscore" "$d" "unknown frontmatter field 'allowed_tools'"
 
-# Anything unindented that is neither key, comment nor continuation must be
-# reported rather than skipped — that is what kept the hole above open.
+# Unindented non-key/comment/continuation lines must be reported.
 d=$(build_fixture unreadable-frontmatter-line)
 sed -i.bak 's/^description: /"quoted key": x\ndescription: /' "$d/skills/example-skill/SKILL.md"
 rm -f "$d/skills/example-skill/SKILL.md.bak"
 relock "$d"
 expect_fail "unreadable frontmatter line" "$d" "unreadable frontmatter line"
 
-# node, not python3: the Windows python3 shim rejects a heredoc on stdin, and
-# under `set -e` that aborted the run with eleven cases still to go.
+# node, not python3: the Windows python3 shim rejects heredoc stdin under set -e.
 d=$(build_fixture long-description)
 node -e 'const fs=require("fs"),f=process.argv[1];
   fs.writeFileSync(f, fs.readFileSync(f,"utf8")
@@ -250,13 +216,10 @@ node -e 'const fs=require("fs"),f=process.argv[1];
 relock "$d"
 expect_fail "description over 1024 chars" "$d" "description 1[0-9][0-9][0-9] chars"
 
-# A folded scalar carrying a chomping indicator, measured at exactly the limit.
-# `>-` used to be treated as the value rather than as an opener, so every folded
-# description was measured with a stray ">- " glued to the front — this one came
-# out at 1027 and was rejected for being 3 chars of syntax over the limit.
+# >- used to be treated as the value, adding 3 chars of syntax to the measurement.
 d=$(build_fixture folded-description-at-limit)
 node -e 'const fs=require("fs"),f=process.argv[1];
-  // 10x100 + 14 chars of text + 10 joining spaces = exactly 1024.
+  // 10x100 + 14 chars + 10 joining spaces = exactly 1024.
   const lines = Array(10).fill("x".repeat(100)).concat("x".repeat(14));
   fs.writeFileSync(f, fs.readFileSync(f,"utf8")
     .replace(/^description: .*$/m, "description: >-\n" + lines.map(l => "  " + l).join("\n")))' \
@@ -264,16 +227,14 @@ node -e 'const fs=require("fs"),f=process.argv[1];
 relock "$d"
 expect_pass "folded description of exactly 1024 chars" "$d"
 
-# A quoted scalar used to keep its quotes and fail the directory-match check
-# with a name nobody wrote.
+# Quoted name used to keep its quotes and fail the directory-match check.
 d=$(build_fixture quoted-name)
 sed -i.bak 's/^name: example-skill/name: "example-skill"/' "$d/skills/example-skill/SKILL.md"
 rm -f "$d/skills/example-skill/SKILL.md.bak"
 relock "$d"
 expect_pass "quoted name matches the directory" "$d"
 
-# Reserved words (opper-ai/opper-skills parity): Anthropic's naming rules reject
-# these on publish however well the skill conforms to the spec.
+# Anthropic's naming rules reject reserved words on publish.
 d=$(build_fixture reserved-name)
 mv "$d/skills/example-skill" "$d/skills/claude-helper"
 sed -i.bak 's/^name: example-skill/name: claude-helper/' "$d/skills/claude-helper/SKILL.md"
@@ -289,10 +250,7 @@ git -C "$d" add -A
 expect_fail "tracked SKILL.md outside skills/" "$d" "stray tracked skill outside skills/"
 
 # --- 6. spec §4.1 path containment ---
-# Git Bash without developer mode copies the target instead of linking, so these
-# fixtures cannot be built on Windows and would report failures that say nothing
-# about the validator. Probe once, skip loudly, and keep a count: CI runs on
-# Linux, where the probe always succeeds and nothing is skipped.
+# Git Bash without developer mode copies instead of linking; skip on those platforms.
 symlink_cases() {
   local d
   d=$(build_fixture escaping-symlink)
@@ -300,8 +258,7 @@ symlink_cases() {
   git -C "$d" add -A
   expect_fail "symlink escaping the plugin root" "$d" "resolves outside the plugin root"
 
-  # A basename of `..` is the case that string-prefix matching accepted: the link
-  # lands on the repo's parent while every component looks inside it.
+  # `..` parent traversal that string-prefix matching would accept.
   d=$(build_fixture dotdot-symlink)
   ln -s "skills/../.." "$d/escape"
   git -C "$d" add -A
@@ -312,15 +269,14 @@ symlink_cases() {
   git -C "$d" add -A
   expect_fail "dangling symlink" "$d" "does not resolve"
 
-  # Non-ASCII path: without `git ls-files -z` git C-quotes it, lstat throws on the
-  # quoted literal, and the escape is skipped in silence.
+  # Without -z, git C-quotes non-ASCII paths and lstat silently misses them.
   d=$(build_fixture non-ascii-symlink)
   mkdir -p "$d/café"
   ln -s /etc/hosts "$d/café/escape.json"
   git -C "$d" add -A
   expect_fail "escaping symlink under a non-ASCII path" "$d" "resolves outside the plugin root"
 
-  # A symlink that stays inside the root is legal under §4.1 and must not trip it.
+  # A symlink inside the root is legal under §4.1.
   d=$(build_fixture contained-symlink)
   ln -s ./skills "$d/skills-alias"
   git -C "$d" add -A
@@ -332,8 +288,9 @@ if ln -s target "$tmp_root/.symlink-probe" 2>/dev/null && [ -L "$tmp_root/.symli
   symlink_cases
 else
   rm -f "$tmp_root/.symlink-probe"
-  skipped=5
-  echo "SKIP [5 symlink containment cases]: this platform does not create real symlinks — run them on Linux/CI"
+  # Derive the skip count from symlink_cases itself.
+  skipped=$(sed -n '/^symlink_cases/,/^}/p' "${BASH_SOURCE[0]}" | grep -cE '^\s*expect_(fail|pass) ')
+  echo "SKIP [$skipped symlink containment cases]: this platform does not create real symlinks — run them on Linux/CI"
 fi
 
 # --- 7. one Agent Plugins root ---
@@ -343,8 +300,7 @@ cp "$d/plugin.json" "$d/nested/plugin.json"
 git -C "$d" add -A
 expect_fail "nested Agent Plugins manifest" "$d" "nested Agent Plugins manifest"
 
-# A client-specific manifest nested anywhere is legal — .claude-plugin,
-# .codex-plugin, .cursor-plugin and plugins/trace-hooks all ship one.
+# Client-specific manifests nested anywhere are legal.
 d=$(build_fixture nested-harness-manifest)
 mkdir -p "$d/plugins/other-plugin/.claude-plugin"
 printf '{\n  "name": "other",\n  "version": "1.0.0"\n}\n' > "$d/plugins/other-plugin/.claude-plugin/plugin.json"
@@ -352,18 +308,17 @@ git -C "$d" add -A
 expect_pass "nested client-specific manifest is allowed" "$d"
 
 # --- 8. AGENTS.md <-> skills/ ---
-# A skill directory that exists but isn't in AGENTS.md: the agent runtime
-# can't find or route to it.
+# Skill exists but isn't in AGENTS.md.
 d=$(build_fixture skill-missing-from-agents)
 mkdir -p "$d/skills/second-skill"
 cp "$d/skills/example-skill/SKILL.md" "$d/skills/second-skill/SKILL.md"
 node -e 'const fs=require("fs"),f=process.argv[1];
-  fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace("example-skill","second-skill"))' \
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace(/^name: example-skill$/m,"name: second-skill"))' \
   "$d/skills/second-skill/SKILL.md"
 relock "$d"
 expect_fail "skill missing from AGENTS.md path list" "$d" "path list is missing 'second-skill'"
 
-# A phantom entry in the path list references a skill that doesn't exist.
+# Phantom entry in the path list.
 d=$(build_fixture phantom-agents-pathlist)
 node -e 'const fs=require("fs"),f=process.argv[1];
   fs.writeFileSync(f,fs.readFileSync(f,"utf8")
@@ -371,7 +326,7 @@ node -e 'const fs=require("fs"),f=process.argv[1];
   "$d/agents/AGENTS.md"
 expect_fail "phantom in AGENTS.md path list" "$d" "path list references 'phantom-skill' but skills/phantom-skill does not exist"
 
-# A phantom entry in <available_skills> references a skill that doesn't exist.
+# Phantom entry in <available_skills>.
 d=$(build_fixture phantom-available-skills)
 node -e 'const fs=require("fs"),f=process.argv[1];
   fs.writeFileSync(f,fs.readFileSync(f,"utf8")
@@ -379,12 +334,21 @@ node -e 'const fs=require("fs"),f=process.argv[1];
   "$d/agents/AGENTS.md"
 expect_fail "phantom in AGENTS.md available_skills" "$d" "<available_skills> references 'phantom-skill' but skills/phantom-skill does not exist"
 
-# Missing AGENTS.md entirely must error, not silently skip.
+# Path list label doesn't match the target directory.
+d=$(build_fixture agents-label-target-mismatch)
+node -e 'const fs=require("fs"),f=process.argv[1];
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8")
+    .replace("example-skill -> \"skills/example-skill/SKILL.md\"",
+             "example-skill -> \"skills/wrong-dir/SKILL.md\""))' \
+  "$d/agents/AGENTS.md"
+expect_fail "AGENTS.md label/target mismatch" "$d" "label 'example-skill' points to skills/wrong-dir/"
+
+# Missing AGENTS.md entirely.
 d=$(build_fixture missing-agents-md)
 rm -rf "$d/agents"
 expect_fail "missing AGENTS.md" "$d" "AGENTS.md is missing or unreadable"
 
-# Missing <available_skills> block must error.
+# Missing <available_skills> block.
 d=$(build_fixture missing-available-skills-block)
 node -e 'const fs=require("fs"),f=process.argv[1];
   fs.writeFileSync(f,fs.readFileSync(f,"utf8")
@@ -397,9 +361,9 @@ d=$(build_fixture skill-missing-from-readme)
 mkdir -p "$d/skills/second-skill"
 cp "$d/skills/example-skill/SKILL.md" "$d/skills/second-skill/SKILL.md"
 node -e 'const fs=require("fs"),f=process.argv[1];
-  fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace("example-skill","second-skill"))' \
+  fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace(/^name: example-skill$/m,"name: second-skill"))' \
   "$d/skills/second-skill/SKILL.md"
-# Add the new skill to AGENTS.md so only the README check fires.
+# Add to AGENTS.md so only the README check fires.
 node -e 'const fs=require("fs"),f=process.argv[1];
   fs.writeFileSync(f,fs.readFileSync(f,"utf8")
     .replace(/(example-skill.*SKILL\.md")/,"$1\n - second-skill -> \"skills/second-skill/SKILL.md\"")
@@ -415,13 +379,13 @@ node -e 'const fs=require("fs"),f=process.argv[1];
   "$d/README.md"
 expect_fail "phantom in README skills table" "$d" "README.md skills table references 'phantom-skill' but skills/phantom-skill does not exist"
 
-# Missing README.md entirely must error, not silently skip.
+# Missing README.md entirely.
 d=$(build_fixture missing-readme)
 rm "$d/README.md"
 git -C "$d" add -A
 expect_fail "missing README.md" "$d" "README.md is missing or unreadable"
 
-# Missing table markers must error, not silently skip.
+# Missing table markers.
 d=$(build_fixture missing-table-markers)
 node -e 'const fs=require("fs"),f=process.argv[1];
   fs.writeFileSync(f,fs.readFileSync(f,"utf8")
@@ -429,9 +393,7 @@ node -e 'const fs=require("fs"),f=process.argv[1];
   "$d/README.md"
 expect_fail "missing table markers" "$d" "has no <!-- BEGIN_SKILLS_TABLE -->"
 
-# --- the git-failure path: skipping sections 5-7 must not report success ---
-# A non-git tree legitimately skips them; a checkout whose git is broken must
-# not, or a run that never walked the tree still prints "validation passed".
+# --- git-failure paths ---
 d=$(build_fixture no-git)
 rm -rf "$d/.git"
 expect_pass "non-git tree skips the tracked-file checks" "$d"
