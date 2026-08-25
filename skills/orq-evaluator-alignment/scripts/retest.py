@@ -53,9 +53,6 @@ Usage:
 
 from __future__ import annotations
 
-import hashlib
-import json
-import secrets
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -530,18 +527,6 @@ def _pair_with_labels(
         tols.append(float(band) if isinstance(band, (int, float)) and not isinstance(band, bool) else None)
         indices.append(idx)
     return pairs, tols, indices
-
-
-def _policy_rules(policy: dict[str, Any] | None) -> list[str]:
-    """The resolved grey-zone rules, so the reader scores against what the user said
-    rather than against their own idea of a good answer."""
-    if not policy:
-        return []
-    return [
-        str(gz.get('rule', '')).strip()
-        for gz in policy.get('grey_zones', [])
-        if str(gz.get('rule', '')).strip()
-    ]
 
 
 def _evaluate_agreement(

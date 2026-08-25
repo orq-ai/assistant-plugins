@@ -108,7 +108,7 @@ def _type_detail(output_type: str, clean: list[Any], k: int | None, scale: tuple
 
 def _per_row(
     rows: list[dict[str, Any]], output_type: str, k: int | None, scale: tuple[float, float] | None,
-    floor: int, n_req: int,
+    floor: int,
 ) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for row in rows:
@@ -505,7 +505,7 @@ def main(run_dir: str | None = None, config: str = 'config.toml') -> str:
     scale_raw = ev.get('scale')
     scale = tuple(scale_raw) if isinstance(scale_raw, (list, tuple)) and len(scale_raw) == 2 else None
 
-    per_row = _per_row(rows, output_type, k, scale, floor, n_req)
+    per_row = _per_row(rows, output_type, k, scale, floor)
     # A fixed absolute band is only meaningful relative to a declared scale (or an
     # explicit override) — with neither, "correct within 0.5" is an arbitrary
     # number dressed up as a measurement (§3.5).

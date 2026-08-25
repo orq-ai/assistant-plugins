@@ -120,7 +120,7 @@ recommend_concurrency = 4
 # The retest calls a rewrite a success only when BOTH signals hold: instability
 # dropped AND the new verdicts agree with the human labels. These are signal (b)'s
 # bars — the type-native minimum agreement. Raising them makes the retest stricter.
-retest_min_accuracy = 0.7      # boolean + categorical + string: overall accuracy (string: reader's match/no-match rate)
+retest_min_accuracy = 0.7      # boolean + categorical: overall accuracy
 retest_min_tpr = 0.7           # boolean only; skipped when no human label is True
 retest_min_tnr = 0.7           # boolean only; skipped when no human label is False
 retest_min_within_tol = 0.7    # numeric: share of points inside the band below
