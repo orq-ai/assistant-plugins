@@ -11,7 +11,7 @@ description: >
   conversations (use `orq-analyze-trace-failures`). Do NOT use for adversarial
   red-teaming sweeps (use evaluatorq's built-in `red_team()` directly, see
   `resources/redteam-mode.md`).
-allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities
+allowed-tools: Bash(curl:*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities
 ---
 
 # Simulate Agent

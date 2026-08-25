@@ -77,7 +77,7 @@ Invoke Progress:
 
 ## orq.ai Documentation
 
-**Deployments:** [Overview](https://docs.orq.ai/docs/deployments/overview) · [Invoke API](https://docs.orq.ai/reference/deployments/orq-invoke-deployment) · [Stream API](https://docs.orq.ai/reference/deployments/stream-deployment) · [Get Config](https://docs.orq.ai/reference/deployments/get-deployment-config)
+**Deployments:** [Overview](https://docs.orq.ai/docs/deployments/overview) · [Invoke API](https://docs.orq.ai/reference/deployments/orq-invoke-deployment) · [Stream API](https://docs.orq.ai/reference/deployments/stream-deployment) · [Get Config](https://docs.orq.ai/reference/deployments/get-config)
 
 **Agents:** [Agent API](https://docs.orq.ai/docs/agents/agent-api) · [Create Response](https://docs.orq.ai/reference/agents/create-response)
 

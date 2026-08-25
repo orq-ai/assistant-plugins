@@ -7,7 +7,7 @@ description: >
   Use when comparing agents, benchmarking, or wanting side-by-side evaluation.
   Do NOT use when comparing only orq.ai configurations with no external agents
   (use orq-run-experiment instead).
-allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__create_dataset, mcp__orq-workspace__create_datapoints, mcp__orq-workspace__create_llm_eval
+allowed-tools: Bash(curl:*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__create_dataset, mcp__orq-workspace__create_datapoints, mcp__orq-workspace__create_llm_eval
 ---
 
 # Compare Agents

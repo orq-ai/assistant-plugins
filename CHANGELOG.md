@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `orq-red-team`, `orq-compare-agents`, `orq-simulate-agent`, `orq-invoke-deployment`, `evaluatorq`: preflight existence checks now verify with the **run key** via REST/SDK instead of treating the MCP as authoritative. All five skills reference a shared [run-key preflight](docs/run-key-preflight.md) doc (`orq-red-team`'s inline copy from PR #45 replaced with a reference). `orq-build-agent`, `orq-optimize-prompt`, and `orq-generate-synthetic-dataset` were audited and left unchanged — they use MCP for browsing/discovery, not for run-gate existence checks.
 - `orq-invoke-deployment`: intro text reconciled — "do NOT check the key" clarified to "do NOT prompt for it" (the new step 3 verification is intentional, not contradictory).
+- `orq-compare-agents`, `orq-simulate-agent`: added `Bash(curl:*)` to `allowed-tools`. Both skills instruct the agent to verify a key with the run key via REST, but neither granted any tool able to make the call.
+- `orq-invoke-deployment`: fixed the `Get Config` reference link — the `get-deployment-config` slug returns 404; the correct slug is `get-config`.
 
 ## [2.3.2] - 2026-08-14
 
