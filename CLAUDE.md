@@ -33,15 +33,27 @@ Exception: removing shipped content that was never the canonical surface (e.g. s
 - **The per-harness manifests cannot be removed yet, and this is not just a scheduling matter.** The Codex `interface` blob (displayName, logo, brandColor, category, privacy/ToS URLs) and Cursor's `displayName` have nowhere to go in the portable manifest: they belong under `extensions["<reverse.domain>"]`, and no client has published a namespace — the spec defines no registry. Until one does, dropping `.codex-plugin/` or `.cursor-plugin/` loses store-listing metadata. Do not "finish the migration" without checking that first.
 - Only the repo root may be an Agent Plugins root. A nested `plugin.json` carrying the 1.0.0 `$schema` is rejected by CI — it would re-create the `plugins/orq` escape (symlinks that stayed inside the repo but left their own plugin root). Client-specific manifests (`.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/`, `plugins/trace-hooks/`) are unaffected; they are matched by `$schema`, not filename.
 - `mcp.json`, `.claude-plugin/.mcp.json`, `.claude-plugin/skills` are symlinks. Do not replace with copies; every tracked symlink must resolve inside the repo root (CI enforces).
-- New skill = add to: `skills/<name>/SKILL.md`, `agents/AGENTS.md` (path list + `<available_skills>` block), `README.md` skills table, `tests/skills.md` (smoke tests + Critical Files), and `skills-lock.json` (see below).
+- New skill = add to: `skills/<name>/SKILL.md`, `agents/AGENTS.md` (path list + `<available_skills>` block), `README.md` skills table, `tests/skills.md` (smoke tests + Critical Files), and `skills-lock.json` (see below). All five are enforced by `validate-skills.mjs`: each surface is diffed against `skills/` in both directions, each must list a skill exactly once, and where the surface carries a target path (the `AGENTS.md` path list, the `README.md` table's `[SKILL.md](…)` link) the label and the target must agree — a registration pointing at another skill's file passes a name diff while every harness loads the wrong file. A missing surface file, or a `README.md` that has lost its table markers, is an error rather than a skipped check. One half is deliberately **not** covered: `tests/skills.md` is checked for a `## \`<name>\`` smoke-test section per skill, but its "Critical Files" list is free prose and nothing verifies a skill appears there — add it by hand.
 
 ## SKILL.md frontmatter is a closed field set
 
-Only `name`, `description`, `license`, `compatibility`, `metadata`, `allowed-tools` are permitted — that is the [Agent Skills](https://agentskills.io/specification) field set, and `validate-skills.mjs` enforces it. Do **not** add a field a harness happens to read: Agent Plugins §7.1 requires a conformant client to *skip the whole skill* if it fails the Agent Skills spec, so one extra frontmatter line silently costs the skill everywhere. This is not theoretical — `disallowed-tools` shipped in 2.2.3 and made 14 of 15 skills skippable until 2.3.0 removed it. Harness-specific data belongs in `metadata` (a string→string map), which the spec reserves for exactly that. Cross-check with the reference validator when in doubt:
+Only `name`, `description`, `license`, `compatibility`, `metadata`, `allowed-tools` are permitted — that is the [Agent Skills](https://agentskills.io/specification) field set, and `validate-skills.mjs` enforces it. Do **not** add a field a harness happens to read: Agent Plugins §7.1 requires a conformant client to *skip the whole skill* if it fails the Agent Skills spec, so one extra frontmatter line silently costs the skill everywhere. This is not theoretical — `disallowed-tools` shipped in 2.2.3 and made 14 of 15 skills skippable until 2.3.0 removed it. Harness-specific data belongs in `metadata` (a string→string map), which the spec reserves for exactly that.
+
+**Values are checked too, not just field names.** A permitted name with a wrong value type makes a skill skippable exactly as an unknown field does, so `validate-skills.mjs` also enforces each value's shape: `metadata` must be a map whose entries are all `key: value` pairs (`metadata: [a, b]` is a list and is rejected), and `name`, `description`, `license`, `compatibility` and `allowed-tools` must each be a string. `allowed-tools` is a **comma-separated string**, not a YAML sequence — that is the form every skill here uses and the form Claude Code's own reader expects.
+
+CI cross-checks all 15 skills against the reference validator on every run, so a divergence between our reading of the spec and the spec's own implementation fails the build rather than waiting for a consumer to hit it. To run it against one skill locally:
 
 ```bash
 uvx --from "git+https://github.com/agentskills/agentskills.git#subdirectory=skills-ref" skills-ref validate skills/<name>
 ```
+
+On Windows this aborts with a `UnicodeDecodeError` on any skill containing non-ASCII: `skills-ref` reads `SKILL.md` with the locale encoding, which is cp1252 there. Set `PYTHONUTF8=1` (CI does).
+
+A typo'd field name is the realistic version of this mistake. The validator catches it in two ways: the widened key pattern reads identifier-ish keys like `allowed_tools:` as fields, and the closed-field-set check then rejects them as unknown; anything still unreadable (quoted or non-ASCII keys) is reported separately. Either way, `allowed_tools:` is not a harmless annotation — it is `allowed-tools` costing the skill.
+
+**Skill names** additionally must not contain `anthropic` or `claude` as a whole segment. That is Anthropic's naming rule rather than a spec constraint, so `skills-ref` will not tell you; `validate-skills.mjs` does.
+
+**SKILL.md length:** the spec *recommends* under 500 lines and the validator warns above it, deliberately short of an error — several skills here are over it because their procedures don't survive being split across `resources/`, and §7.1 does not make a long skill skippable. Other suites (e.g. `opper-ai/opper-skills`) do treat 500 as a hard limit; that is a real divergence, not an oversight.
 
 ## skills-lock.json
 
@@ -53,29 +65,24 @@ Lock file for the [`vercel-labs/skills`](https://github.com/vercel-labs/skills) 
 
 **To install / use the CLI:** Node ≥ 18. No global install needed — `npx skills …` downloads the `skills` package (npm) on demand.
 
-**How `computedHash` is computed** (upstream `computeSkillFolderHash`, deterministic): SHA-256 over every file in the skill folder — walk recursively skipping `.git`/`node_modules`, sort files by `/`-normalized relative path, then for each file `update(relativePath)` then `update(fileContentBytes)`, output hex. Relative path is relative to the skill folder (the folder name itself is not hashed), so editing `SKILL.md` or any resource changes the hash; renaming the folder does not.
+**How `computedHash` is computed** (after upstream `computeSkillFolderHash`, deterministic): SHA-256 over every **tracked** file in the skill folder, read from the **git index** — sort by `/`-normalized relative path, then for each file `update(relativePath)` then `update(blobBytes)`, output hex. Relative path is relative to the skill folder (the folder name itself is not hashed), so editing `SKILL.md` or any resource changes the hash; renaming the folder does not.
+
+Reading the index rather than the disk is a deliberate divergence from upstream, and the reason the hashes are reproducible at all:
+
+- **Line endings.** Under `core.autocrlf=true` the checkout is CRLF while the blobs are LF. Hashing the disk made all 15 skills report stale on Windows — the validator could not pass there — and `--fix` wrote CRLF hashes that CI then rejected. (`.gitattributes` now pins the working tree to LF as well, so the two agree.)
+- **Ignored artifacts.** The disk walk picked up `.pytest_cache/`, `__pycache__/` and `runs/`, so running a skill's own pytest suite changed its hash. This is what forced the hand-corrected hash in `23406d3`.
+- **Cost of the divergence.** `npx skills add <local path>` still hashes the folder on disk, so installing from a dirty or CRLF checkout sees a different hash than the lock records. That costs one needless reinstall and nothing else — the hash is a skip-cache key, never an integrity check. Installing from GitHub, which is how consumers get this repo, matches exactly.
 
 **How to update after changing skills:**
 - **Added a skill** → add an entry. **Removed** → delete its entry (`npx skills remove` does *not* clean the lock — do it by hand). **Edited/renamed** → recompute that skill's `computedHash`.
-- Regenerate all entries deterministically with Node (no install):
+- Regenerate every entry with the validator, which is the only implementation of the algorithm — there is deliberately no second copy here to drift out of sync with it:
 
 ```bash
-node --input-type=module -e '
-import { createHash } from "node:crypto";
-import { readdir, readFile, writeFile } from "node:fs/promises";
-import { join, relative } from "node:path";
-const walk = async (d, b, a=[]) => { for (const e of await readdir(d,{withFileTypes:true})) {
-  if (e.name===".git"||e.name==="node_modules") continue; const f=join(d,e.name);
-  e.isDirectory() ? await walk(f,b,a) : a.push({p:relative(b,f).split("\\").join("/"),f}); } return a; };
-const hash = async dir => { const fs=(await walk(dir,dir)).sort((x,y)=>x.p.localeCompare(y.p));
-  const h=createHash("sha256"); for (const x of fs){ h.update(x.p); h.update(await readFile(x.f)); } return h.digest("hex"); };
-const dirs=(await readdir("skills",{withFileTypes:true})).filter(e=>e.isDirectory()).map(e=>e.name).sort((a,b)=>a.localeCompare(b));
-const skills={}; for (const n of dirs) skills[n]={source:"orq-ai/assistant-plugins",sourceType:"github",computedHash:await hash(join("skills",n))};
-await writeFile("skills-lock.json", JSON.stringify({version:1,skills},null,2)+"\n");
-console.log("locked", dirs.length, "skills");'
+git add skills/                                  # hashes come from the index
+node tests/scripts/validate-skills.mjs --fix
 ```
 
-> Hashes are computed from on-disk bytes, so line-ending differences change them — generate on LF (macOS/Linux), not Windows with `core.autocrlf=true`.
+> `--fix` hashes **staged** content. An unstaged edit is not reflected; the validator warns when it finds one.
 
 ## Sub-plugin versioning
 
