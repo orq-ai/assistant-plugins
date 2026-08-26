@@ -38,7 +38,7 @@ Supported comparison modes:
 - `orq-build-evaluator` — design the LLM-as-a-judge evaluator
 - `orq-run-experiment` — run orq.ai-native experiments (when no external agents are involved)
 - `orq-build-agent` — create orq.ai agents to include in comparisons
-- `orq-analyze-trace-failures` — diagnose agent failures from trace data
+- `orq-analyze-agent` — diagnose agent failures from trace data
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
 ## Workflow Checklist
@@ -59,7 +59,7 @@ Agent Comparison Progress:
 - All agents independently invocable and verified before the full experiment
 - Experiment completed and results visible in the orq.ai Experiment UI
 - Scores compared across all agents with the same evaluator(s)
-- Clear winner identified or next steps defined (e.g., deeper investigation with `orq-analyze-trace-failures`)
+- Clear winner identified or next steps defined (e.g., deeper investigation with `orq-analyze-agent`)
 
 ## When to use
 
@@ -73,7 +73,7 @@ Agent Comparison Progress:
 - Just need a dataset? → `orq-generate-synthetic-dataset`
 - Just need an evaluator? → `orq-build-evaluator`
 - Comparing orq.ai configurations only (no external agents)? → `orq-run-experiment`
-- Need to identify failure modes first? → `orq-analyze-trace-failures`
+- Need to identify failure modes first? → `orq-analyze-agent`
 
 ## Resources
 
@@ -192,7 +192,7 @@ Agent Comparison Progress:
 
 13. **If issues arise**, check [resources/gotchas.md](resources/gotchas.md) for common pitfalls.
 
-14. **Iterate:** If one agent consistently underperforms, investigate with `orq-analyze-trace-failures`, improve with `orq-optimize-prompt`, then re-run the comparison.
+14. **Iterate:** If one agent consistently underperforms, investigate with `orq-analyze-agent`, improve with `orq-improve-agent`, then re-run the comparison.
 
 ---
 

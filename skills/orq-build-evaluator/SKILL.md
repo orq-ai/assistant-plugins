@@ -4,9 +4,12 @@ description: >
   Create validated LLM-as-a-Judge evaluators following best practices — binary
   Pass/Fail judges with TPR/TNR validation for measuring specific failure modes.
   Use when you need to automate quality checks, build guardrails, or measure
-  a specific failure mode identified during trace analysis. Do NOT use when
-  failures are fixable with prompt changes (use orq-optimize-prompt) or when failure
-  modes are unknown (use orq-analyze-trace-failures first).
+  a specific failure mode identified during trace analysis. This is the
+  destination when NO evaluator exists for the failure mode yet; if one exists
+  and disagrees with human judgment, use orq-evaluator-alignment instead. Do NOT
+  use when failures are fixable with a prompt or config change (use
+  orq-improve-agent) or when failure modes are unknown (use orq-analyze-agent
+  first).
 allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__get_llm_eval, mcp__orq-workspace__get_python_eval, mcp__orq-workspace__search_entities, mcp__orq-workspace__search_docs
 ---
 
@@ -52,9 +55,9 @@ Evaluator Build Progress:
 
 **Companion skills:**
 - `orq-run-experiment` — run experiments using the evaluators you build
-- `orq-analyze-trace-failures` — identify failure modes that evaluators should target
+- `orq-analyze-agent` — identify failure modes that evaluators should target; a `fix: evaluator` mode with no existing judge routes here
 - `orq-generate-synthetic-dataset` — generate test data for evaluator validation
-- `orq-optimize-prompt` — iterate on prompts based on evaluator results
+- `orq-improve-agent` — iterate on prompts and config knobs based on evaluator results
 - `orq-build-agent` — create agents that evaluators assess
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
@@ -70,8 +73,9 @@ Evaluator Build Progress:
 ## When NOT to use
 
 - Need to run an experiment? → `orq-run-experiment`
-- Need to identify failure modes first? → `orq-analyze-trace-failures`
-- Need to optimize a prompt? → `orq-optimize-prompt`
+- Need to identify failure modes first? → `orq-analyze-agent`
+- An evaluator already exists and disagrees with humans? → `orq-evaluator-alignment`
+- Need to fix a prompt or a config knob? → `orq-improve-agent`
 - Need to generate test data? → `orq-generate-synthetic-dataset`
 
 ## orq.ai Documentation

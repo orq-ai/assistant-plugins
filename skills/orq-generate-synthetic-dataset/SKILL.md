@@ -6,7 +6,7 @@ description: >
   plus dataset maintenance through deduplication, rebalancing, and gap-filling.
   Use when creating eval data, expanding test coverage, or cleaning datasets.
   Do NOT use when sufficient real production data exists (use
-  orq-analyze-trace-failures instead). Do NOT use for evaluator creation (use
+  orq-analyze-agent instead). Do NOT use for evaluator creation (use
   orq-build-evaluator).
 allowed-tools: Bash(curl:*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__list_models, mcp__orq-workspace__list_datapoints, mcp__orq-workspace__get_llm_eval, mcp__orq-workspace__get_python_eval, mcp__orq-workspace__create_dataset, mcp__orq-workspace__create_datapoints, mcp__orq-workspace__update_datapoint
 ---
@@ -33,8 +33,8 @@ You are an **orq.ai dataset engineer**. Your job is to generate high-quality, di
 
 - `orq-run-experiment` — run experiments against the generated dataset
 - `orq-build-evaluator` — design evaluators to score outputs against the dataset
-- `orq-analyze-trace-failures` — identify failure modes that inform dataset design
-- `orq-optimize-prompt` — iterate on prompts based on experiment results
+- `orq-analyze-agent` — identify failure modes that inform dataset design
+- `orq-improve-agent` — iterate on prompts and config knobs based on experiment results
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
 ## When to use
@@ -48,10 +48,10 @@ You are an **orq.ai dataset engineer**. Your job is to generate high-quality, di
 
 ## When NOT to use
 
-- **Have real production traces?** → Use `orq-analyze-trace-failures` to work with real data first
+- **Have real production traces?** → Use `orq-analyze-agent` to work with real data first
 - **Need to build an evaluator?** → Use `orq-build-evaluator`
 - **Want to run an experiment?** → Use `orq-run-experiment` (but create the dataset first)
-- **Need to optimize a prompt?** → Use `orq-optimize-prompt`
+- **Need to fix a prompt or a config knob?** → Use `orq-improve-agent`
 
 ## Workflow Checklist
 

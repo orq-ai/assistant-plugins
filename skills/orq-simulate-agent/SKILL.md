@@ -8,7 +8,7 @@ description: >
   broken. Use when generating realistic multi-turn data for experiments,
   stress-testing conversational agents, or producing seed transcripts for
   dataset curation. Do NOT use when you have enough real production
-  conversations (use `orq-analyze-trace-failures`). Do NOT use for adversarial
+  conversations (use `orq-analyze-agent`). Do NOT use for adversarial
   red-teaming sweeps (use evaluatorq's built-in `red_team()` directly, see
   `resources/redteam-mode.md`).
 allowed-tools: Bash(curl:*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities
@@ -42,7 +42,7 @@ violations. You almost never need to hand-roll the loop.
 - `orq-generate-synthetic-dataset`, turn reviewed simulation transcripts into a curated dataset
 - `orq-run-experiment`, once transcripts exist, evaluate them with conversation-level scorers
 - `orq-build-evaluator`, design a `SimulationScorer` that reads `SimulationResult`
-- `orq-analyze-trace-failures`, prefer this if real production conversations already exist
+- `orq-analyze-agent`, prefer this if real production conversations already exist
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
 ## When to use
@@ -54,7 +54,7 @@ violations. You almost never need to hand-roll the loop.
 
 ## When NOT to use
 
-- Real production conversations are available, use `orq-analyze-trace-failures`
+- Real production conversations are available, use `orq-analyze-agent`
 - Single-turn input/output evaluation, use `orq-run-experiment`
 - Red-teaming sweeps with attack categories, call `red_team()` directly (`from evaluatorq.redteam import red_team` — see [resources/redteam-mode.md](resources/redteam-mode.md))
 

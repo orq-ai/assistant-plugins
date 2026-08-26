@@ -115,4 +115,4 @@ Every Skill is either **project-scoped** (`project_id` set to a project's id) or
 - **Focused on one capability.** If you find yourself writing "and also…", split into two Skills.
 - **Specific.** Include 1–2 input/output examples.
 - **Free of hard constraints expressed as prose.** Don't write "NEVER do X" or "you MUST refuse Y" — those are soft hints, not enforcement. See [known-caveats.md](known-caveats.md#anti-pattern-never-prose-constraints-in-instructions).
-- **Sanity-checked before save.** Reuse `orq-optimize-prompt`'s clarity heuristics, but apply judgment — Skill `instructions` are typically shorter and more capability-scoped than a system prompt.
+- **Sanity-checked before save.** Reuse `orq-improve-agent`'s clarity heuristics, but apply judgment — Skill `instructions` are typically shorter and more capability-scoped than a system prompt.

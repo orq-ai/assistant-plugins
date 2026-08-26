@@ -162,17 +162,71 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: proposes dimensions of variation OR generates diverse cases
 - Verify: calls `create_dataset` + `create_datapoints` with `orq-skills-test-` prefix
 
-## `orq-optimize-prompt`
+## `orq-improve-agent`
+
+### Scenario 1: Inline prompt, no orq entity
 
 - Provide a simple prompt inline: "You are a helpful assistant. Answer questions."
-- Verify: analyzes against the 11-dimension framework
-- Verify: produces concrete suggestions
+- Verify: analyzes against the 11-guideline framework and produces concrete suggestions
+- Verify: skips all trace work and does not attempt a write
 
-## `orq-analyze-trace-failures`
+### Scenario 2: Reads the artifact instead of re-analyzing
 
-- Ask: "Analyze recent trace failures"
-- Verify: calls `list_traces`, attempts to read spans
-- Verify: describes sampling strategy
+- Place an `./error-analysis-<key>-<ts>.md` in the working directory with three failure modes: one `fix: prompt`, one `fix: config` carrying `knob`/`current`/`suggest`, one `fix: structure`
+- Ask: "Improve this agent"
+- Verify: globs `./error-analysis-*.md` and reads it — does NOT re-run a trace sweep
+- Verify: compares the front matter's `target.version` against the live agent's version
+- Verify: routes each mode by `fix` — prompt and config handled here, `structure` **named as `orq-build-agent` and stopped at**, not attempted
+- Verify: builds the config patch from `knob` + `current` + `suggest` alone, without re-reading a trace
+
+### Scenario 3: Approval-gated config write
+
+- Continue from Scenario 2 and approve the config change
+- Verify: runs `orq agents retrieve` first and sends back the **whole** `settings` object, not a partial one
+- Verify: shows a diff and calls `AskUserQuestion` before writing
+- Verify: the write carries both `--version-increment` and `--version-description`
+- Verify: after the write, re-reads the agent and confirms `settings.tools[]` is unchanged
+- Verify: closes by recommending `orq-run-experiment` with the artifact's `evidence` + `passing` ids
+
+### Scenario 4: Narrow entry, no artifact
+
+- Ask: "My agent keeps cutting off mid-answer" with no artifact present
+- Verify: runs a targeted sweep on **one or two signals only** (`finish_reasons`, `status`) — not a full error analysis
+- Verify: does not silently produce a taxonomy; a wider need routes to `orq-analyze-agent`
+
+## `orq-analyze-agent`
+
+### Scenario 1: Phase 0 relays without judging
+
+- Ask: "Analyze recent trace failures for agent <key>"
+- Verify: resolves trace field names at runtime (`traces list-fields` / `list-facets`) rather than assuming them
+- Verify: relays terminal states, declared config, and observed behaviour as **facts with no verdicts** — no pass/fail per check, no thresholds
+- Verify: anything unreadable is named in `unobservable` **with a reason**, never omitted
+- Verify: calls `list_traces` / `orq traces search`, and every `get-span` / `list-spans` call carries a `-j` projection
+- Verify: describes the sampling strategy
+
+### Scenario 2: The config cause is attributed, not pre-flagged
+
+- Point it at an agent with a known config problem (e.g. `max_iterations: 2` on a task needing more)
+- Verify: the coder attributes the failure cluster back to that cap **without being told to**, and records `caused_by` + `knob` on the mode
+- Then point it at a healthy agent
+- Verify: it does **not** invent config problems from ordinary values (`temperature: 0.7` is not a finding)
+
+### Scenario 3: The artifact
+
+- Verify: writes `./error-analysis-<key-or-local>-<YYYYMMDD-HHMMSS>.md` by default, without being asked
+- Verify: the YAML front matter parses, and because modes are non-overlapping the per-mode **counts** (`rate × read`) sum to `failed` — equivalently the rates sum to `failed ÷ read`
+- Verify: `fix` is the only routing field; `classification` appears only on `fix: evaluator` modes
+- Verify: `passing` ids are recorded alongside `evidence`
+- Verify: the body leads with the work-list table
+- Verify: on a multi-step agent, `where` is populated from real span order and degrades to the bare state (or `unobservable: [span_order]`) rather than being silently omitted
+
+### Scenario 4: Local mode
+
+- Ask: "Analyze my local agent" with no orq entity
+- Verify: **asks the user for the config** rather than reporting it missing
+- Verify: declining puts the affected items in `unobservable`, never as a pass
+- Verify: terminal-state checks still run — they need no declared config
 
 ## `orq-run-experiment`
 
@@ -236,7 +290,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: confirms the diff with the user before `update_skill`
 - Then ask: "Rename `refund_policy` to `refund_policy_eu`"
 - Verify: warns that renaming `display_name` silently breaks every `{{skill.refund_policy}}` / `{{snippet.refund_policy}}` reference and runs the reference scan before sending the rename
-- Verify: when rewriting `instructions`, applies clarity heuristics from `orq-optimize-prompt` rather than blindly delegating
+- Verify: when rewriting `instructions`, applies clarity heuristics from `orq-improve-agent` rather than blindly delegating
 
 ### Scenario 5: Failure-mode handling
 
@@ -430,8 +484,9 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-evaluator-alignment/config.toml`
 - `skills/orq-evaluator-alignment/scripts/stability.py`
 - `skills/orq-generate-synthetic-dataset/SKILL.md`
-- `skills/orq-optimize-prompt/SKILL.md`
-- `skills/orq-analyze-trace-failures/SKILL.md`
+- `skills/orq-improve-agent/SKILL.md`
+- `skills/orq-analyze-agent/SKILL.md`
+- `docs/trace-queries.md`
 - `skills/orq-run-experiment/SKILL.md`
 - `skills/orq-red-team/SKILL.md`
 - `skills/orq-red-team/resources/python-sdk.md`

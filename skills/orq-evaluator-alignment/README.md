@@ -7,7 +7,7 @@ most ambiguous datapoints for human annotation, turns those labels into a
 rewritten judge prompt (via PO2), and — only after the human approves — creates
 a new evaluator. See [`SKILL.md`](SKILL.md) for the conductor flow.
 
-Sits alongside `orq-build-evaluator` and `orq-optimize-prompt` in the orq skills
+Sits alongside `orq-build-evaluator` and `orq-improve-agent` in the orq skills
 family. Every step script is self-contained via PEP 723 inline dependencies, so
 `uv run scripts/<name>.py` builds its own environment — no repo or `uv sync`
 required.

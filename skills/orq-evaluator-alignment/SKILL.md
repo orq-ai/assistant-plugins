@@ -11,7 +11,9 @@ description: >-
   prompt from the labels, and creates the new evaluator only after the human
   approves. If the evaluator ID isn't given, ask for it after triggering. Do NOT
   use to build an evaluator from scratch (use orq-build-evaluator), to fix
-  failures with prompt tweaks (use orq-optimize-prompt), or for non-boolean judges.
+  failures with a prompt or config change (use orq-improve-agent), or for
+  non-boolean judges. orq-analyze-agent routes here when a failure mode's only
+  evidence is an evaluator score.
 allowed-tools: Read, Write, Edit, Grep, Glob, Bash(uv run:*), AskUserQuestion
 ---
 

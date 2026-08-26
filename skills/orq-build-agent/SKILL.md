@@ -4,8 +4,10 @@ description: >
   Design, create, and configure orq.ai Agents with tools, instructions,
   knowledge bases, and memory stores. Use when building new agents, attaching
   KBs or memory, writing system instructions, selecting models, or setting up
-  RAG pipelines. Do NOT use for debugging existing agents (use
-  orq-analyze-trace-failures) or comparing agents across frameworks (use
+  RAG pipelines. Also use when trace analysis says an agent needs
+  re-architecting — task decomposition, a new pipeline stage, or splitting via
+  team_of_agents. Do NOT use for knob-level fixes to a live agent (use
+  orq-improve-agent) or comparing agents across frameworks (use
   orq-compare-agents).
 allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__get_agent, mcp__orq-workspace__list_models, mcp__orq-workspace__search_entities, mcp__orq-workspace__search_docs
 ---
@@ -33,10 +35,10 @@ You are an **orq.ai agent architect**. Your job is to design, create, and config
 ## Companion Skills
 
 - `orq-build-evaluator` — design quality evaluators for agent outputs
-- `orq-analyze-trace-failures` — diagnose agent failures from trace data
+- `orq-analyze-agent` — diagnose agent failures from trace data; a `fix: structure` failure mode routes here
 - `orq-run-experiment` — run end-to-end evaluations and model comparisons
 - `orq-generate-synthetic-dataset` — create test datasets for agent evaluation
-- `orq-optimize-prompt` — improve agent system instructions and prompt quality
+- `orq-improve-agent` — knob-level fixes to a live agent: rewrite `instructions`, or move one config parameter
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
 ## When to use
@@ -49,10 +51,10 @@ You are an **orq.ai agent architect**. Your job is to design, create, and config
 
 ## When NOT to use
 
-- **Agent failing in production?** → Use `orq-analyze-trace-failures` to diagnose first
+- **Agent failing in production?** → Use `orq-analyze-agent` to diagnose first — then come back here if the taxonomy says `fix: structure`
 - **Comparing agents across frameworks?** → Use `orq-compare-agents`
 - **Running evaluations on an existing agent?** → Use `orq-run-experiment`
-- **Need to improve an agent's prompt?** → Use `orq-optimize-prompt`
+- **Need to move one knob or rewrite the instructions of a live agent?** → Use `orq-improve-agent`
 
 ## Workflow Checklist
 

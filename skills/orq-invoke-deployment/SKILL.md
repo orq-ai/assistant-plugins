@@ -4,7 +4,7 @@ description: >
   Invoke orq.ai deployments, agents, and models via the Python SDK or HTTP API.
   Use when a user wants to call a deployment with prompt variables, invoke an
   agent in a conversation, or call a model directly through the AI Router.
-  Do NOT use for creating or editing deployments/agents (use orq-optimize-prompt
+  Do NOT use for creating or editing deployments/agents (use orq-improve-agent
   or orq-build-agent). Do NOT use for running evaluations (use orq-run-experiment).
 allowed-tools: Bash(curl:*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__list_models, mcp__orq-workspace__list_traces
 ---
@@ -26,10 +26,10 @@ You are an **orq.ai integration engineer**. Your job is to help users invoke orq
 
 ## Companion Skills
 
-- `orq-optimize-prompt` — improve a deployment's prompt before invoking it
+- `orq-improve-agent` — improve a deployment's prompt, or an agent's instructions and config, before invoking it
 - `orq-build-agent` — create and configure an agent before invoking it
 - `orq-run-experiment` — evaluate invocation quality across a dataset
-- `orq-analyze-trace-failures` — diagnose failures from invocation traces
+- `orq-analyze-agent` — diagnose failures from invocation traces
 - `orq-setup-observability` — instrument the application that calls the deployment
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
@@ -46,7 +46,7 @@ You are an **orq.ai integration engineer**. Your job is to help users invoke orq
 
 ## When NOT to use
 
-- **Need to create or edit a deployment/prompt?** → Use `orq-optimize-prompt`
+- **Need to create or edit a deployment/prompt?** → Use `orq-improve-agent`
 - **Need to build or configure an agent?** → Use `orq-build-agent`
 - **Need to evaluate quality?** → Use `orq-run-experiment`
 - **Traces not appearing?** → Use `orq-setup-observability`
