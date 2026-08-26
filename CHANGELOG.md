@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.3.3] - 2026-08-25
+## [2.3.4] - 2026-08-25
 
 ### Changed
 - `skills-lock.json`: folder hashes are computed over a byte-ordered file list instead of `localeCompare`, which is ICU- and locale-dependent. Byte order also matches upstream `computeSkillFolderHash`, whose default `.sort()` is UTF-16 code-unit order, so the lock now sits closer to what `npx skills` computes rather than merely being deterministic. No skill content changed; 13 of 15 hashes moved because every skill with a `resources/` directory sorted `resources/x.md` before `SKILL.md` under the old comparator. The hash is a skip-cache key and never an integrity check, so the only consumer-visible effect is one needless reinstall of those 13 skills on the next `npx skills sync`.
@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Registration surfaces reject **duplicates**. All three collected names into a `Set`, which collapses a repeat, so "listed exactly once" was never enforced.
 - The `README.md` skills table is checked **label against link target**, matching the `AGENTS.md` path list. A row pointing at another skill's `SKILL.md` satisfied both name diffs while every harness loaded the wrong file; a row that has lost its link is reported rather than silently skipped.
 - The self-test suite asserts the **committed** `skills-lock.json` validates clean against the checkout. Nothing pinned this, so the hash-ordering change above went in stale and surfaced as a red pipeline instead of a failing test.
+
+## [2.3.3] - 2026-08-18
+
+### Fixed
+- `orq-red-team`, `orq-compare-agents`, `orq-simulate-agent`, `orq-invoke-deployment`, `evaluatorq`: preflight existence checks now verify with the **run key** via REST/SDK instead of treating the MCP as authoritative. All five skills reference a shared [run-key preflight](docs/run-key-preflight.md) doc (`orq-red-team`'s inline copy from PR #45 replaced with a reference). `orq-build-agent`, `orq-optimize-prompt`, and `orq-generate-synthetic-dataset` were audited and left unchanged — they use MCP for browsing/discovery, not for run-gate existence checks.
+- `orq-invoke-deployment`: intro text reconciled — "do NOT check the key" clarified to "do NOT prompt for it" (the new step 3 verification is intentional, not contradictory).
+- `orq-compare-agents`, `orq-simulate-agent`: added `Bash(curl:*)` to `allowed-tools`. Both skills instruct the agent to verify a key with the run key via REST, but neither granted any tool able to make the call.
+- `orq-invoke-deployment`: fixed the `Get Config` reference link — the `get-deployment-config` slug returns 404; the correct slug is `get-config`.
 
 ## [2.3.2] - 2026-08-14
 
