@@ -4,3 +4,6 @@ runs/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Python caches in docs/.
+docs/__pycache__/

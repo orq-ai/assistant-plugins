@@ -151,10 +151,24 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 ## `orq-evaluator-alignment`
 
 - Ask: "Align my evaluator — it disagrees with my labels"
-- Verify: asks for the evaluator ID if not given, confirms it is a binary Pass/Fail judge
-- Verify: runs the stability / flip-rate step and builds a human annotation queue before rewriting
+- Verify: asks whether they have a judge in orq at all before asking for an ID; hands off to `orq-build-evaluator` if they don't
+- Verify: accepts boolean, categorical and numeric judges (not just Pass/Fail), and fails fast at step 1 on any other output type — including orq's free-form `string` type, which is refused before any judging is paid for rather than at the create step
+- Verify: runs the repeated-judging step and reports one 0..1 instability score before proposing any rewrite
+- Verify: after fetching the judge it **asks where the examples should come from** — traces, an orq dataset, examples you bring, or generated ones — instead of scanning traces by default and treating the other three as recovery options
+- Verify: offers the deeper trace scan only when the scan hit its cap (there is more history), not when it came back under the cap (a deeper scan would re-read the same traces)
+- Verify: refuses to run the trace scan over rows another source added, since the scan overwrites `traces.jsonl` and the others append to it
+- Verify: groups the unstable examples and asks a few questions, rather than presenting every row for individual labelling (the annotation UI is the fallback, not the default)
+- Verify: describes judge behaviour in plain terms ("it gave a different answer 6 times out of 8"), not the statistics or the internal vocabulary (confuser, grey zone, conductor)
+- Verify: reads the per-point labels it derived from the user's rule back to them before the rewrite, rather than treating its own application of the rule as their verdict
+- Verify: reviews the stable spot-check rows with the user (`assemble --include_low_flip`) instead of only promising to
+- Verify: pulls a dataset whose exchange lives under `messages` (metadata-only `inputs`) instead of skipping every row as unmappable, and on a genuine mismatch prints one inventory of what the dataset holds rather than N identical `missing [...]` lines
+- Verify: when the examples carry ground truth it reports **accuracy, and accuracy on the rows the judge was stable on**, instead of reciting the consistently-wrong caveat it now has the data to retire — and still tags those labels `dataset_reference`, not the user's verdict
+- Verify: after the new evaluator exists it **asks whether to re-run the old datapoints** to check for regression, quotes what that costs, and states how many of the original rows the check actually covered rather than reporting a 5-row result as "nothing regressed"
+- Verify: before retesting, asks whether rows labelled only from the dataset's own ground truth (`label_source: dataset_reference`) should be included too, mirroring the `--all_rows` ask, rather than silently leaving them out of gate (b)
 - Verify: only creates the new evaluator after human approval (never auto-creates)
-- Verify: any `judge_model` slug it writes uses the plain `<provider>/<model>` form (e.g. `anthropic/claude-haiku-4-5`), never a `<provider>/openai/<model>` double-prefix (that 404s on the router)
+- Verify: quotes the retest against what the **original** judge scored on the same labels, and reads out the `caveats` (selection effect, no holdout, derived labels) rather than reporting the drop alone
+- Verify: the final summary states the consistently-wrong blind spot even when the numbers are good
+- Verify: any `judge_model` slug it writes uses the routable `refId` from `GET /v2/models`, never the shorter display alias (which can route to the wrong provider and 403)
 
 ## `orq-generate-synthetic-dataset`
 
@@ -428,7 +442,13 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-build-evaluator/SKILL.md`
 - `skills/orq-evaluator-alignment/SKILL.md`
 - `skills/orq-evaluator-alignment/config.toml`
+- `skills/orq-evaluator-alignment/lib/content.py`
+- `skills/orq-evaluator-alignment/lib/instability.py`
+- `skills/orq-evaluator-alignment/lib/grey_zone.py`
+- `skills/orq-evaluator-alignment/scripts/fetch_traces.py`
 - `skills/orq-evaluator-alignment/scripts/stability.py`
+- `skills/orq-evaluator-alignment/scripts/grey_zone.py`
+- `skills/orq-evaluator-alignment/scripts/retest.py`
 - `skills/orq-generate-synthetic-dataset/SKILL.md`
 - `skills/orq-optimize-prompt/SKILL.md`
 - `skills/orq-analyze-trace-failures/SKILL.md`

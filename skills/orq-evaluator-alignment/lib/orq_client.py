@@ -23,7 +23,49 @@ from typing import Any
 import httpx
 from loguru import logger
 
+#: The orq API host every control-plane call goes to (evaluators, traces, projects,
+#: datasets, create). Overridable with `ORQ_API_BASE_URL` — the same variable the
+#: `orq_deployment` backend and the router price lookup read, so a self-hosted or
+#: proxied orq is one setting rather than one per call site. Resolved at call time,
+#: not import time, so a `.env` loaded by the script still applies.
 DEFAULT_BASE_URL = 'https://api.orq.ai'
+
+
+def default_base_url() -> str:
+    """The API host to use: `ORQ_API_BASE_URL` if set, else the hosted default."""
+    return os.environ.get('ORQ_API_BASE_URL', DEFAULT_BASE_URL).rstrip('/') or DEFAULT_BASE_URL
+
+
+#: The evaluator output types this skill supports, end to end. Single source of
+#: truth: the step-1 fetch gate and the step-7 create path both resolve through
+#: `normalise_output_type`, so a type that cannot be created can never be accepted
+#: at step 1. That split is what let a `string` evaluator pay for a whole run and
+#: then fail at `create_eval --approve`, after `approval.json` was written.
+SUPPORTED_OUTPUT_TYPES = frozenset({'boolean', 'categorical', 'number'})
+
+#: Spellings orq's own records use interchangeably. `numeric` is the alias the
+#: evaluator record sometimes carries for `number` (§8.1); it is normalised on the
+#: way in so exactly one spelling reaches the request body.
+_OUTPUT_TYPE_ALIASES = {'numeric': 'number'}
+
+
+def normalise_output_type(output_type: str) -> str:
+    """Lower-case, de-alias and validate an evaluator output type.
+
+    Returns one of `boolean | categorical | number`; raises ``ValueError`` for
+    anything else so the caller can stop with guidance. Free-form `string`
+    evaluators are deliberately not supported: exact-match entropy is a weak
+    instability signal on prose, and the retest cannot score agreement without a
+    human reading the answers.
+    """
+    t = (output_type or '').strip().lower()
+    t = _OUTPUT_TYPE_ALIASES.get(t, t)
+    if t not in SUPPORTED_OUTPUT_TYPES:
+        raise ValueError(
+            f'output_type={output_type!r} is not supported. This skill handles '
+            'boolean | categorical | number evaluators only.'
+        )
+    return t
 
 # Matches `{{ var.path }}` template tokens in a judge prompt. The captured group
 # is the trimmed variable path (e.g. `log.input`, `query`, `output`).
@@ -72,6 +114,191 @@ def extract_template_variables(prompt: str) -> list[str]:
     return list(seen)
 
 
+def extract_categorical_labels(data: dict[str, Any]) -> list[str]:
+    """The full DECLARED label set (K) of a categorical evaluator, in order.
+
+    orq's record carries the rich `categorical_labels` — a list of
+    ``{"value", "description"}`` — plus a flat `categories` mirror (§8.1). We keep
+    the `value` strings (the actual verdict labels); fall back to `categories`; and
+    return ``[]`` when neither is present, so a non-categorical record is a no-op.
+    K is ``len()`` of this list — the count of allowed labels, never the observed.
+    """
+    labels = data.get('categorical_labels')
+    if isinstance(labels, list):
+        values = [item['value'] for item in labels if isinstance(item, dict) and item.get('value')]
+        if values:
+            return values
+    flat = data.get('categories')
+    if isinstance(flat, list):
+        return [c for c in flat if isinstance(c, str) and c]
+    return []
+
+
+def _routable_slug(model_record: dict[str, Any]) -> str | None:
+    """The routable slug for a `/v2/models` registry entry.
+
+    Prefer `refId` — the provider-qualified id the router actually routes on
+    (e.g. `groq/openai/gpt-oss-120b`, `openai/gpt-4o-mini`) — over `model_id`,
+    which is a display alias that can address the wrong provider path. Concretely:
+    an open-weights model served via groq has `model_id="openai/gpt-oss-120b"`,
+    and that bare `openai/…` slug hits OpenAI's provider path → `403
+    permission_error`, while its `refId="groq/openai/gpt-oss-120b"` routes. Fall
+    back to `model_id` when no `refId` is present.
+    """
+    return model_record.get('refId') or model_record.get('model_id') or None
+
+
+def _normalise_labels(labels: list[Any]) -> list[dict[str, str]]:
+    """Coerce a declared label set into orq's rich ``[{value, description}]``.
+
+    A source evaluator's labels reach us in one of two shapes: the rich record
+    form (a list of ``{value, description}`` dicts, straight from the API) or the
+    flat form (a list of ``value`` strings, as `evaluator.json`'s top-level
+    `categorical_labels` stores them). orq's `POST /v2/evaluators` body wants the
+    rich shape, so we widen flat strings to ``{value, description: ''}`` and keep
+    any descriptions the rich form already carries. Non-string/dict entries and
+    empty values are dropped, never invented.
+    """
+    out: list[dict[str, str]] = []
+    for item in labels:
+        if isinstance(item, dict):
+            value = item.get('value')
+            if isinstance(value, str) and value:
+                out.append({'value': value, 'description': str(item.get('description') or '')})
+        elif isinstance(item, str) and item:
+            out.append({'value': item, 'description': ''})
+    return out
+
+
+def build_create_body(
+    *,
+    key: str,
+    path: str,
+    prompt: str,
+    model: str,
+    description: str | None,
+    output_type: str,
+    display_name: str | None = None,
+    categorical_labels: list[Any] | None = None,
+    scale: list[Any] | None = None,
+    guardrail_value: bool = True,
+    guardrail_values: list[Any] | None = None,
+) -> dict[str, Any]:
+    """Assemble the `POST /v2/evaluators` request body for a given verdict type.
+
+    A pure function (no httpx) so the per-type request shape is unit-testable:
+    - **boolean**  → `output_type='boolean'` + a boolean `guardrail_config`;
+    - **categorical** → `output_type='categorical'` + the declared label set in
+      orq's rich ``categorical_labels`` shape (``[{value, description}]``) with a
+      flat `categories` mirror, plus a categorical guardrail. Labels are
+      required — a categorical evaluator with no labels has an undefined verdict
+      space, so we refuse rather than send an empty set.
+    - **numeric** (`'number'`) → `output_type='number'`; a `scale` is sent ONLY
+      when the source record carried one — never invented (the record has no
+      scale field of its own; §8.1). No label set is attached.
+
+    Any other `output_type` is rejected: only the three supported verdict spaces
+    can be created.
+    """
+    # Resolve through the shared gate so `numeric` never reaches the request body
+    # as an unrecognised spelling and an unsupported type fails here the same way
+    # it fails at step 1.
+    output_type = normalise_output_type(output_type)
+    body: dict[str, Any] = {
+        'type': 'llm_eval',
+        'mode': 'single',
+        'model': model,
+        'prompt': prompt,
+        'output_type': output_type,
+        'path': path,
+        'key': key,
+    }
+    if description is not None:
+        body['description'] = description
+    # orq shows `display_name` as the evaluator's name; when omitted it falls back
+    # to the `key`. Forward the source's name so the aligned copy is recognisable.
+    if display_name is not None:
+        body['display_name'] = display_name
+
+    if output_type == 'boolean':
+        body['guardrail_config'] = {
+            'type': 'boolean',
+            'value': guardrail_value,
+            'enabled': True,
+            'alert_on_failure': False,
+        }
+    elif output_type == 'categorical':
+        rich = _normalise_labels(categorical_labels or [])
+        if not rich:
+            raise ValueError(
+                'Cannot create a categorical evaluator without a label set: the '
+                'verdict space would be undefined. Pass the source evaluator\'s '
+                'categorical_labels through.'
+            )
+        body['categorical_labels'] = rich
+        body['categories'] = [item['value'] for item in rich]
+        # orq's categorical guardrail requires a `values` array (the labels that
+        # "pass" the guardrail). Preserve the source's set when provided; else
+        # default to the full label set so the request is valid.
+        gr_values = (
+            [str(v) for v in guardrail_values]
+            if guardrail_values
+            else [item['value'] for item in rich]
+        )
+        body['guardrail_config'] = {
+            'type': 'categorical',
+            'values': gr_values,
+            'enabled': True,
+            'alert_on_failure': False,
+        }
+    elif output_type == 'number':
+        # Nothing type-specific goes in the body. `scale` is accepted by this
+        # function's signature (callers hold it, and it belongs in the run record)
+        # but is deliberately NOT sent: the evaluator schema has no scale field and
+        # the API drops it, so writing it here only made the request look like it
+        # carried a guarantee it never had. A numeric judge's scale lives in its
+        # rubric text — which is exactly what `check_preservation` gates on.
+        if scale:
+            logger.debug(
+                f'numeric scale {scale} not sent: /v2/evaluators has no scale field. '
+                'The scale is preserved in the rubric text instead.'
+            )
+    else:  # pragma: no cover — unreachable while every supported type has a branch
+        raise ValueError(
+            f'output_type {output_type!r} passed the gate but has no request shape: '
+            'SUPPORTED_OUTPUT_TYPES and build_create_body have drifted apart.'
+        )
+    return body
+
+
+def build_create_dataset_body(
+    display_name: str, *, path: str | None = None, description: str | None = None
+) -> dict[str, Any]:
+    """`POST /v2/datasets` body for an empty dataset (RES-980 §11.5, save-back).
+
+    `display_name` is orq's shown name (mirrors the evaluator create shape;
+    confirm the exact field against the live API). `path`'s first segment names
+    the owning project, as with evaluators. Pure so the shape is unit-testable.
+    """
+    body: dict[str, Any] = {'display_name': display_name}
+    if path is not None:
+        body['path'] = path
+    if description is not None:
+        body['description'] = description
+    return body
+
+
+def build_create_datapoints_body(datapoints: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`POST /v2/datasets/{id}/datapoints` bulk body — a top-level JSON **array**.
+
+    Not `{"datapoints": [...]}`: the wrapped object is rejected with
+    `400 invalid_request_body` ("expected array, received object"), which silently
+    broke the dataset save-back path. Returns a copy so the caller's list can't be
+    mutated into the request afterwards.
+    """
+    return list(datapoints)
+
+
 @dataclass
 class EvaluatorConfig:
     """The audited evaluator's config, normalised for downstream steps."""
@@ -82,6 +309,7 @@ class EvaluatorConfig:
     judge_model: str
     output_type: str
     variables: list[str]
+    categorical_labels: list[str] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -96,14 +324,18 @@ class OrqClient:
     def __init__(
         self,
         api_key: str | None = None,
-        base_url: str = DEFAULT_BASE_URL,
+        base_url: str | None = None,
         timeout: float = 120.0,
     ) -> None:
         key = api_key or os.getenv('ORQ_API_KEY')
         if not key:
-            raise RuntimeError('ORQ_API_KEY is not set (env or constructor arg).')
+            raise RuntimeError(
+                'ORQ_API_KEY is not set. Put it in the environment or a .env file '
+                '(every script loads one); it is never taken as a CLI flag.'
+            )
+        self.base_url = base_url or default_base_url()
         self._client = httpx.AsyncClient(
-            base_url=base_url,
+            base_url=self.base_url,
             timeout=timeout,
             # Verification stays on everywhere except Windows (OpenSSL Applink
             # crash — see module docstring). The API key rides these requests.
@@ -145,18 +377,81 @@ class OrqClient:
             judge_model=judge_model,
             output_type=output_type,
             variables=extract_template_variables(prompt),
+            categorical_labels=extract_categorical_labels(data),
             raw=data,
         )
+
+    async def resolve_project_key(self, project_id: str) -> str | None:
+        """Map an evaluator's ``project_id`` to the project **key** that names it.
+
+        Needed because an evaluator record carries no ``path`` of its own — neither
+        ``GET /v2/evaluators/{id}`` nor the list endpoint returns one, only
+        ``project_id``. But ``POST /v2/evaluators`` locates the new evaluator by
+        ``path``, whose *first segment is the project key*. So co-locating an aligned
+        copy with its source means resolving that id back into a key here.
+
+        Returns ``None`` when the id isn't in ``GET /v2/projects`` or the call fails —
+        the caller then falls back to an unprefixed path (workspace root) rather than
+        inventing a project.
+
+        **A project-scoped API key is the usual reason for that None** (probed live
+        2026-08-14): ``GET /v2/projects`` returns only the key's own project, and
+        ``GET /v2/projects/{other}`` answers 403 "Project out of scope for this API
+        key" — while ``GET /v2/evaluators/{id}`` happily reads an evaluator from a
+        project the key cannot see. So an out-of-scope source is *readable* and
+        *unresolvable*, and the copy lands at the workspace root through no fault of
+        the id fields. That is worth saying out loud, because a create into that
+        project would likely 403 anyway.
+        """
+        if not project_id:
+            return None
+        try:
+            # Paged: a workspace with more projects than one page held used to
+            # resolve to None on everything past the first page, silently.
+            projects = await self._paginate_get(
+                '/v2/projects', limit=1000, page_size=100, keys=('data', 'projects', 'items')
+            )
+        except Exception as exc:  # noqa: BLE001 — a failed lookup must not block the create
+            logger.warning(
+                f'GET /v2/projects failed ({exc}); cannot resolve the source project — '
+                'the aligned copy will be created at the workspace root.'
+            )
+            return None
+        for p in projects:
+            # `/v2/projects` names the id `project_id`; the MCP/list surfaces use
+            # `_id` for the same value. Match on any of them rather than pin one
+            # spelling and resolve nothing.
+            if isinstance(p, dict) and project_id in {
+                p.get('project_id'), p.get('id'), p.get('_id'), p.get('domain_id')
+            }:
+                key = p.get('key') or p.get('name')
+                return str(key) if key else None
+        if len(projects) <= 1:
+            # The tell for a project-scoped key: the list holds only its own project.
+            logger.warning(
+                f'project id {project_id} is not visible to this API key — GET /v2/projects '
+                f'returns {len(projects)} project(s), so the key is scoped to one project and '
+                'the source lives in another. The aligned copy will be created at the '
+                'workspace root; use a workspace-scoped key to co-locate it.'
+            )
+            return None
+        logger.warning(
+            f'project id {project_id} not found in GET /v2/projects — the aligned copy '
+            'will be created at the workspace root.'
+        )
+        return None
 
     async def resolve_model_slug(self, model_id: str) -> str | None:
         """Map an evaluator's opaque model config id to a routable slug.
 
         Evaluator configs store the judge model as a workspace-registry UUID
         (e.g. ``ce490df4-...``), not a routable slug. ``GET /v2/models`` returns
-        the registry (``id`` -> ``model_id``), so we look the UUID up there.
-        Returns the slug (e.g. ``mistral-large-latest``) or ``None`` if the id
-        isn't found or the call fails — the caller then falls back to trace
-        resolution or an explicit override.
+        the registry, so we look the UUID up there and return its **routable**
+        slug — the provider-qualified ``refId`` (``groq/openai/gpt-oss-120b``),
+        NOT the ``model_id`` display alias, which can address the wrong provider
+        path and 403 (see ``_routable_slug``). Returns ``None`` if the id isn't
+        found or the call fails — the caller then falls back to trace resolution
+        or an explicit override.
         """
         resp = await self._client.get('/v2/models')
         if resp.status_code >= 400:
@@ -164,8 +459,45 @@ class OrqClient:
             return None
         for m in _envelope_list(resp.json(), 'data', 'models', 'items'):
             if isinstance(m, dict) and m.get('id') == model_id:
-                return m.get('model_id') or None
+                return _routable_slug(m)
         return None
+
+    async def model_slug_map(self) -> dict[str, str]:
+        """Map every registry `model_id` (display alias) to its routable slug.
+
+        `GET /v2/models` once, return ``{model_id: refId-or-fallback}`` via
+        ``_routable_slug``. The model string recorded on a judge span is the
+        display alias the judge was *called* with (e.g. ``openai/gpt-oss-120b``),
+        which addresses the wrong provider path and 403s; this map lets step 2
+        (``fetch_traces._resolve_judge_model``) normalise that alias to the
+        provider-qualified ``refId`` (``groq/openai/gpt-oss-120b``) before pinning
+        it — the same guarantee ``resolve_model_slug`` gives step 1. Returns ``{}``
+        (never raises) when the call fails, so the caller falls back to the raw
+        observed slug rather than aborting the run.
+        """
+        resp = await self._client.get('/v2/models')
+        if resp.status_code >= 400:
+            logger.warning(f'GET /v2/models [{resp.status_code}]; cannot normalise judge slugs')
+            return {}
+        out: dict[str, str] = {}
+        for m in _envelope_list(resp.json(), 'data', 'models', 'items'):
+            if isinstance(m, dict):
+                model_id = m.get('model_id')
+                slug = _routable_slug(m)
+                if model_id and slug:
+                    # A display alias can be shared by two registry entries (the same
+                    # open-weights model served by two providers). First-wins with a
+                    # warning: silently letting the last entry overwrite would map the
+                    # alias to an arbitrary provider's refId and reintroduce the 403
+                    # slug bug this map exists to close (project memory: refId vs id).
+                    if model_id in out and out[model_id] != slug:
+                        logger.warning(
+                            f'duplicate model_id {model_id!r} routes to both '
+                            f'{out[model_id]!r} and {slug!r}; keeping the first'
+                        )
+                        continue
+                    out[model_id] = slug
+        return out
 
     # ── Step 2 ───────────────────────────────────────────────────────────────
     async def query_traces(
@@ -249,7 +581,7 @@ class OrqClient:
         return _envelope_dict(payload)
 
     # ── Step 9b ──────────────────────────────────────────────────────────────
-    async def create_boolean_evaluator(
+    async def create_evaluator(
         self,
         *,
         key: str,
@@ -257,26 +589,36 @@ class OrqClient:
         prompt: str,
         model: str,
         description: str | None = None,
+        output_type: str,
+        display_name: str | None = None,
+        categorical_labels: list[Any] | None = None,
+        scale: list[Any] | None = None,
         guardrail_value: bool = True,
+        guardrail_values: list[Any] | None = None,
     ) -> CreateResult:
-        """Create a single-judge boolean LLM-as-judge evaluator (the rewrite)."""
-        body: dict[str, Any] = {
-            'type': 'llm_eval',
-            'mode': 'single',
-            'model': model,
-            'prompt': prompt,
-            'output_type': 'boolean',
-            'path': path,
-            'key': key,
-            'guardrail_config': {
-                'type': 'boolean',
-                'value': guardrail_value,
-                'enabled': True,
-                'alert_on_failure': False,
-            },
-        }
-        if description is not None:
-            body['description'] = description
+        """Create a single-judge LLM-as-judge evaluator of any verdict type.
+
+        Sends the correct `POST /v2/evaluators` body per ``output_type`` (built by
+        the pure :func:`build_create_body`): boolean, categorical (the declared
+        label set travels in orq's rich ``categorical_labels`` shape), or numeric
+        (`'number'`; a scale is forwarded only when the source declared one — never
+        invented). The verdict space is preserved, so the created evaluator scores
+        the same space as its source. Co-location with the source project is the
+        caller's job via ``path`` (whose first segment names the owning project).
+        """
+        body = build_create_body(
+            key=key,
+            path=path,
+            prompt=prompt,
+            model=model,
+            description=description,
+            output_type=output_type,
+            display_name=display_name,
+            categorical_labels=categorical_labels,
+            scale=scale,
+            guardrail_value=guardrail_value,
+            guardrail_values=guardrail_values,
+        )
         resp = await self._client.post('/v2/evaluators', json=body)
         if resp.status_code >= 400:
             logger.error(f'✗ create evaluator failed [{resp.status_code}]: {resp.text}')
@@ -288,6 +630,99 @@ class OrqClient:
             # response drift doesn't crash with a bare KeyError mid-write.
             raise RuntimeError(f'create evaluator returned no id; response shape: {data!r}')
         return CreateResult(id=new_id, key=data.get('key', key), raw=data)
+
+    # ── Datasets (RES-980 §11) ────────────────────────────────────────────────
+    async def _paginate_get(
+        self, path: str, *, limit: int, page_size: int, keys: tuple[str, ...]
+    ) -> list[dict[str, Any]]:
+        """GET `path` with page/limit params, accumulating up to `limit` items.
+        Mirrors `query_traces` pagination (stop on `has_more: False` or short page)."""
+        out: list[dict[str, Any]] = []
+        page = 1
+        while len(out) < limit:
+            want = min(page_size, limit - len(out))
+            resp = await self._client.get(path, params={'limit': want, 'page': page})
+            if resp.status_code >= 400:
+                logger.error(f'✗ GET {path} failed [{resp.status_code}]: {resp.text}')
+                resp.raise_for_status()
+            payload = resp.json()
+            batch = _envelope_list(payload, *keys)
+            if not batch:
+                break
+            out.extend(batch)
+            if payload.get('has_more') is False or len(batch) < want:
+                break
+            page += 1
+        return out[:limit]
+
+    async def list_datasets(self, limit: int = 200, page_size: int = 100) -> list[dict[str, Any]]:
+        """GET /v2/datasets — the workspace's datasets (keyed on `_id`)."""
+        return await self._paginate_get(
+            '/v2/datasets', limit=limit, page_size=page_size, keys=('data', 'datasets', 'items')
+        )
+
+    async def get_dataset(self, dataset_id: str) -> dict[str, Any]:
+        """GET /v2/datasets/{id}."""
+        resp = await self._client.get(f'/v2/datasets/{dataset_id}')
+        if resp.status_code >= 400:
+            logger.error(f'✗ get_dataset failed [{resp.status_code}]: {resp.text}')
+            resp.raise_for_status()
+        return _envelope_dict(resp.json()) or {}
+
+    async def list_datapoints(self, dataset_id: str, limit: int = 200, page_size: int = 100) -> list[dict[str, Any]]:
+        """GET /v2/datasets/{id}/datapoints — datapoints (each keyed on `id`)."""
+        return await self._paginate_get(
+            f'/v2/datasets/{dataset_id}/datapoints', limit=limit, page_size=page_size,
+            keys=('data', 'datapoints', 'items'),
+        )
+
+    async def create_dataset(
+        self, display_name: str, *, path: str | None = None, description: str | None = None
+    ) -> CreateResult:
+        """POST /v2/datasets — create an empty dataset (save-back target)."""
+        body = build_create_dataset_body(display_name, path=path, description=description)
+        resp = await self._client.post('/v2/datasets', json=body)
+        if resp.status_code >= 400:
+            logger.error(f'✗ create_dataset failed [{resp.status_code}]: {resp.text}')
+            resp.raise_for_status()
+        data = _envelope_dict(resp.json()) or {}
+        new_id = data.get('_id') or data.get('id')
+        if not new_id:
+            raise RuntimeError(f'create dataset returned no id; response shape: {data!r}')
+        return CreateResult(id=new_id, key=data.get('display_name', display_name), raw=data)
+
+    async def create_datapoints(
+        self, dataset_id: str, datapoints: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """POST /v2/datasets/{id}/datapoints — bulk-append datapoints."""
+        body = build_create_datapoints_body(datapoints)
+        resp = await self._client.post(f'/v2/datasets/{dataset_id}/datapoints', json=body)
+        if resp.status_code >= 400:
+            logger.error(f'✗ create_datapoints failed [{resp.status_code}]: {resp.text}')
+            resp.raise_for_status()
+        return _envelope_list(resp.json(), 'data', 'datapoints', 'items')
+
+    async def create_boolean_evaluator(
+        self,
+        *,
+        key: str,
+        path: str,
+        prompt: str,
+        model: str,
+        description: str | None = None,
+        guardrail_value: bool = True,
+    ) -> CreateResult:
+        """Create a boolean evaluator. Thin wrapper over :meth:`create_evaluator`
+        so existing boolean callers keep working unchanged."""
+        return await self.create_evaluator(
+            key=key,
+            path=path,
+            prompt=prompt,
+            model=model,
+            description=description,
+            output_type='boolean',
+            guardrail_value=guardrail_value,
+        )
 
 
 class EvaluatorNotFound(RuntimeError):

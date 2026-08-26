@@ -41,10 +41,11 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from collections import Counter
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 import fire
 from dotenv import load_dotenv
@@ -52,7 +53,7 @@ from loguru import logger
 
 import _bootstrap  # noqa: F401
 from lib import runner
-from lib.content import field_for_variable, message_text
+from lib.content import field_for_variable, judged_input_key, message_text
 from lib.orq_client import OrqClient
 
 load_dotenv()
@@ -458,6 +459,104 @@ def _in_window(iso: str | None, start: int | None, end: int | None) -> bool:
     return not (end and ms > end)
 
 
+def foreign_rows(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """Count existing rows that did NOT come from a trace scan, by source.
+
+    The scan writes `traces.jsonl` **wholesale**, while `dataset_inputs.pull` and
+    `seed_inputs.convert` *append* to it. So running the scan after either of them
+    deletes their rows — silently, because the scan has no reason to look at what
+    was there and the row count afterwards looks perfectly reasonable.
+
+    Now that the input source is a menu the user picks from (SKILL.md step 1a) rather
+    than a scan that always ran first, mixing sources is an ordinary thing to want,
+    and "scan, then add a dataset" and "add a dataset, then scan" have to stop being
+    the same command in a different order with silently different results.
+    """
+    counts: dict[str, int] = {}
+    for row in rows:
+        if row.get('synthetic'):
+            counts['synthetic'] = counts.get('synthetic', 0) + 1
+        else:
+            source = str(row.get('source') or '')
+            if source.startswith('dataset:'):
+                counts[source] = counts.get(source, 0) + 1
+    return counts
+
+
+def _guard_foreign_rows(out_dir: Path, replace: bool) -> None:
+    """Refuse to overwrite non-trace rows unless the caller said to."""
+    path = out_dir / 'traces.jsonl'
+    if not path.exists():
+        return
+    counts = foreign_rows(runner.read_jsonl(path))
+    if not counts:
+        return
+    total = sum(counts.values())
+    detail = ', '.join(f'{n} from {src}' for src, n in sorted(counts.items()))
+    if replace:
+        logger.warning(
+            f'⚠ --replace: discarding {total} row(s) not from a trace scan ({detail}).'
+        )
+        return
+    raise SystemExit(
+        f'traces.jsonl already holds {total} row(s) from another input source ({detail}), and '
+        f'the trace scan REWRITES that file rather than adding to it — running it now would '
+        f'delete them.\n'
+        f'  • To combine sources, scan FIRST, then re-add the others (they append):\n'
+        f'      uv run scripts/dataset_inputs.py pull --run_dir {out_dir} --dataset_id <id>\n'
+        f'      uv run scripts/seed_inputs.py convert --run_dir {out_dir}\n'
+        f'  • To use traces alone and drop what is there: --replace\n'
+        f'  • To keep what is there and skip the scan: do not run this command.'
+    )
+
+
+def _scan_depth_note(filter_echo: dict[str, Any], n_rows: int) -> str:
+    """How deep the scan went, and whether going deeper could find anything.
+
+    Returns the lines the conductor reads back before the run is priced. The
+    distinction that matters is `scan_truncated`: the scan stopping *at the cap* means
+    there is history behind it, and a deeper scan is worth offering; stopping *under*
+    the cap means the window already held every trace there was, so raising
+    `--trace_limit` would re-scan the same traces and find the same rows. Suggesting
+    the deeper scan in that case wastes the user's time and teaches them to ignore
+    the question.
+    """
+    limit = filter_echo.get('limit')
+    scanned = filter_echo.get('n_traces_scanned')
+    if scanned is None or limit is None:
+        return f'Scan: {n_rows} datapoint(s).'
+    lines = [f'Scan depth: {n_rows} datapoint(s) from the {scanned} most recent trace(s) '
+             f'(--trace_limit {limit}).']
+    if filter_echo.get('scan_truncated'):
+        lines.append(
+            f'  ⚠ The scan stopped at the {limit}-trace cap, so this is a SLICE of the '
+            f'history, not all of it. `--trace_limit 2000` scans deeper (traces only — '
+            f'no judge calls, so it costs nothing but time) and is safe to run now, '
+            f'before anything is labelled.'
+        )
+    else:
+        lines.append(
+            f'  This is every trace in the window ({scanned} < the {limit} cap), so a '
+            f'deeper --trace_limit would re-scan the same traces. Widen '
+            f'trace_start_date/trace_end_date instead if the judge is older than this.'
+        )
+    return '\n'.join(lines)
+
+
+def _scan_echo(n_raw: int, n_in_window: int, limit: int) -> dict[str, Any]:
+    """The `n_traces_scanned`/`scan_truncated` pair echoed back into the report.
+
+    `scan_truncated` has to read the RAW fetch depth (`n_raw`), not the
+    date-window-filtered count (`n_in_window`): hitting the `trace_limit` cap on
+    the raw fetch is the only thing that means more history exists behind it. A
+    narrow window (e.g. a tight trace_start_date/trace_end_date) can hold few
+    rows while the raw scan still hit the cap — computing truncation from the
+    window instead reports "this is everything" and `_scan_depth_note` tells the
+    user a deeper --trace_limit can't help when it, in fact, can.
+    """
+    return {'n_traces_scanned': n_in_window, 'scan_truncated': n_raw >= limit}
+
+
 async def _fetch(
     evaluator_id: str, evaluator_key: str, cfg: dict[str, Any], template: str, force: bool = False
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any] | None]:
@@ -508,6 +607,13 @@ async def _fetch(
                         f'may be truncated — raise --trace_limit to cover the full window.'
                     )
         logger.info(f'v3oql returned {len(traces)} traces to scan')
+        # Whether the scan *ran out of traces* or *ran out of budget*. Hitting the cap
+        # means there is almost certainly more history behind it, so widening is worth
+        # offering; coming back under the cap means the window held everything there
+        # was and a bigger --trace_limit would re-scan the same traces for nothing.
+        # Truncation reads the RAW fetch depth, not the (possibly date-filtered)
+        # window — see `_scan_echo`.
+        filter_echo.update(_scan_echo(len(raw_traces), len(traces), limit))
         if not traces:
             return [], filter_echo, None
 
@@ -724,11 +830,37 @@ def _guard_hollow(
     )
 
 
+# The dedup key is `lib.content.judged_input_key` — the same row-identity function
+# the fingerprint guard keys off. Kept in one place so the two can never disagree
+# about what "the same datapoint" means (the §5 no-mirrors rule).
+_judged_input_key = judged_input_key
+
+
+def _dedup_rows(
+    rows: list[dict[str, Any]], key: Callable[[dict[str, Any]], Any]
+) -> tuple[list[dict[str, Any]], int]:
+    """Drop later exact-duplicate rows, keeping the first occurrence of each key.
+
+    Order-preserving, first-wins. Returns ``(deduped_rows, n_dropped)``.
+    """
+    seen: set[Any] = set()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        k = key(row)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(row)
+    return out, len(rows) - len(out)
+
+
 def main(
     run_dir: str | None = None,
     config: str = 'config.toml',
     trace_limit: int | None = 200,
     force: bool = False,
+    dedup: bool = True,
+    replace: bool = False,
 ) -> str:
     """Fetch traces for the evaluator recorded in the run directory.
 
@@ -745,6 +877,13 @@ def main(
             auth/rate-limit failure aborts instead of writing garbage. It covers
             the span-detail half ONLY — an extraction/shape gap still aborts,
             since forcing that writes empty rows that look perfectly stable.
+        replace: Overwrite `traces.jsonl` even when it holds rows from another
+            input source (an orq dataset, or examples the user brought). Off by
+            default: this command rewrites that file wholesale while the other
+            sources append to it, so running it second silently deletes them.
+        dedup: Drop exact-duplicate datapoints (identical judged input) before
+            writing, keeping the first occurrence. On by default; pass
+            --dedup=False to keep every trace.
     """
     cfg = runner.load_config(config)
     if trace_limit is not None:
@@ -752,6 +891,10 @@ def main(
     out_dir = runner.resolve_run_dir(run_dir) if run_dir else runner.latest_run_dir(cfg.get('runs_dir', 'runs'))
     if out_dir is None:
         raise SystemExit('No run directory. Run fetch_evaluator.py first.')
+
+    # Before spending the scan: this command overwrites traces.jsonl, and the other
+    # input sources append to it. Check what is already there.
+    _guard_foreign_rows(out_dir, replace)
 
     evaluator = runner.read_json(out_dir / 'evaluator.json')
     evaluator_id = evaluator['id']
@@ -766,7 +909,7 @@ def main(
             'No candidate datapoints found.\n'
             f'  scan: {filter_echo}\n'
             'Matching is client-side (v3oql has no evaluator filter): raise the '
-            'scan depth with `--trace_limit <N>` (default 300) — the evaluator '
+            'scan depth with `--trace_limit <N>` (default 200) — the evaluator '
             'may be sparse or its traffic older than the scanned window — and/or '
             'widen trace_start_date / trace_end_date (epoch-ms) in config.toml. '
             'Confirm the evaluator actually has traces in the window.'
@@ -784,10 +927,38 @@ def main(
         runner.write_json(out_dir / 'hollow_debug.json', _hollow_debug(debug_sample))
     _guard_hollow(n_detail, n_empty, len(rows), abort_ratio, force, debug_path)
 
+    # Exact-match dedup: identical judged inputs (same query/output/reference/
+    # messages) are one datapoint — no point judging (and re-judging) a repeat.
+    # Runs after the hollow guard, which keys off the raw scan counts.
+    if dedup:
+        before = len(rows)
+        rows, n_dropped = _dedup_rows(rows, _judged_input_key)
+        filter_echo['n_deduped'] = n_dropped
+        if n_dropped:
+            logger.info(f'✓ deduped {n_dropped} identical inputs ({len(rows)} unique of {before})')
+
     runner.write_jsonl(out_dir / 'traces.jsonl', rows)
     logger.info(f'✓ Wrote {len(rows)} datapoints to {out_dir / "traces.jsonl"}')
 
-    model = _resolve_judge_model(out_dir, evaluator, rows)
+    # State the scan DEPTH next to the count, because the two read very differently
+    # and only one of them is a fact about the judge. "18 examples" sounds like all
+    # this judge has; "18 examples out of the most recent 200 traces, and the scan
+    # hit that cap" says it is a slice of a larger history. The conductor offers the
+    # deeper scan off this — the choice belongs here, before the stability run turns
+    # rows into judge calls, not after.
+    scan_depth = _scan_depth_note(filter_echo, len(rows))
+    runner.write_json(out_dir / 'scan.json', {**filter_echo, 'n_datapoints': len(rows)})
+    for line in scan_depth.splitlines():
+        logger.info(line)
+
+    # Fetch the registry once so the trace-observed model (a display alias) is
+    # normalised to its routable refId before pinning — else it 403s (RES-978).
+    async def _slug_map() -> dict[str, str]:
+        async with OrqClient() as client:
+            return await client.model_slug_map()
+
+    model_map = asyncio.run(_slug_map())
+    model = _resolve_judge_model(out_dir, evaluator, rows, model_map=model_map)
 
     # Now that the judge model and datapoint count are known, embed them in the
     # run dir name so the folder is self-describing (`<key>_<ts>_<model>_<N>dp`).
@@ -798,7 +969,12 @@ def main(
     return str(out_dir)
 
 
-def _resolve_judge_model(out_dir: Any, evaluator: dict[str, Any], rows: list[dict[str, Any]]) -> str | None:
+def _resolve_judge_model(
+    out_dir: Any,
+    evaluator: dict[str, Any],
+    rows: list[dict[str, Any]],
+    model_map: dict[str, str] | None = None,
+) -> str | None:
     """Resolve the evaluator's judge model from the traces and pin it.
 
     `evaluator.json` arrives from step 1 with only the opaque config model id
@@ -807,7 +983,20 @@ def _resolve_judge_model(out_dir: Any, evaluator: dict[str, Any], rows: list[dic
     stability run reconstructs with. The full distribution is written too, so a
     judge whose model changed across the scanned window is visible rather than
     silently collapsed.
+
+    The model recorded on a span is the string the judge was *called* with —
+    a display alias (``openai/gpt-oss-120b``), not the routable provider-qualified
+    slug. Pinning that alias sends the stability run down the wrong provider path
+    and 403s (RES-978 slug bug). ``model_map`` (``{model_id: refId}`` from
+    ``/v2/models``) normalises the observed alias to its routable ``refId`` before
+    pinning — the same fix ``_routable_slug`` applies in step 1. A model absent
+    from the map (a malformed/deprecated slug on a misconfigured production judge)
+    is kept as-is and flagged, never silently dropped. The raw observed
+    distribution is recorded un-normalised for honesty.
     """
+    def _routable(slug: str) -> str:
+        return (model_map or {}).get(slug, slug)
+
     observed = Counter(r['judge_model'] for r in rows if r.get('judge_model'))
     if not observed:
         # Traces didn't record a model. That's fine IF step 1 already resolved a
@@ -824,7 +1013,16 @@ def _resolve_judge_model(out_dir: Any, evaluator: dict[str, Any], rows: list[dic
         )
         return None
 
-    resolved, _ = observed.most_common(1)[0]
+    observed_slug, _ = observed.most_common(1)[0]
+    resolved = _routable(observed_slug)
+    if resolved != observed_slug:
+        logger.info(f'✓ Normalised judge slug {observed_slug!r} → routable {resolved!r}')
+    elif model_map and observed_slug not in model_map:
+        logger.warning(
+            f'⚠ Judge slug {observed_slug!r} is not in the /v2/models registry — pinning it '
+            'as-is. If the stability run 403s/404s, the production judge is on a deprecated or '
+            'mis-ordered slug; rerun fetch_evaluator.py with --judge_model <routable-slug>.'
+        )
     evaluator['judge_model'] = resolved
     evaluator['judge_models_observed'] = dict(observed)
     runner.write_json(out_dir / 'evaluator.json', evaluator)

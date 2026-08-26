@@ -1,0 +1,58 @@
+{
+  "_comment": [
+    "The three judge rubrics under test. Every one is DELIBERATELY UNDERSPECIFIED in",
+    "the same four places, which is what makes the test case work: it leaves the",
+    "judge no rule for (1) answers entailed only by inference, (2) true-but-",
+    "unsupported additions, (3) numeric/quantifier paraphrase, and (4) explicitly",
+    "hedged speculation. Those four gaps are grey zones GZ1..GZ4 in answer_key.json.",
+    "Do NOT 'improve' these prompts — a crisp rubric drives instability to ~0, the",
+    "run starves at SKILL.md step 4a, and the test proves nothing."
+  ],
+  "judge_model": "google/gemini-2.5-flash",
+  "path_prefix": "Default/eval-alignment-testcase",
+  "evaluators": [
+    {
+      "key": "groundedness-bool-testcase",
+      "display_name": "Groundedness (boolean) — alignment test case",
+      "description": "TEST CASE for the evaluator-alignment skill. Deliberately vague groundedness judge, boolean verdict. Not for production use.",
+      "output_type": "boolean",
+      "guardrail_value": true,
+      "prompt": "You are evaluating the groundedness of an AI assistant's answer.\n\nThe assistant was given a retrieved context and a user question, shown together in <input>. The assistant's answer is in <output>.\n\nReturn true if the answer is grounded in the context, and false if it is not.\n\nExplain your reasoning BEFORE giving the value.\n\n<input>{{log.input}}</input>\n<output>{{log.output}}</output>"
+    },
+    {
+      "key": "groundedness-cat-testcase",
+      "display_name": "Groundedness (categorical) — alignment test case",
+      "description": "TEST CASE for the evaluator-alignment skill. Deliberately vague groundedness judge, three-label verdict. Not for production use.",
+      "output_type": "categorical",
+      "categorical_labels": [
+        {
+          "value": "grounded",
+          "description": "The answer is grounded in the context."
+        },
+        {
+          "value": "partially_grounded",
+          "description": "The answer is partly grounded in the context."
+        },
+        {
+          "value": "ungrounded",
+          "description": "The answer is not grounded in the context."
+        }
+      ],
+      "guardrail_values": [
+        "grounded"
+      ],
+      "prompt": "You are evaluating the groundedness of an AI assistant's answer.\n\nThe assistant was given a retrieved context and a user question, shown together in <input>. The assistant's answer is in <output>.\n\nClassify the answer as exactly one of: grounded, partially_grounded, ungrounded.\n\nExplain your reasoning BEFORE giving the value.\n\n<input>{{log.input}}</input>\n<output>{{log.output}}</output>"
+    },
+    {
+      "key": "groundedness-num-testcase",
+      "display_name": "Groundedness (1-5) — alignment test case",
+      "description": "TEST CASE for the evaluator-alignment skill. Deliberately vague groundedness judge, 1-5 verdict with no anchor descriptions. Not for production use.",
+      "output_type": "number",
+      "scale": [
+        1,
+        5
+      ],
+      "prompt": "You are evaluating the groundedness of an AI assistant's answer.\n\nThe assistant was given a retrieved context and a user question, shown together in <input>. The assistant's answer is in <output>.\n\nRate how grounded the answer is on a scale from 1 to 5, where 1 means not grounded at all and 5 means fully grounded.\n\nExplain your reasoning BEFORE giving the value.\n\n<input>{{log.input}}</input>\n<output>{{log.output}}</output>"
+    }
+  ]
+}

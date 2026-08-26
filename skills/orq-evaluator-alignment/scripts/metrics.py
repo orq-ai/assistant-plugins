@@ -9,30 +9,36 @@
 #     "tenacity>=8.0",
 # ]
 # ///
-"""Step 5 — binary flip-rate and agreement metrics over the stability run.
+"""Step 5 — per-row judge instability across the stability run (RES-978).
 
-Consumes `stability.json` (per-row list of N repeated verdicts) and produces
-`metrics.json`:
-  - per-row flip-rate (1 − mode_rate) + pairwise agreement, most-ambiguous-first
-  - dataset-level 1-Flip Consistency, Fleiss' κ and Gwet's AC1, True prevalence
-  - a human-readable flip summary the conductor reports back to the user
+Consumes `stability.json` (per-row list of N repeated verdicts) + `evaluator.json`
+(output_type, categorical_labels, scale) and writes `metrics.json`:
+  - per-row unified `instability` (0..1) + `band` (stable | noisy | unreliable |
+    unmeasurable), most-unstable-first, plus type-native detail
+  - dataset-level mean instability + a one-line band histogram
+  - a lean human-readable report the conductor reports back (§6)
 
-Binary-only: the formulas are lifted from the validated
-`stability_metrics/compute_metrics.py` and trimmed to the boolean case (the
-verbosity-GLM / swap-invariance families are out of V1 scope). Cheap to rerun —
-it never re-invokes the judge.
+All three orq output types (boolean / categorical / number) land on ONE 0..1
+scale via `lib.instability`, so nothing downstream branches on type. The heavier
+boolean agreement stats (Fleiss κ, Gwet AC1, pairwise) are still computed but kept
+OUT of the default summary — surfaced on request. Cheap to rerun; never
+re-invokes the judge.
 """
 
 from __future__ import annotations
 
+import math
 from collections import Counter
+from statistics import fmean, pstdev
 from typing import Any
 
 import fire
 from loguru import logger
 
 import _bootstrap  # noqa: F401
-from lib import runner
+from lib import content, instability, runner
+
+_NUMERIC_TYPES = {'number', 'numeric'}
 
 
 def _coerce_bool(value: Any) -> bool | None:
@@ -49,70 +55,266 @@ def _coerce_bool(value: Any) -> bool | None:
     return None
 
 
-def _row_bools(row: dict[str, Any]) -> list[bool]:
-    out: list[bool] = []
-    for v in row.get('repetitions', []):
-        b = _coerce_bool(v)
-        if b is not None:
-            out.append(b)
+def _clean_verdicts(reps: list[Any], output_type: str) -> list[Any]:
+    """The usable, canonical verdicts of a row: drop None (failed/off-contract),
+    coerce to the type. instability.py only ever sees this clean list (§4a)."""
+    out: list[Any] = []
+    for v in reps or []:
+        if v is None:
+            continue
+        if output_type == 'boolean':
+            b = _coerce_bool(v)
+            if b is not None:
+                out.append(b)
+        elif output_type == 'categorical':
+            out.append(str(v))
+        elif output_type in _NUMERIC_TYPES:
+            try:
+                out.append(float(v))
+            except (TypeError, ValueError):
+                pass
+        else:
+            out.append(v)
     return out
 
 
-def _per_row(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _type_detail(output_type: str, clean: list[Any], k: int | None, scale: tuple[float, float] | None) -> dict[str, Any]:
+    """Type-native per-row detail. For boolean this also carries the legacy
+    flip_rate / mode / pairwise fields (kept for boolean-only consumers)."""
+    n = len(clean)
+    if output_type == 'boolean':
+        n_true = sum(1 for b in clean if b)
+        n_false = n - n_true
+        detail: dict[str, Any] = {'n_true': n_true, 'n_false': n_false}
+        if n >= 2:
+            (mode_value, mode_count), = Counter(clean).most_common(1)
+            mode_rate = mode_count / n
+            pairwise = (n_true * (n_true - 1) + n_false * (n_false - 1)) / (n * (n - 1))
+            detail.update({'mode_value': mode_value, 'mode_rate': mode_rate,
+                           'flip_rate': 1.0 - mode_rate, 'pairwise_agreement': pairwise})
+        else:
+            detail.update({'mode_value': None, 'mode_rate': None, 'flip_rate': None, 'pairwise_agreement': None})
+        return detail
+    if output_type == 'categorical':
+        return {'counts': dict(Counter(clean)), 'k': k}
+    if output_type in _NUMERIC_TYPES:
+        return {
+            'mean': (fmean(clean) if clean else None),
+            'stdev': (pstdev(clean) if clean else None),
+            'scale': list(scale) if scale else None,
+        }
+    return {}
+
+
+def _per_row(
+    rows: list[dict[str, Any]], output_type: str, k: int | None, scale: tuple[float, float] | None,
+    floor: int,
+) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
-    pairwise_sum = 0.0
-    measurable = 0
     for row in rows:
-        bools = _row_bools(row)
-        k = len(bools)
+        clean = _clean_verdicts(row.get('repetitions', []), output_type)
+        n_clean = len(clean)
+        # NB: the judged input (query/output/messages) is deliberately NOT copied
+        # here — it lives canonically in stability.json. Duplicating it into
+        # metrics.json would dump every rendered judge prompt into the conductor's
+        # context when it reads the instability report, defeating the bounded
+        # grey-zone payload. build_queue / recommend read the input from
+        # stability.json by source_index instead.
         entry: dict[str, Any] = {
             'source_index': row.get('source_index'),
-            'n_successful_repeats': k,
-            'query': row.get('query', ''),
-            'output': row.get('output', ''),
-            'messages': row.get('messages'),
             'representative_explanation': row.get('representative_explanation'),
+            'n_successful_repeats': n_clean,
+            'n_failed': int(row.get('repetitions_failed') or 0),
+            'n_wrong_output_type': int(row.get('n_wrong_output_type') or 0),
         }
-        if k < 2:
-            entry.update({'mode_rate': None, 'mode_value': None, 'flip_rate': None, 'pairwise_agreement': None})
-            entries.append(entry)
-            continue
-        n_true = sum(bools)
-        n_false = k - n_true
-        pairwise = (n_true * (n_true - 1) + n_false * (n_false - 1)) / (k * (k - 1))
-        (mode_value, mode_count), = Counter(bools).most_common(1)
-        mode_rate = mode_count / k
-        entry.update(
-            {
-                'mode_rate': mode_rate,
-                'mode_value': mode_value,
-                'flip_rate': 1.0 - mode_rate,
-                'pairwise_agreement': pairwise,
-                'n_true': n_true,
-                'n_false': n_false,
-            }
-        )
+        entry.update(_type_detail(output_type, clean, k, scale))
+        # Unmeasurable: too few usable verdicts to trust, or no denominator to
+        # normalize by (numeric with no scale, surfaced as instability None). Not
+        # an error — the expected path in those cases (§4a).
+        if n_clean == 0 or n_clean < floor:
+            entry.update({'instability': None, 'band': 'unmeasurable'})
+        else:
+            try:
+                inst = instability.row_instability(output_type, clean, k=k, scale=scale)
+            except ValueError:
+                inst = None
+            if inst is None:
+                entry.update({'instability': None, 'band': 'unmeasurable'})
+            else:
+                entry.update({'instability': inst, 'band': instability.classify(inst)})
         entries.append(entry)
-        measurable += 1
-        pairwise_sum += pairwise
+    # Most-unstable first; unmeasurable rows (instability None) sort to the end.
+    entries.sort(key=lambda e: (e['instability'] is None, -(e['instability'] or 0.0)))
+    return entries
 
-    # Most-ambiguous-first: highest flip-rate (lowest pairwise) leads; rows with
-    # too few repeats sort to the end.
-    entries.sort(
-        key=lambda e: (
-            e['pairwise_agreement'] is None,
-            e['pairwise_agreement'] if e['pairwise_agreement'] is not None else 1.0,
-        )
+
+# ── correctness against dataset ground truth (flow-friction §3) ───────────────
+# Instability answers "does the judge agree with itself". When rows carry a
+# `reference` label it can also answer "is it RIGHT" — the question the skill
+# otherwise says, correctly, that it structurally cannot answer. It was being
+# collected and thrown away: `map_datapoint` routed `expected_output` into
+# `reference`, and nothing downstream read it, because an evaluator declaring no
+# {{reference}} variable never renders it.
+
+
+def _numeric_tol(cfg: dict[str, Any], scale: tuple[float, float] | None) -> float:
+    """The same band the retest gates on, so "correct" means one thing per run."""
+    from lib import agreement as agreement_lib  # noqa: PLC0415 — pure stdlib module
+
+    configured = cfg.get('numeric_tol')
+    if configured not in (None, ''):
+        return float(configured)
+    return agreement_lib.default_tolerance(
+        scale, fraction=float(cfg.get('numeric_tol_fraction', agreement_lib.DEFAULT_TOL_FRACTION))
     )
-    summary = {
-        'measurable_rows': measurable,
-        'one_flip_consistency': (pairwise_sum / measurable if measurable else None),
+
+
+def _reference_matches(
+    reference: Any, verdict: Any, output_type: str, tol: float,
+    categorical_labels: list[str] | None = None,
+    scale: tuple[float, float] | None = None,
+) -> bool | None:
+    """Whether a judge verdict matches a ground-truth label, type-natively.
+
+    Returns None when the label cannot be read into the judge's verdict space —
+    excluded from the count and warned about once, never coerced into a False that
+    would read as the judge being wrong. For categorical this includes a reference
+    that is not one of the judge's own declared labels; for numeric, a reference
+    outside the judge's declared scale: a 1–5 dataset label against a 0–1 judge is
+    a scale mismatch, not a wrong answer.
+    """
+    if verdict is None or reference in (None, ''):
+        return None
+    if output_type == 'boolean':
+        ref, got = _coerce_bool(reference), _coerce_bool(verdict)
+        return None if ref is None or got is None else ref == got
+    if output_type == 'categorical':
+        norm_ref = str(reference).strip().lower()
+        if categorical_labels and norm_ref not in {str(label).strip().lower() for label in categorical_labels}:
+            return None
+        return norm_ref == str(verdict).strip().lower()
+    if output_type in _NUMERIC_TYPES:
+        try:
+            ref_f = float(reference)
+        except (TypeError, ValueError):
+            return None
+        if scale is not None and not (scale[0] <= ref_f <= scale[1]):
+            return None
+        try:
+            return abs(ref_f - float(verdict)) <= tol
+        except (TypeError, ValueError):
+            return None
+    return None  # unknown output_type: no mechanical comparison to make
+
+
+def _correctness(
+    rows: list[dict[str, Any]], per_row: list[dict[str, Any]], output_type: str, tol: float,
+    *, variables: list[str], categorical_labels: list[str], tol_derivable: bool,
+    scale: tuple[float, float] | None = None,
+) -> dict[str, Any] | None:
+    """Accuracy against `reference`, overall and **by instability band**.
+
+    `by_band` is the point of the whole block. Accuracy among the rows the judge
+    was *stable* on is the direct measurement of the consistently-wrong blind spot:
+    a judge that is 100% stable and 60% correct on those rows is the exact failure
+    instability-ranking cannot surface, and here it becomes a headline number
+    instead of a caveat.
+
+    Two cases omit accuracy outright rather than compute a number that looks
+    like a measurement and isn't (§1.2, §3.5):
+      - `variables` declares a reference-family variable (`reference`/`expected`/
+        `expected_output`) — `reference` was bound INTO the judge prompt by
+        `lib.judge.make_replacements`, so grading the verdict against it is
+        circular, not a correctness check. Checked first: it invalidates the
+        whole run regardless of `output_type`.
+      - numeric with no derivable tolerance band (`tol_derivable=False`) — a
+        fixed absolute band would be arbitrary with no declared scale to size it.
+
+    `variables`/`categorical_labels`/`tol_derivable` are required, not defaulted:
+    a caller that silently omitted `variables=` would silently re-enable the
+    §1.2 circular-grading bug, and one omitting `tol_derivable=False` would
+    re-enable the §3.5 arbitrary-band bug — both with no error and a
+    plausible-looking wrong number. Forcing every call site to state them is the
+    difference between a loud `TypeError` and a quiet wrong answer.
+    """
+    if content.reference_is_judge_input(variables):
+        ref_vars = [v for v in variables if content.field_for_variable(v) == 'reference']
+        return {
+            'n_labelled': 0,
+            'reason_omitted': (
+                f'the evaluator declares a reference-family variable ({", ".join(ref_vars)}), so '
+                '`reference` is input the judge is shown, not ground truth to grade it against'
+            ),
+        }
+    if output_type in _NUMERIC_TYPES and not tol_derivable:
+        return {
+            'n_labelled': 0,
+            'reason_omitted': (
+                'no declared scale and no configured numeric_tol — a fixed absolute band would be '
+                'arbitrary (0.5 is half of a 0-1 scale)'
+            ),
+        }
+    verdicts = {r.get('source_index'): r.get('aggregate_value') for r in rows}
+    bands = {e['source_index']: e['band'] for e in per_row}
+    band_totals = Counter(e['band'] for e in per_row)
+    n_unreadable = 0
+    confusion: Counter = Counter()
+    by_band: dict[str, dict[str, int]] = {}
+    n_correct = n_labelled = 0
+    n_unmeasurable_labelled = 0
+    wrong_indices: list[int] = []
+    labelled_indices: list[int] = []
+    for row in rows:
+        idx = row.get('source_index')
+        match = _reference_matches(row.get('reference'), verdicts.get(idx), output_type, tol, categorical_labels, scale)
+        if match is None:
+            if row.get('reference') not in (None, '') and verdicts.get(idx) is not None:
+                n_unreadable += 1
+            continue
+        band = bands.get(idx, 'unmeasurable')
+        slot = by_band.setdefault(band, {'n': 0, 'n_correct': 0})
+        slot['n'] += 1
+        slot['n_correct'] += int(match)
+        confusion[f'{row.get("reference")}→{verdicts.get(idx)}'] += 1
+        if band == 'unmeasurable':
+            n_unmeasurable_labelled += 1
+            continue
+        labelled_indices.append(idx)
+        if not match:
+            wrong_indices.append(idx)
+        n_labelled += 1
+        n_correct += int(match)
+    if not n_labelled and not n_unmeasurable_labelled:
+        return None
+    for band_name, slot in by_band.items():
+        slot['accuracy'] = slot['n_correct'] / slot['n']
+        slot['n_band_total'] = band_totals.get(band_name, slot['n'])
+    result: dict[str, Any] = {
+        'n_labelled': n_labelled,
+        'n_correct': n_correct,
+        'accuracy': (n_correct / n_labelled) if n_labelled else None,
+        'confusion': dict(confusion),
+        'label_source': 'dataset_reference',
+        'by_band': by_band,
+        'wrong_source_indices': sorted(wrong_indices),
+        'labelled_source_indices': sorted(labelled_indices),
+        'n_unreadable_labels': n_unreadable,
     }
-    return entries, summary
+    if n_unmeasurable_labelled:
+        result['n_unmeasurable_labelled'] = n_unmeasurable_labelled
+    return result
+
+
+def _row_bools(row: dict[str, Any]) -> list[bool]:
+    return [b for b in (_coerce_bool(v) for v in row.get('repetitions', [])) if b is not None]
 
 
 def _panel_agreement(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Fleiss' κ and Gwet's AC1 across the N repeats (binary, variable raters)."""
+    """Fleiss' κ and Gwet's AC1 across the N repeats (binary, variable raters).
+
+    Boolean-only heavy stats — computed for completeness, kept out of the default
+    report. Math unchanged from V1.
+    """
     n_true_total = 0
     n_total = 0
     p_i_sum = 0.0
@@ -129,7 +331,7 @@ def _panel_agreement(rows: list[dict[str, Any]]) -> dict[str, Any]:
         n_total += k
         measurable += 1
     if measurable == 0:
-        return {'fleiss_kappa': None, 'gwet_ac1': None, 'prevalence_true': None, 'measurable_rows': 0}
+        return {'fleiss_kappa': None, 'gwet_ac1': None, 'prevalence_true': None, 'one_flip_consistency': None}
     p_bar = p_i_sum / measurable
     pi_true = n_true_total / n_total
     pi_false = 1.0 - pi_true
@@ -142,37 +344,139 @@ def _panel_agreement(rows: list[dict[str, Any]]) -> dict[str, Any]:
         'fleiss_kappa': _coef(pi_true**2 + pi_false**2),
         'gwet_ac1': _coef(2.0 * pi_true * pi_false),
         'prevalence_true': pi_true,
-        'measurable_rows': measurable,
+        'one_flip_consistency': p_bar,
     }
 
 
-def _flip_report(per_row: list[dict[str, Any]], panel: dict[str, Any], one_flip: float | None, n_rows: int) -> str:
-    flipped = [e for e in per_row if e.get('flip_rate') not in (None, 0.0)]
-    measurable = panel['measurable_rows']
+def _detail_str(output_type: str, e: dict[str, Any]) -> str:
+    def _num(v: Any) -> str:
+        return f'{v:.2f}' if isinstance(v, (int, float)) else 'n/a'
 
+    if output_type == 'boolean':
+        detail = f"({e.get('n_true', '?')}T/{e.get('n_false', '?')}F)"
+    elif output_type == 'categorical':
+        detail = f"(counts={e.get('counts')}, k={e.get('k')})"
+    elif output_type in _NUMERIC_TYPES:
+        detail = f"(mean={_num(e.get('mean'))}, stdev={_num(e.get('stdev'))} on scale {e.get('scale')})"
+    else:
+        detail = ''
+    # Instability is computed over the CLEAN verdicts, so a row can answer
+    # off-contract half the time and still band as `stable` on the rest. The
+    # dataset-level count shows it in aggregate but not on the row where it
+    # happened, which is the row a reader is about to trust.
+    n_wrong = e.get('n_wrong_output_type') or 0
+    if n_wrong:
+        detail += f' [{n_wrong} off-contract rep(s) excluded]'
+    return detail
+
+
+def _correctness_lines(c: dict[str, Any] | None) -> list[str]:
+    """The correctness headline, with the stable-row accuracy called out.
+
+    Overall accuracy is the reassuring number; accuracy among the rows the judge
+    never wavered on is the one that can contradict the whole run. A judge at 0.0
+    instability and 0.6 stable-row accuracy is consistently wrong, which is the
+    failure everything else here is blind to — so it gets its own line, not a
+    field in a nested dict.
+
+    That line only earns the "measured" claim when the labelled subset actually
+    speaks for the band: `n >= 10` (not a handful of rows) AND labelled coverage
+    `>= 90%` of the band. Below that floor it is a partial view, not a measurement
+    of the blind spot, and is captioned as such (§4.1).
+
+    MINOR 9: an omitted block (`n_labelled: 0` with a `reason_omitted` — a
+    reference-family variable or an undeclared numeric scale, per
+    `_correctness`) still earns ONE line here. Returning `[]` for it wrote the
+    `reason_omitted` explanation to `metrics.json` but never into the report the
+    conductor actually reads out (SKILL.md), so the omission — and why — was
+    invisible at the one place a reader would see it.
+    """
+    if not c:
+        return []
+    if not c.get('n_labelled'):
+        reason = c.get('reason_omitted')
+        return [f'  - correctness vs dataset labels: not measured — {reason}'] if reason else []
+    metadata_caveat = (
+        ' (⚠ evaluator.json missing — circularity and vocabulary guards disabled)'
+        if c.get('metadata_missing') else ''
+    )
+    acc = c['accuracy']
+    acc_str = f'{acc:.0%}' if acc is not None else 'n/a'
+    lines = [
+        f"  - correctness vs dataset labels: {c['n_correct']}/{c['n_labelled']} "
+        f"({acc_str}) — labels are `dataset_reference`, not the user's verdict.{metadata_caveat}"
+    ]
+    if c.get('n_unmeasurable_labelled'):
+        lines.append(
+            f"      ({c['n_unmeasurable_labelled']} labelled rows excluded — "
+            f"verdict unmeasurable, not in headline)"
+        )
+    stable = c.get('by_band', {}).get('stable')
+    if stable:
+        n_band_total = stable.get('n_band_total', stable['n'])
+        coverage = stable['n'] / n_band_total if n_band_total else 0.0
+        line = (
+            f"      on rows the judge was STABLE: {stable['n_correct']}/{stable['n']} "
+            f"({stable['accuracy']:.0%}) — {stable['n']} of {n_band_total} stable rows carry a "
+            f"label ({coverage:.0%} coverage)"
+        )
+        if stable['n'] >= 10 and coverage >= 0.9:
+            line += ' ← the consistently-wrong blind spot, measured'
+        else:
+            line += ' (partial view — do not conclude "consistent-and-right" from this)'
+        lines.append(line)
+    if c.get('wrong_source_indices'):
+        lines.append(f"      wrong on: {c['wrong_source_indices'][:10]}")
+    return lines
+
+
+def _report(
+    per_row: list[dict[str, Any]], output_type: str, mean_inst: float | None,
+    bands: Counter, n_rows: int, n_measurable: int, total_wrong: int, total_failed: int,
+    correctness: dict[str, Any] | None = None,
+) -> str:
     def _fmt(v: Any) -> str:
         return f'{v:.3f}' if isinstance(v, (int, float)) else 'n/a'
 
+    hist = f"{bands.get('stable', 0)} stable / {bands.get('noisy', 0)} noisy / {bands.get('unreliable', 0)} unreliable"
+    if bands.get('unmeasurable'):
+        hist += f" / {bands['unmeasurable']} unmeasurable"
+    inst_annotation = '(0 = judge always agrees with itself, 1 = maximal).'
     lines = [
-        f'Flip summary over {n_rows} datapoints ({measurable} with ≥2 valid repeats):',
-        f'  - {len(flipped)} datapoints flipped (judge not unanimous).',
-        f'  - 1-Flip Consistency: {_fmt(one_flip)} (1.0 = never flips).',
-        f"  - Gwet AC1: {_fmt(panel['gwet_ac1'])}   Fleiss κ: {_fmt(panel['fleiss_kappa'])}"
-        f"   (True prevalence {_fmt(panel['prevalence_true'])}).",
+        f'Instability summary over {n_rows} datapoints ({n_measurable} measurable, type={output_type}):',
+        f'  - mean instability: {_fmt(mean_inst)} {inst_annotation}',
+        f'  - bands: {hist}.',
+        *_correctness_lines(correctness),
     ]
-    if flipped:
-        worst = flipped[:5]
-        lines.append('  - Most-ambiguous datapoints (highest flip-rate):')
-        for e in worst:
+    if total_wrong or total_failed:
+        lines.append(f'  - {total_wrong} off-contract (wrong_output_type) reps, {total_failed} failed reps.')
+    # Which rows, not just how many. A row whose band was computed from half its
+    # repetitions can read `stable` while the other half never parsed, and the
+    # dataset-level count above does not say which row that was.
+    off_contract = [e for e in per_row if (e.get('n_wrong_output_type') or 0)]
+    if off_contract:
+        named = ', '.join(
+            f"#{e['source_index']} ({e['n_wrong_output_type']} of "
+            f"{e['n_wrong_output_type'] + e['n_successful_repeats'] + e['n_failed']}, band={e['band']})"
+            for e in sorted(off_contract, key=lambda e: -e['n_wrong_output_type'])[:5]
+        )
+        lines.append(
+            f'  - Rows with off-contract reps (band reflects only the parsed ones): {named}'
+            + (f' … +{len(off_contract) - 5} more' if len(off_contract) > 5 else '')
+        )
+    unstable = [e for e in per_row if e['instability'] not in (None, 0.0)]
+    if unstable:
+        lines.append('  - Most-unstable datapoints:')
+        for e in unstable[:5]:
             lines.append(
-                f"      #{e['source_index']}: flip_rate={_fmt(e['flip_rate'])} "
-                f"({e.get('n_true', '?')}T/{e.get('n_false', '?')}F)"
+                f"      #{e['source_index']}: instability={_fmt(e['instability'])} "
+                f"({e['band']}) {_detail_str(output_type, e)}"
             )
     return '\n'.join(lines)
 
 
 def main(run_dir: str | None = None, config: str = 'config.toml') -> str:
-    """Compute flip metrics for a run directory's stability.json."""
+    """Compute per-row instability for a run directory's stability.json."""
     cfg = runner.load_config(config)
     out_dir = runner.resolve_run_dir(run_dir) if run_dir else runner.latest_run_dir(cfg.get('runs_dir', 'runs'))
     if out_dir is None:
@@ -180,23 +484,85 @@ def main(run_dir: str | None = None, config: str = 'config.toml') -> str:
 
     stability = runner.read_json(out_dir / 'stability.json')
     rows = stability.get('rows', [])
-    per_row, sc = _per_row(rows)
-    panel = _panel_agreement(rows)
-    report = _flip_report(per_row, panel, sc['one_flip_consistency'], len(rows))
+    meta = stability.get('metadata', {})
+    n_req = int(meta.get('n_repeats') or cfg.get('n_repeats', 5))
+    floor = max(1, math.ceil(n_req / 2))
 
-    n_flipped = sum(1 for e in per_row if e.get('flip_rate') not in (None, 0.0))
+    # Verdict space (output_type / K / scale) is authoritative in evaluator.json;
+    # fall back to stability metadata's output_type for older runs.
+    ev_path = out_dir / 'evaluator.json'
+    if ev_path.exists():
+        ev = runner.read_json(ev_path)
+    else:
+        ev = {}
+        logger.warning(
+            '⚠ evaluator.json not found — correctness guards (circularity, '
+            'scale-less numeric) run without evaluator metadata'
+        )
+    output_type = (ev.get('output_type') or meta.get('output_type') or 'boolean').strip().lower()
+    labels = ev.get('categorical_labels') or []
+    k = len(labels) if labels else None
+    scale_raw = ev.get('scale')
+    scale = tuple(scale_raw) if isinstance(scale_raw, (list, tuple)) and len(scale_raw) == 2 else None
+
+    per_row = _per_row(rows, output_type, k, scale, floor)
+    # A fixed absolute band is only meaningful relative to a declared scale (or an
+    # explicit override) — with neither, "correct within 0.5" is an arbitrary
+    # number dressed up as a measurement (§3.5).
+    tol_derivable = (cfg.get('numeric_tol') not in (None, '')) or scale is not None
+    ev_missing = not ev
+    correctness = _correctness(
+        rows, per_row, output_type, _numeric_tol(cfg, scale),
+        variables=ev.get('variables', []), categorical_labels=labels, tol_derivable=tol_derivable,
+        scale=scale,
+    )
+    if correctness is not None and ev_missing:
+        correctness['metadata_missing'] = True
+    if correctness and correctness.get('n_unreadable_labels'):
+        logger.warning(
+            f"⚠ {correctness['n_unreadable_labels']} row(s) carry a ground-truth label this "
+            f"judge's verdict space cannot read; excluded rather than counted as wrong."
+        )
+    measurable = [e for e in per_row if e['instability'] is not None]
+    bands = Counter(e['band'] for e in per_row)
+    mean_inst = fmean(e['instability'] for e in measurable) if measurable else None
+    n_unstable = sum(1 for e in measurable if e['instability'] > 0.0)
+    total_wrong = sum(e['n_wrong_output_type'] for e in per_row)
+    total_failed = sum(e['n_failed'] for e in per_row)
+
+    # Heavy boolean-only agreement stats: computed, but not in the lean report.
+    panel = _panel_agreement(rows) if output_type == 'boolean' else {
+        'fleiss_kappa': None, 'gwet_ac1': None, 'prevalence_true': None, 'one_flip_consistency': None
+    }
+    report = _report(
+        per_row, output_type, mean_inst, bands, len(rows), len(measurable),
+        total_wrong, total_failed, correctness,
+    )
+
     metrics = {
-        'metadata': stability.get('metadata', {}),
+        'metadata': {**meta, 'output_type': output_type, 'k': k, 'scale': list(scale) if scale else None},
         'scores': {
             'num_rows': len(rows),
-            'measurable_rows': sc['measurable_rows'],
-            'n_flipped': n_flipped,
-            'one_flip_consistency': sc['one_flip_consistency'],
+            'measurable_rows': len(measurable),
+            'mean_instability': mean_inst,
+            'bands': dict(bands),
+            'n_unstable': n_unstable,
+            # Pre-multi-type alias for `n_unstable`, kept because metrics.json is
+            # a published artifact an operator's own scripts may read. Nothing in
+            # the skill consumes it now that the boolean-only retest is gone.
+            'n_flipped': n_unstable,
+            'total_wrong_output_type': total_wrong,
+            'total_failed': total_failed,
+            # Boolean-only heavy stats — surfaced on request, not in the report.
+            'one_flip_consistency': panel['one_flip_consistency'],
             'fleiss_kappa': panel['fleiss_kappa'],
             'gwet_ac1': panel['gwet_ac1'],
             'prevalence_true': panel['prevalence_true'],
         },
-        'flip_report': report,
+        # Present only when rows carried a readable ground-truth label. Absent means
+        # "not measured", never "nothing wrong found".
+        'correctness': correctness,
+        'report': report,
         'per_row': per_row,
     }
     runner.write_json(out_dir / 'metrics.json', metrics)

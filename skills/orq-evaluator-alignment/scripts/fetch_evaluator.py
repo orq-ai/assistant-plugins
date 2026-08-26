@@ -11,16 +11,18 @@
 # ///
 """Step 1 — fetch the evaluator under audit and pin its config.
 
-GET /v2/evaluators/{id}, assert it is a boolean single-judge evaluator (V1
-scope), extract the judge prompt, judge model, output type, and declared
-`{{...}}` variables, and write `evaluator.json` into a fresh run directory.
-The declared variable set is stored so step 9a can enforce variable
-preservation on the rewrite.
+GET /v2/evaluators/{id}, assert it is a single-judge evaluator of a supported
+output type — boolean | categorical | number (RES-978) — then extract the judge
+prompt, judge model, output type, the declared categorical label set (K), the
+resolved numeric scale (override-only), and the declared `{{...}}` variables, and
+write `evaluator.json` into a fresh run directory. The declared variable set is
+stored so step 9a can enforce variable preservation on the rewrite.
 
 Usage:
     cd skills/orq-evaluator-alignment
     uv run scripts/fetch_evaluator.py --evaluator_id <24-hex-id>
-    # if the judge model can't be auto-resolved (run dir shows model-unknown):
+    # if the judge model can't be auto-resolved (evaluator.json's judge_model still
+    # equals judge_model_id — the opaque config id, unresolved against /v2/models):
     uv run scripts/fetch_evaluator.py --evaluator_id <id> --judge_model mistral-large-latest
 """
 
@@ -36,11 +38,41 @@ from loguru import logger
 
 import _bootstrap  # noqa: F401  (path setup)
 from lib import runner
-from lib.orq_client import EvaluatorNotFound, OrqClient
+from lib.orq_client import EvaluatorNotFound, OrqClient, normalise_output_type
 
 load_dotenv()
 
 _UUID_RE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', re.IGNORECASE)
+
+
+def _check_output_type(output_type: str) -> str:
+    """Normalise + validate the evaluator output type (§5.2 type gate).
+
+    Delegates to `orq_client.normalise_output_type` so this gate and the step-7
+    create path share one list: a type that cannot be created is refused here,
+    before any judging is paid for, rather than at `create_eval --approve`.
+    """
+    return normalise_output_type(output_type)
+
+
+def _resolve_scale(
+    cfg: dict, scale_min: float | None, scale_max: float | None
+) -> tuple[float, float] | None:
+    """Resolve the numeric scale override-only: flags beat config, both-or-neither.
+
+    Numeric evaluators carry NO scale in their orq record (§8.1), so the
+    normalising denominator is supplied out-of-band via ``--scale_min``/
+    ``--scale_max`` or ``config.toml``. Neither present → ``None`` (numeric rows
+    become ``unmeasurable`` — the expected path until a scale is known). Exactly
+    one present is a user error, not a silent ``None``.
+    """
+    lo = scale_min if scale_min is not None else cfg.get('scale_min')
+    hi = scale_max if scale_max is not None else cfg.get('scale_max')
+    if lo is None and hi is None:
+        return None
+    if lo is None or hi is None:
+        raise ValueError('numeric scale needs BOTH scale_min and scale_max (override-only).')
+    return (float(lo), float(hi))
 
 
 async def _fetch(evaluator_id: str, judge_model_override: str | None = None) -> dict:
@@ -68,6 +100,7 @@ async def _fetch(evaluator_id: str, judge_model_override: str | None = None) -> 
         'judge_model': judge_model,
         'judge_model_id': cfg.judge_model,
         'output_type': cfg.output_type,
+        'categorical_labels': cfg.categorical_labels,
         'variables': cfg.variables,
         'raw': cfg.raw,
     }
@@ -77,20 +110,35 @@ def main(
     evaluator_id: str | None = None,
     config: str = 'config.toml',
     run_dir: str | None = None,
-    with_traces: bool = True,
+    with_traces: bool = False,
     trace_limit: int = 200,
     judge_model: str | None = None,
+    scale_min: float | None = None,
+    scale_max: float | None = None,
 ) -> str:
     """Fetch an evaluator and create its run directory.
 
-    By default this also chains straight into the trace fetch (``with_traces``),
-    scanning the most recent ``trace_limit`` traces, so a single command confirms
-    the evaluator in one shot: its declared variables and judge prompt (this
-    step) plus the candidate datapoint count and the *real* judge model resolved
-    from the production spans (the trace step). The cost/setup GATE still comes
-    afterwards (step 3), so nothing expensive runs here — trace fetch is
-    read-only. Pass ``--no-with_traces`` to fetch only the evaluator, or rerun
-    ``fetch_traces.py --trace_limit <N>`` later to pull more data.
+    Fetches the evaluator ONLY. Where the examples come from is the user's choice
+    — a trace scan, an orq dataset, examples they bring, or generated ones — and
+    this step deliberately stops before making it for them (SKILL.md step 1a).
+
+    It used to chain straight into a 200-trace scan, which answered that question
+    silently: the scan is the *default* source rather than the *only* one, and a
+    judge that is new, rarely triggered, or older than the window has little or
+    nothing in production to find. Scanning first made those users read an empty
+    result as a dead end instead of as one option of four.
+
+    Pass ``--with_traces`` to scan in the same command (``--trace_limit N`` sets the
+    depth) once the user has chosen that route, or run ``fetch_traces.py`` after.
+    Nothing expensive happens either way; the cost GATE is step 2 and the judge is
+    not invoked until step 3.
+
+    Note the one thing the scan supplies that the other sources cannot: the judge
+    model observed on production spans. That is only a *fallback* — the model is
+    normally resolved from the evaluator's own config against ``GET /v2/models`` —
+    but if the run dir comes back ``…_model-unknown_…`` and the user picks a
+    non-trace source, they have to supply ``--judge_model``, because step 3 cannot
+    re-run a judge it cannot name.
 
     Args:
         evaluator_id: orq evaluator id (24-hex). Falls back to `evaluator_id`
@@ -98,15 +146,18 @@ def main(
         config: Path to the TOML config (relative to skill/ or absolute).
         run_dir: Optional existing run directory to write into. Omit to create
             a fresh `runs/<key>_<ts>/`.
-        with_traces: Auto-run the trace fetch after writing evaluator.json
-            (default True). The evaluator is already saved if the trace fetch
-            fails, so you can retry traces without re-fetching the evaluator.
-        trace_limit: Scan depth for the chained trace fetch (default 200).
+        with_traces: Also scan traces after writing evaluator.json. **Off by
+            default** — the trace scan is one of four input sources the user
+            chooses between, not the presumed one. Pass it once they have picked
+            that route. The evaluator is already saved if the scan fails, so a
+            retry never re-fetches the evaluator.
+        trace_limit: Scan depth for the chained trace fetch (default 200), used
+            only when ``--with_traces`` is passed.
         judge_model: Explicit judge-model slug override (e.g.
             ``mistral-large-latest``). Use this when the evaluator's config
             model can't be resolved to a routable slug AND production spans
             don't record one — otherwise ``judge_model`` stays an opaque id and
-            step 4 (stability) can't route the judge. See "Judge-model
+            step 3 (stability) can't route the judge. See "Judge-model
             resolution" below. Normally unnecessary: the config UUID is resolved
             automatically via GET /v2/models.
 
@@ -124,7 +175,7 @@ def main(
         ``gen_ai.request.model`` (common — evaluator spans record the judge's
         input/output but not always the resolved model). In that case rerun with
         ``--judge_model <slug>``, or set ``evaluator.json["judge_model"]`` to a
-        real slug before step 4.
+        real slug before step 3.
 
     Returns:
         The run directory path (printed for the conductor / next step).
@@ -141,16 +192,39 @@ def main(
     except EvaluatorNotFound as exc:
         raise SystemExit(str(exc)) from exc
 
-    output_type = (evaluator['output_type'] or '').lower()
-    if output_type != 'boolean':
-        raise SystemExit(
-            f'Evaluator {evaluator_id} has output_type={evaluator["output_type"]!r}. '
-            'V1 supports boolean Pass/Fail judges only (design §1, §8). Stopping.'
-        )
+    try:
+        output_type = _check_output_type(evaluator['output_type'])
+    except ValueError as exc:
+        raise SystemExit(f'Evaluator {evaluator_id}: {exc}') from exc
+    evaluator['output_type'] = output_type
+
     if not evaluator['prompt']:
         raise SystemExit(
             f'Evaluator {evaluator_id} returned an empty judge prompt — nothing to audit. '
             'Confirm this is an LLM-judge (llm_eval) evaluator.'
+        )
+
+    # Categorical needs its declared label set to define K (the entropy
+    # denominator). Fail loud rather than guess K from the labels observed in
+    # traces — a silent guess would make the instability scale drift with the data.
+    if output_type == 'categorical' and not evaluator['categorical_labels']:
+        raise SystemExit(
+            f'Evaluator {evaluator_id} is categorical but returned no categorical_labels — '
+            'cannot determine K. Confirm the evaluator declares its label set.'
+        )
+
+    # Numeric scale is override-only (§4a, §8.1): resolve it now so evaluator.json
+    # carries it. Absent scale is allowed and expected — numeric rows are then
+    # reported `unmeasurable` rather than guessed.
+    try:
+        scale = _resolve_scale(cfg, scale_min, scale_max)
+    except ValueError as exc:
+        raise SystemExit(f'Evaluator {evaluator_id}: {exc}') from exc
+    evaluator['scale'] = scale if output_type in {'number', 'numeric'} else None
+    if output_type in {'number', 'numeric'} and scale is None:
+        logger.warning(
+            '  numeric scale: NONE — numeric rows will be reported `unmeasurable` until you pass '
+            '--scale_min/--scale_max (or set scale_min/scale_max in config.toml).'
         )
 
     key = evaluator['key'] or runner.slugify(evaluator_id)
@@ -171,6 +245,13 @@ def main(
             'production spans; if that also misses, rerun with --judge_model <slug>.'
         )
     logger.info(f'  variables:   {evaluator["variables"]}')
+    if output_type == 'categorical':
+        labels = evaluator['categorical_labels']
+        logger.info(f'  output type: categorical (K={len(labels)}: {labels})')
+    elif output_type in {'number', 'numeric'}:
+        logger.info(f'  output type: {output_type} (scale={evaluator["scale"]})')
+    else:
+        logger.info(f'  output type: {output_type}')
     logger.info(f'  run dir:     {out_dir}')
 
     if with_traces:

@@ -16,19 +16,39 @@ id). `run_jury_for_row` is the per-row job the stability step fans out.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Sequence
 
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_exponential_jitter
 
-from evaluatorq.common.judge import EvaluatorResponsePayload, _strip_code_fences, render_template
+from evaluatorq.common.judge import EvaluatorResponsePayload, render_template
 from evaluatorq.common.jury import Prediction, VerdictKind, run_jury
 from evaluatorq.common.llm_call import execute_chat_completion
 from evaluatorq.common.llm_client import resolve_llm_client
 
 from lib.content import field_for_variable, stringify_messages
 from lib.orq_client import tls_verify
+
+
+def _strip_code_fences(text: str) -> str:
+    """Strip a surrounding ```lang … ``` markdown fence, if present.
+
+    Vendored (RES-978): evaluatorq stopped exporting its private
+    ``_strip_code_fences``, which broke this module's import (and every test that
+    loads it). Behaviour matches what parse_verdict relies on: only an *outer*
+    fence is removed — a ``` that appears inside a JSON string value is left
+    untouched, so a fenced explanation never truncates the payload.
+    """
+    s = (text or '').strip()
+    if not s.startswith('```'):
+        return text  # no outer fence — don't disturb inner ``` in string values
+    lines = s.split('\n')
+    lines = lines[1:]  # drop the opening ```lang line
+    if lines and lines[-1].strip().startswith('```'):
+        lines = lines[:-1]  # drop the closing fence
+    return '\n'.join(lines).strip()
 
 # Mirror of orq's boolean `explanation_and_value` contract. orq puts the whole
 # rubric in a single user message (no system turn) and pins the output shape with
@@ -61,12 +81,52 @@ JUDGE_RESPONSE_FORMAT: dict[str, Any] = {
     },
 }
 
+
+def build_response_format(output_type: str, labels: Sequence[str] | None = None) -> dict[str, Any]:
+    """The structured-output contract to request, per output type (RES-978 §5.3).
+
+    boolean → `value: boolean`; categorical → `value: string` constrained to an
+    `enum` of the K declared labels; numeric → `value: number`. `explanation` is
+    always first so the model reasons before committing. Best-effort only — some
+    judges ignore json_schema and free-text the verdict, which the parsers recover.
+    """
+    kind = (output_type or 'boolean').strip().lower()
+    if kind == 'boolean':
+        return JUDGE_RESPONSE_FORMAT
+    if kind == 'categorical':
+        value_schema: dict[str, Any] = {'type': 'string', 'description': 'Exactly one of the allowed labels.'}
+        if labels:
+            value_schema['enum'] = list(labels)
+    elif kind in {'number', 'numeric'}:
+        value_schema = {'type': 'number', 'description': 'The numeric score the rubric asks for.'}
+    else:
+        raise ValueError(f'unknown output_type {output_type!r} (expected boolean | categorical | number)')
+    return {
+        'type': 'json_schema',
+        'json_schema': {
+            'name': 'evaluator_verdict',
+            'strict': True,
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'explanation': {'type': 'string', 'description': 'Reasoning, written BEFORE the verdict.'},
+                    'value': value_schema,
+                },
+                'required': ['explanation', 'value'],
+                'additionalProperties': False,
+            },
+        },
+    }
+
+
 # Trailing/standalone boolean token. Tool-capable judges (e.g. glm-5.2 via the
 # orq router) ignore `response_format: json_schema` and instead follow the
 # judge prompt's literal free-text contract ("explanation, value"), emitting
 # plain text that ends in True/False. We accept both.
 _BOOL_TOKEN = re.compile(r'\b(true|false)\b', re.IGNORECASE)
-_VALUE_LABEL = re.compile(r'(?:^|\n)\s*(?:value|verdict|answer)\s*[:=]\s*', re.IGNORECASE)
+_VALUE_LABEL = re.compile(
+    r'(?:^|\n)\s*(?:value|verdict|answer|score|rating)\s*[:=]\s*', re.IGNORECASE
+)
 
 
 def _clean_explanation(text: str, *spans: tuple[int, int]) -> str:
@@ -129,6 +189,186 @@ def parse_verdict(raw: str) -> EvaluatorResponsePayload:
         spans.append((label.start(), label.end()))
     explanation = _clean_explanation(text, *spans)
     return EvaluatorResponsePayload(value=value, explanation=explanation)
+
+
+# ── Categorical / numeric canonicalization (RES-978 §4a) ───────────────────────
+# instability.py only ever sees clean, canonical verdicts, so all the messy
+# "what did the judge actually emit" logic lives here. A completion that parses
+# but is off-contract (a non-K label, a non-number, a number outside the declared
+# scale) is a SURFACED `wrong_output_type` signal — recorded and shown to the
+# human as a target for eval improvement — never silently scored or bucketed.
+
+_WRONG_OUTPUT_TYPE = 'wrong_output_type'
+_OK = 'ok'
+# First numeric token: optional sign, digits, optional decimal via '.' or ','.
+_NUM_TOKEN = re.compile(r'[-+]?\d+(?:[.,]\d+)?')
+
+
+@dataclass
+class ParsedVerdict:
+    """A canonical categorical/numeric verdict, or an off-contract signal.
+
+    `status` is `ok` (`value` is a clean canonical verdict — the declared label
+    string, or a float) or `wrong_output_type` (`value` is None; the completion
+    parsed but violated the contract).
+    """
+
+    status: str
+    value: str | float | None
+    explanation: str = ''
+
+
+def _loads_obj(text: str) -> dict[str, Any] | None:
+    """Best-effort parse of a JSON object from a fence-stripped completion."""
+    try:
+        obj = json.loads(text)
+    except Exception:  # noqa: BLE001 — free text is the expected fallback
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _freetext_candidate(text: str) -> str:
+    """The label-ish token a free-text judge emitted.
+
+    Prefers the text after the last `Value:`/`Verdict:`/`Answer:` label (the
+    verdict is emitted last); otherwise the last non-empty line.
+    """
+    label: re.Match[str] | None = None
+    for lm in _VALUE_LABEL.finditer(text):
+        label = lm
+    if label is not None:
+        tail = text[label.end():].strip().splitlines()
+        if tail and tail[0].strip():
+            return tail[0].strip()
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    return lines[-1] if lines else text.strip()
+
+
+def parse_categorical(raw: str, labels: Sequence[str]) -> ParsedVerdict:
+    """Canonicalize a categorical completion: casefold+strip, exact one-of-K.
+
+    Matches the emitted label against the declared set case-insensitively and
+    returns the DECLARED label (so K-counting groups on the contract's own
+    spelling). No fuzzy/substring matching — merging `abuse` with `abuse (severe)`
+    would corrupt K and inflate entropy far worse than a visible miss — so a
+    non-match is `wrong_output_type`, never a new bucket.
+    """
+    text = _strip_code_fences((raw or '').strip()).strip()
+    obj = _loads_obj(text)
+    if obj is not None and 'value' in obj:
+        candidate = str(obj.get('value', ''))
+        explanation = str(obj.get('explanation', '') or '')
+    else:
+        candidate = _freetext_candidate(text)
+        explanation = ''
+    key = candidate.casefold().strip()
+    for declared in labels:
+        if declared.casefold().strip() == key:
+            return ParsedVerdict(_OK, declared, explanation)
+    return ParsedVerdict(_WRONG_OUTPUT_TYPE, None, explanation or candidate)
+
+
+# Phrases that name the *scale* rather than the verdict: "on a scale of 1 to 5",
+# "4 out of 5", "3/5". Scrubbed before the verdict is read so a scale endpoint can
+# never be mistaken for the score.
+_SCALE_MENTION = re.compile(
+    r'(?:\bout\s+of\b|\bof\b|\bto\b|/)\s*[-+]?\d+(?:[.,]\d+)?', re.IGNORECASE
+)
+
+
+def _verdict_number_token(text: str) -> tuple[str | None, str]:
+    """The numeric token a free-text judge emitted as its verdict.
+
+    Checks three sources in priority order:
+
+    1. A bare number on the first non-empty line (score-first pattern).  Judges
+       that emit ``4\nOnly 2 of 3 claims supported.`` put the verdict on line 1
+       and the explanation below.  Without this check, ``_freetext_candidate``
+       picked the last line, ``_SCALE_MENTION`` scrubbed ``of 3``, and the
+       surviving ``2`` was returned as the verdict — silently wrong and inside
+       the declared scale, so nothing downstream caught it.
+    2. ``_freetext_candidate`` — the text after the last ``Value:``/``Score:``
+       label, or the last non-empty line when no label exists.
+    3. The full text as a last resort.
+
+    Scale mentions are scrubbed before reading tokens from sources 2 and 3.
+    A verdict line still carrying two different numbers after scrubbing is
+    **ambiguous** and surfaced as off-contract — guessing between them is exactly
+    how a wrong score gets scored silently.
+    """
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if lines and _NUM_TOKEN.fullmatch(lines[0]):
+        return lines[0], ''
+
+    for source in (_freetext_candidate(text), text):
+        if not source:
+            continue
+        tokens = _NUM_TOKEN.findall(_SCALE_MENTION.sub(' ', source)) or _NUM_TOKEN.findall(source)
+        if not tokens:
+            continue
+        if len({t.replace(',', '.') for t in tokens}) > 1:
+            return None, f'ambiguous free-text number ({", ".join(tokens)}): {source[:160]}'
+        return tokens[-1], ''
+    return None, ''
+
+
+def _json_number(obj: dict[str, Any] | None) -> float | None:
+    """The `value` of a JSON completion as a float, or None if it isn't one.
+
+    Accepts a QUOTED number (`{"value": "4"}`) as well as a bare one. Models quote
+    numbers routinely, and requiring `isinstance(value, (int, float))` sent those
+    completions down the free-text path — where the surrounding explanation's own
+    digits made the verdict line ambiguous, and a judge that had answered correctly
+    in the schema it was given was recorded as off-contract. Bools are excluded
+    because `True` is an `int` in Python and a boolean verdict is not a score.
+    """
+    if obj is None or 'value' not in obj:
+        return None
+    value = obj['value']
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        token = value.strip()
+        if token.count(',') == 1 and '.' not in token:
+            token = token.replace(',', '.')
+        try:
+            return float(token)
+        except ValueError:
+            return None
+    return None
+
+
+def parse_numeric(raw: str, scale: tuple[float, float] | None = None) -> ParsedVerdict:
+    """Canonicalize a numeric completion: the verdict token, `,`/`.` normalized.
+
+    A single `,` with no `.` is a decimal separator (`3,4` → `3.4`); this does NOT
+    disambiguate thousands separators (`3,400`), which bounded eval scores never
+    take (§4a, documented limit). Not a number, or an ambiguous free-text verdict
+    line → `wrong_output_type`; when a scale is set, a value outside
+    `[scale_min, scale_max]` is off-contract too.
+    """
+    text = _strip_code_fences((raw or '').strip()).strip()
+    obj = _loads_obj(text)
+    explanation = ''
+    json_number = _json_number(obj)
+    if json_number is not None:
+        number = json_number
+        explanation = str(obj.get('explanation', '') or '')
+    else:
+        token, reason = _verdict_number_token(text)
+        if token is None:
+            return ParsedVerdict(_WRONG_OUTPUT_TYPE, None, (reason or text)[:200])
+        if token.count(',') == 1 and '.' not in token:
+            token = token.replace(',', '.')
+        try:
+            number = float(token)
+        except ValueError:
+            return ParsedVerdict(_WRONG_OUTPUT_TYPE, None, token)
+    if scale is not None and not (scale[0] <= number <= scale[1]):
+        return ParsedVerdict(_WRONG_OUTPUT_TYPE, None, explanation or str(number))
+    return ParsedVerdict(_OK, number, explanation)
 
 
 @dataclass
@@ -200,12 +440,48 @@ def _is_transient(exc: BaseException) -> bool:
 
 
 def build_judge_fn(
-    spec: JudgeSpec, client: Any
+    spec: JudgeSpec,
+    client: Any,
+    *,
+    output_type: str = 'boolean',
+    labels: Sequence[str] | None = None,
+    scale: tuple[float, float] | None = None,
 ) -> Callable[[str], Awaitable[Prediction]]:
-    """Return a `judge_fn(model) -> Prediction` bound to one datapoint."""
+    """Return a `judge_fn(model) -> Prediction` bound to one datapoint.
+
+    The requested response format and the verdict parser are both chosen by
+    `output_type` (§5.3). An off-contract completion — a non-K label, a
+    non-number, or a number outside `scale` — becomes an ABSTAINED prediction: it
+    produced output (so it is not an error / failed repetition) but it is not a
+    scored verdict either (§4a). The boolean path is unchanged.
+    """
     prompt = render_template(spec.prompt_template, spec.replacements)
     # Emulate orq: the rubric alone in a single user message, no system turn.
     messages = [{'role': 'user', 'content': prompt}]
+    kind = (output_type or 'boolean').strip().lower()
+    response_format = build_response_format(kind, labels)
+
+    def _to_prediction(raw: str, usage: Any) -> Prediction:
+        if kind == 'boolean':
+            payload = parse_verdict(raw)  # raises on no verdict → failed repetition
+            return Prediction(
+                value=payload.value,
+                explanation=payload.explanation,
+                token_usage=usage,
+                abstained=payload.abstain,
+            )
+        if kind == 'categorical':
+            parsed = parse_categorical(raw, labels or [])
+        else:
+            parsed = parse_numeric(raw, scale)
+        if parsed.status == _OK:
+            return Prediction(value=parsed.value, explanation=parsed.explanation, token_usage=usage)
+        # Off-contract: abstain (surfaced, not scored, not a failure).
+        return Prediction(
+            abstained=True,
+            explanation=f'{_WRONG_OUTPUT_TYPE}: {parsed.explanation}'.strip(),
+            token_usage=usage,
+        )
 
     async def judge_fn(model: str) -> Prediction:
         try:
@@ -226,20 +502,25 @@ def build_judge_fn(
                         span=None,
                         timeout_s=spec.timeout_s,
                         temperature=spec.temperature,
-                        response_format=JUDGE_RESPONSE_FORMAT,
+                        response_format=response_format,
                     )
             raw = response.choices[0].message.content or '{}'
-            payload = parse_verdict(raw)
-            return Prediction(
-                value=payload.value,
-                explanation=payload.explanation,
-                token_usage=usage,
-                abstained=payload.abstain,
-            )
+            return _to_prediction(raw, usage)
         except Exception as exc:  # noqa: BLE001 — recorded as a failed repetition
             return Prediction(error=f'{type(exc).__name__}: {exc}')
 
     return judge_fn
+
+
+def _count_off_contract(repetitions: list[Any], repetitions_failed: int) -> int:
+    """Off-contract (wrong_output_type) repetition count.
+
+    Abstained reps surface as `None` in the jury's `repetitions` list but are NOT
+    in `repetitions_failed` (which counts errored calls only). So the off-contract
+    tally is the `None` count minus the failures. Never negative.
+    """
+    n_none = sum(1 for r in repetitions if r is None)
+    return max(0, n_none - repetitions_failed)
 
 
 async def run_jury_for_row(
@@ -248,31 +529,44 @@ async def run_jury_for_row(
     *,
     client: Any,
     repetitions: int,
+    output_type: str = 'boolean',
+    labels: Sequence[str] | None = None,
+    scale: tuple[float, float] | None = None,
 ) -> dict[str, Any]:
     """Run the single-judge panel `repetitions` times over one datapoint.
 
-    Returns the raw per-repetition verdicts (`repetitions`), the count that
-    errored (`repetitions_failed`), and evaluatorq's aggregated majority
-    verdict (`value`). `propagate_errors=False` keeps a transient judge outage
-    on one repetition from aborting the whole row.
+    Returns the raw per-repetition verdicts (`repetitions` — bool/str/float for
+    the type, `None` for a failed or off-contract rep), the count that errored
+    (`repetitions_failed`), the off-contract count split out of the Nones
+    (`n_wrong_output_type`, §4a), and evaluatorq's aggregated verdict (`value`).
+    `propagate_errors=False` keeps a transient judge outage on one repetition
+    from aborting the whole row. The numeric type aggregates by mean, the others
+    by plurality (`VerdictKind`).
     """
+    kind = (output_type or 'boolean').strip().lower()
+    verdict_kind = VerdictKind.NUMERIC if kind in {'number', 'numeric'} else VerdictKind.CATEGORICAL
     deliberation = await run_jury(
-        judge_fn=build_judge_fn(spec, client),
+        judge_fn=build_judge_fn(spec, client, output_type=kind, labels=labels, scale=scale),
         panel=[judge_model],  # single-judge "panel"
         repetitions=repetitions,
-        verdict_kind=VerdictKind.CATEGORICAL,  # boolean Pass/Fail (no BINARY kind)
+        verdict_kind=verdict_kind,
         propagate_errors=False,
     )
     vote = deliberation.jury.votes[0]
+    reps = list(vote.repetitions)
     return {
         # evaluatorq marks an all-failed vote success=False and carries the
         # underlying judge error (e.g. a router 500) on vote.error. Propagate
         # both so callers never mistake an all-None row for a real verdict.
         'success': vote.success,
         'error': vote.error,
-        'repetitions': list(vote.repetitions),
+        'repetitions': reps,
         'repetitions_failed': vote.repetitions_failed,
+        # Off-contract reps abstained (surfaced as None but not errored), so split
+        # them out of the Nones for the §4a signal / the usable-verdict floor.
+        'n_wrong_output_type': _count_off_contract(reps, vote.repetitions_failed),
         'value': vote.value,
+        'output_type': kind,
         # run_jury collapses the N rationales to one representative for the
         # majority class. We keep that for the annotation queue's "what did the
         # judge say" panel; per-repetition rationales are not exposed by the

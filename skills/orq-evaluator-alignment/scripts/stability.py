@@ -36,6 +36,7 @@ from loguru import logger
 
 import _bootstrap  # noqa: F401
 from lib import runner
+from lib.content import traces_fingerprint
 from lib.judge import JudgeSpec, make_judge_client, make_replacements, run_jury_for_row
 
 load_dotenv()
@@ -95,6 +96,13 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
     prompt_template = evaluator['prompt']
     judge_model = evaluator['judge_model']
     variables = evaluator.get('variables', [])
+    # Verdict space (RES-978 §5.4): the judge emits + parses per output type, and
+    # metrics dispatches to the matching instability formula. Carried from
+    # evaluator.json; boolean is the default when absent (older run dirs).
+    output_type = (evaluator.get('output_type') or 'boolean').strip().lower()
+    categorical_labels = evaluator.get('categorical_labels') or []
+    scale_raw = evaluator.get('scale')
+    scale = tuple(scale_raw) if isinstance(scale_raw, (list, tuple)) and len(scale_raw) == 2 else None
     if not judge_model:
         raise RuntimeError(
             'evaluator.json has no judge_model — cannot reconstruct the judge. '
@@ -118,7 +126,10 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
         async with sem:
             t0 = time.monotonic()
             try:
-                res = await run_jury_for_row(spec, judge_model, client=client, repetitions=n_repeats)
+                res = await run_jury_for_row(
+                    spec, judge_model, client=client, repetitions=n_repeats,
+                    output_type=output_type, labels=categorical_labels, scale=scale,
+                )
                 n_failed = int(res.get('repetitions_failed') or 0)
                 # A row counts as judged only if >=1 repetition produced a usable
                 # verdict. An all-failed vote (success=False) used to be recorded
@@ -137,18 +148,32 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
                         )
             except Exception as exc:  # noqa: BLE001
                 logger.exception(f'✗ stability row {idx} failed')
-                res = {'repetitions': [], 'repetitions_failed': n_repeats, 'value': None, 'explanation': None}
+                res = {
+                    'repetitions': [], 'repetitions_failed': n_repeats, 'n_wrong_output_type': 0,
+                    'value': None, 'explanation': None,
+                }
                 ok, err = False, f'{type(exc).__name__}: {exc}'
         return {
             'source_index': idx,
             'query': row.get('query', ''),
             'output': row.get('output', ''),
             'messages': row.get('messages'),
+            # Ground truth rides through so metrics.py can score CORRECTNESS, not
+            # just self-consistency. A dataset row's `expected_output` landed in
+            # `reference` and stopped here, because an evaluator that declares no
+            # {{reference}} variable never renders it — so the one field that can
+            # close this method's central blind spot was collected and dropped.
+            'reference': row.get('reference', ''),
+            # Seeded-row provenance (RES-980 §11.6) rides through so build_queue /
+            # the report can flag synthetic or dataset-sourced datapoints.
+            'synthetic': row.get('synthetic', False),
+            'source': row.get('source'),
             'prod_judge_value': row.get('judge_value'),
             'success': ok,
             'error': err,
             'repetitions': res['repetitions'],
             'repetitions_failed': res['repetitions_failed'],
+            'n_wrong_output_type': int(res.get('n_wrong_output_type') or 0),
             'aggregate_value': res['value'],
             'representative_explanation': res.get('explanation'),
             'elapsed_s': time.monotonic() - t0,
@@ -170,8 +195,14 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
             'evaluator_id': evaluator['id'],
             'evaluator_key': evaluator.get('key'),
             'judge_model': judge_model,
+            'output_type': output_type,
             'n_repeats': n_repeats,
             'temperature': temperature,
+            # Identity of the traces.jsonl these source_index values point into, so
+            # a later consumer can tell that the file was rewritten underneath them
+            # (lib.content.traces_fingerprint). Over the FULL file, not the judged
+            # subset — source_index is a position in the file.
+            'traces_fingerprint': traces_fingerprint(rows),
             'num_rows': len(records),
             'experiment_path': experiment_path,
             'timestamp': runner.utc_timestamp(),

@@ -1,28 +1,41 @@
 ---
 name: orq-evaluator-alignment
 description: >-
-  Align, calibrate, or improve an existing binary Pass/Fail LLM-as-a-judge (orq
-  evaluator) so its verdicts match human judgment. Use when the user wants to
-  "align my evaluator", "improve my eval", "annotate an evaluator", "find
-  ambiguous cases", or "build an annotation queue" — i.e. they have a boolean
-  judge (evaluator = LLM-as-a-judge) that disagrees with human labels or is
-  inconsistent. Measures judge self-consistency (flip-rate) via repeated runs,
-  surfaces the most ambiguous datapoints for human annotation, rewrites the judge
-  prompt from the labels, and creates the new evaluator only after the human
-  approves. If the evaluator ID isn't given, ask for it after triggering. Do NOT
-  use to build an evaluator from scratch (use orq-build-evaluator), to fix
-  failures with prompt tweaks (use orq-optimize-prompt), or for non-boolean judges.
+  Align, calibrate, or improve an existing LLM-as-a-judge (orq evaluator) so its
+  verdicts match human judgment — boolean, categorical, or numeric judges. Use when
+  the user wants to "align my evaluator", "improve my eval", "my judge keeps
+  changing its mind", "find ambiguous cases", or "annotate an evaluator" — i.e.
+  they have an LLM judge that disagrees with human labels or is inconsistent.
+  Measures judge self-consistency as one 0..1 instability score via repeated runs,
+  groups the least reliable examples by what makes them hard and asks a few
+  questions instead of making the user label every row, rewrites the judge prompt
+  from those answers, and creates the new evaluator only after the human approves.
+  If the evaluator ID isn't given, ask for it after triggering. Do NOT use to
+  build an evaluator from scratch (use orq-build-evaluator) or to fix failures
+  with prompt tweaks (use orq-optimize-prompt).
 allowed-tools: Read, Write, Edit, Grep, Glob, Bash(uv run:*), AskUserQuestion
 ---
 
 # Evaluator Alignment
 
-You are the **conductor** of a human-in-the-loop pipeline (RES-930) that rewrites
-a binary LLM-judge evaluator to better match human judgment. You run small,
-independently-runnable scripts under `scripts/`; each writes one artifact into a
-per-run working directory (`runs/<key>_<ts>_<model>_<N>dp/`). **The human stays in control of
-every consequential action** — the prompt rewrite, creating the new evaluator,
-and any retest. Never skip a gate.
+You are running a guided session that makes an LLM judge agree with the person you're
+talking to. You do the mechanics; **they make every decision that costs money or
+changes something in their workspace** — rewriting the prompt, creating the new judge,
+re-running the test. Never skip a gate.
+
+**How to talk to the user.** They know their domain; they may know nothing about
+judges, entropy, or flip rates, and they don't need to. Describe what is happening in
+terms of what the judge *did* — "it gave a different answer 6 times out of 8 on this
+one" — not in terms of the metric that measured it. Keep the internal vocabulary
+("confuser", "grey zone", "instability band", "open-code", "conductor") out of what
+you say to them; it's fine in the artifacts. At each step, one or two sentences on
+what you're about to do and why, then do it. Offer options as short lists they can
+answer in a few words.
+
+Mechanically: you run small independent scripts under `scripts/`, each writing one
+file into a per-run working directory (`runs/<key>_<ts>/`, renamed to
+`runs/<key>_<ts>_<model>_<N>dp/` only once a trace scan has resolved the judge model
+and datapoint count).
 
 Each script under `scripts/` is self-contained: it declares its own dependencies
 via PEP 723 inline metadata, so `uv run scripts/<name>.py ...` builds an isolated,
@@ -39,178 +52,653 @@ bypasses the inline metadata).
 
 ## Constraints
 
-- **Boolean Pass/Fail judges only** (V1). Step 1 fails fast on anything else.
-- **Self-consistency is a ceiling, not proof.** A low flip-rate means the judge
-  is *stable*, not *correct* — a judge can be consistently wrong. You surface
-  ambiguity; the human supplies truth.
-- **Known blind spot:** flip-ranking never surfaces consistently-wrong items
-  (flip-rate ≈ 0). You MUST state this in your final summary, and you offer the
-  low-flip sanity sample (config `low_flip_sample_size`) as the cheap mitigation.
+- **Multi-type.** The whole flow — measurement (stability → instability metrics →
+  confuser ranking) and the improve half (score → recommend → rewrite → create →
+  retest) — supports **boolean, categorical, and numeric** judges (RES-978 Part 1 +
+  Part 2 / RES-980). Instability is one 0..1 scale (boolean flip-rate, categorical
+  label entropy, numeric score spread); the rewrite preserves the evaluator's verdict
+  space (label set / numeric scale). Numeric rewriting is deliberately shallow — it
+  nudges the scale's anchor descriptions, not a calibration model. Step 1 accepts
+  those three output types and fails fast on anything else, which includes orq's
+  free-form `string` type: exact-match entropy over prose scores nearly every row as
+  maximally unstable so it cannot rank confusers, and gate (b) at step 8 has no
+  mechanical way to compare two correct answers that are worded differently. Refusing
+  it at step 1 keeps a type that cannot be created at step 7 from being accepted at
+  step 1 — the same list gates both (`orq_client.SUPPORTED_OUTPUT_TYPES`).
+- **Consistency is a ceiling, not proof.** A steady judge is *reproducible*, not
+  *right* — it can be wrong the same way every time. You find the examples it's
+  unsure about; only the user can say what the answer should be.
+- **The blind spot, which you must say out loud — unless you measured it.** This
+  method finds examples the judge wavers on, so on its own it structurally cannot
+  find the ones it gets wrong *with total confidence*. Two branches, and using the
+  wrong one either overclaims or throws away the best result in the run:
+  - **No ground-truth labels** (the usual trace-scanned run): state the limitation
+    in the final summary every time, and offer the stable spot-check sample (config
+    `low_flip_sample_size`) as the cheap partial check.
+  - **Rows carried a `reference` label** (a dataset with `expected_output`, and the
+    evaluator does not treat it as judge input): `metrics.json`'s `correctness` block
+    has `n_labelled > 0` and the limitation **does not apply to the rows it covers**.
+    Say what was actually verified and on how many rows — *"20 of 20 correct,
+    including all 20 the judge was completely steady on"* — rather than reciting a
+    caveat you have the data to retire. `by_band.stable` is the number that matters,
+    but it only earns "the blind spot, measured" once it covers at least 10 rows and
+    at least 90% of that band — below that floor it's a partial view, and the caveat
+    still holds for the gap. Still name the labels as `dataset_reference` (§ step 8)
+    — they are someone's prior judgement, not the user's verdict — and keep the
+    caveat for whatever rows were unlabelled.
 
 ## The flow
 
-### 1. Confirm the evaluator (+ a first 200-trace scan)
-Ask for the evaluator **id**. (To find it: open the evaluator in orq, click
-**View code**, and copy the `id="01..."` shown there.) Then run **one** command:
+### 0. Do they have a judge in orq?  ⟵ GATE
+**Ask this first, before anything else.** This skill improves a judge that already
+exists in orq, so start by finding out whether there is one:
+
+> *"Do you already have this judge set up in orq? If so, paste its ID — open the
+> evaluator in orq, click **View code**, and copy the `id="01..."`."*
+
+Three answers, three routes:
+
+- **Yes, here's the ID** → go to step 1.
+- **No, but I have the prompt** → offer to set it up for them: *"Paste the judge
+  prompt and tell me what a pass looks like, and I'll create it in orq so we can
+  measure it."* Create it with the **`orq-build-evaluator`** skill, confirm the new
+  ID with them, then come back to step 1. Don't start measuring a prompt that has no
+  evaluator behind it — every later step reads the evaluator record.
+- **No, and no prompt yet** → this is the wrong skill. Say so plainly and point them
+  at **`orq-build-evaluator`**, which starts from what they want to catch. Stop here.
+
+### 1. Check the judge
+Once you have the ID, run **one** command:
 ```
 uv run scripts/fetch_evaluator.py --evaluator_id <id>
 ```
-This both fetches the evaluator **and** auto-chains a 200-trace scan, so a single
-step confirms everything the user needs to greenlight the run:
-- the **evaluator is right** — echo back the declared template variables and a
-  short paraphrase of the judge prompt;
-- the **candidate datapoint count** (`traces.jsonl`);
-- the **real judge model** pinned onto `evaluator.json` (`judge_model`). It is
-  resolved in priority order: an explicit `--judge_model` override → the
-  evaluator's config model id looked up via `GET /v2/models` (registry UUID →
-  slug) → the model observed on the production judge spans (step 2, plus
-  `judge_models_observed`). Flag it if more than one model shows up (a
-  mixed-model history can inflate the apparent flip-rate).
+This fetches the judge and **stops** — where the examples come from is step 1a, and
+it is the user's call, not a default. Tell the user, in their words, what came back:
+- **the judge is the right one** — say what it looks at (its template variables) and
+  what it decides, in one sentence, and ask them to confirm;
+- **which model is doing the judging** (`judge_model` on `evaluator.json`). Resolved
+  in priority order: an explicit `--judge_model` override → the evaluator's config
+  model id looked up via `GET /v2/models` (registry UUID → slug) → the model seen on
+  the production judge spans (plus `judge_models_observed`). If more than one model
+  shows up, mention it — a judge whose model changed over time looks more erratic
+  than it is.
 
-  **If the judge model comes out UNRESOLVED** (step 1 logs a warning and the run
-  dir is named `…_model-unknown_…`): the config id wasn't in `/v2/models` *and*
-  the spans don't record `gen_ai.request.model` — common, because evaluator
-  spans store the judge's input/output but not always the resolved model. Rerun
-  step 1 with an explicit slug (find it in the evaluator's model dropdown in
-  orq, or `GET /v2/models`):
+  **If the model comes back unresolved** (`evaluator.json`'s `judge_model` still
+  equals `judge_model_id` — the opaque config id, unresolved against `/v2/models`):
+  the config id wasn't in `/v2/models` *and* the spans don't record
+  `gen_ai.request.model` — common, because evaluator spans store the judge's input
+  and output but not always which model produced them. Ask the user which model the
+  judge uses (it's in the evaluator's model dropdown in orq) and rerun:
   ```
   uv run scripts/fetch_evaluator.py --evaluator_id <id> --judge_model mistral-large-latest
   ```
-  Without a routable slug, step 4 (stability) cannot re-invoke the judge.
+  Without it, we can't re-run the judge at step 3, so this has to be settled here.
 
-It prints the run directory — **use that `--run_dir` for every later step.** The
-folder is created as `<key>_<ts>` and, once the trace scan resolves the judge
-model and datapoint count, is renamed to `<key>_<ts>_<model>_<N>dp` so it is
-self-describing (re-fetching traces with a wider window updates the `<model>`/
-`<N>dp` in place). Always use the **printed** path, not the pre-scan name. If
-the evaluator is not boolean the script stops before scanning; relay that V1 is
-boolean-only.
+The command prints a run directory — **pass that `--run_dir` to every later step.**
+It starts as `<key>_<ts>` and is renamed to `<key>_<ts>_<model>_<N>dp` once the model
+and example count are known, so always use the **printed** path. If the judge's
+output type isn't boolean, categorical, or number, it stops here — tell the user
+those three are what's supported. orq's free-form `string` type is deliberately
+among the refusals: instability over prose is exact-match entropy, which scores
+nearly every row as maximally unstable and so cannot rank anything, and gate (b)
+at step 8 has no way to compare two correct answers worded differently. It also hard-exits if `--scale_min`/
+`--scale_max` are passed one without the other — the numeric scale override is
+both-or-neither, so a partial pair is a user error rather than something to guess at.
 
-**Then offer more data.** Matching is client-side (v3oql has no evaluator
-filter), so the scan covers the most recent `--trace_limit` traces (default
-**200**). If the user wants more datapoints, or the scan came back empty (a
-sparse or aged evaluator can sit beyond the default window — the empty message
-echoes the scan window), rerun just the trace fetch with a wider scan, and/or
-widen `trace_start_date`/`trace_end_date` in `config.toml`:
+### 1a. Ask where the examples should come from  ⟵ GATE
+**Always ask. There is no default source.** The judge is fetched; nothing has been
+scanned, pulled or generated yet. Four routes, and the right one depends on facts
+only the user has — how long this judge has been live, whether it fires often, whether
+the cases they care about have happened yet.
+
+> *"I've got the judge. Now I need examples to test it on. I can scan your production
+> traces for cases it's already scored, pull an orq dataset you've already got, take
+> examples you bring me, or generate some. Which fits?"*
+
+Lead with the trace scan and say why it's the one to beat: **it is the only source
+that shows what the judge actually meets in production.** The other three test what
+the rubric *says*. That's a real difference and worth one sentence, but it is not a
+reason to pick for them — a judge that went live yesterday has nothing to scan, and
+saying so up front beats an empty scan that reads like a dead end.
+
+**They can combine sources**, and several will want to: scan production, then top up
+with generated borderline cases. One ordering constraint — **the trace scan must go
+first.** It rewrites `traces.jsonl` wholesale; the other three append. Running it
+second deletes what they added, so it refuses when it finds rows from another source
+(`--replace` to override deliberately).
+
+1. **Scan production traces.** Reads the most recent traces and keeps the ones this
+   judge has already scored.
+   ```
+   uv run scripts/fetch_traces.py --run_dir <run_dir>                    # 200 (default)
+   uv run scripts/fetch_traces.py --run_dir <run_dir> --trace_limit 2000 # deeper
+   ```
+   It reports the count **next to the window it came from**, and whether it hit the
+   cap: *"18 datapoints from the 200 most recent traces — and the scan filled up"*
+   means there is history behind it, so offer the deeper scan. If it came back
+   **under** the cap it already saw every trace in the window; a bigger limit
+   re-scans the same traces, so widen `trace_start_date`/`trace_end_date` instead.
+   Read this back before step 2 prices the run: more examples cost proportionally
+   more, and after step 6 re-scanning is no longer free — it rewrites the file every
+   label is keyed into, so it means redoing stability → metrics → build_queue and
+   the labelling.
+2. **Use a dataset already in orq.**
+   ```
+   uv run scripts/dataset_inputs.py list --config config.toml        # pick one
+   uv run scripts/dataset_inputs.py pull --run_dir <run_dir> --dataset_id <id>
+   ```
+   It matches the dataset's columns to what the judge reads, deriving `output` from
+   the last assistant turn and `query` from the last user turn when the exchange
+   lives under `messages` rather than in `inputs`. If a field still can't be matched
+   it prints **one inventory** — what the judge needs, what the dataset holds, what
+   each field could map to — instead of one line per row. Read that back and ask the
+   user to confirm the mapping; don't guess:
+   ```
+   uv run scripts/dataset_inputs.py pull --run_dir <run_dir> --dataset_id <id> \
+       --map "log.output=messages.assistant.last"
+   ```
+   **Datasets often carry ground truth** (`expected_output`). That is the single
+   most valuable thing a run can have: it turns step 4 from "is the judge steady?"
+   into "is it *right*?", and it is the only way to see a judge that is stable and
+   wrong. Say so when offering this option.
+3. **Take examples they bring.** For data that isn't in orq yet — a spreadsheet, a
+   log export, examples pasted into chat. Write them to
+   `<run_dir>/synthetic_datapoints.json` as a list of
+   `{inputs, messages?, expected_output?, rationale?}`, then:
+   ```
+   uv run scripts/seed_inputs.py convert --run_dir <run_dir>   # → traces.jsonl
+   ```
+   Then ask whether to keep them in orq for next time:
+   ```
+   uv run scripts/seed_inputs.py save --run_dir <run_dir> --dataset_name "<name>"
+   ```
+4. **Make some up.** Use the **`orq-generate-synthetic-dataset`** skill to write
+   borderline cases — **based on the real examples if there are any**, on the judge's
+   own rubric if there are none. Same `convert` / `save` commands as option 3.
+
+**Check what you ended up with before moving on.** Fewer than 10 usable examples is
+too few to tell signal from noise — say so in one line (*"that's 4 examples, which
+isn't enough to tell a real disagreement from a coin flip"*) and offer the remaining
+routes rather than proceeding. This is a normal outcome for a judge that is new,
+rarely triggered, or older than the scan window, not a failure.
+
+**Come back here from step 4** if the judge turns out perfectly consistent on
+everything — there is nothing to review, and more or different examples is the fix.
+
+**Not an input source, but it belongs in the same conversation:** when there is plenty
+of data and the judge simply never wavers, ask a **second model** to judge the same
+examples and treat the disagreements as the interesting cases. This needs a completed
+`stability.py` run first, so it is a step-4 remedy rather than a step-1a choice.
+Confirm the second model with the user.
 ```
-uv run scripts/fetch_traces.py --run_dir <run_dir> --trace_limit 2000
+uv run scripts/cross_model.py --run_dir <run_dir> --model <provider/model>
 ```
-(The evaluator is already saved, so this only re-pulls traces.) To fetch the
-evaluator without the auto-scan, pass `--no-with_traces`.
 
-### 2. Confirm experiment setup + workload  ⟵ GATE
-Confirm **repetitions N** (default 8), **datapoint count**, and temperature with
-the user. **Also confirm the provider:** step 1 resolves the judge *model* from
-the traces/eval config correctly, but the *provider* is a known limitation — it
-is **not** resolved. Trace resolution writes a **bare** model slug into
-`evaluator.json["judge_model"]` (e.g. `gpt-5-mini`, `gpt-oss-120b`), and the
-router needs a provider-prefixed slug to route it. There is **no `--model`/
-`--provider` flag** — the judge model is read only from that field. So to use the
-provider the user names, **edit `<run_dir>/evaluator.json` and set `judge_model`
-to the fully-qualified router slug** before step 4, no code change needed. The
-router requires the form **`<provider>/<model>`** — a single provider prefix, then
-the model: e.g. `anthropic/claude-haiku-4-5`, `google/gemini-2.5-flash`,
-`groq/gpt-oss-120b` (the same form the agent config and the MCP `create_llm_eval`
-tool accept). In slugs like `openai/gpt-oss-120b` the `openai/` is the *provider*,
-not a fixed segment — do **not** insert a literal `openai/` between the provider and
-the model; `anthropic/openai/claude-haiku-4-5` returns a 404. Show the user the
-resulting slug and confirm it's the provider they want to judge with.
-Show the projected workload and **wait for explicit go-ahead**:
+**If the judge model came back unresolved** (`evaluator.json`'s `judge_model` still
+equals `judge_model_id`) and they picked a non-trace source, ask for the model now —
+production spans were the fallback that would have supplied it, and step 3 cannot
+re-run a judge it cannot name.
+
+**Say this in the final summary whenever options 2–4 contributed:** examples that
+didn't come from production test what the rubric *says*, not what the judge actually
+meets in the wild. The alignment is only as representative as the data behind it.
+
+### 2. Agree what we're about to run, and what it costs  ⟵ GATE
+The next step asks the judge the same question several times over to see whether it
+answers the same way. Explain it that way, then settle three things with the user:
+**how many times to repeat each example** (default 8), **how many examples**, and the
+**temperature**.
+
+**Also confirm which model will judge.** We resolve the model name but *not* the
+provider, and the router needs both. `evaluator.json["judge_model"]` often holds a
+bare name (`gpt-5-mini`, `gpt-oss-120b`); to pin the provider, **edit
+`<run_dir>/evaluator.json` and set `judge_model`** to `<provider>/<model>` — there is
+no `--model` flag, that field is the only input. Examples:
+`anthropic/claude-haiku-4-5`, `google/gemini-2.5-flash`, `groq/gpt-oss-120b`. In
+`openai/gpt-oss-120b` the `openai/` **is** the provider, not a fixed prefix — never
+stack one on another (`anthropic/openai/claude-haiku-4-5` is a 404). Show the user the
+final slug and check it's the provider they meant.
+
+Then show the size of the job and **wait for an explicit yes**:
 ```
 uv run scripts/estimate_cost.py --run_dir <run_dir>
 ```
-This reports the **number of judge calls** and the **input/output token totals**
-(no dollar figure — multiply by your judge model's per-Mtoken rate for a cost).
+It reports how many judge calls that is and the token totals. There's no dollar
+figure — multiply by the model's per-Mtoken rate if they want one.
 
-### 3. Run the stability experiment
+### 3. Run it
 ```
 uv run scripts/stability.py --run_dir <run_dir>
 ```
-(Add `--num_samples 2` first for a smoke check.) Writes `stability.json` and
-auto-runs metrics.
+(Try `--num_samples 2` first as a smoke check.) Writes `stability.json` and runs the
+metrics automatically.
 
-### 4. Report the flips
-metrics.py wrote `metrics.json` with a `flip_report`. **Tell the user how much
-the judge is flipping**: overall 1-Flip Consistency, Gwet AC1, how many
-datapoints flipped, and where instability concentrates. This is the evidence the
-user needs to choose an annotation count.
+### 4. Tell them how consistent the judge is
+`metrics.py` wrote `metrics.json`. Report it **as behaviour, not as statistics**:
+how often the judge gave the same answer when asked the same question repeatedly,
+how many examples it was solid on versus wobbly on, and which specific examples it
+changed its mind about most. Lead with a sentence anyone can act on — *"on 40
+examples, the judge gave a different answer on 6 of them when asked eight times"* —
+and keep the underlying scale (a 0–1 instability score per example) as backup detail
+for anyone who asks.
 
-### 5. Ask how many to annotate  ⟵ GATE
-*After* they have seen the flip report, ask how many top-ambiguous datapoints
-they want to label (an informed choice, not a fixed number). Mention the
-low-flip sanity sample. Then:
+Say plainly what this does **not** tell them: consistency is not correctness. A judge
+that is wrong the same way every time scores perfectly here. That caveat belongs in
+this message, not only in the final summary.
+
+**Unless `metrics.json`'s `correctness` block has `n_labelled > 0`** — then it *does*
+tell them, for the rows it covers, and burying that would waste the most valuable
+number in the run. The block itself is present whenever the examples carried ground
+truth, but a present block isn't the same as a populated one: when the evaluator
+declares a reference-family variable (`reference` was judge input, not ground truth),
+or it's numeric with no derivable scale, it comes back with
+`n_labelled: 0` and a `reason_omitted` naming which — read that out, don't report an
+accuracy number. When it *is* populated, lead with the accuracy and, specifically, the
+accuracy on rows the judge was **stable** on — but check `by_band.stable`'s coverage
+first: only once it covers at least 10 rows and at least 90% of that band does the
+line earn *"the consistently-wrong blind spot, measured"*, and only then say *"and on
+the 20 it was completely steady about, it was right on all 20 — so this isn't
+consistent-but-wrong, it's consistent-and-right."* Below that floor `metrics.py`
+captions the same line "partial view — do not conclude 'consistent-and-right' from
+this", and say exactly that instead of the stronger claim. If the accuracy itself
+reads *"steady on 20, right on 12"* — whatever the coverage — say that just as
+plainly: the judge is reliably wrong, and no amount of rewriting for consistency will
+help.
+
+`wrong_vs_reference` rows enter the queue as their own class — stable, and disagreeing
+with the label. Before any of them drives a rewrite, **ask the user to confirm the
+label**: a dataset label is someone's prior judgement, possibly stale, possibly from a
+different version of the rubric. Never auto-approve a rewrite on dataset labels alone.
+
+(For yes/no judges the heavier agreement stats — 1-Flip Consistency, Gwet AC1,
+Fleiss κ — are computed too. Offer them; don't lead with them.)
+
+**If the judge was consistent on everything, go back to step 1a** — there is nothing
+to review, and the second-model option is the one that fits.
+
+### 5. Ask how many examples to go through together  ⟵ GATE
+*After* they've seen the step-4 report, ask how many of the examples the judge
+changed its mind on they want to look at with you:
+
+> *"How many of the ones it kept changing its mind on should we go through together?
+> Give me a number, or 'all' — if it's more than fits in one pass I'll tell you which
+> ones made the cut."*
+
+Never say "confuser queue", "top-ambiguous", or "grey zone" to the user. It's an
+informed choice, not a fixed number. Mention in half a sentence that you'll also pull
+a few examples it was *completely* consistent on, as a spot-check that it isn't
+confidently wrong — those are held separately and don't count against their number.
 ```
 uv run scripts/build_queue.py --run_dir <run_dir> --count <N>
 ```
+**The number they give is the number they get.** The queue also holds
+`low_flip_sample_size` (default 5) stable spot-check rows, and those are *excluded*
+from step 6 — so "3" means three examples in the discussion, not eight.
 
-### 6. Annotate
+`build_queue` also projects what step 6 will cost in context ("~95k tokens of 60k;
+the top 48 will enter"). If it reports a drop, say so **now** — this is the moment
+they chose coverage, so correct it here rather than re-asking later.
+
+### 6. Work out *why* those examples are hard, then ask about it
+Rather than labelling each example one at a time, group them by what makes them hard
+and ask a few questions that each settle a whole group at once.
+
+1. **Assemble** the payload and read it into context:
+   ```
+   uv run scripts/grey_zone.py assemble --run_dir <run_dir>
+   ```
+   `grey_zone_payload.json` gives each example's answer split, how wobbly it was, one
+   of the judge's own explanations, and the (shortened) input it judged. *(Only one
+   explanation per example is available — evaluatorq collapses the repetitions to
+   one; a known v1 limit.)*
+
+   **Don't `Read` `queue.json` or `stability.json` wholesale** — they carry every
+   full input and every repetition, and reading them blows straight past the context
+   budget. `grey_zone_payload.json` is the view you work from.
+
+   **The one exception:** if answering a question genuinely needs a field the payload
+   doesn't carry — a truncated passage, an exact figure, a row flagged
+   `input_source: "fallback"` — look up **that one datapoint** by its `source_index`
+   and read only its record. Say you're doing it and why. A single row is cheap; the
+   whole file is not. Guessing because the rule said no is the worst of the three.
+
+   **Then say what you actually got to see, before you analyse it.** The `budget`
+   block tells you how many examples came through (`n_confusers`), how many the token
+   budget dropped (`n_dropped_by_budget`), how many stable spot-check rows were held
+   back (`n_low_flip_excluded`), and how many inputs were shortened (`n_truncated`,
+   `total_chars_elided`; per example, `input_chars_shown` of `input_chars_original`).
+   Say it in one plain line — *"all 3 came through in full, nothing shortened"*, or
+   *"48 of 80; 12 had long inputs cut down, the worst showing 600 of 41,200
+   characters"*.
+
+   Two more that the elision numbers **cannot** tell you, so check them explicitly:
+   - **`n_fallback_input` > 0** — those rows' inputs were reassembled from what the
+     trace captured, because the judge template couldn't be inverted. They may be
+     missing a field the judge had, and no character count will reveal it. Say so,
+     and use the single-datapoint lookup below before drawing a conclusion from one.
+   - **`n_no_rationale` > 0** — the judge gave no usable explanation for those,
+     which happens most on an exact tie. That's the perverse case: the most evenly
+     split example, where seeing both sides would help most, arrives with nothing to
+     read. Don't quote the tie-break notice as if it were reasoning; say it's absent
+     and reason from the input.
+   - **`n_dropped_cross_model` > 0** — the queue lists second-model disagreers
+     *after* the instability ranking, so the token budget drops those first. On a
+     judge that rarely wavers they were the whole reason there was anything to look
+     at. Raise `--max_tokens` and re-run rather than open-code without them.
+
+   Each confuser also carries `reason`: `instability` (the judge disagreed with
+   itself) or `cross_model` (it held steady and a second model disagreed). They are
+   different kinds of hard — don't describe one as the other.
+
+   This matters because a conclusion drawn from 1% of a transcript is confidently
+   wrong in a way nothing downstream catches. Flag any group whose examples were
+   heavily cut, and lean on the judge's own explanation for those. If they want to
+   see more, raise `--max_chars` (more of each) or `--max_tokens` (more of them) and
+   re-run — it's pure recomputation from `queue.json`, so it costs nothing.
+2. **Group them by what makes them hard.** Not by topic — by the thing the current
+   rubric doesn't settle (e.g. "sarcasm handled inconsistently", "abuse that's being
+   quoted, not said", "no clear line for how severe counts as severe"). Step 4 found
+   *which* examples it wobbled on; here you work out *why*.
+3. **Ask one question per group — aim for 1–5 total.**  ⟵ GATE
+   Ask about the rule, not the example, so one answer settles the whole group:
+   - yes/no judge → which side of the line ("Should sarcasm aimed at a group count as abuse?")
+   - category judge → where two labels divide ("When is something `spam` rather than `promotional`?")
+   - score judge → the threshold ("Above what score would you call this severe?")
+
+   Ask in chat, one at a time, and show an example or two so the question is
+   concrete. What you want back is a short rule, not a verdict on each example.
+4. **Write `grey_zone_policy.json`** from their answers. Per group record
+   `{id, question, answer, rule, member_source_indices}`; then apply each rule to its
+   examples to derive `{source_index, value, [tolerance], grey_zone_id, label_source}`
+   — `true/false` for yes/no; one **already-declared** label for categories; for
+   scores a target **plus a `tolerance` band** (asking for an exact number back is
+   unrealistic). Carry the evaluator's `verdict_space` into the file; `apply` checks
+   every value against it and refuses a label the judge cannot emit. **Never invent a
+   new label or move the scale** — the rewritten judge has to answer in the same
+   terms as the old one, or nothing is comparable.
+
+   **Then read the derived labels back.**  ⟵ GATE
+   You applied their rule; they didn't label these points. Those labels are what
+   step 8 grades the new judge against, so show them the result in one short pass —
+   *"applying that, I'd mark these three as pass and this one as fail; anything you'd
+   flip?"* — and set `label_source: "human_confirmed"` on the ones they confirm,
+   `"derived"` on the rest (the default). It's one message, and without it the whole
+   validation is one model checking its own reading of the rule.
+5. **Turn the answers into guidance** for the rewrite:
+   ```
+   uv run scripts/grey_zone.py apply --run_dir <run_dir>
+   ```
+   Checks the policy and writes `aggregated.md`. Go to step 7.
+6. **Look at the steady ones too, briefly.** You promised this at step 5 and it is
+   the only check on the blind spot the whole method has. One extra pass, held
+   separately from the grey zones:
+   ```
+   uv run scripts/grey_zone.py assemble --run_dir <run_dir> --include_low_flip
+   ```
+   Read the `low_flip_sample: true` rows and ask the user whether the judge got them
+   right — no grouping, no rules, just *"it was completely sure about these; do you
+   agree?"* If any is wrong, say so plainly: the judge is confidently wrong
+   somewhere, and nothing in the instability ranking will ever find that. **Re-run
+   `assemble` without the flag afterwards** so `grey_zone_payload.json` goes back to
+   being the grey-zone view. Don't fold these into the policy — they aren't grey
+   zones, and step 8 re-judges them separately with `--with_low_flip`.
+
+**If the examples don't group cleanly**, or the user would rather just look at them
+one by one, open the scoring UI instead of doing the chat Q&A:
 ```
 uv run scripts/serve_annotation.py --run_dir <run_dir>
 ```
-Tell the user to open the printed URL and label each item **True/False** (the
-judge's own verdict space). Labels auto-save to `annotations.json`; they can
-stop and resume. Wait for them to say they are done.
-
-### 7. Recommend → aggregate
+They get the right control for the judge's type — Pass/Fail, one button per label, or
+a number on the scale — plus an optional one-line "why". It saves as they go and can
+be resumed. Then:
 ```
 uv run scripts/recommend.py --run_dir <run_dir>
 uv run scripts/aggregate.py --run_dir <run_dir>
 ```
-One meta-prompt per annotation (agreements and disagreements alike), then
-`aggregated.md` grouping them into changes-to-make and strengths-to-preserve.
-Show the user the aggregated changes; they may edit `aggregated.md` before the
-rewrite.
+Both routes end at `aggregated.md`. When both `grey_zone_policy.json` and
+`annotations.json` exist, steps 7 and 8 score against the **union** of the two, keyed
+by `source_index` — so switching to the UI part-way through the grey-zone route keeps
+both halves of the labelling. Where a datapoint appears in both, the annotation wins,
+since the UI is where you go to correct a policy label.
 
-### 8. Propose → approve → create  ⟵ GATE
+### 7. Show the proposed rewrite, then create it only if they say yes  ⟵ GATE
+
+**First, name the model that will do the rewriting.** Before running anything here,
+tell the user which model writes the new prompt and offer the alternatives — one
+short exchange, not a lecture:
+
+> *"I'll use **deepseek-v4-pro** through your orq workspace to write the new prompt —
+> that's the default, and it bills to orq like everything else in this run. It needs
+> to be enabled on your workspace; I'll check before spending anything. If you'd
+> rather use a different model, tell me which, or I can use a Claude subagent
+> instead if you have the CLI set up."*
+
+Three ways to go, all set in `config.toml`:
+- **`backend = "orq_router"`** (default) with `backend_model = ""` → `deepseek/deepseek-v4-pro`.
+- **a different model** → set `backend_model` to its **`refId`** from `GET /v2/models`,
+  e.g. `groq/openai/gpt-oss-120b`. It must be the provider-qualified id, not the
+  short display alias — the alias can route to the wrong provider or 404.
+- **`backend = "claude_subagent"`** → shells out to `claude -p`, spending Claude
+  credits instead of workspace credits. Needs the CLI installed and logged in.
+
+Both scripts below preflight the model with one tiny call and stop with a plain
+reason if it isn't reachable — a model can be listed in the registry and still
+refuse for want of a provider key. If that happens, relay the reason and re-offer
+the three options rather than retrying.
+
 ```
 uv run scripts/rewrite_eval.py --run_dir <run_dir>
-uv run scripts/create_eval.py --run_dir <run_dir>          # presents the diff
+uv run scripts/create_eval.py --run_dir <run_dir>          # shows the diff, creates nothing
 ```
-PO2 rewrites the prompt with a variable-preservation gate (it will not let
-`{{...}}` variables change). The second command **presents** the aggregated
-recommendations, the old→new diff, and the variable-check status — show this to
-the user. **Only after they approve:**
+The rewrite is guarded: it can't change which fields the judge reads, drop a label, or
+move the scale. The second command **shows** what would change — the guidance it drew
+on, the before/after prompt diff, and whether those guards held — and `create_eval.py
+--approve` actually enforces all three (variable set, verdict space, preservation),
+refusing to create unless every one passed. Walk the user through it: what changed,
+and which of their answers drove it.
+
+**Only after they say yes:**
 ```
 uv run scripts/create_eval.py --run_dir <run_dir> --approve
 ```
-(Pass `--edits <file>` to fold in inline human edits.) This creates a NEW boolean
-evaluator with `source_evaluator_id` lineage; the original is never touched. If
-the user rejects, stop — nothing is created.
+(`--edits <file>` folds in their own wording.) This creates a **new** judge alongside
+the old one — same answer type, named after the original with `-aligned-<timestamp>`,
+placed in the same orq project as the source — and records which evaluator it came
+from. **The original is never touched.** If they say no, stop; nothing is created.
 
-### 9. Optional retest — confirm repeats first  ⟵ GATE
-Re-judges the annotated datapoints with the new prompt and writes
-`experiment_report.md` comparing old vs new agreement with the human labels.
+### 8. Optional — check whether it actually worked  ⟵ GATE
+Runs the same examples past the **new** judge and writes `retest_metrics.json`. It
+uses the answers from `grey_zone_policy.json`, falling back to `annotations.json`.
 
-**First get the variance-aware suggestion, then ask the user how many repeats**
-(default **N=5**). The suggestion floors at the stability N (so the new-judge
-verdict is as trustworthy as the 5-rep `old_judge` it is compared against) and
-adds more repeats for datapoints that flipped a lot during the stability run —
-high flips warrant higher repeats here too:
+**Ask before including dataset-only labels.**  ⟵ GATE
+If any labelled row's *only* label is `label_source: dataset_reference` — the
+dataset's own `expected_output`, merged in because the human never answered about
+that row — it sits out of the retest by default: someone else's prior judgement
+isn't the user's verdict on this rubric, and including it silently would let
+"agreement" quietly cover rows nobody actually confirmed. Mirror the `--all_rows`
+ask:
+
+> *"3 of the labelled rows are only labelled from the dataset, not something you
+> confirmed directly — include those in the retest too, or leave them out?"*
+
 ```
-uv run scripts/run_experiment.py --run_dir <run_dir> --recommend_only
+uv run scripts/retest.py --run_dir <run_dir> --with_dataset_labels
 ```
-Show the user the suggested N and its basis (floor, mean/max flip-rate of the
-retested rows), ask them to confirm or override, then run with their choice:
+
+**Two things both have to be true** for this to count as an improvement: the new
+judge has to stop changing its mind, **and** its answers have to match what the user
+said they should be. Steadiness alone is worthless — a judge that's wrong the same
+way every time scores perfectly on it. If it got steadier but disagrees with the
+user, report exactly that; don't call it a win.
+
+**Agreement comes with a `before`.** The original run already judged these same
+rows, so `retest_metrics.json` carries what the *old* judge scored against the same
+labels, for free. Quote both — and note `agreement.regressed_vs_before` already does
+the arithmetic: a new score of 0.78 that clears the 0.7 bar still forces
+`success: false` if the old judge was at 0.85, so the pass/fail flag on its own is no
+longer blind to a regression the way it used to be.
+
+**Say what the numbers can't be.** `retest_metrics.json` carries a `caveats` list;
+read it out rather than summarising it away. They all point the same way — the result
+is softer than it looks:
+- these rows were chosen for being the *most* unstable, so re-measuring them drifts
+  toward the middle on its own. `--baseline_rerun` re-runs the **old** judge over the
+  same rows in the same pass, which is the only version of gate (a) that isolates the
+  rewrite — `instability.selection_bias_controlled` in `retest_metrics.json` says
+  outright whether *this* run did that, rather than leaving it implied by whether the
+  flag was passed. It costs the same again — offer it, don't assume it;
+- the same examples produced the rewrite guidance *and* the labels that score it.
+  There's no holdout, so the agreement number is an upper bound;
+- any label the user didn't confirm at step 6 is your reading of their rule, not
+  their verdict. `metadata.label_provenance` counts them;
+- a row the new judge can no longer *measure* (off-contract on more than half its
+  repetitions) is outside gate (a) entirely. Both means are taken over the rows both
+  judges could measure — `instability.n_rows_compared` — and
+  `instability.n_lost_unmeasurable` counts the rest. A non-zero count is the one that
+  matters: dropping the hardest rows out of the average reads exactly like a drop.
+
+**Check what happened outside the grey zone — and ask how wide to check.**  ⟵ GATE
+The examples you worked on are *supposed* to change. The question a new evaluator
+raises is what happened to everything else, and by default the answer covers only the
+labelled rows plus, with `--with_low_flip`, the ~5 stable spot-check rows the queue
+held back. That is a narrow check reported in confident words, so say what it covers
+and offer the wide one:
+
+> *"That's the 12 examples we worked on plus 5 steady ones — all fine. Want me to
+> re-run the new judge over all 200 original datapoints and show you what moved? It's
+> 200 × 8 calls, so it costs about the same as the first run. Worth it if this
+> evaluator is already scoring live traffic."*
+
 ```
-uv run scripts/run_experiment.py --run_dir <run_dir> --repeats <N>
+uv run scripts/retest.py --run_dir <run_dir> --with_low_flip              # ~5 rows
+uv run scripts/retest.py --run_dir <run_dir> --all_rows --with_low_flip   # the lot
 ```
-(Going below the stability N is allowed but warns — the comparison stops being
-apples-to-apples.)
+
+`retest_metrics.json` carries both views — `regression_on_stable_rows` (the spot-check
+sample) and `regression_on_unlabelled_rows` (every re-judged row nobody labelled) —
+plus `regression_scope`, which records how many of the original datapoints were
+actually re-judged. **Quote that scope with the number.** "0 of 5 previously-stable
+rows changed" is true and reads as "nothing regressed", which it does not mean; a
+caveat says so whenever the check was narrower than the original run.
+
+A changed verdict here isn't automatically wrong — nobody labelled these rows — but a
+rewrite that settles the grey zone by unsettling everything else is the classic
+failure of this whole process, and this is the only place it surfaces.
+
+**It re-judges only the examples you settled answers for** — those are the only ones
+agreement can score, so re-running the rest would cost money for verdicts nothing
+reads. The before/after instability comparison is recomputed over that same subset,
+so the drop isn't an artifact of which rows were picked. Quote the cost accordingly:
+**labelled examples × repeats**, not the whole dataset. (`--all_rows` re-judges
+everything, if they want a run-wide re-measure.)
+
+Repeats and temperature **default to whatever the step-3 run actually used**, read
+back from `metrics.json`, so the comparison is like-for-like without anyone having to
+remember. Overriding to a *lower* repeat count, or to a *different* temperature,
+marks the comparison not comparable — fewer samples under-estimate instability, and a
+different temperature changes how often the judge flips in the first place, so either
+reads as a win it didn't earn — and gate (a) fails rather than claiming one.
+```
+uv run scripts/retest.py --run_dir <run_dir>
+uv run scripts/retest.py --run_dir <run_dir> --baseline_rerun --with_low_flip
+```
+(`--tol` is how close a score has to be to count as agreeing; it resolves, in order, a
+uniform grey-zone policy band → `numeric_tol` → `numeric_tol_fraction` × the declared
+scale. On a numeric judge with none of those AND no declared scale, the retest now
+**refuses before any judging** rather than silently falling back to an absolute 0.5 —
+that band is arbitrary (half of a 0–1 scale, 0.5% of a 0–100 one) and gate (b) exists
+precisely so gate (a) can't be gamed; pass `--tol`, set `numeric_tol`, or declare the
+scale (`fetch_evaluator.py --scale_min/--scale_max`) and re-run — see Configuration.
+`--num_samples` caps the rows, for a smoke test — it narrows both sides of the
+comparison, so the before/after stays over the same rows.)
+
+**Quote the cost before running it**, there's no estimator for this step: it's
+`labelled rows × repeats` judge calls, doubled with `--baseline_rerun`, plus
+`low_flip_sample_size × repeats` with `--with_low_flip`.
 
 ## Final summary
-When you finish, tell the user plainly:
-- what changed in the prompt and why (the aggregated recommendations),
-- whether the retest showed better alignment (and on how many items),
-- **the blind-spot caveat**: alignment was measured on ambiguous/annotated items
-  only; a consistently-wrong judge would not have surfaced. Suggest the low-flip
-  sanity sample and periodic re-runs as mitigation.
+Tell them, in plain terms:
+- **what changed in the judge and why** — tie it back to the answers they gave;
+- **whether it actually got better**, on how many examples, and on both counts from
+  step 8 (steadier, and agreeing with them);
+- **what this did not check.** Everything here was measured on examples the judge was
+  *unsure* about. A judge that is confidently wrong never wobbles, so it never showed
+  up. Say this even when the numbers are good — especially then. Say what the stable
+  spot-check examples showed (step 6.6) and whether the retest re-judged them, and
+  suggest re-running periodically.
+- **why the improvement number is an upper bound.** The same examples produced the
+  guidance for the rewrite and the labels that scored it, with no holdout; the rows
+  were picked for maximum instability, so some of the drop is regression to the mean
+  unless `--baseline_rerun` was used; and any label the user didn't confirm is your
+  application of their rule. `retest_metrics.json` `caveats` lists whichever of these
+  apply — none of them is optional to mention.
+- if any examples came from step 1a options 2–4, say that too: they test what the
+  rubric says, not what production actually sends.
 
 ## Configuration & backends
-`config.toml` holds all defaults. The recommend/rewrite **backend** is selectable:
-`claude_subagent` (default, shells out to `claude -p`), `anthropic_api`,
-`orq_deployment`, or `fake` (tests). See `lib/model_backend.py` for the
-nested-template-variable handling that keeps the embedded judge prompt's own
-`{{query}}`/`{{output}}` tokens intact.
+`config.toml` holds all defaults, including the step-8 gates:
+
+| Key | Default | What it does |
+|---|---|---|
+| `retest_min_accuracy` | 0.7 | boolean + categorical: minimum exact-match rate for gate (b) |
+| `retest_min_tpr` / `retest_min_tnr` | 0.7 | boolean only; each is skipped when the labels hold no positives / no negatives |
+| `retest_min_within_tol` | 0.7 | numeric: minimum share of points inside the band |
+| `numeric_tol` | blank → derived | the numeric agreement band in the judge's own units. **One key**, shared by the retest gate, the recommend step's disagreement extraction, and the cross-model probe |
+| `numeric_tol_fraction` | 0.1 | fraction of the declared scale range used when `numeric_tol` is blank; falls back to an absolute 0.5 when the evaluator declares no scale — `retest.py` refuses before judging instead of silently using that fallback (`cross_model.py`'s probe still falls back to it) |
+
+Leave `numeric_tol` blank unless you have a reason not to. An absolute band means
+something different on every judge — 0.5 is half of a 0–1 groundedness scale and
+0.5% of a 0–100 one — which is the same argument that makes instability normalize by
+the declared range. A grey-zone policy that bands each point individually overrides
+both: those per-point bands are scored as given, and these values only cover points
+without one.
+
+The model that writes the recommendation (step 6/8) and the rewritten prompt (step 7)
+is selectable via `backend`:
+
+| `backend` | What it uses | API key (env only) | Endpoint env var (default) |
+|---|---|---|---|
+| `orq_router` **(default)** | any workspace model over `/v3/router`; `backend_model` blank → `deepseek/deepseek-v4-pro` | `ORQ_API_KEY` — already required | `ORQ_BASE_URL` (`https://my.orq.ai`) |
+| `claude_subagent` | `claude -p` | the `claude` CLI, installed and logged in | — |
+| `anthropic_api` | Anthropic Messages API | `ANTHROPIC_API_KEY` | `ANTHROPIC_BASE_URL` (`https://api.anthropic.com`) |
+| `orq_deployment` | an existing orq deployment | `ORQ_API_KEY` + `backend_deployment_key` | `ORQ_API_BASE_URL` (`https://api.orq.ai`) |
+| `fake` | canned completions | none (tests) | — |
+
+**All three inputs resolve the same way, most specific first:**
+
+```
+CLI flag  →  config.toml  →  environment variable  →  built-in default
+```
+
+so `--backend`, `--backend_model` and `--backend_base_url` on `recommend.py` /
+`rewrite_eval.py` override the config for one run without editing a file:
+
+```
+uv run scripts/rewrite_eval.py --run_dir <run_dir> \
+  --backend orq_router --backend_model groq/openai/gpt-oss-120b \
+  --backend_base_url https://orq.internal.example.com
+```
+
+`backend_model` is optional — blank takes the chosen backend's own default, so
+changing `backend` alone is a valid edit. For `orq_router` it must be the
+provider-qualified `refId`. `orq_router` prices its calls from the registry's own
+per-1K rates, so the reported cost is real rather than zero. The preflight message
+names the resolved backend, model **and** endpoint, so tell the user which host is
+about to receive their rubric before they approve a paid step.
+
+**Self-hosted or proxied orq:** `ORQ_API_BASE_URL` moves every control-plane call
+too (evaluators, traces, projects, datasets, create), so that one variable plus
+`ORQ_BASE_URL` for the router covers the whole skill.
+
+**API keys are environment-only.** `ORQ_API_KEY`, `ANTHROPIC_API_KEY`, or the
+`claude` CLI's own login — read from the environment or a `.env` file, which every
+script loads. There is deliberately no `--backend_api_key` flag: a key passed on the
+command line lands in shell history and in every `ps` listing on the machine. If a
+key is missing, the error names the variable it wanted.
+
+See `lib/model_backend.py` for the nested-template-variable handling that keeps the
+embedded judge prompt's own `{{query}}`/`{{output}}` tokens intact — a hazard for
+`orq_deployment` only, since the string backends never re-template their input.
 
 ## Parameter reference
 Every script is a `python-fire` CLI: pass any `main()` param as `--param value`.
@@ -220,25 +708,63 @@ resolve to the config value shown; overriding a flag beats `config.toml`.
 
 | Script | Overridable flags (default) |
 |---|---|
-| `fetch_evaluator.py` | `--evaluator_id` (req/config), `--with_traces` (True; `--no-with_traces` to skip), `--trace_limit` (200), `--judge_model` (slug override when the config id can't be resolved) |
-| `fetch_traces.py` | `--trace_limit` (200) |
+| `fetch_evaluator.py` | `--evaluator_id` (req/config), `--with_traces` (**False** — the input source is step 1a's question; pass it to scan in the same command), `--trace_limit` (200, with `--with_traces`), `--judge_model` (slug override when the config id can't be resolved), `--scale_min` / `--scale_max` (numeric evaluators only; override-only, both-or-neither — leave blank and numeric rows report `unmeasurable` until set) |
+| `fetch_traces.py` | `--trace_limit` (200), `--replace` (False — required to overwrite rows another input source appended, since the scan rewrites `traces.jsonl` wholesale), `--force` / `--dedup` |
 | `estimate_cost.py` | `--n_repeats` (cfg 8), `--num_samples` (cfg -1 = all) |
-| `stability.py` | `--num_samples` (cfg -1), `--n_repeats` (cfg 8), `--max_concurrency` (cfg 8), `--temperature` (cfg 1), `--metrics` (True; `--no-metrics` to skip) |
+| `stability.py` | `--num_samples` (cfg -1), `--n_repeats` (cfg 8), `--max_concurrency` (cfg 8), `--temperature` (cfg 1), `--metrics` (True; skip with `--metrics False` — **not** `--no-metrics`, which fire rejects *after* the run completes, making a finished run look failed), `--include_degraded` (False — keep degraded/hollow rows instead of skipping them) |
 | `metrics.py` | — (run_dir/config only) |
-| `build_queue.py` | `--count` (-1 = all), `--low_flip_sample_size` (cfg 5) |
-| `serve_annotation.py` | `--port` (8765) |
-| `recommend.py` | — |
+| `build_queue.py` | `--count` (-1 = all), `--low_flip_sample_size` (cfg 5). Also projects the step-6 context budget into `queue.json` `meta.grey_zone_projection` |
+| `dataset_inputs.py list` | `--limit` (100) |
+| `dataset_inputs.py pull` | `--dataset_id` (req), `--limit` (200), `--map "<var>=<source>"` (repeatable; sources: `inputs.<key>`, `messages.<role>.last\|first`, `messages.all`, `expected_output`) |
+| `seed_inputs.py convert` | — (run_dir/config only) |
+| `seed_inputs.py save` | `--dataset_name` (new) OR `--dataset_id` (append) |
+| `cross_model.py` | `--model` (req; 2nd judge slug), `--num_samples`, `--n_repeats`, `--tol` (resolves `numeric_tol` → `numeric_tol_fraction` × the declared scale → 0.5 fallback; no grey-zone policy exists yet at this stage) |
+| `grey_zone.py assemble` | `--top_k` (cfg `grey_zone_top_k`; -1 = all, 0 = none), `--max_chars` (cfg `grey_zone_max_chars`; 600 — per-example input budget, fair-shared across `{{variables}}`), `--max_tokens` (cfg `grey_zone_max_tokens`; 60000 — payload ceiling, clamps to the fitting prefix), `--include_low_flip` (False — bring the stable spot-check rows into the payload too) |
+| `grey_zone.py apply` | — (run_dir/config only) |
+| `serve_annotation.py` | `--port` (8765) — the interactive UI fallback |
+| `recommend.py` | `--backend`, `--backend_model`, `--backend_base_url` (each: flag → config → env → default) |
 | `aggregate.py` | — |
-| `rewrite_eval.py` | `--max_attempts` (3) |
-| `create_eval.py` | `--approve` (False), `--edits <file>` (None), `--force` (False; bypass create-side guards, e.g. non-routable judge slug) |
-| `run_experiment.py` | `--repeats` (5, floors up to stability N), `--temperature` (1.0), `--recommend_only` (False) |
+| `rewrite_eval.py` | `--max_attempts` (3), `--backend`, `--backend_model`, `--backend_base_url` |
+| `create_eval.py` | `--approve` (False), `--edits <file>` (None), `--force` (False; bypasses the variable-set AND verdict-space/preservation checks — unsafe; there is no judge-slug guard) |
+| `retest.py` | `--n_repeats` / `--temperature` (default: whatever the step-3 run used — a lower `--n_repeats` or a different `--temperature` marks the comparison not comparable), `--num_samples` (cap rows, smoke test — narrows both sides of the comparison), `--tol` (numeric within-tolerance band; resolves policy band → `numeric_tol` → `numeric_tol_fraction` × scale; refuses before any judging if none of those and no declared scale, see Configuration), `--all_rows` (False — by default only the **labelled** rows are re-judged), `--with_dataset_labels` (False — also re-judge rows whose only label is `dataset_reference`), `--with_low_flip` (False — also re-judge the stable spot-check rows as a regression check), `--baseline_rerun` (False — re-run the OLD judge over the same rows for a true A/B; doubles the cost) |
 
 ## Run directory contract
-Every artifact lives in `runs/<key>_<ts>_<model>_<N>dp/`: `evaluator.json`, `traces.jsonl`,
-`stability.json`, `metrics.json`, `queue.json`, `annotations.json`,
-`recommendations.json`, `aggregated.md`, `new_prompt.md`, `rewrite_status.json`,
-`approval.json`, `new_evaluator.json`, `experiment_report.md`. Any step is
-re-runnable in isolation against an existing run directory.
+Every artifact lives in one run directory, born `runs/<key>_<ts>/` at step 1 and
+renamed to `runs/<key>_<ts>_<model>_<N>dp/` only once a trace scan (step 1a option 1)
+has resolved the judge model and datapoint count — a run built entirely from a
+dataset, bring-your-own, or generated examples never gets that suffix, so always pass
+the **printed** path rather than assuming the renamed form. It holds: `evaluator.json`
+(with `output_type` + `categorical_labels`/`scale`), `traces.jsonl`, `scan.json` (what
+the trace scan covered, and whether it hit its cap), `hollow_debug.json` (a sample of
+the raw span shape, written only when the hollow ratio trips the abort — the
+extraction shape-gap diagnostic), `stability.json` (rows carry `reference` when the
+source supplied ground truth), `metrics.json` (+ a `correctness` block when labels
+were present), `queue.json` (each confuser carries its `verdict_space` + a `reason` of
+instability/cross_model/wrong_vs_reference/low_flip),
+`dataset_inventory.json` + `input_mapping.json` (what a dataset held and how its
+fields were mapped, written only when rows were skipped or `--map` was used),
+`synthetic_datapoints.json`
+(conductor-authored seed, §11) + `cross_model.json` (second-model disagreers) when
+a starved run was seeded, `grey_zone_payload.json` (the conductor's bounded confuser payload),
+`grey_zone_policy.json` (grey zones + questions + answers + per-point policy
+labels with their `label_source` — the default feedback artifact),
+`annotations.json` (typed values — the UI fallback), `recommendations.json`,
+`aggregated.md` + `aggregated.json`, `new_prompt.md`, `rewrite_status.json`,
+`approval.json` (records `forced_checks` — which create-side guards `--force`
+overrode, empty when none did), `new_evaluator.json`, `retest_metrics.json`,
+and the retest's own
+sub-runs `retest/` (+ `retest_baseline/` with `--baseline_rerun`), each holding the
+filtered `traces.jsonl` and the `index_map.json` that pairs its positional
+`source_index` back to the parent's. Any step is re-runnable in isolation against an
+existing run directory.
+
+**`source_index` is a position in `traces.jsonl`, and that file is the run's spine.**
+`stability.json` and `queue.json` record a `traces_fingerprint` of it; `fetch_traces`
+**rewrites** the file (`dataset_inputs` and `seed_inputs` only append), so widening
+the trace window after labelling renumbers every row underneath the labels. The
+grey-zone assemble warns on a mismatch and the retest refuses outright. If you need
+more data after labelling, re-run stability → metrics → build_queue and redo the
+labels rather than pairing them against a file that moved.
 
 ## Companion Skills
 

@@ -15,7 +15,7 @@
   .counts b { color:var(--ink); }
   .bar { height:6px; background:var(--line); border-radius:3px; overflow:hidden; flex:1; min-width:120px; }
   .bar > i { display:block; height:100%; background:var(--accent); width:0; }
-  main { max-width:900px; margin:0 auto; padding:18px 16px 120px; }
+  main { max-width:900px; margin:0 auto; padding:18px 16px 140px; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
   .badges { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
   .badge { font-size:12px; padding:2px 8px; border-radius:999px; background:var(--line); color:var(--muted); }
@@ -35,11 +35,16 @@
   details .inner { padding:0 12px 12px; }
   .controls { position:fixed; bottom:0; left:0; right:0; background:var(--panel); border-top:1px solid var(--line); padding:12px 16px; }
   .controls .wrap { max-width:900px; margin:0 auto; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .scorebar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   button { font:inherit; border:1px solid var(--line); background:#222631; color:var(--ink); border-radius:8px; padding:9px 14px; cursor:pointer; }
   button:hover { border-color:var(--accent); }
   button.t { border-color:var(--pass); } button.t.sel { background:var(--pass); }
   button.f { border-color:var(--fail); } button.f.sel { background:var(--fail); }
+  button.cat.sel { background:var(--accent); color:#0c0e13; border-color:var(--accent); }
   button.ghost { color:var(--muted); }
+  input[type=number] { width:120px; background:#0c0e13; color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; }
+  input[type=number].sel { border-color:var(--accent); }
+  .scale-hint { color:var(--muted); font-size:12px; }
   textarea { flex:1; min-width:200px; min-height:38px; background:#0c0e13; color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; }
   .nav { display:flex; gap:8px; align-items:center; }
   .verdict { font-weight:600; } .verdict.t { color:var(--pass); } .verdict.f { color:var(--fail); }
@@ -67,16 +72,35 @@
 <main id="main"></main>
 <div class="controls">
   <div class="wrap">
-    <button class="f" id="btnFail" title="key 1">False <kbd>1</kbd></button>
-    <button class="t" id="btnPass" title="key 2">True <kbd>2</kbd></button>
+    <!-- Per-type scoring widget (boolean / categorical / number) is rendered
+         here from each item's verdict_space. -->
+    <div class="scorebar" id="scorebar"></div>
     <button class="ghost" id="btnDefer" title="key D">defer <kbd>D</kbd></button>
     <button class="ghost" id="btnClear" title="key U">clear <kbd>U</kbd></button>
-    <textarea id="note" placeholder="optional note — why this label? (Ctrl+Enter saves + next)"></textarea>
+    <textarea id="note" placeholder="optional why — one line (Ctrl+Enter saves + next)"></textarea>
   </div>
 </div>
 <script>
 const $ = s => document.querySelector(s);
 let items = [], meta = {}, ann = {}, i = 0;
+
+// --- verdict_space -> UI widget spec (mirrors serve_annotation.input_type_for)
+function inputTypeFor(vs) {
+  vs = vs || {};
+  // A MISSING type defaults to boolean; a DECLARED but unknown one does not.
+  // Rendering Pass/Fail for, say, a queue.json that still says `string` would
+  // collect a boolean the server then rejects with a 400 — better to say so here.
+  if (vs.type === undefined || vs.type === null) return { type: 'boolean' };
+  const t = String(vs.type).toLowerCase();
+  if (t === 'boolean') return { type: 'boolean' };
+  if (t === 'categorical') return { type: 'categorical', labels: (vs.labels || []).slice() };
+  if (t === 'number' || t === 'numeric') {
+    const s = Array.isArray(vs.scale) && vs.scale.length === 2 ? [Number(vs.scale[0]), Number(vs.scale[1])] : null;
+    return { type: 'number', scale: s };
+  }
+  return { type: 'unsupported', raw: t };
+}
+function verdictSpace(it) { return (it && it.verdict_space) || meta.verdict_space || { type: 'boolean' }; }
 
 async function load() {
   const q = await (await fetch('/queue.json')).json();
@@ -87,11 +111,12 @@ async function load() {
 }
 function firstUnlabeled() {
   for (let k = 0; k < items.length; k++) {
-    if (!ann[String(items[k].source_index)]) return k;
+    const a = ann[String(items[k].source_index)];
+    if (!a || a.status !== 'labeled') return k;
   }
   return 0;
 }
-function esc(s) { return (s ?? '').toString().replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function esc(s) { return (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 // Minimal markdown -> HTML for the eval prompt box (bold, headings, ordered/
 // unordered lists, inline code). HTML is escaped first, so literal tags in the
@@ -121,13 +146,87 @@ function mdToHtml(src) {
   return html;
 }
 
+// The judge's own verdict spread, shown for context (varies by type).
+function judgeSpread(it) {
+  const jv = it.judge_votes || {}, amb = it.ambiguity || {};
+  const vs = verdictSpace(it);
+  const spec = inputTypeFor(vs);
+  if (spec.type === 'boolean') {
+    const mode = amb.mode_value;
+    return `<span class="badge">judge mode: <span class="verdict ${mode?'t':'f'}">${mode==null?'?':mode}</span></span>` +
+           `<span class="badge">${jv.n_true ?? '?'}T / ${jv.n_false ?? '?'}F · N=${amb.n_repeats ?? '?'}</span>`;
+  }
+  if (spec.type === 'categorical') {
+    const counts = jv.counts || {};
+    const parts = Object.keys(counts).length
+      ? Object.entries(counts).map(([k,v]) => `${esc(k)}:${v}`).join(' · ')
+      : 'n/a';
+    return `<span class="badge">judge votes: ${parts} · N=${amb.n_repeats ?? '?'}</span>`;
+  }
+  if (spec.type === 'unsupported') return '';
+  // number
+  const mean = jv.mean, sd = jv.stdev;
+  return `<span class="badge">judge mean ${mean==null?'?':(+mean).toFixed(2)} ± ${sd==null?'?':(+sd).toFixed(2)} · N=${amb.n_repeats ?? '?'}</span>`;
+}
+
+// Render the type-native scoring widget into #scorebar and wire it up. The
+// current saved value (if any) is shown as selected.
+function renderScorebar(it) {
+  const spec = inputTypeFor(verdictSpace(it));
+  const a = ann[String(it.source_index)] || {};
+  const cur = a.status === 'labeled' ? a.value : undefined;
+  const bar = $('#scorebar');
+  if (spec.type === 'unsupported') {
+    bar.innerHTML =
+      `<span class="scale-hint">This queue declares verdict type "${esc(spec.raw)}", which this build ` +
+      `cannot score. Regenerate queue.json with build_queue.py.</span>`;
+    return;
+  }
+  if (spec.type === 'boolean') {
+    bar.innerHTML =
+      `<button class="f" id="btnFail" title="key 1">Fail <kbd>1</kbd></button>` +
+      `<button class="t" id="btnPass" title="key 2">Pass <kbd>2</kbd></button>`;
+    $('#btnPass').classList.toggle('sel', cur === true);
+    $('#btnFail').classList.toggle('sel', cur === false);
+    $('#btnPass').onclick = () => label(true);
+    $('#btnFail').onclick = () => label(false);
+  } else if (spec.type === 'categorical') {
+    bar.innerHTML = spec.labels.map((lab, k) =>
+      `<button class="cat" data-lab="${esc(lab)}" title="key ${k+1}">${esc(lab)}${k<9?` <kbd>${k+1}</kbd>`:''}</button>`
+    ).join('') || '<span class="scale-hint">(no labels declared)</span>';
+    bar.querySelectorAll('button.cat').forEach(b => {
+      b.classList.toggle('sel', cur === b.dataset.lab);
+      b.onclick = () => label(b.dataset.lab);
+    });
+  } else { // number
+    const s = spec.scale;
+    const attrs = s ? `min="${s[0]}" max="${s[1]}" step="any"` : `step="any"`;
+    const hint = s ? `<span class="scale-hint">scale ${s[0]}–${s[1]}</span>` : `<span class="scale-hint">(unbounded)</span>`;
+    bar.innerHTML =
+      `<input type="number" id="numIn" ${attrs} placeholder="score" />` +
+      `<button class="t" id="btnSaveNum" title="Enter">save <kbd>↵</kbd></button>` + hint;
+    const inp = $('#numIn');
+    if (cur !== undefined && cur !== null) { inp.value = cur; inp.classList.add('sel'); }
+    const submit = () => {
+      const raw = inp.value.trim();
+      if (raw === '') { alert('enter a number'); return; }
+      const n = Number(raw);
+      if (Number.isNaN(n)) { alert('not a number'); return; }
+      if (s && (n < s[0] || n > s[1])) { alert(`out of scale ${s[0]}–${s[1]}`); return; }
+      label(n);
+    };
+    $('#btnSaveNum').onclick = submit;
+    inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } };
+  }
+}
+
 function render() {
   if (!items.length) { $('#main').innerHTML = '<div class="done">Queue is empty.</div>'; return; }
   i = Math.max(0, Math.min(i, items.length - 1));
   const it = items[i];
   const a = ann[String(it.source_index)] || {};
   const amb = it.ambiguity || {}, jv = it.judge_votes || {};
-  const flip = amb.flip_rate, mode = amb.mode_value;
+  const flip = amb.flip_rate, inst = amb.instability;
   const msgs = it.messages ? (typeof it.messages === 'string' ? it.messages : JSON.stringify(it.messages, null, 2)) : '';
   // Prefer the variables recovered from the eval prompt (each judged input
   // shown under its own template variable name). Fall back to the raw rendered
@@ -142,14 +241,15 @@ function render() {
       `<div class="field"><h4>Input (query)</h4><div class="box">${esc(it.query) || '<em>(empty)</em>'}</div></div>` +
       `<div class="field"><h4>Output being judged (raw — variables not mapped)</h4><div class="box">${esc(it.output) || '<em>(empty)</em>'}</div></div>`;
   }
+  const ambBadge = it.low_flip_sample
+    ? '<span class="badge low">low-flip sanity sample</span>'
+    : `<span class="badge flip">${flip!=null ? 'flip-rate '+flip.toFixed(2) : (inst!=null ? 'instability '+(+inst).toFixed(2) : 'unstable')}</span>`;
   $('#main').innerHTML = `
     <div class="card">
       <div class="badges">
         <span class="badge">#${it.source_index} · rank ${it.rank}</span>
-        ${it.low_flip_sample ? '<span class="badge low">low-flip sanity sample</span>'
-          : `<span class="badge flip">flip-rate ${flip==null?'n/a':flip.toFixed(2)}</span>`}
-        <span class="badge">judge mode: <span class="verdict ${mode?'t':'f'}">${mode==null?'?':mode}</span></span>
-        <span class="badge">${jv.n_true ?? '?'}T / ${jv.n_false ?? '?'}F · N=${amb.n_repeats ?? '?'}</span>
+        ${ambBadge}
+        ${judgeSpread(it)}
       </div>
       ${msgs ? `<details><summary>conversation / messages</summary><div class="inner"><div class="box">${esc(msgs)}</div></div></details>` : ''}
       ${inputs}
@@ -159,9 +259,8 @@ function render() {
         <div class="inner"><div class="box">${esc(jv.representative_explanation) || '<em>(none)</em>'}</div></div>
       </details>
     </div>`;
-  $('#note').value = a.explanation || '';
-  $('#btnPass').classList.toggle('sel', a.status === 'labeled' && a.value === true);
-  $('#btnFail').classList.toggle('sel', a.status === 'labeled' && a.value === false);
+  $('#note').value = a.reason || '';
+  renderScorebar(it);
   updateHeader();
 }
 function updateHeader() {
@@ -175,28 +274,35 @@ function updateHeader() {
 }
 async function save(status, value) {
   const it = items[i];
-  const body = { source_index: it.source_index, status, value, explanation: $('#note').value };
+  // Contract: server keys on source_index, coerces `value` per verdict_space,
+  // stores `reason` (the optional one-line "why").
+  const body = { source_index: it.source_index, status, value, reason: $('#note').value };
   const r = await fetch('/api/annotations', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
   if (!r.ok) { alert('save failed: ' + (await r.text())); return false; }
-  ann[String(it.source_index)] = { ...(ann[String(it.source_index)]||{}), status, value: status==='labeled'?value:null, explanation: body.explanation };
+  ann[String(it.source_index)] = {
+    status,
+    value: status === 'labeled' ? value : null,
+    reason: body.reason,
+    low_flip_sample: !!it.low_flip_sample,
+  };
   return true;
 }
 async function label(value) { if (await save('labeled', value)) { i++; render(); } }
 async function defer() { if (await save('deferred', null)) { i++; render(); } }
 async function clearLabel() {
-  // "Clear" records a deferred status (the server is append-only, no delete
-  // route). save() updates the in-memory entry to match, so disk and UI agree:
-  // a deferred item shows no selected verdict and is counted as deferred.
+  // "Clear" records a deferred status (the server never deletes): the item shows
+  // no selected verdict and is counted as deferred, so disk and UI agree.
   $('#note').value = '';
   if (await save('deferred', null)) render();
 }
-$('#btnPass').onclick = () => label(true);
-$('#btnFail').onclick = () => label(false);
 $('#btnDefer').onclick = defer;
 $('#btnClear').onclick = clearLabel;
 $('#prev').onclick = () => { i--; render(); };
 $('#next').onclick = () => { i++; render(); };
-$('#nextUnlabeled').onclick = () => { for (let k=0;k<items.length;k++){ if(!ann[String(items[k].source_index)]){ i=k; break; } } render(); };
+$('#nextUnlabeled').onclick = () => {
+  for (let k=0;k<items.length;k++){ const a=ann[String(items[k].source_index)]; if(!a || a.status!=='labeled'){ i=k; break; } }
+  render();
+};
 async function finish() {
   let labeled = 0, deferred = 0;
   for (const it of items) { const a = ann[String(it.source_index)]; if (!a) continue;
@@ -212,14 +318,29 @@ async function finish() {
   setTimeout(() => { try { window.close(); } catch (e) {} }, 400);
 }
 $('#btnDone').onclick = finish;
+// Keyboard shortcuts are type-aware: boolean -> 1/2, categorical -> 1..9 by
+// label index. Numeric scoring is typed into the input (Enter saves) so digit
+// keys must not hijack it. All ignore keystrokes while a text field is focused.
 document.addEventListener('keydown', e => {
-  if (e.target.tagName === 'TEXTAREA') {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save('labeled', ann[String(items[i].source_index)]?.value ?? false).then(()=>{i++;render();}); }
+  const tag = e.target.tagName;
+  if (tag === 'TEXTAREA' || tag === 'INPUT') {
+    if (tag === 'TEXTAREA' && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      const a = ann[String(items[i].source_index)] || {};
+      if (a.status === 'labeled' && a.value != null) save('labeled', a.value).then(()=>{i++;render();});
+    }
     return;
   }
-  if (e.key === '1') label(false);
-  else if (e.key === '2') label(true);
-  else if (e.key.toLowerCase() === 'd') defer();
+  const it = items[i]; if (!it) return;
+  const spec = inputTypeFor(verdictSpace(it));
+  if (spec.type === 'boolean') {
+    if (e.key === '1') label(false);
+    else if (e.key === '2') label(true);
+  } else if (spec.type === 'categorical') {
+    const n = parseInt(e.key, 10);
+    if (!Number.isNaN(n) && n >= 1 && n <= spec.labels.length) label(spec.labels[n-1]);
+  }
+  if (e.key.toLowerCase() === 'd') defer();
   else if (e.key.toLowerCase() === 'u') clearLabel();
   else if (e.key === 'ArrowLeft') { i--; render(); }
   else if (e.key === 'ArrowRight') { i++; render(); }

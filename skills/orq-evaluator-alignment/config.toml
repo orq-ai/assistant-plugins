@@ -5,15 +5,29 @@
 # ── Step 1: evaluator under audit ────────────────────────────────────────────
 # orq evaluator id (24-hex). Set on the CLI with `--evaluator_id <id>` or here.
 evaluator_id = ""
+# Numeric evaluators carry NO scale in their orq record: fetch_evaluator.py needs
+# BOTH scale_min and scale_max (override-only, both-or-neither — one without the
+# other is a hard error) to normalize instability and the retest tolerance band.
+# Leave both KEYS ABSENT (not `""` — unlike numeric_tol below, a present-but-empty
+# value is not treated as blank here and will fail to parse as a float) and numeric
+# rows report `unmeasurable` until set. Also settable per run via
+# --scale_min/--scale_max. Uncomment both together to set a workspace default:
+# scale_min = 1
+# scale_max = 5
 
-# ── Step 2: trace retrieval (v3oql + v3spans) ────────────────────────────────
+# ── Step 1a: trace retrieval (v3oql + v3spans) ───────────────────────────────
 # Epoch-ms window for the v3oql query. 0 = unbounded on that side.
 trace_start_date = 0
 trace_end_date = 0
 # Max traces to pull (paginated by the client). Caps the candidate pool.
 trace_limit = 200
+# Abort threshold (fetch_traces.py): if span-detail failures + empty-extraction
+# rows exceed this fraction of the scan, the fetch aborts rather than persisting
+# mostly-hollow datapoints that would then read as perfectly stable. --force
+# discounts only the auth/rate-limit (span-detail-failure) share of it.
+hollow_abort_ratio = 0.2
 
-# ── Step 4: stability run (evaluatorq, repetitions=N) ────────────────────────
+# ── Step 3: stability run (evaluatorq, repetitions=N) ────────────────────────
 # Repeated judge invocations per datapoint. The whole flip analysis rests on
 # this; >= 5 is the floor for a stable per-row flip-rate, 8 is the default.
 n_repeats = 8
@@ -27,18 +41,18 @@ max_concurrency = 8
 # measurement default; 0 collapses variance and hides flips. Note: GPT-5-family
 # judges (e.g. gpt-5-mini) only accept temperature=1 and 400 on any other value.
 temperature = 1
-# Stable evaluatorq experiment path so the step-10 retest lands on the SAME
-# experiment as the baseline run. Empty -> derived from the evaluator key.
+# Stable evaluatorq experiment path so the retest lands on the SAME experiment
+# as the baseline run. Empty -> derived from the evaluator key.
 experiment_path = ""
 
-# ── Step 9: retest repeats (variance-aware) ──────────────────────────────────
-# Default/floor repeats for the rewritten-judge retest. The conductor confirms
-# the final N with the user; the suggestion floors at max(retest_repeats,
-# stability n_repeats) and adds more for rows that flipped a lot, capped below.
-retest_repeats = 5
-retest_repeats_cap = 15
+# The step-8 retest defaults to the repeat count and temperature the ORIGINAL
+# stability run actually used (read back from metrics.json), not to the values
+# here — instability is estimated from N samples at a temperature, so retesting
+# at different ones compares two different measurements. `retest.py --n_repeats N`
+# / `--temperature T` override; a LOWER N than the original marks the comparison
+# not comparable rather than letting the sample size read as an improvement.
 
-# ── Step 6: annotation queue ─────────────────────────────────────────────────
+# ── Step 5: confuser queue ───────────────────────────────────────────────────
 # Random sample of LOW-flip items to annotate alongside the high-flip queue, as
 # a sanity check against the consistently-wrong blind spot (design §1, §8).
 # 0 = pure flip-ranking, no sanity sample.
@@ -46,19 +60,87 @@ low_flip_sample_size = 5
 # Deterministic seed for the low-flip sample draw.
 seed = 42
 
-# ── Step 8/9: recommendation + rewrite backend ───────────────────────────────
-# Model backend for the meta-prompt (step 8) and PO2 rewrite (step 9). One of:
-#   "claude_subagent" — shell out to `claude -p ... --output-format json`
-#   "orq_deployment"  — orq deployment / evaluatorq.invoke (workspace model)
-#   "anthropic_api"   — direct Anthropic Messages API
+# ── Step 6: grey-zone payload context budget (design §12) ────────────────────
+# How many (most-unstable-first) confusers may enter the conductor's context.
+# -1 = all, matching the num_samples/count sentinel elsewhere; 0 = none. The token
+# budget below does the real capping — a fixed K is the wrong knob because item
+# size varies by orders of magnitude between evaluators.
+grey_zone_top_k = -1
+# Per-confuser budget for the judged input, in characters. Fair-shared across the
+# evaluator's {{variables}} so a long {{query}} cannot starve {{output}}; an
+# over-share value is shown head+tail with the elided count marked inline.
+grey_zone_max_chars = 600
+# Ceiling for the whole assembled payload, in tokens (~4 chars/token). assemble
+# clamps to the longest prefix that fits and reports what it dropped. Deliberately
+# well below a full context window: the payload shares that window with SKILL.md,
+# evaluator.json, and the multi-turn grey-zone Q&A that follows.
+grey_zone_max_tokens = 60000
+
+# ── Step 6/7: recommendation + rewrite backend ───────────────────────────────
+# Which model writes the recommendation (step 6 fallback) and the rewritten prompt (step 7).
+#   "orq_router"      — DEFAULT. Any workspace model over the orq router, using the
+#                       ORQ_API_KEY this skill already needs. No second account, no
+#                       CLI. The model must be reachable on your workspace — a model
+#                       can be listed and still 403 for want of a provider key, so
+#                       step 7 checks with one tiny call before spending anything.
+#   "claude_subagent" — shell out to `claude -p ... --output-format json`. Needs the
+#                       `claude` CLI installed and logged in; use it if you'd rather
+#                       spend Claude credits than workspace credits.
+#   "orq_deployment"  — an existing orq deployment (see backend_deployment_key)
+#   "anthropic_api"   — direct Anthropic Messages API (needs ANTHROPIC_API_KEY)
 #   "fake"            — deterministic canned completions (tests only)
-backend = "claude_subagent"
-# Model id for the chosen backend (claude_subagent / anthropic_api).
-backend_model = "claude-opus-4-8"
+backend = "orq_router"
+# Model for the chosen backend. LEAVE BLANK to take that backend's own default
+# (orq_router → deepseek/deepseek-v4-pro, claude_subagent/anthropic_api →
+# claude-opus-4-8), so switching `backend` alone is a valid edit. For orq_router
+# this must be the provider-qualified `refId` from GET /v2/models
+# (e.g. "deepseek/deepseek-v4-pro"), not the shorter display alias.
+backend_model = ""
+# Endpoint for the chosen backend. LEAVE BLANK for the hosted default. Set it for a
+# self-hosted or proxied orq, or an Anthropic-compatible gateway. Resolution is
+#   --backend_base_url  ->  this key  ->  env var  ->  built-in default
+# and the env var depends on the backend:
+#   orq_router      ORQ_BASE_URL       (default https://my.orq.ai; /v3/router is appended)
+#   orq_deployment  ORQ_API_BASE_URL   (default https://api.orq.ai)
+#   anthropic_api   ANTHROPIC_BASE_URL (default https://api.anthropic.com)
+# ORQ_API_BASE_URL also moves every control-plane call (evaluators, traces,
+# projects, datasets, create), so a self-hosted orq needs that one variable.
+backend_base_url = ""
 # orq deployment key when backend = "orq_deployment".
 backend_deployment_key = ""
-# Bounded parallelism for per-annotation meta-prompt calls (step 8).
+# API KEYS ARE NOT CONFIGURED HERE. They come from the environment or a .env file:
+# ORQ_API_KEY for the orq backends, ANTHROPIC_API_KEY for anthropic_api, and the
+# `claude` CLI's own login for claude_subagent. There is deliberately no
+# --backend_api_key flag — a key passed on the command line lands in shell history
+# and in every `ps` listing on the machine.
+# Bounded parallelism for per-annotation meta-prompt calls (step 6 fallback).
 recommend_concurrency = 4
+
+# ── Step 8: retest gates ─────────────────────────────────────────────────────
+# The retest calls a rewrite a success only when BOTH signals hold: instability
+# dropped AND the new verdicts agree with the human labels. These are signal (b)'s
+# bars — the type-native minimum agreement. Raising them makes the retest stricter.
+retest_min_accuracy = 0.7      # boolean + categorical: overall accuracy
+retest_min_tpr = 0.7           # boolean only; skipped when no human label is True
+retest_min_tnr = 0.7           # boolean only; skipped when no human label is False
+retest_min_within_tol = 0.7    # numeric: share of points inside the band below
+
+# Numeric agreement band, in the judge's own units: |human − judge| <= this counts
+# as agreement. ONE key, read by the retest gate, the recommend step's disagreement
+# extraction, and the cross-model probe — they are the same distance on the same
+# scale, and two keys meant setting one silently left the other on its default.
+# LEAVE BLANK to derive it from the evaluator's declared scale, which is what you
+# usually want: a fixed 0.5 is half of a 0–1 groundedness scale and 0.5% of a 0–100
+# one, so an absolute band means something different on every judge.
+numeric_tol = ""
+# Fraction of the declared scale range used when numeric_tol is blank. 0.1 is one
+# point on a 1–10 judge. Falls back to an absolute 0.5 when no scale is declared —
+# EXCEPT in retest.py's gate (b), which refuses before judging rather than
+# silently scoring against that arbitrary band: declare a scale, set numeric_tol,
+# or pass --tol. cross_model.py's probe still uses the 0.5 fallback as before.
+numeric_tol_fraction = 0.1
+# A grey-zone policy may band each point individually (`tolerance` per label); those
+# per-point bands are honoured as-is, and this value covers the points without one.
 
 # ── Output ───────────────────────────────────────────────────────────────────
 # Parent directory for per-run working directories (runs/<key>_<ts>/).

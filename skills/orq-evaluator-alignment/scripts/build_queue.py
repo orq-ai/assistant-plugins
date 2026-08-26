@@ -35,7 +35,9 @@ import fire
 from loguru import logger
 
 import _bootstrap  # noqa: F401
+from lib import grey_zone as gzlib
 from lib import runner
+from lib.content import traces_fingerprint
 
 # Matches an orq prompt placeholder, e.g. `{{ log.output }}`. Names can carry
 # dots (`log.output`) and surrounding whitespace; we keep the trimmed name.
@@ -83,42 +85,150 @@ def _invert_template(template: str, rendered: str) -> list[dict[str, str]] | Non
     return ordered
 
 
-def _is_flipped(e: dict[str, Any]) -> bool:
-    fr = e.get('flip_rate')
-    return isinstance(fr, (int, float)) and fr > 0.0
+def _is_confuser(e: dict[str, Any]) -> bool:
+    # Measurable AND unstable — the unified, type-agnostic replacement for the
+    # boolean flip test (§5.6). Keys off `instability`, never on type.
+    inst = e.get('instability')
+    return isinstance(inst, (int, float)) and inst > 0.0
 
 
-def _is_low_flip(e: dict[str, Any]) -> bool:
-    # Measurable (>=2 repeats) AND unanimous — the judge was perfectly
-    # consistent here, which is exactly the bucket that can hide a consistent
-    # bias and never surfaces in the flip ranking.
-    return e.get('flip_rate') == 0.0 and (e.get('n_successful_repeats') or 0) >= 2
+def _is_low_instability(e: dict[str, Any]) -> bool:
+    # Measurable AND perfectly consistent (instability 0) — exactly the bucket
+    # that can hide a *consistent* bias and never surfaces in the ranking, so it
+    # feeds the low-instability sanity sample.
+    return e.get('instability') == 0.0 and (e.get('n_successful_repeats') or 0) >= 2
 
 
-def _display_item(rank: int, e: dict[str, Any], low_flip: bool, template: str) -> dict[str, Any]:
+def _verdict_space(output_type: str, labels: list[str], scale: tuple[float, float] | None) -> dict[str, Any]:
+    """The self-contained verdict space attached to the queue + each item, so any
+    downstream consumer (Part 2 chat clustering, an optional point view) needs no
+    knowledge of the on-disk formats."""
+    if output_type == 'categorical':
+        return {'type': 'categorical', 'labels': labels, 'k': len(labels)}
+    if output_type in {'number', 'numeric'}:
+        return {'type': 'number', 'scale': list(scale) if scale else None}
+    return {'type': 'boolean', 'labels': [False, True]}
+
+
+def _display_item(
+    rank: int, e: dict[str, Any], low_flip: bool, template: str, verdict_space: dict[str, Any],
+    src: dict[str, Any], reason: str = 'instability', judge_correct: bool | None = None,
+) -> dict[str, Any]:
+    # The judged input (query/output/messages) comes from `src` — the stability.json
+    # row for this datapoint — not from the metrics entry `e`, which no longer
+    # carries it (metrics.json stays lean so the conductor's report read can't slurp
+    # every input; see metrics.py).
+    output = src.get('output', '')
     return {
         'rank': rank,
         'source_index': e.get('source_index'),
         'low_flip_sample': low_flip,
-        'query': e.get('query', ''),
-        'output': e.get('output', ''),
+        # Why this datapoint is in the queue: 'instability' (self-inconsistent),
+        # 'cross_model' (two models disagree — §11.3 opt 4), 'wrong_vs_reference'
+        # (stable, and disagrees with the dataset's ground truth), or 'low_flip'.
+        'reason': reason,
+        # Ground truth and whether the judge matched it, when the dataset carried a
+        # label. Lets the conductor group by HOW the judge is wrong (systematically
+        # over-flagging fiction, say) rather than only by what it is unsure about.
+        # `judge_correct` is None when there was no readable label — absent, not False.
+        'reference': src.get('reference', ''),
+        'judge_correct': judge_correct,
+        # A seeded row's provenance flows through from stability (§11.6), if present.
+        'synthetic': src.get('synthetic', False),
+        'source': src.get('source'),
+        'query': src.get('query', ''),
+        'output': output,
         # Variables recovered from the rendered prompt so the UI can show the
         # actual judged inputs instead of the entire judge prompt. None when the
         # template could not be inverted; the UI falls back to raw `output`.
-        'variables': _invert_template(template, e.get('output', '')),
-        'messages': e.get('messages'),
+        'variables': _invert_template(template, output),
+        'messages': src.get('messages'),
+        # Self-contained verdict space (§5.6): the Part 1 → Part 2 boundary.
+        'verdict_space': verdict_space,
         'ambiguity': {
+            'instability': e.get('instability'),
+            'band': e.get('band'),
+            # Boolean-only legacy detail (None for categorical / numeric).
             'flip_rate': e.get('flip_rate'),
             'mode_value': e.get('mode_value'),
             'mode_rate': e.get('mode_rate'),
             'n_repeats': e.get('n_successful_repeats'),
         },
         'judge_votes': {
-            'n_true': e.get('n_true'),
-            'n_false': e.get('n_false'),
+            'n_true': e.get('n_true'),        # boolean
+            'n_false': e.get('n_false'),      # boolean
+            'counts': e.get('counts'),        # categorical
+            'mean': e.get('mean'),            # numeric
+            'stdev': e.get('stdev'),          # numeric
             'representative_explanation': e.get('representative_explanation'),
         },
     }
+
+
+def _traces_fingerprint(out_dir, metrics: dict[str, Any]) -> str | None:
+    """Identity of the traces.jsonl this queue's `source_index` values point into.
+
+    Preferred from the stability/metrics metadata — the file as it was when the run
+    was judged. Recomputed only for older run dirs that predate the field, and None
+    when there is no traces.jsonl to read (the queue is still the artifact that
+    matters; a missing fingerprint just means the downstream guard can't fire).
+    """
+    recorded = metrics.get('metadata', {}).get('traces_fingerprint')
+    if recorded:
+        return recorded
+    traces_path = out_dir / 'traces.jsonl'
+    return traces_fingerprint(runner.read_jsonl(traces_path)) if traces_path.exists() else None
+
+
+def _project_grey_zone(queue: dict[str, Any], cfg: dict) -> dict[str, Any] | None:
+    """What the step-6 grey-zone payload will cost in the conductor's context (§12.4).
+
+    The context budget rides on the count the user just chose rather than adding a
+    gate of its own, so the projection is reported here. It runs the *same* pure
+    `assemble_payload` that step 6 will run — a projection computed a second way
+    would eventually promise one thing and deliver another.
+
+    Returns None (and warns) if sizing fails: the queue is the artifact that matters.
+    """
+    try:
+        payload = gzlib.assemble_payload(
+            queue,
+            top_k=cfg.get('grey_zone_top_k'),
+            max_chars=int(cfg.get('grey_zone_max_chars', 600)),
+            max_tokens=int(cfg.get('grey_zone_max_tokens', 60000)),
+        )
+        # The budget block carries `n_confusers` itself: the queue holds the low-flip
+        # spot-check rows too, so `len(items)` is not what step 6 will show.
+        return payload['budget']
+    except Exception:  # noqa: BLE001 — never cost the user their queue over a courtesy
+        logger.warning('⚠ Could not project the grey-zone context budget; the queue is unaffected.')
+        return None
+
+
+def _log_projection(projection: dict[str, Any] | None, n_items: int) -> None:
+    """Tell the user, in the same breath as the count they chose, how much of it
+    will actually reach the conductor's context at step 6."""
+    if not projection:
+        return
+    logger.info(
+        f'  Grey-zone context projection: ~{projection["estimated_tokens"]} tokens of '
+        f'{projection["budget_tokens"]}.'
+    )
+    n_confusers = projection.get('n_confusers', n_items)
+    dropped = projection.get('n_dropped_by_budget') or 0
+    excluded = projection.get('n_low_flip_excluded') or 0
+    if excluded:
+        # State this rather than let the queue total imply it: the user picked a count
+        # of *unstable* examples, and the queue is that count plus the stable ones.
+        logger.info(
+            f'  {n_confusers} example(s) to review together at step 6; the {excluded} '
+            'stable spot-check row(s) stay out of that discussion.'
+        )
+    if dropped:
+        logger.warning(
+            f'⚠ {n_confusers} of {n_confusers + dropped} will enter context at step 6 (the '
+            f'most unstable); {dropped} exceed the token budget. Tell the user before clustering.'
+        )
 
 
 def main(
@@ -132,8 +242,10 @@ def main(
     Args:
         run_dir: Run directory (defaults to most recent).
         config: TOML config path.
-        count: How many top-ambiguous (flipped) items to annotate. -1 = all
-            flipped items. Choose this after reading the step-5 flip report.
+        count: How many top-ambiguous items to annotate — caps the COMBINED
+            confuser list (flipped, then cross-model, then wrong-vs-reference).
+            -1 = all; 0 = none (low-flip sanity sample only). Choose this after
+            reading the step-4 flip report.
         low_flip_sample_size: Random low-flip items to append as a sanity check
             (overrides config `low_flip_sample_size`; 0 disables).
     """
@@ -144,51 +256,150 @@ def main(
 
     metrics = runner.read_json(out_dir / 'metrics.json')
     per_row = metrics.get('per_row', [])
+    # The judged input lives in stability.json (metrics.json is kept lean); index it
+    # by source_index so each queue item can carry its actual input.
+    stab_path = out_dir / 'stability.json'
+    stability = runner.read_json(stab_path) if stab_path.exists() else {}
+    inputs_by_idx = {r.get('source_index'): r for r in stability.get('rows', [])}
     low_n = cfg.get('low_flip_sample_size', 5) if low_flip_sample_size is None else int(low_flip_sample_size)
     seed = int(cfg.get('seed', 42))
 
     # The judge prompt template lets us invert each rendered datapoint back into
     # its `{{variable}}` bindings for the annotation UI (kept visible there too).
+    # The same record carries the verdict space (§5.6) attached to every item.
     ev_path = out_dir / 'evaluator.json'
-    template = (runner.read_json(ev_path).get('prompt') or '') if ev_path.exists() else ''
+    ev = runner.read_json(ev_path) if ev_path.exists() else {}
+    template = ev.get('prompt') or ''
+    output_type = (ev.get('output_type') or metrics.get('metadata', {}).get('output_type') or 'boolean').strip().lower()
+    labels = ev.get('categorical_labels') or []
+    scale_raw = ev.get('scale')
+    scale = tuple(scale_raw) if isinstance(scale_raw, (list, tuple)) and len(scale_raw) == 2 else None
+    verdict_space = _verdict_space(output_type, labels, scale)
 
-    flipped = [e for e in per_row if _is_flipped(e)]  # already most-ambiguous-first
-    if count and count > 0:
-        flipped = flipped[:count]
+    flipped = [e for e in per_row if _is_confuser(e)]  # already most-unstable-first
+    # Uncapped: cross-model/wrong-vs-reference dedup and the "no confusers" check
+    # both need the FULL flipped set, not whatever --count later keeps. The cap
+    # applies once, to the combined confuser list, below.
+    flipped_idx = {e.get('source_index') for e in flipped}
 
-    items = [_display_item(i + 1, e, low_flip=False, template=template) for i, e in enumerate(flipped)]
+    # Cross-model disagreers (§11.3 opt 4): datapoints two models split on are
+    # confusers even at instability 0, so add any not already flipped.
+    cm_path = out_dir / 'cross_model.json'
+    cross_idx = set(runner.read_json(cm_path).get('disagreeing_indices', [])) if cm_path.exists() else set()
+    cross_only = [e for e in per_row if e.get('source_index') in cross_idx and e.get('source_index') not in flipped_idx]
 
-    low_pool = [e for e in per_row if _is_low_flip(e)]
+    # Stable-but-WRONG rows (flow-friction §3b). When the dataset carried ground
+    # truth, these are the highest-information rows in the run and the only ones
+    # instability-ranking can never surface — the judge is perfectly steady, and
+    # steadily wrong. Appended as their own `reason` rather than interleaved into
+    # the instability ranking, which stays a clean single-metric order.
+    wrong_idx = set((metrics.get('correctness') or {}).get('wrong_source_indices') or [])
+    wrong_only = [
+        e for e in per_row
+        if e.get('source_index') in wrong_idx
+        and e.get('source_index') not in flipped_idx
+        and e.get('source_index') not in cross_idx
+        and e.get('band') != 'unmeasurable'
+    ]
+
+    all_confusers = (
+        [(e, 'instability') for e in flipped]
+        + [(e, 'cross_model') for e in cross_only]
+        + [(e, 'wrong_vs_reference') for e in wrong_only]
+    )
+    # -1 (or any negative) = all; count >= 0 = take exactly that many (0 → none, so
+    # the queue is the low-flip sanity sample only). Caps the WHOLE confuser list
+    # (flipped, then cross-model, then wrong-vs-reference — the cap trims the
+    # tail), not just `flipped`, so a large wrong-vs-reference tail can't sneak
+    # past a user-chosen count.
+    n_dropped_by_count = max(0, len(all_confusers) - count) if count >= 0 else 0
+    confusers = all_confusers[:count] if count >= 0 else all_confusers
+
+    # Correct / wrong / unlabelled, per row, from the correctness block metrics
+    # already computed — so the queue never re-derives what "wrong" means.
+    correctness = metrics.get('correctness') or {}
+    labelled_idx = set(correctness.get('labelled_source_indices') or [])
+    def _correct(idx: Any) -> bool | None:
+        if idx in wrong_idx:
+            return False
+        return True if idx in labelled_idx else None
+
+    items = [
+        _display_item(
+            i + 1, e, False, template, verdict_space,
+            inputs_by_idx.get(e.get('source_index'), {}), reason,
+            _correct(e.get('source_index')),
+        )
+        for i, (e, reason) in enumerate(confusers)
+    ]
+
+    # Never re-offer a row already queued as a confuser (any reason) as a
+    # low-flip sanity item too — one row, one queue entry. Built from the CAPPED
+    # confuser list, not the uncapped source sets — a wrong row trimmed by --count
+    # should remain eligible for the low-flip pool rather than disappearing from
+    # both the queue and the pool with no disclosure.
+    queued_idx = {e.get('source_index') for e, _ in confusers}
+    low_pool = [e for e in per_row if _is_low_instability(e) and e.get('source_index') not in queued_idx]
     sampled_low: list[dict[str, Any]] = []
     if low_n > 0 and low_pool:
         rng = random.Random(seed)
         sampled_low = rng.sample(low_pool, min(low_n, len(low_pool)))
         start = len(items)
-        items.extend(_display_item(start + i + 1, e, low_flip=True, template=template) for i, e in enumerate(sampled_low))
+        items.extend(
+            _display_item(start + i + 1, e, True, template, verdict_space,
+                          inputs_by_idx.get(e.get('source_index'), {}), 'low_flip',
+                          _correct(e.get('source_index')))
+            for i, e in enumerate(sampled_low)
+        )
+
+    # What actually entered the queue post-cap, per reason — not the uncapped
+    # source lists, so these agree with `len(items)` even when --count trimmed
+    # the confuser list.
+    n_flipped_in_queue = sum(1 for _, reason in confusers if reason == 'instability')
+    n_cross_in_queue = sum(1 for _, reason in confusers if reason == 'cross_model')
+    n_wrong_in_queue = sum(1 for _, reason in confusers if reason == 'wrong_vs_reference')
 
     queue = {
         'meta': {
             'evaluator_id': metrics.get('metadata', {}).get('evaluator_id'),
             'evaluator_key': metrics.get('metadata', {}).get('evaluator_key'),
             'judge_model': metrics.get('metadata', {}).get('judge_model'),
-            'label_scheme': ['false', 'true'],  # the judge's own boolean verdict space
+            # Identity of the traces.jsonl these source_index values index into.
+            # Preferred from the metrics/stability metadata (the file as it was when
+            # the run was judged); recomputed only for older run dirs that predate it.
+            'traces_fingerprint': _traces_fingerprint(out_dir, metrics),
+            'verdict_space': verdict_space,  # the judge's own verdict space (per type)
             'eval_prompt': template,  # shown in the UI for context on how variables are used
-            'n_flipped_items': len(flipped),
+            'n_flipped_items': n_flipped_in_queue,
+            'n_cross_model': n_cross_in_queue,
+            'n_wrong_vs_reference': n_wrong_in_queue,
+            'n_dropped_by_count': n_dropped_by_count,
             'n_low_flip_sample': len(sampled_low),
             'n_items': len(items),
         },
         'items': items,
     }
+    queue['meta']['grey_zone_projection'] = _project_grey_zone(queue, cfg)
     runner.write_json(out_dir / 'queue.json', queue)
     logger.info(
-        f'✓ Wrote {out_dir / "queue.json"}: {len(flipped)} flipped + '
+        f'✓ Wrote {out_dir / "queue.json"}: {n_flipped_in_queue} flipped + '
+        f'{n_cross_in_queue} cross-model + {n_wrong_in_queue} wrong-vs-reference + '
         f'{len(sampled_low)} low-flip sanity items = {len(items)} to annotate'
     )
-    if not flipped:
+    _log_projection(queue['meta']['grey_zone_projection'], len(items))
+    if n_dropped_by_count:
+        logger.info(
+            f'  --count {count} trimmed {n_dropped_by_count} confuser(s) from the tail; '
+            'rows trimmed by --count remain eligible for the low-flip pool.'
+        )
+    # Uncapped lists on purpose: whether confusers EXIST is a property of the run,
+    # not of the --count the user happened to pass this time.
+    if not flipped and not cross_only and not wrong_only:
         logger.warning(
-            '⚠ No flipped datapoints. The judge was unanimous everywhere at this '
-            'temperature — the flip queue is empty. Raise temperature or rely on '
-            'the low-flip sanity sample (design §8).'
+            '⚠ No confusers. The judge was unanimous everywhere at this temperature '
+            'and no cross-model disagreements were found — the flip queue is empty. '
+            'Raise temperature, seed data (dataset/synthetic), add a second model, or '
+            'rely on the low-flip sanity sample (design §8 / §11).'
         )
     print(out_dir)
     return str(out_dir)

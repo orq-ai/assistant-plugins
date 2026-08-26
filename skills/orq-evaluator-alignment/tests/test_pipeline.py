@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -400,25 +401,51 @@ def test_make_replacements_reads_parts_shaped_conversation():
     assert 'where is my order' in repl['log.conversation']
     assert repl['log.expected_output'] == 'gold'
 
-# Canned per-row verdicts keyed by a substring of the judged input.
+
+# Canned per-row verdicts keyed by a substring of the judged input, per type. The
+# "useless" row is unstable in every type; the other two are unanimous (stable).
 _CANNED = {
     'useless': [True, False, True, False, True],   # flips: 3T/2F, mode True
     'tokyo': [False, False, False, False, False],  # unanimous False
     'hate you': [True, True, True, True, True],     # unanimous True
 }
+_CANNED_CAT = {
+    'useless': ['abuse', 'safe', 'abuse', 'safe', 'abuse'],   # 3 abuse / 2 safe over K=3
+    'tokyo': ['safe', 'safe', 'safe', 'safe', 'safe'],
+    'hate you': ['abuse', 'abuse', 'abuse', 'abuse', 'abuse'],
+}
+_CANNED_NUM = {
+    'useless': [2.0, 4.0, 2.0, 4.0, 3.0],   # spread → stdev > 0 on a 1–5 scale
+    'tokyo': [5.0, 5.0, 5.0, 5.0, 5.0],
+    'hate you': [1.0, 1.0, 1.0, 1.0, 1.0],
+}
 
 
-async def _fake_run_jury_for_row(spec, judge_model, *, client, repetitions):
+async def _fake_run_jury_for_row(
+    spec, judge_model, *, client, repetitions, output_type='boolean', labels=None, scale=None
+):
     text = (spec.replacements.get('log.input') or '').lower()
-    reps = next((v for k, v in _CANNED.items() if k in text), [True] * repetitions)
-    reps = reps[:repetitions]
-    n_true = sum(reps)
-    value = n_true >= (len(reps) - n_true)
+    if output_type == 'categorical':
+        canned, default = _CANNED_CAT, [(labels or ['safe'])[0]] * repetitions
+    elif output_type in ('number', 'numeric'):
+        canned, default = _CANNED_NUM, [1.0] * repetitions
+    else:
+        canned, default = _CANNED, [True] * repetitions
+    reps = next((v for k, v in canned.items() if k in text), default)[:repetitions]
+    if output_type == 'categorical':
+        (value, _), = Counter(reps).most_common(1)
+    elif output_type in ('number', 'numeric'):
+        value = sum(reps) / len(reps)
+    else:
+        n_true = sum(1 for r in reps if r)
+        value = n_true >= (len(reps) - n_true)
     return {
         'success': True,
         'repetitions': reps,
         'repetitions_failed': 0,
+        'n_wrong_output_type': 0,
         'value': value,
+        'output_type': output_type,
         'explanation': 'canned judge rationale',
     }
 
@@ -531,3 +558,267 @@ def test_pipeline_end_to_end(run_dir):
     assert set(status['source_vars']) == {'log.input', 'log.output'}
     new_prompt = (run_dir / 'new_prompt.md').read_text(encoding='utf-8')
     assert '{{log.input}}' in new_prompt and '{{log.output}}' in new_prompt
+
+
+def test_build_queue_count_zero_takes_no_flipped_items(run_dir):
+    # Regression: count=0 previously folded into "all flipped" (the `count and
+    # count > 0` guard). It must now mean "none" — queue is the low-flip sample only.
+    import build_queue
+    import stability
+
+    stability.main(run_dir=str(run_dir), config=FAKE_CONFIG)
+    build_queue.main(run_dir=str(run_dir), config=FAKE_CONFIG, count=0)
+    queue = json.loads((run_dir / 'queue.json').read_text(encoding='utf-8'))
+    assert queue['meta']['n_flipped_items'] == 0
+    assert queue['meta']['n_low_flip_sample'] == 1
+
+
+# --- RES-978 §9: categorical + numeric end-to-end through stability→metrics→build_queue ---
+
+
+def _make_run(tmp_path, monkeypatch, evaluator_fixture: str) -> Path:
+    d = tmp_path / 'fixture_run'
+    d.mkdir()
+    shutil.copy(FIXTURES / evaluator_fixture, d / 'evaluator.json')
+    shutil.copy(FIXTURES / 'traces.jsonl', d / 'traces.jsonl')
+    import stability
+
+    monkeypatch.setattr(stability, 'run_jury_for_row', _fake_run_jury_for_row)
+    monkeypatch.setattr(stability, 'make_judge_client', lambda: object())
+    return d
+
+
+def test_pipeline_categorical(tmp_path, monkeypatch):
+    import build_queue
+    import stability
+
+    d = _make_run(tmp_path, monkeypatch, 'evaluator_categorical.json')
+    stability.main(run_dir=str(d), config=FAKE_CONFIG)
+    mx = json.loads((d / 'metrics.json').read_text(encoding='utf-8'))
+    assert mx['metadata']['output_type'] == 'categorical'
+    by_idx = {e['source_index']: e for e in mx['per_row']}
+
+    # The "useless" row mixes labels over K=3 → measurable and unstable, with the
+    # unified instability/band and categorical detail attached.
+    confuser = by_idx[0]
+    assert confuser['instability'] > 0.0
+    assert confuser['band'] in ('noisy', 'unreliable')
+    assert confuser['k'] == 3
+    assert confuser['counts']
+    # Unanimous rows are perfectly stable on the SAME 0..1 scale.
+    assert all(by_idx[i]['instability'] == 0.0 and by_idx[i]['band'] == 'stable' for i in (1, 2))
+
+    build_queue.main(run_dir=str(d), config=FAKE_CONFIG, count=-1)
+    q = json.loads((d / 'queue.json').read_text(encoding='utf-8'))
+    assert q['meta']['verdict_space'] == {'type': 'categorical', 'labels': ['safe', 'abuse', 'spam'], 'k': 3}
+    assert q['items'][0]['source_index'] == 0  # the ranked confuser
+    assert q['items'][0]['verdict_space']['type'] == 'categorical'
+
+
+def test_pipeline_numeric(tmp_path, monkeypatch):
+    import build_queue
+    import stability
+
+    d = _make_run(tmp_path, monkeypatch, 'evaluator_numeric.json')
+    stability.main(run_dir=str(d), config=FAKE_CONFIG)
+    mx = json.loads((d / 'metrics.json').read_text(encoding='utf-8'))
+    assert mx['metadata']['output_type'] == 'number'
+    by_idx = {e['source_index']: e for e in mx['per_row']}
+
+    confuser = by_idx[0]
+    assert confuser['instability'] > 0.0
+    assert confuser['band'] in ('noisy', 'unreliable')
+    assert confuser['scale'] == [1, 5]
+    assert confuser['stdev'] > 0.0
+    assert all(by_idx[i]['instability'] == 0.0 for i in (1, 2))
+
+    build_queue.main(run_dir=str(d), config=FAKE_CONFIG, count=-1)
+    q = json.loads((d / 'queue.json').read_text(encoding='utf-8'))
+    assert q['meta']['verdict_space'] == {'type': 'number', 'scale': [1, 5]}
+    assert q['items'][0]['source_index'] == 0
+
+
+def test_pipeline_numeric_no_scale_is_unmeasurable(tmp_path, monkeypatch):
+    import stability
+
+    d = _make_run(tmp_path, monkeypatch, 'evaluator_numeric.json')
+    # Drop the scale: numeric rows must become `unmeasurable`, never guessed (§4a).
+    ev = json.loads((d / 'evaluator.json').read_text(encoding='utf-8'))
+    ev['scale'] = None
+    (d / 'evaluator.json').write_text(json.dumps(ev), encoding='utf-8')
+
+    stability.main(run_dir=str(d), config=FAKE_CONFIG)
+    mx = json.loads((d / 'metrics.json').read_text(encoding='utf-8'))
+    assert mx['per_row']  # rows exist
+    assert all(e['instability'] is None and e['band'] == 'unmeasurable' for e in mx['per_row'])
+
+
+# --- RES-980: grey-zone feedback loop (assemble → policy → apply → rewrite → retest) ---
+
+
+def test_grey_zone_feedback_categorical(tmp_path, monkeypatch):
+    """The grey-zone path drives the EXISTING rewrite: build_queue → assemble the
+    conductor payload → (conductor writes grey_zone_policy.json) → apply →
+    rewrite_eval, with the categorical verdict space preserved."""
+    import build_queue
+    import grey_zone as gz  # scripts/grey_zone.py (the CLI)
+    import rewrite_eval
+    import stability
+
+    d = _make_run(tmp_path, monkeypatch, 'evaluator_categorical.json')
+    # A realistic categorical rubric names its labels, so the identity-stub rewrite
+    # can preserve them (the fake backend echoes the judge prompt verbatim).
+    ev = json.loads((d / 'evaluator.json').read_text(encoding='utf-8'))
+    ev['prompt'] = ('Classify the message as one of: safe, abuse, spam. Explanation '
+                    'before value.\n<input>{{log.input}}</input>\n<output>{{log.output}}</output>')
+    (d / 'evaluator.json').write_text(json.dumps(ev), encoding='utf-8')
+
+    stability.main(run_dir=str(d), config=FAKE_CONFIG)
+    build_queue.main(run_dir=str(d), config=FAKE_CONFIG, count=-1)
+
+    # Assemble the bounded confuser payload the conductor open-codes.
+    gz.assemble(run_dir=str(d), config=FAKE_CONFIG)
+    payload = json.loads((d / 'grey_zone_payload.json').read_text(encoding='utf-8'))
+    assert payload['n_confusers'] >= 1
+    confuser = payload['confusers'][0]
+    assert confuser['verdict_split'].get('counts')  # categorical detail carried
+
+    # Conductor writes the policy from the (simulated) Q&A: resolve the confuser to `abuse`.
+    rule = 'A sarcastic put-down aimed at a person is `abuse`, not `safe`.'
+    policy = {
+        'output_type': 'categorical',
+        'verdict_space': payload['verdict_space'],
+        'grey_zones': [{
+            'id': 'gz1', 'question': 'Is a sarcastic put-down abuse?',
+            'answer': 'Yes — targeted sarcasm counts as abuse.', 'rule': rule,
+            'member_source_indices': [confuser['source_index']],
+        }],
+        'labels': [{'source_index': confuser['source_index'], 'value': 'abuse', 'grey_zone_id': 'gz1'}],
+    }
+    (d / 'grey_zone_policy.json').write_text(json.dumps(policy), encoding='utf-8')
+
+    # apply → aggregated.md; rewrite_eval consumes it unchanged, preserving the labels.
+    gz.apply(run_dir=str(d), config=FAKE_CONFIG)
+    assert rule in (d / 'aggregated.md').read_text(encoding='utf-8')
+
+    rewrite_eval.main(run_dir=str(d), config=FAKE_CONFIG)
+    status = json.loads((d / 'rewrite_status.json').read_text(encoding='utf-8'))
+    assert status['output_type'] == 'categorical'
+    assert status['verdict_space_ok'] is True  # all K labels survived the rewrite
+
+
+def test_retest_scores_against_the_union_of_both_label_artifacts(tmp_path, monkeypatch):
+    """End-to-end proof that retest scores agreement against BOTH label artifacts when
+    both exist, with the annotation winning a datapoint the policy also covers — and
+    that the result does not depend on which file happens to have the newer mtime."""
+    import retest
+    import stability
+
+    d = _make_run(tmp_path, monkeypatch, 'evaluator_categorical.json')
+    stability.main(run_dir=str(d), config=FAKE_CONFIG)  # original metrics.json + stability.json
+
+    # A created evaluator to retest (same prompt/model, fresh id).
+    ev = json.loads((d / 'evaluator.json').read_text(encoding='utf-8'))
+    new_eval = dict(ev)
+    new_eval['id'] = 'new-eval-123'
+    new_eval['judge_model'] = ev.get('judge_model') or 'fake/model'
+    new_eval['source_evaluator_id'] = ev.get('id')
+    (d / 'new_evaluator.json').write_text(json.dumps(new_eval), encoding='utf-8')
+
+    # Policy says the confuser (row 0) is `abuse`; a CONFLICTING annotations.json says
+    # `safe`. The fake judge majority on row 0 is `abuse`, so agreement is 1.0 only if
+    # retest scored the policy label — 0.0 if the annotation overrode it, which is what
+    # the union rule says must happen for a datapoint both files cover.
+    (d / 'annotations.json').write_text(json.dumps({'0': {'value': 'safe', 'reason': ''}}), encoding='utf-8')
+    (d / 'grey_zone_policy.json').write_text(json.dumps({
+        'output_type': 'categorical',
+        'verdict_space': {'type': 'categorical', 'labels': ['safe', 'abuse', 'spam'], 'k': 3},
+        'grey_zones': [],
+        'labels': [{'source_index': 0, 'value': 'abuse', 'grey_zone_id': None}],
+    }), encoding='utf-8')
+
+    retest.main(run_dir=str(d), config=FAKE_CONFIG)
+    rm = json.loads((d / 'retest_metrics.json').read_text(encoding='utf-8'))
+    assert rm['metadata']['output_type'] == 'categorical'
+    assert rm['metadata']['label_source'] == 'grey_zone_policy+annotations'
+    assert rm['agreement']['n'] == 1
+    assert rm['agreement']['accuracy'] == 0.0  # the annotation won row 0, not the policy
+
+
+# --- RES-980 §11: data seeding — synthetic rows flow through & stay flagged ---
+
+
+def test_seeding_synthetic_rows_flow_to_queue_tagged(tmp_path, monkeypatch):
+    """seed_inputs.convert → stability → metrics → build_queue: a synthetic confuser
+    reaches the queue and keeps its `synthetic: true` flag end-to-end (§11.6)."""
+    import build_queue
+    import seed_inputs
+    import stability
+
+    d = tmp_path / 'run'
+    d.mkdir()
+    (d / 'evaluator.json').write_text(json.dumps({
+        'id': 'e', 'prompt': 'Judge {{log.input}} {{log.output}}', 'output_type': 'boolean',
+        'variables': ['log.input', 'log.output'], 'judge_model': 'm',
+    }), encoding='utf-8')
+    # A synthetic boundary case whose input the fake judge flips on ("useless").
+    (d / 'synthetic_datapoints.json').write_text(json.dumps([
+        {'inputs': {'log.input': 'this is useless', 'log.output': 'ok'}, 'expected_output': '', 'rationale': 'edge'},
+    ]), encoding='utf-8')
+
+    seed_inputs.convert(run_dir=str(d), config=FAKE_CONFIG)
+    monkeypatch.setattr(stability, 'run_jury_for_row', _fake_run_jury_for_row)
+    monkeypatch.setattr(stability, 'make_judge_client', lambda: object())
+    stability.main(run_dir=str(d), config=FAKE_CONFIG)
+    build_queue.main(run_dir=str(d), config=FAKE_CONFIG, count=-1, low_flip_sample_size=0)
+
+    q = json.loads((d / 'queue.json').read_text(encoding='utf-8'))
+    assert q['items'], 'the synthetic confuser should surface in the queue'
+    assert q['items'][0]['synthetic'] is True
+    assert q['items'][0]['reason'] == 'instability'
+
+
+# --- context-bloat fix: metrics.json must not carry raw inputs into the conductor ---
+
+
+def test_metrics_json_omits_raw_inputs_from_per_row(run_dir):
+    """The conductor reads metrics.json at the instability step; it must NOT carry
+    the per-datapoint query/output/messages (which would dump every judged input
+    into context, defeating the bounded grey-zone payload). They live only in
+    stability.json (the canonical copy)."""
+    import stability
+
+    stability.main(run_dir=str(run_dir), config=FAKE_CONFIG)
+    mx = json.loads((run_dir / 'metrics.json').read_text(encoding='utf-8'))
+    assert mx['per_row']
+    for e in mx['per_row']:
+        assert 'output' not in e and 'query' not in e and 'messages' not in e
+    # the input text is still available in stability.json
+    stab = json.loads((run_dir / 'stability.json').read_text(encoding='utf-8'))
+    assert any(r.get('output') for r in stab['rows'])
+
+
+def test_build_queue_sources_inputs_from_stability(run_dir):
+    """Even though metrics.json dropped the inputs, the queue items still carry the
+    judged input (sourced from stability.json) so the UI + grey-zone payload work."""
+    import build_queue
+    import stability
+
+    stability.main(run_dir=str(run_dir), config=FAKE_CONFIG)
+    build_queue.main(run_dir=str(run_dir), config=FAKE_CONFIG, count=-1)
+    q = json.loads((run_dir / 'queue.json').read_text(encoding='utf-8'))
+    assert any(it['output'] for it in q['items'])       # judged input text still present
+    assert all('output' in it and 'query' in it for it in q['items'])
+
+
+def test_recommend_rows_by_index_enriches_from_stability():
+    """The pure reroute seam: metric rows keyed by source_index, enriched with the
+    judged input from stability.json (metric fields preserved)."""
+    import recommend
+
+    metrics = {'per_row': [{'source_index': 0, 'instability': 0.6, 'flip_rate': 0.4}]}
+    stab = {'rows': [{'source_index': 0, 'query': 'q0', 'output': 'o0', 'messages': None}]}
+    rows = recommend._rows_by_index(metrics, stab)
+    assert rows[0]['query'] == 'q0'
+    assert rows[0]['output'] == 'o0'
+    assert rows[0]['instability'] == 0.6  # metric fields preserved through the merge
