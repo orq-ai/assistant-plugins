@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -25,21 +25,54 @@ assert_jq() {
 
 assert_path() {
   local flag="$1" path="$2" msg="$3"
-  if ! test "$flag" "$path"; then
+  # Resolved through content_path so a link this checkout could not materialise
+  # is still tested against what it points at — see the note above assert_symlink.
+  local resolved; resolved="$(content_path "$path")"
+  if ! test "$flag" "$resolved"; then
     echo "FAIL: $msg"
     echo "  path: $path"
+    [[ "$resolved" != "$path" ]] && echo "  resolved: $resolved (unmaterialised symlink)"
     exit 1
   fi
+}
+
+# The index is the authority on what ships, not the checkout. Windows git
+# materialises a tracked symlink as a regular file whose content is the target
+# path, so `-L` is false and `jq` is handed a path where it expected JSON. Both
+# were reported as repo faults — "should be a symlink but is not" and "Invalid
+# JSON in mcp.json" — when the repo is fine and the checkout simply cannot
+# represent a link.
+tracked_mode() { git ls-files -s -- "$1" 2>/dev/null | cut -d' ' -f1; }
+is_tracked_symlink() { [[ "$(tracked_mode "$1")" == "120000" ]]; }
+
+# The path whose *content* should be validated, following any unmaterialised
+# link. Walks component by component, because a link can sit anywhere along the
+# way: `.claude-plugin/skills/orq-build-agent/SKILL.md` passes through one.
+# On a checkout that did materialise the links, `-L` is true and this is a no-op.
+content_path() {
+  local rest="$1" acc="" comp
+  while [[ -n "$rest" ]]; do
+    comp="${rest%%/*}"
+    if [[ "$comp" == "$rest" ]]; then rest=""; else rest="${rest#*/}"; fi
+    acc="${acc:+$acc/}$comp"
+    if [[ ! -L "$acc" && -f "$acc" ]] && is_tracked_symlink "$acc"; then
+      acc="$(dirname "$acc")/$(cat "$acc")"
+    fi
+  done
+  echo "$acc"
 }
 
 assert_symlink() {
   local link="$1" expected_target="$2"
   local actual_target
-  if [[ ! -L "$link" ]]; then
-    echo "FAIL: $link should be a symlink but is not"
+  if [[ -L "$link" ]]; then
+    actual_target="$(readlink "$link")"
+  elif is_tracked_symlink "$link"; then
+    actual_target="$(cat "$link")"   # unmaterialised: the blob content is the target
+  else
+    echo "FAIL: $link should be a symlink but is not, and is not tracked as one"
     exit 1
   fi
-  actual_target="$(readlink "$link")"
   if [[ "$actual_target" != "$expected_target" ]]; then
     echo "FAIL: $link points to '$actual_target', expected '$expected_target'"
     exit 1
@@ -63,9 +96,11 @@ for file in "${json_files[@]}"; do
     echo "FAIL: Missing required file: $file"
     exit 1
   fi
-  if ! jq -e . "$file" >/dev/null 2>&1; then
+  target="$(content_path "$file")"
+  if ! jq -e . "$target" >/dev/null 2>&1; then
     echo "FAIL: Invalid JSON in $file"
-    jq . "$file" 2>&1 | head -5
+    [[ "$target" != "$file" ]] && echo "  (read through an unmaterialised symlink: $target)"
+    jq . "$target" 2>&1 | head -5
     exit 1
   fi
 done

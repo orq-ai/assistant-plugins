@@ -1,0 +1,16 @@
+# LF in the working tree on every platform, not just in the blobs.
+#
+# Without this, a Windows checkout with core.autocrlf=true holds CRLF copies of
+# LF blobs. The skill lock hashes are computed from the index so they no longer
+# care (see tests/scripts/validate-skills.mjs), but everything else in the repo
+# still does: `npx skills add <local path>` hashes the files on disk, so the same
+# checkout installs with different hashes than CI computes, and the bash test
+# harness and hook scripts are read by tools that treat a trailing CR as part of
+# the last argument.
+#
+# `text=auto` still lets git detect binary content, so assets/logo.png and any
+# future binary are left alone.
+* text=auto eol=lf
+
+# Explicitly binary, so no filter is attempted regardless of content sniffing.
+*.png binary
