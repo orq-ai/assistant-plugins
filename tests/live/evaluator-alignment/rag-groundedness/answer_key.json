@@ -383,6 +383,7 @@
         "G3c"
       ],
       "agreement_with_reference_policy": "18/24 by majority verdict",
+      "unnamed_sixth_miss": "18/24 means six misses; the two lists above name five (A2, A3, G1a, G1b, G3c). The sixth is NOT recorded and must not be inferred: score_run.py takes the majority with Counter.most_common(1), which on a 4/4 tie returns whichever verdict was seen first, so any of the other 0.5-instability rows — G2a, G2c, G4b — could have tie-broken to the wrong side on this run. Do not 'correct' the figure to 19/24 to match the list; re-run flash-lite through score_run.py if the exact list is needed. Same caveat on the flash row below, whose five named ids do reconcile with 19/24 only because its single unstable row is the one already named.",
       "note": "G3c is wrong here AND unstable (0.5), so it is not a blind-spot case on this judge — the ranking surfaces it. It sits in unstable_and_wrong_cases rather than stable_but_wrong_cases, which would have claimed it both ways at once."
     },
     "google/gemini-2.5-flash": {
@@ -436,7 +437,7 @@
       "id": "PC3",
       "claim": "The documented blind spot is real and is reported.",
       "check": "The MEASURED stable-wrong cases — A2, A3, G1a, G1b on both judges — show instability at or near 0 and do NOT appear in the queue with reason='instability'. They can only reach the human via reason='low_flip' (the low_flip_sample_size draw), and the conductor's final summary must state the consistently-wrong caveat. This is the criterion nothing else in the repo verifies, and the flash (non-lite) run is the sharpest version of it.",
-      "note": "T1, T2 and T4 are DESIGNED to be stably wrong (see their predicted_judge_failure) but were not among the wrong verdicts on either 2026-08-13 run: flash-lite scored 18/24 and flash 19/24, and those misses are accounted for by the four anchors/GZ1 cases plus G3c. Do not assert them as measured blind-spot cases without re-measuring — an earlier draft of this criterion said 'six' and then named seven ids, which is how the discrepancy went unnoticed."
+      "note": "T1, T2 and T4 are DESIGNED to be stably wrong (see their predicted_judge_failure) but were not among the wrong verdicts on either 2026-08-13 run: flash-lite scored 18/24 and flash 19/24. On flash the five named misses (the four anchors/GZ1 cases plus G3c) account for the figure exactly; on flash-lite they account for five of six — see unnamed_sixth_miss in measured_baseline. T1/T2/T4 are not among the NAMED misses on either run, but flash-lite's unidentified sixth cannot be ruled out as one of them. Do not assert them as measured blind-spot cases without re-measuring — an earlier draft of this criterion said 'six' and then named seven ids, which is how the discrepancy went unnoticed."
     },
     {
       "id": "PC4",
