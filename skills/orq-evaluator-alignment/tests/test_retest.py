@@ -34,11 +34,8 @@ def _boolean_policy() -> dict:
     }
 
 
-def test_load_labels_prefers_grey_zone_policy(tmp_path):
-    _write(tmp_path / 'annotations.json', {'7': {'value': False, 'reason': ''}})
+def test_load_labels_uses_only_the_policy_when_it_is_the_only_artifact(tmp_path):
     _write(tmp_path / 'grey_zone_policy.json', _boolean_policy())
-    # Make the policy unambiguously the newer of the two.
-    os.utime(tmp_path / 'grey_zone_policy.json', (time.time() + 10, time.time() + 10))
 
     labels, source, policy = retest._load_labels(tmp_path)
 
@@ -47,19 +44,50 @@ def test_load_labels_prefers_grey_zone_policy(tmp_path):
     assert policy is not None
 
 
-def test_load_labels_uses_the_newer_artifact_when_both_exist(tmp_path):
+def test_load_labels_unions_both_artifacts_and_the_annotation_wins_a_collision(tmp_path):
     # The documented fallback runs grey zone -> "these don't group" -> annotation UI,
-    # so a fixed grey-zone-first preference threw away the labels the user had just
-    # finished collecting, silently.
+    # so both files are the same human answering about different datapoints. Neither
+    # may be discarded, and the choice may not depend on which file has the newer
+    # mtime — the run has to score the same way twice.
     _write(tmp_path / 'grey_zone_policy.json', _boolean_policy())
-    _write(tmp_path / 'annotations.json', {'7': {'value': False, 'reason': 'by hand'}})
-    os.utime(tmp_path / 'annotations.json', (time.time() + 10, time.time() + 10))
+    _write(tmp_path / 'annotations.json', {
+        '7': {'value': False, 'reason': 'by hand'},
+        '9': {'value': True, 'reason': 'not in the policy at all'},
+    })
 
     labels, source, policy = retest._load_labels(tmp_path)
 
-    assert source == 'annotations'
-    assert labels['7']['value'] is False
-    assert policy is None
+    assert source == 'grey_zone_policy+annotations'
+    assert labels['7']['value'] is False   # annotation overrides the policy label
+    assert labels['9']['value'] is True    # annotation-only datapoint survives
+    assert policy is not None              # tolerance band / provenance still readable
+
+
+def test_load_labels_union_does_not_depend_on_mtime(tmp_path):
+    _write(tmp_path / 'grey_zone_policy.json', _boolean_policy())
+    _write(tmp_path / 'annotations.json', {'7': {'value': False, 'reason': 'by hand'}})
+
+    later = time.time() + 10
+    os.utime(tmp_path / 'grey_zone_policy.json', (later, later))
+    policy_newer = retest._load_labels(tmp_path)
+    os.utime(tmp_path / 'annotations.json', (later + 10, later + 10))
+    annotations_newer = retest._load_labels(tmp_path)
+
+    assert policy_newer == annotations_newer
+
+
+def test_load_labels_marks_merged_annotations_as_human_confirmed(tmp_path):
+    # `_build_provenance` reads the per-label source off `labels` before falling back
+    # to the policy; without this stamp a merged annotation counts as `derived`.
+    _write(tmp_path / 'grey_zone_policy.json', _boolean_policy())
+    _write(tmp_path / 'annotations.json', {'9': {'value': True, 'reason': 'by hand'}})
+
+    labels, _source, policy = retest._load_labels(tmp_path)
+
+    assert labels['9']['label_source'] == 'human_confirmed'
+    assert retest._build_provenance(policy, [7, 9], labels) == {
+        'derived': 1, 'human_confirmed': 1, 'dataset_reference': 0,
+    }
 
 
 def test_load_labels_falls_back_to_annotations(tmp_path):

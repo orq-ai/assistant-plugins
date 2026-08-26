@@ -19,6 +19,11 @@ majority verdict matches the reference policy. Then the two checks that matter:
   PC1  do the grey-zone cases outrank the anchors on instability?
   PC3  which cases are STABLE AND WRONG — the blind spot instability cannot see?
 
+Also diffs this run's wrong-case ids against the ones `measured_baseline` records for
+this judge. The recorded agreement figure is a count from a past run; the id lists
+beside it are what a new run can actually be checked against, so this reports both
+and names the difference instead of asserting either.
+
 Failed repetitions come back as null and are excluded from the majority, not
 counted as a verdict.
 """
@@ -52,6 +57,54 @@ def _matches(expected: Any, actual: Any, output_type: str, tol: float) -> bool:
         except (TypeError, ValueError):
             return False
     return str(expected).strip().lower() == str(actual).strip().lower()
+
+
+def _baseline_wrong_ids(baseline: dict[str, Any]) -> set[str]:
+    """The wrong cases a recorded baseline NAMES, as one set.
+
+    `stable_but_wrong_cases` and `unstable_and_wrong_cases` partition the misses —
+    same verdict every repeat vs. not — so the union is every case that baseline
+    identified. It is not necessarily every case that baseline COUNTED: the
+    flash-lite row records 18/24 against five named ids, because a 4/4 repetition
+    tie resolves by first-seen order (`Counter.most_common`) and nobody wrote down
+    which of the 0.5-instability rows tipped. Hence report, don't reconcile.
+    """
+    return set(baseline.get('stable_but_wrong_cases') or []) | set(baseline.get('unstable_and_wrong_cases') or [])
+
+
+def _compare_to_baseline(key_doc: dict[str, Any], judge: str, rows: list[dict[str, Any]]) -> None:
+    """Put this run's wrong-case ids next to the recorded ones and name the difference.
+
+    The agreement figure in `answer_key.json` is prose from a past run, so nothing
+    stops it drifting from the id lists directly above it — and it has. This does not
+    try to decide which is right: it prints the recorded figure, the recorded ids and
+    the ids THIS run got wrong, which is the only one of the three the reader can act
+    on. A judge that has genuinely moved shows up as a named id, not as a number that
+    changed for unknown reasons.
+    """
+    baseline = (key_doc.get('measured_baseline') or {}).get(judge)
+    if not isinstance(baseline, dict):
+        print(f'\nbaseline: no recorded baseline for {judge} — nothing to compare against.')
+        return
+
+    expected_wrong = _baseline_wrong_ids(baseline)
+    recorded = baseline.get('agreement_with_reference_policy', '(no figure recorded)')
+    print(f'\nbaseline for {judge}: recorded {recorded}')
+    print(f'     named wrong there ({len(expected_wrong)}): {", ".join(sorted(expected_wrong)) or "none"}')
+
+    actual_wrong = {r['id'] for r in rows if not r['agrees']}
+    print(f'     wrong here      ({len(actual_wrong)}): {", ".join(sorted(actual_wrong)) or "none"}')
+    if actual_wrong == expected_wrong:
+        print('     Same id set. This run reproduces the recorded blind spot exactly.')
+        return
+    newly_wrong = sorted(actual_wrong - expected_wrong)
+    newly_right = sorted(expected_wrong - actual_wrong)
+    if newly_wrong:
+        print(f'     wrong here but not named in the baseline: {", ".join(newly_wrong)}')
+    if newly_right:
+        print(f'     named in the baseline but right here:     {", ".join(newly_right)}')
+    print('     If this run is the better measurement, update measured_baseline from it —')
+    print('     both the id lists AND the figure, so the two keep saying the same thing.')
 
 
 def main(run_dir: str, tol: float = 0.5) -> None:
@@ -103,6 +156,7 @@ def main(run_dir: str, tol: float = 0.5) -> None:
     print('-' * len(header))
     agree = sum(r['agrees'] for r in rows)
     print(f'agreement with reference policy: {agree}/{len(rows)}')
+    _compare_to_baseline(key_doc, judge, rows)
 
     # PC1 — instability must rank the engineered ambiguity above the anchors.
     unstable = [r for r in rows if (r['instability'] or 0) > 0]

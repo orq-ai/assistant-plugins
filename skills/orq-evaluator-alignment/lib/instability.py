@@ -14,7 +14,7 @@ the validation project (`projects/eval-stability-metrics-validation`) import it.
 Formulas (RES-978 §4), each returning 0.0 = perfectly stable, 1.0 = maximal:
   - boolean:      2·min(yes, N−yes) / N
   - categorical:  H / ln(k)   with H = −Σ p·ln p  over observed labels
-  - numeric:      population stdev / (scale_max − scale_min)
+  - numeric:      population stdev / ((scale_max − scale_min) / 2)
 
 Every denominator is fixed by something the run declares — the label set, the
 scale — and never by what the judge happened to return. A denominator that moves
@@ -85,31 +85,30 @@ def categorical(labels: Sequence[str], k: int) -> float:
 
 
 def numeric(values: Sequence[float], scale_min: float, scale_max: float) -> float:
-    """Population stdev normalized by the *declared* scale range.
+    """Population stdev normalized by *half* the declared scale range.
 
     Uses the declared `[scale_min, scale_max]`, not the observed spread, so the
     number means the same thing regardless of what the judge happened to emit. A
     single value (stdev 0) is 0.0; the scale range must be strictly positive.
 
-    Clamped to `[0, 1]`: values the judge emits *outside* the declared scale can
-    make the stdev exceed the range, which would push the ratio past 1.0 and break
-    the shared 0..1 scale downstream steps depend on. Out-of-scale spread saturates
-    at 1.0.
+    The denominator is `range / 2`, not `range`, so 1.0 means *maximally split* on
+    every output type. A maximal split (half the repeats at `scale_min`, half at
+    `scale_max`) has a population stdev of exactly half the range, so dividing by
+    the full range topped out at 0.5 and put numeric on a different scale from
+    boolean and categorical, which both reach 1.0 on their maximal splits. Since
+    the bands (`stable` / `noisy` / `unreliable`) and every downstream sort and
+    N-recommendation read one shared 0..1 number, the two halves of that number
+    have to mean the same thing.
 
-    Note the top of the range is unreachable in practice: a maximal split (half at
-    `scale_min`, half at `scale_max`) has a population stdev of exactly half the
-    range, so it scores 0.5, where boolean and categorical both reach 1.0 on their
-    maximal splits. So "1 = maximal" holds for the other types but not for numeric,
-    where 0.5 already means *as split as a judge can be*. It still lands in
-    `unreliable`, and the bands are what everything downstream reads, so this
-    affects how the number should be read rather than what it triggers.
+    Clamped to `[0, 1]`: values the judge emits *outside* the declared scale, or a
+    split wider than the scale allows, would otherwise push the ratio past 1.0.
     """
     if len(values) == 0:
         raise ValueError('numeric instability needs at least one value')
     scale_range = scale_max - scale_min
     if scale_range <= 0:
         raise ValueError(f'numeric scale range must be > 0, got [{scale_min}, {scale_max}]')
-    return min(1.0, pstdev(values) / scale_range)
+    return min(1.0, pstdev(values) / (scale_range / 2))
 
 
 def classify(x: float) -> str:

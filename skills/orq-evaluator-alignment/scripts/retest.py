@@ -184,33 +184,49 @@ def _check_fingerprint(out_dir: Path, original_metrics: dict[str, Any]) -> None:
 
 
 def _load_labels(out_dir: Path) -> tuple[dict[str, Any], str, dict[str, Any] | None]:
-    """Load the human labels, grey-zone policy first (RES-980 default), then the
-    UI-fallback annotations. Returns `(labels, source, policy)`:
+    """Load the human labels from the grey-zone policy, the UI-fallback
+    annotations, or both. Returns `(labels, source, policy)`:
 
     - `grey_zone_policy.json` present → its per-point policy labels (validated),
       source `'grey_zone_policy'`, and the raw policy (so the numeric tolerance
       band and the label provenance can be read from it).
-    - else `annotations.json` (the interactive UI fallback) → source
-      `'annotations'`, policy `None`.
+    - `annotations.json` (the interactive UI fallback) → source `'annotations'`,
+      policy `None`.
+    - BOTH present → the **union**, keyed by `source_index`, with the annotation
+      winning any datapoint both cover. The policy is still returned, so the
+      tolerance band and the derived-label provenance survive the merge.
 
     Both yield `{str(source_index): {'value': ..., 'tolerance'?: ...}}` so the
     pairing loop is identical.
 
-    When BOTH exist the **newer file wins**. The documented fallback runs in this
-    direction — try the grey-zone Q&A, find the examples don't group, open the
-    annotation UI — so a fixed grey-zone-first preference discarded the artifact
-    the user had just spent their time on, silently.
+    Merging rather than picking is what makes this deterministic. The documented
+    fallback runs grey-zone Q&A first and the annotation UI second, so neither a
+    fixed grey-zone-first preference (which discarded the artifact the user had
+    just finished) nor a newest-file-wins rule (which made the result depend on
+    filesystem timestamps, and threw away whichever half lost) is right: both
+    files are the same human answering about different datapoints. Annotations win
+    a collision because the UI is where the user goes to correct a policy label.
     """
     gz_path = out_dir / 'grey_zone_policy.json'
     ann_path = out_dir / 'annotations.json'
     if gz_path.exists() and ann_path.exists():
-        newer = 'annotations' if ann_path.stat().st_mtime > gz_path.stat().st_mtime else 'grey_zone_policy'
-        logger.warning(
-            f'⚠ Both grey_zone_policy.json and annotations.json exist; using the newer '
-            f'({newer}). Delete the stale one to make this unambiguous.'
+        policy = runner.read_json(gz_path)
+        grey_zone.validate_policy(policy)
+        labels = dict(grey_zone.policy_labels(policy))
+        annotations = runner.read_json(ann_path)
+        for key, value in annotations.items():
+            entry = dict(value) if isinstance(value, dict) else {'value': value}
+            # A widget answer is a human confirming a verdict, which is exactly what
+            # the policy's own `human_confirmed` provenance bucket means.
+            entry.setdefault('label_source', 'human_confirmed')
+            labels[str(key)] = entry
+        overlap = sorted(set(map(str, annotations)) & set(grey_zone.policy_labels(policy)))
+        logger.info(
+            f'Both grey_zone_policy.json and annotations.json exist; scoring against the '
+            f'union ({len(labels)} labels)'
+            + (f'. {len(overlap)} datapoint(s) in both — the annotation wins: {overlap}' if overlap else '.')
         )
-        if newer == 'annotations':
-            return runner.read_json(ann_path), 'annotations', None
+        return labels, 'grey_zone_policy+annotations', policy
     if gz_path.exists():
         policy = runner.read_json(gz_path)
         grey_zone.validate_policy(policy)
@@ -682,11 +698,11 @@ def _build_provenance(
     derived" on a run that scored 1 pair. The caveat text's denominator (`n_pairs`)
     and this function's now agree by construction, because both are `pair_indices`.
 
-    A pair's source is read from `labels` first (`label_source == 'dataset_reference'`
-    marks a merged row regardless of type) and only then from the policy's own
-    per-label `label_source` — a dataset-merged row is never present in the policy's
-    `labels` list at all, so skipping that check would silently mis-source it as
-    `'derived'`.
+    A pair's source is read from `labels` first — a row merged in from the dataset
+    or from `annotations.json` carries its own `label_source` and is not present in
+    the policy's `labels` list at all, so skipping that check would silently
+    mis-source it as `'derived'` — and only then from the policy's own per-label
+    `label_source`.
     """
     if policy is not None:
         # Mirrors grey_zone.label_provenance's own default: an unlabelled
@@ -699,9 +715,8 @@ def _build_provenance(
         provenance = {source: 0 for source in sorted(grey_zone.LABEL_SOURCES)}
         for idx in pair_indices:
             ann = labels.get(str(idx))
-            if isinstance(ann, dict) and ann.get('label_source') == 'dataset_reference':
-                source = 'dataset_reference'
-            else:
+            source = ann.get('label_source') if isinstance(ann, dict) else None
+            if source not in grey_zone.LABEL_SOURCES:
                 source = policy_source_by_idx.get(idx, 'derived')
             provenance[source] = provenance.get(source, 0) + 1
         return provenance

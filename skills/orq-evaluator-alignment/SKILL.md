@@ -455,10 +455,11 @@ be resumed. Then:
 uv run scripts/recommend.py --run_dir <run_dir>
 uv run scripts/aggregate.py --run_dir <run_dir>
 ```
-Both routes end at `aggregated.md`; steps 7 and 8 read whichever of
-`grey_zone_policy.json` / `annotations.json` is **newer**, so if you switch to the UI
-after starting the grey-zone route, the labels you just collected are the ones used.
-Delete the abandoned artifact to keep it unambiguous.
+Both routes end at `aggregated.md`. When both `grey_zone_policy.json` and
+`annotations.json` exist, steps 7 and 8 score against the **union** of the two, keyed
+by `source_index` — so switching to the UI part-way through the grey-zone route keeps
+both halves of the labelling. Where a datapoint appears in both, the annotation wins,
+since the UI is where you go to correct a policy label.
 
 ### 7. Show the proposed rewrite, then create it only if they say yes  ⟵ GATE
 

@@ -80,13 +80,20 @@ def test_categorical_off_contract_labels_clamp_to_1():
     assert instability.categorical(['a', 'b', 'c'], 2) == pytest.approx(1.0)
 
 
-# --- numeric: population stdev / (scale_max − scale_min) ---
+# --- numeric: population stdev / ((scale_max − scale_min) / 2) ---
 
 
-def test_numeric_stdev_1_5_on_1_10_is_0_17():
-    # Ticket worked example: pstdev 1.5 on a 1–10 scale → 1.5/9 ≈ 0.17.
+def test_numeric_stdev_1_5_on_1_10_is_0_33():
+    # Ticket worked example: pstdev 1.5 on a 1–10 scale → 1.5/4.5 ≈ 0.33.
     # [4, 7] has population stdev exactly 1.5.
-    assert instability.numeric([4.0, 7.0], 1.0, 10.0) == pytest.approx(1.5 / 9)
+    assert instability.numeric([4.0, 7.0], 1.0, 10.0) == pytest.approx(1.5 / 4.5)
+
+
+def test_numeric_maximal_split_is_1_like_the_other_types():
+    # Half the repeats at each end of the declared scale is as split as a numeric
+    # judge can be, so it must score 1.0 — the same as a 50/50 boolean flip.
+    assert instability.numeric([1.0, 1.0, 10.0, 10.0], 1.0, 10.0) == pytest.approx(1.0)
+    assert instability.boolean([True, True, False, False]) == pytest.approx(1.0)
 
 
 def test_numeric_single_value_is_0():
@@ -150,7 +157,7 @@ def test_row_instability_categorical_missing_k_raises():
 
 
 def test_row_instability_numeric_with_scale():
-    assert instability.row_instability('number', [4.0, 7.0], scale=(1.0, 10.0)) == pytest.approx(1.5 / 9)
+    assert instability.row_instability('number', [4.0, 7.0], scale=(1.0, 10.0)) == pytest.approx(1.5 / 4.5)
 
 
 def test_row_instability_numeric_no_scale_is_unmeasurable():
@@ -160,7 +167,7 @@ def test_row_instability_numeric_no_scale_is_unmeasurable():
 
 def test_row_instability_accepts_numeric_alias():
     # Guard the open output_type spelling question (§8.1): accept 'numeric' too.
-    assert instability.row_instability('numeric', [4.0, 7.0], scale=(1.0, 10.0)) == pytest.approx(1.5 / 9)
+    assert instability.row_instability('numeric', [4.0, 7.0], scale=(1.0, 10.0)) == pytest.approx(1.5 / 4.5)
 
 
 def test_row_instability_unknown_type_raises():
