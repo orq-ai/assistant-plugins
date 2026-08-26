@@ -65,9 +65,9 @@ def _baseline_wrong_ids(baseline: dict[str, Any]) -> set[str]:
     `stable_but_wrong_cases` and `unstable_and_wrong_cases` partition the misses —
     same verdict every repeat vs. not — so the union is every case that baseline
     identified. It is not necessarily every case that baseline COUNTED: the
-    flash-lite row records 18/24 against five named ids, because a 4/4 repetition
-    tie resolves by first-seen order (`Counter.most_common`) and nobody wrote down
-    which of the 0.5-instability rows tipped. Hence report, don't reconcile.
+    flash-lite row records 18/24 against five named ids, and the sixth is simply
+    unrecorded — `cases[]` holds expected verdicts only, so nothing in the repo
+    remembers what that judge returned. Hence report, don't reconcile.
     """
     return set(baseline.get('stable_but_wrong_cases') or []) | set(baseline.get('unstable_and_wrong_cases') or [])
 

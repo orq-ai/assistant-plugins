@@ -65,6 +65,10 @@ def test_input_type_number_scale_may_be_absent():
 def test_input_type_defaults_to_boolean_when_type_is_missing():
     assert sa.input_type_for({})['type'] == 'boolean'
     assert sa.input_type_for(None)['type'] == 'boolean'
+    # An explicit null is missing, not a declared-and-unknown type. annotate.html's
+    # inputTypeFor treats it that way, and a disagreement here renders a Pass/Fail
+    # widget whose answer the POST handler then rejects with a 400.
+    assert sa.input_type_for({'type': None})['type'] == 'boolean'
 
 
 def test_input_type_refuses_a_declared_but_unsupported_type():

@@ -89,7 +89,10 @@ def input_type_for(verdict_space: dict[str, Any] | None) -> dict[str, Any]:
       - number      -> {'type': 'number', 'scale': [min, max] | None}
 
     A **missing** type falls back to boolean — the historical default, and the
-    right one for a queue item that never declared a verdict space.
+    right one for a queue item that never declared a verdict space. An explicit
+    `null` counts as missing: JSON round-trips an absent field to `null` often
+    enough that treating the two differently only produces a widget the front-end
+    renders and the server then rejects.
 
     An **unknown** type raises. Falling back there looked like graceful
     degradation and was the opposite: a `queue.json` written by a build that
@@ -99,7 +102,7 @@ def input_type_for(verdict_space: dict[str, Any] | None) -> dict[str, Any]:
     the failure is loud and the wrong answer is never persisted.
     """
     vs = verdict_space or {}
-    if 'type' not in vs:
+    if vs.get('type') is None:
         return {'type': 'boolean'}
     vtype = str(vs.get('type')).strip().lower()
     if vtype == 'boolean':
