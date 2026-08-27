@@ -130,7 +130,7 @@ orq traces list-spans <trace-id> --json \
   -j "data[].{id:span_id,parent:parent_span_id,name:name,type:type,start:started_at,status:status}"
 ```
 
-Measured on an 83-span agent trace: **115,871 → 22,666 bytes** with an eight-field projection; the six fields above land well under 10 KB. One call per failed trace.
+Measured on an 83-span agent trace: **115,868 → 22,666 bytes** with an eight-field projection; the six fields above land well under 10 KB. One call per failed trace.
 
 The response is `{data[], has_more, next_page_token, object}`. Each row is a **flat canonical summary with no nested `attributes` object at all** — `span_id`, `parent_span_id`, `name`, `operation`, `type`, `status`, `started_at`, `ended_at`, `duration_ms`, `model`, `provider`, `cost`, `usage`, `trace_id`, `has_detail`.
 
@@ -175,8 +175,6 @@ The final assistant text is reliable: `output[0].parts[?kind=='text'].text` retu
 > **It does NOT give a tool-call inventory. Never use it as one.** A `tool_call` part appears only when the run was cut off *mid-call*. A normally-completed run shows none even when tools certainly ran — a control agent whose instructions mandate three `web_scraper` calls, with 5 chat-completion turns, returned **zero** `tool_call` parts. With `span.agent_tool_execution` never emitted either, **whether an agent's tools ran is currently unobservable from the CLI.** Record it as `unobservable`; do not infer it from either source.
 
 **Every bad id returns the same 404.** `{"message":"Agent response not found for this task"}` comes back identically for a trace id, a root span id, a chat-completion span id, the correct span id with the wrong agent key, and a garbage string. The error cannot tell you which mistake you made — re-derive the id from `list-spans` rather than guessing.
-
-**Project it.** A full response embeds every scraped page; one observed run carried 176k tokens in a single turn. **Never call this without `-j`.**
 
 **Project it.** A full response embeds every scraped page and one observed run carried 176k tokens in a single turn. `-j 'finish_reason'` is a few bytes; an unprojected `--json` is not. **Never call this without `-j`.**
 

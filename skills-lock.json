@@ -54,7 +54,7 @@
     "orq-improve-agent": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "411f50ac5f1d00f3b3e71b80815fc0808ec1afa1193f5648824b10451f84bf03"
+      "computedHash": "002faa7611e450a1a22ed420f915a0e3d1943dd3a1b9083aeee7a6a70032c299"
     },
     "orq-invoke-deployment": {
       "source": "orq-ai/assistant-plugins",
