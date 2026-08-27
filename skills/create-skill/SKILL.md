@@ -107,15 +107,24 @@ If no `skills/` directory exists (running outside a plugin repo), check the runt
 - Record anything that behaved differently from the docs
 
 **Thorough mode:**
-- Test every operation in the inventory (or only the new/changed operations if updating)
-- For each, record: the exact call, the actual response shape, and any surprise
-- Test error cases: missing required params, bad auth, invalid values
-- Test edge cases: empty results, large payloads, special characters
-- Test common workflows end-to-end
 
-**Large surfaces (20+ operations):** confirm with the user before proceeding in thorough mode. Show the count and estimated scope.
+Test every operation with real calls against the live surface. Do not trust docs alone.
 
-**When an operation cannot be tested** (auth unavailable, endpoint behind VPN, rate limit hit, destructive write): mark it `[unverified: <reason>]` in the scratchpad. Report the count of unverified operations to the user before proceeding.
+**For each operation:**
+1. **Run it** with a concrete example (real IDs, real data, not placeholders). For read operations, call them. For write operations, create a test entity, verify it exists, then clean it up.
+2. **Record the exact call and the actual response** in the scratchpad. Copy the real output, not a paraphrase.
+3. **Compare to docs**: note every difference between what the docs say and what actually happened (different field names, missing fields, extra fields, different status codes, different error shapes).
+4. **Test the error path**: call with missing required params, invalid values, or a nonexistent ID. Record the actual error response shape.
+
+**For common workflows**, run the full sequence end-to-end: e.g. create -> list (verify it appears) -> get by ID -> update -> get (verify change) -> delete -> get (verify 404). This catches ordering dependencies, eventual consistency, and silent failures.
+
+**For CLI surfaces**, run each command and subcommand. Capture `--help` output AND run a real invocation. Flags that accept values: test with a real value and confirm the output format.
+
+**For MCP surfaces**, call each tool via the MCP client with real parameters. Verify the return shape matches the schema from `ToolSearch`.
+
+**Large surfaces (20+ operations):** confirm with the user before proceeding. Show the count and estimated time.
+
+**When an operation cannot be tested** (auth unavailable, endpoint behind VPN, rate limit hit, destructive write on production data): mark it `[unverified: <reason>]` in the scratchpad. Report the count of unverified operations to the user before proceeding.
 
 Record gotchas in the scratchpad with evidence:
 
@@ -126,7 +135,7 @@ Gotcha 1: <command> with <flag> silently returns empty instead of erroring
   Actual: 200 with empty array
 ```
 
-**Done when:** every operation is either tested with a recorded result or marked `[unverified: reason]`, and every gotcha has a recorded test that produced it.
+**Done when:** every operation has either (a) a recorded real call with its actual response, or (b) an `[unverified: reason]` mark. Every gotcha has the exact call that produced it.
 
 ### Phase 5: Write the contract
 
@@ -146,7 +155,20 @@ Output the complete skill as text so the user can read it, then ask for approval
 
 **Done when:** the user approved the content, the file is written, the writing-guide checklist passes, and every claim traces to a test result (thorough) or doc reference (fast) in the scratchpad.
 
-### Phase 6: Clean up
+### Phase 6: Critical review
+
+Before presenting the skill to the user, review the draft adversarially. For each claim in the skill, ask:
+
+1. **Did I actually test this, or am I restating the docs?** If a section says "returns X" but you never saw X in a real response, either test it now or mark it `[unverified]`.
+2. **Would an agent following this skill hit a wall?** Walk through each workflow section as if you were the agent executing it for the first time. Are there missing setup steps, unstated prerequisites, or parameter values that only make sense if you already know the surface?
+3. **Are the gotchas complete?** Review your test results for any surprise that did not make it into the skill. Silent failures, unexpected defaults, and undocumented required fields are the most common omissions.
+4. **Are the examples real?** Every code example, command snippet, or API call in the skill must be something you actually ran (thorough) or extracted from current docs (fast). No invented examples.
+
+Fix what the review catches. If fixing requires additional tests, run them now.
+
+**Done when:** every claim traces to evidence, no untested doc claims remain unmarked, and the workflows are executable by a cold-start agent.
+
+### Phase 7: Clean up
 
 Delete the scratchpad inventory file. The evidence now lives in the skill itself (gotchas with tested calls) and in the `verified` date.
 
@@ -158,6 +180,7 @@ All of these are true:
 
 - The SKILL.md is written (or updated) and the user approved it
 - The writing-guide failure-mode checklist passes
+- The critical review (Phase 6) passed with no untested claims remaining
 - Every claim traces to a test result (thorough) or doc reference (fast)
 - Unverified operations are marked `[unverified: reason]` in the output
 - Companion skills section references verified skill names
