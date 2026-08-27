@@ -23,6 +23,9 @@ Return your evaluation as a JSON object with exactly two keys:
 1. "reasoning": A brief explanation (1-2 sentences) for your decision.
 2. "answer": Either "Pass" or "Fail".
 
+[FOR CATEGORICAL EVALUATORS, replace the answer instruction above with:]
+2. "answer": One of: "[LABEL_1]", "[LABEL_2]", "[LABEL_3]"
+
 Do NOT include any text outside the JSON object.
 
 ## Examples
@@ -41,6 +44,12 @@ Do NOT include any text outside the JSON object.
 **Input**: [Borderline case from training set]
 **Output**: [LLM response]
 **Evaluation**: {"reasoning": "[Explanation of the deciding factor]", "answer": "[Pass or Fail]"}
+
+[FOR CATEGORICAL EVALUATORS, use the category labels instead of Pass/Fail:]
+### Example 4 (categorical):
+**Input**: [User query]
+**Output**: [LLM response with a clearly professional tone]
+**Evaluation**: {"reasoning": "The response uses formal language and avoids slang.", "answer": "professional"}
 
 [Add 1-5 more examples. Total: 2-8 examples. In-context learning saturates after ~8.]
 
