@@ -8,10 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.6.0] - 2026-08-27
 
 ### Added
-- `orq-analyze-agent` skill: trace-grounded failure analysis using open/axial coding
-- `orq-improve-agent` skill: prompt rewrite and config knob fixes grounded in error-analysis artifacts
+- `orq-analyze-agent` skill: trace-grounded failure analysis using open/axial coding, replaces `orq-analyze-trace-failures` (deleted)
+- `orq-improve-agent` skill: prompt rewrite and config knob fixes grounded in error-analysis artifacts, replaces `orq-optimize-prompt` (deleted)
 - `docs/trace-queries.md`: verified CLI trace query contract
 - HTTP 000 / TLS interception handling in `docs/run-key-preflight.md`
+
+### Removed
+- `orq-analyze-trace-failures` skill (replaced by `orq-analyze-agent`)
+- `orq-optimize-prompt` skill (replaced by `orq-improve-agent`)
 
 ## [2.8.0] - 2026-08-31
 

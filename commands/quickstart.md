@@ -87,7 +87,7 @@ Do **not** hardcode the list — read it from the skills actually available righ
 
 Then explain the lifecycle:
 
-> **The eval cycle:** orq-analyze-trace-failures → orq-build-evaluator → orq-run-experiment → orq-optimize-prompt → repeat
+> **The eval cycle:** orq-analyze-agent → orq-build-evaluator → orq-run-experiment → orq-improve-agent → repeat
 >
 > Skills are auto-discovered — just describe what you want to do in natural language and the right skill will activate.
 
@@ -104,9 +104,9 @@ Then explain the lifecycle:
 Then use `AskUserQuestion` to route the user to their next task:
 
 - **"Build an agent"** → Suggest the `orq-build-agent` skill
-- **"Evaluate an existing agent"** → Suggest `orq-analyze-trace-failures` → `orq-build-evaluator` → `orq-run-experiment`
-- **"Debug production traces"** → Suggest `/orq:traces` then `orq-analyze-trace-failures`
-- **"Optimize a prompt"** → Suggest the `orq-optimize-prompt` skill
+- **"Evaluate an existing agent"** → Suggest `orq-analyze-agent` → `orq-build-evaluator` → `orq-run-experiment`
+- **"Debug production traces"** → Suggest `/orq:traces` then `orq-analyze-agent`
+- **"Optimize a prompt"** → Suggest the `orq-improve-agent` skill
 - **"Generate test data"** → Suggest the `orq-generate-synthetic-dataset` skill
 - **"Check analytics"** → Suggest `/orq:analytics` for usage stats and cost tracking
 - **"Just explore"** → Suggest starting with `/orq:workspace` and trying commands

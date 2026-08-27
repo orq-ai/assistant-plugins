@@ -16,12 +16,7 @@
       "sourceType": "github",
       "computedHash": "0a1047d9af2ff0135040263d2bb454f74e9beacac348d96a2792e3e30df66228"
     },
-    "orq-analyze-trace-failures": {
-      "source": "orq-ai/assistant-plugins",
-      "sourceType": "github",
-      "computedHash": "c0e36a979e099dd21fe28a48efca3f551d44c11689e897e157437ed7653f8e8a"
-    },
-    "orq-build-agent": {
+"orq-build-agent": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
       "computedHash": "cd30aeaab4a873ee4c663e1204f7b5e1c43eeffee5339b174305507e13750b08"
@@ -66,12 +61,7 @@
       "sourceType": "github",
       "computedHash": "ecb81d07cc112f12def9413e7af7a2a3154327d1ff3dbb724c85c84ede99a838"
     },
-    "orq-optimize-prompt": {
-      "source": "orq-ai/assistant-plugins",
-      "sourceType": "github",
-      "computedHash": "0dbc158190c7e04934de9892bf44fd9ea14b47423b921e030e8a62858f9bf012"
-    },
-    "orq-red-team": {
+"orq-red-team": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
       "computedHash": "22bc837a48f3f7661054004a566038de37bad4ed752dec97a7461bcc88c08efd"

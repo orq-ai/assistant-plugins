@@ -225,12 +225,6 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: proposes dimensions of variation OR generates diverse cases
 - Verify: calls `create_dataset` + `create_datapoints` with `orq-skills-test-` prefix
 
-## `orq-optimize-prompt`
-
-- Provide a simple prompt inline: "You are a helpful assistant. Answer questions."
-- Verify: analyzes against the 11-dimension framework
-- Verify: produces concrete suggestions
-
 ## `orq-analyze-agent`
 
 ### Scenario 1: Agent from a vague description
@@ -248,12 +242,6 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Ask: "Analyze the checkout agent" (agent is in a different project than the CLI's active project)
 - Verify: `mcp__orq__get_agent` finds it (workspace-scoped), while `orq agents retrieve` would 404
 - Verify: does not silently report "no traces" when the issue is project scoping
-
-## `orq-analyze-trace-failures`
-
-- Ask: "Analyze recent trace failures"
-- Verify: calls `list_traces`, attempts to read spans
-- Verify: describes sampling strategy
 
 ## `orq-improve-agent`
 
@@ -337,7 +325,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: confirms the diff with the user before `update_skill`
 - Then ask: "Rename `refund_policy` to `refund_policy_eu`"
 - Verify: warns that renaming `display_name` silently breaks every `{{skill.refund_policy}}` / `{{snippet.refund_policy}}` reference and runs the reference scan before sending the rename
-- Verify: when rewriting `instructions`, applies clarity heuristics from `orq-optimize-prompt` rather than blindly delegating
+- Verify: when rewriting `instructions`, applies clarity heuristics from `orq-improve-agent` rather than blindly delegating
 
 ### Scenario 5: Failure-mode handling
 
@@ -540,8 +528,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-evaluator-alignment/scripts/grey_zone.py`
 - `skills/orq-evaluator-alignment/scripts/retest.py`
 - `skills/orq-generate-synthetic-dataset/SKILL.md`
-- `skills/orq-optimize-prompt/SKILL.md`
-- `skills/orq-analyze-trace-failures/SKILL.md`
+- `skills/orq-analyze-agent/SKILL.md`
+- `skills/orq-improve-agent/SKILL.md`
 - `skills/orq-run-experiment/SKILL.md`
 - `skills/orq-red-team/SKILL.md`
 - `skills/orq-red-team/resources/python-sdk.md`

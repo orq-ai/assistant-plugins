@@ -1,13 +1,13 @@
 ---
 name: traces
-description: Query and summarize traces with filters — debugging entry point before orq-analyze-trace-failures
+description: Query and summarize traces with filters — debugging entry point before orq-analyze-agent
 argument-hint: "[--deployment <name>] [--status <status>] [--last <duration>] [--limit <n>]"
 allowed-tools: AskUserQuestion, orq*
 ---
 
 # Traces
 
-Query production traces from the orq.ai platform and display a summary. Use this as a debugging entry point — once you spot a problem, hand off to the `orq-analyze-trace-failures` skill for deep analysis.
+Query production traces from the orq.ai platform and display a summary. Use this as a debugging entry point — once you spot a problem, hand off to the `orq-analyze-agent` skill for deep analysis.
 
 ## Instructions
 
@@ -92,7 +92,7 @@ Success (showing 10 of 41)
 
 After displaying traces, if there are errors, suggest:
 
-> "To analyze these failures in depth, use the `orq-analyze-trace-failures` skill."
+> "To analyze these failures in depth, use the `orq-analyze-agent` skill."
 
 ### 6. Error handling
 

@@ -96,6 +96,8 @@ Agent Analysis Progress:
 - `orq-generate-synthetic-dataset` — generate test data when no production data exists
 - `orq-run-experiment` — measure whether a change actually improved anything
 - `orq-cli` — pull traces from the shell for anything that must run again without an agent present (CI, cron, scripts) or bulk export to a file
+- `orq-red-team` — adversarial testing to surface failure modes proactively
+- `orq-simulate-agent` — generate multi-turn traces when production data is sparse
 
 ## When to use
 

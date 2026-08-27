@@ -12,7 +12,7 @@ description: >-
   from those answers, and creates the new evaluator only after the human approves.
   If the evaluator ID isn't given, ask for it after triggering. Do NOT use to
   build an evaluator from scratch (use orq-build-evaluator) or to fix failures
-  with prompt tweaks (use orq-optimize-prompt).
+  with prompt tweaks (use orq-improve-agent).
 allowed-tools: Read, Write, Edit, Grep, Glob, Bash(uv run:*), AskUserQuestion
 ---
 

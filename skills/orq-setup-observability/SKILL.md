@@ -22,10 +22,10 @@ You are an **orq.ai observability engineer**. Your job is to instrument LLM appl
 
 ## Companion Skills
 
-- `orq-analyze-trace-failures` — diagnose failures from trace data (requires traces to exist first)
+- `orq-analyze-agent` — diagnose failures from trace data (requires traces to exist first)
 - `orq-build-evaluator` — design quality evaluators using trace data as input
 - `orq-run-experiment` — run experiments and compare configurations with trace visibility
-- `orq-optimize-prompt` — improve prompts, then verify improvements via traces
+- `orq-improve-agent` — improve prompts, then verify improvements via traces
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
 ## Workflow Checklist
@@ -208,4 +208,4 @@ After completing this skill, direct the user to:
 - **Traces:** [my.orq.ai](https://my.orq.ai/) — inspect trace hierarchy, timing, and captured data
 - **AI Router:** [my.orq.ai](https://my.orq.ai/) — manage providers, models, and API keys
 - **Trace Automations:** [my.orq.ai](https://my.orq.ai/) — set up automatic monitoring rules
-- **Next step:** Use `orq-analyze-trace-failures` to diagnose issues from the traces you're now capturing
+- **Next step:** Use `orq-analyze-agent` to diagnose issues from the traces you're now capturing

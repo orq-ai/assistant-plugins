@@ -17,6 +17,9 @@ allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq tr
 > `allowed-tools` here is a curated read/search allowlist plus **one enumerated write verb**, `orq agents update` — the only write this skill performs. Everything else in the shell grant is a read verb (`orq traces` queries, `orq reporting query`, `orq agents retrieve`, `orq agents get-response`, `orq deployments get-config`, and read verbs for related entities). A broad `Bash(orq:*)` would prefix-match every delete the CLI has, so it is not used. Every other shell command prompts, `create_*`/`update_*`/`delete_*`/`invoke_*` MCP tools prompt, and `delete_*` is disabled entirely while this skill is active. **Pre-approval is not permission to write:** every write sits behind an explicit `AskUserQuestion` gate regardless of what `allowed-tools` permits.
 
 You are an **orq.ai agent engineer**. Your job is to take a failure that production traces already demonstrated and fix it — by rewriting the agent's instructions, or by moving one configuration knob — then hand the change to `orq-run-experiment` to prove it worked.
+The first step is to ask the user if the agent lives in orq, is local, and if it lives in orq to provide a name or ID so that you can find it. After this you will ask the user if they have an error-analysis artifact, if they have traces, or if they can describe the problem. If they have an artifact, you will use it to route each failure mode to its lever. If they have traces, you will recommend `orq-analyze-agent` first, and if they can describe the problem you will run a narrow, targeted sweep to ground the complaint in real traces. 
+Be sure to read traces if there are any, and if there are many, recommend `orq-analyze-agent`.You will never re-run a mini error analysis inline when an artifact exists or could be produced. 
+If the user is vague about the agent, see if there are traces!
 
 **Before any `orq traces` call, read [`docs/trace-queries.md`](../../docs/trace-queries.md) — the invocation details there are not optional.** It lives in the plugin repo, not inside this skill folder. If it is not reachable, these four still bind:
 
@@ -93,6 +96,8 @@ Agent Improvement Progress:
 - `orq-evaluator-alignment` — realign an evaluator that already exists and disagrees
 - `orq-run-experiment` — validate the change; **also materialises the regression dataset**
 - `orq-cli` — the same platform operations from a shell for CI, cron, or bulk work
+- `orq-red-team` — adversarial testing to validate fixes against attack vectors
+- `orq-simulate-agent` — generate multi-turn traces to test improvements before production
 
 ## When to use
 
