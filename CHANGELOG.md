@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1] - 2026-08-27
+
+### Fixed
+- `evaluatorq`, `orq-compare-agents`: **the skills never said `jobs` takes more than one job**, so every generated script defined one job and any comparison became a loop of `evaluatorq()` calls. Both library examples passed `jobs: [agent_job]`, the only multi-job example lived in `orq-compare-agents/resources/evaluatorq-api.md` (reachable via a link at the bottom of the evaluatorq skill), and `parallelism: 5` appeared in both examples with no explanation of what it gates. In the source (`src/evaluatorq/processings.py`) every job runs against every data point and the jobs for a data point are dispatched together with `asyncio.gather` under a `Semaphore(parallelism)`, while `evaluatorq.py` gates concurrent data points with a second semaphore of the same size; the results table pivots evaluator x job into one comparison. A loop throws all of that away: N unrelated experiments, N tables to diff by eye, no shared sampling, and serialized passes over the dataset. `evaluatorq/SKILL.md` now opens Phase 3 with the rule and a correct/wrong pair before either example, both examples ship two jobs, and the section hands separate-agent comparisons to `orq-compare-agents`, whose Phase 4 now says "a single `evaluatorq()` call" outright.
+- `orq-compare-agents`: the documented Python signature had `parallelism: int = 1`; upstream (`src/evaluatorq/evaluatorq.py`) defaults it to `10`. Anyone reading the reference and omitting the argument expected sequential execution and got ten-way concurrency against their provider.
+
 ## [2.5.0] - 2026-08-26
 
 ### Added

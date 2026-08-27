@@ -112,6 +112,30 @@ If no dataset exists, delegate to `orq-generate-synthetic-dataset`. Target 10–
 
 ## Phase 3: Choose Mode and Generate Script
 
+### One run, many jobs — never loop over `evaluatorq()`
+
+`jobs` is a **list**, and every job runs against every data point. Comparing two prompts, two models, or preprocessing on/off is **one** `evaluatorq()` call with two jobs — not two calls, and never a `for` loop around `evaluatorq()`.
+
+```python
+# CORRECT — one experiment, both variants on identical inputs
+await evaluatorq("prompt-comparison", data=..., jobs=[baseline_job, candidate_job], evaluators=[...])
+
+# WRONG — two disconnected experiments, no side-by-side table, no shared sampling
+for j in [baseline_job, candidate_job]:
+    await evaluatorq(f"prompt-comparison-{j}", data=..., jobs=[j], evaluators=[...])
+```
+
+Why the loop is worse, not just longer:
+
+- **Results table pivots evaluator × job.** One call prints one comparison table with a column per job; N calls print N unrelated tables you have to diff by eye.
+- **One experiment on the platform** instead of N, so the orq.ai UI compares the variants for you.
+- **Identical inputs.** Every job sees the same data points in the same run — the whole point of an A/B.
+- **Concurrency is lost.** Inside one call, jobs for a data point are dispatched together with `asyncio.gather`; a loop serializes whole passes over the dataset.
+
+`parallelism` (default **10**) gates two semaphores: concurrent data points, and concurrent jobs within a data point. Lower it when your provider rate-limits; set `1` for fully sequential execution.
+
+This covers variants of one system (prompts, models, flags). For head-to-head comparison of **separate orq.ai agents**, use `orq-compare-agents` — it uses the same multi-job mechanism plus agent-specific setup.
+
 ### Library — Python
 
 ```python
@@ -124,6 +148,11 @@ async def agent_job(data: DataPoint, _row: int = 0) -> str:
     # Replace with your actual agent call
     return "<your agent response here>"
 
+@job("MyAgent-variant")
+async def variant_job(data: DataPoint, _row: int = 0) -> str:
+    # Second variant — drop this job if you are evaluating a single system
+    return "<your variant response here>"
+
 async def quality_scorer(params: ScorerParameter) -> dict[str, Any]:
     data: DataPoint = params["data"]
     output = params["output"]
@@ -135,7 +164,7 @@ async def main():
         "<experiment-name>",
         {
             "data": {"dataset_id": "<DATASET_ID>"},  # or inline DataPoint list
-            "jobs": [agent_job],
+            "jobs": [agent_job, variant_job],  # every job runs on every data point
             "evaluators": [{"name": "quality", "scorer": quality_scorer}],
             "parallelism": 5,
         },
@@ -155,6 +184,11 @@ const agentJob = job("MyAgent", async (data: DataPoint) => {
   return "<your agent response here>";
 });
 
+// Second variant — drop this job if you are evaluating a single system
+const variantJob = job("MyAgent-variant", async (data: DataPoint) => {
+  return "<your variant response here>";
+});
+
 const qualityEvaluator: Evaluator = {
   name: "quality",
   scorer: async ({ data, output }) => ({
@@ -165,7 +199,7 @@ const qualityEvaluator: Evaluator = {
 
 await evaluatorq("<experiment-name>", {
   data: { datasetId: "<DATASET_ID>" },  // or inline DataPoint array
-  jobs: [agentJob],
+  jobs: [agentJob, variantJob],  // every job runs on every data point
   evaluators: [qualityEvaluator],
   parallelism: 5,
 });

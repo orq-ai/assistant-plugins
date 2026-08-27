@@ -155,7 +155,7 @@ Agent Comparison Progress:
    - Import evaluatorq, job, DataPoint, EvaluationResult
    - Define one job per agent
    - Define an evaluator scorer that invokes the orq.ai LLM-as-a-judge by ID
-   - Wire jobs + data + evaluators into the `evaluatorq()` call
+   - Wire jobs + data + evaluators into a **single** `evaluatorq()` call — all agents go in one `jobs` list, since every job runs against every data point. Never loop `evaluatorq()` once per agent: that produces N unrelated experiments instead of one comparison table.
 
 9. **Common configurations:**
 
