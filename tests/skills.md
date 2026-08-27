@@ -6,6 +6,34 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ---
 
+## `create-skill`
+
+### Scenario 1: New CLI skill from scratch
+
+- Ask: "Create a skill for the `gh` CLI"
+- Verify Phase 1: asks for the surface (confirms `gh`), docs source (offers `--help`), and scope mode (fast/thorough)
+- Verify Phase 2: runs `gh --help` and subcommand help to build the inventory
+- Verify Phase 3: searches `skills/*/SKILL.md` for existing `gh` skills
+- Verify: writes inventory to a scratchpad file, not directly to the skill
+
+### Scenario 2: Update existing skill
+
+- Provide: a skill directory with an existing SKILL.md that documents an API
+- Ask: "Update the skill, the API added new endpoints"
+- Verify Phase 3: finds the existing skill, diffs inventory against it
+- Verify: scopes Phase 4 testing to only the new/changed operations
+- Verify: uses `Edit` on the existing file rather than overwriting
+
+### Scenario 3: Untestable operations
+
+- Provide: an API surface where auth is unavailable
+- Ask: "Create a skill for this API (thorough)"
+- Verify Phase 4: marks untestable operations as `[unverified: <reason>]`
+- Verify: reports the count of unverified operations before proceeding
+- Verify Phase 5: carries `[unverified]` markings into the output skill
+
+---
+
 ## `orq-setup-observability`
 
 ### Scenario 1: Python OpenAI app — AI Router path
@@ -465,4 +493,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-manage-skills/resources/authoring-guide.md`
 - `skills/orq-manage-skills/resources/governance-guide.md`
 - `skills/orq-manage-skills/resources/known-caveats.md`
+- `skills/create-skill/SKILL.md`
+- `skills/create-skill/resources/template.md`
+- `skills/create-skill/resources/writing-guide.md`
 - `commands/orq-manage-skills.md`

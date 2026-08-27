@@ -1,6 +1,11 @@
 {
   "version": 1,
   "skills": {
+    "create-skill": {
+      "source": "orq-ai/assistant-plugins",
+      "sourceType": "github",
+      "computedHash": "edfab3fb4de6bd955c889d1b33ec48c345fdd8a5aa27ff38470efdec4b763835"
+    },
     "evaluatorq": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
