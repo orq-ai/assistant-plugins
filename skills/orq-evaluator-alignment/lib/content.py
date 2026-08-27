@@ -26,19 +26,26 @@ import json
 from typing import Any
 
 # Suffix → row field. Evaluators name their variables differently
-# (`log.input`/`log.output`, `query`/`output`, `input`/`response`, ...), so both
+# (`log.input`/`log.output`, `input.user_query`/`output.response`, ...), so both
 # directions match on the last dotted segment rather than the full name.
 _FIELD_BY_LEAF: dict[str, str] = {
+    # legacy {{log.input}} and bare {{input}}/{{query}}/{{prompt}}
     'input': 'query',
     'query': 'query',
     'prompt': 'query',
+    # v4.14+ {{input.user_query}}
+    'user_query': 'query',
+    # legacy {{log.output}} and bare {{output}}/{{response}}/...
     'output': 'output',
     'response': 'output',
     'completion': 'output',
     'answer': 'output',
+    # legacy {{log.messages}} and v4.14+ {{input.all_messages}}
     'messages': 'messages',
     'history': 'messages',
     'conversation': 'messages',
+    'all_messages': 'messages',
+    # legacy {{log.reference}} and v4.14+ {{input.expected_output}}
     'reference': 'reference',
     'expected': 'reference',
     'expected_output': 'reference',

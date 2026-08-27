@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.2] - 2026-08-27
+
+### Fixed
+- `orq-evaluator-alignment`: `_FIELD_BY_LEAF` now resolves v4.14+ variable leaves (`user_query`, `all_messages`) so evaluators written with `{{input.user_query}}` or `{{input.all_messages}}` no longer silently skip every row as unmappable.
+- `orq-evaluator-alignment`: meta prompt example updated from legacy `{{log.output}}` to include v4.14+ `{{output.response}}`.
+- `orq-run-experiment`: template variable references updated from legacy `{{log.*}}` to v4.14+ `{{input.*}}`/`{{output.*}}` format across SKILL.md and resource files.
+
 ## [2.5.1] - 2026-08-27
 
 ### Fixed
