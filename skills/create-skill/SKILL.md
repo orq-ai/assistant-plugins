@@ -10,6 +10,7 @@ allowed-tools: Read, Write, Edit, Grep, Glob, Bash, AskUserQuestion, WebFetch, W
 metadata:
   verified: "2026-08-27"
   surface: meta
+  source: "skills/create-skill/resources/"
 ---
 
 # Create Skill
@@ -80,7 +81,7 @@ Glob: skills/*/SKILL.md
 Grep: <surface name or key terms> in those files
 ```
 
-> This catches skills in the current directory tree. Plugin-scoped skills (e.g. `orq:` prefix, registered externally) are not on disk. If the surface is a platform capability, also check the skill listing at runtime.
+If no `skills/` directory exists (running outside a plugin repo), check the runtime skill listing instead. Plugin-scoped skills (e.g. `orq:` prefix) are registered externally and never appear on disk, so always check the listing for platform capabilities regardless of context.
 
 **Match found:** read it, diff the verified inventory against what it documents, propose an update. Show the diff to the user. Scope Phase 4 testing to what is new or changed.
 
@@ -129,7 +130,7 @@ Read [`resources/writing-guide.md`](resources/writing-guide.md) first. Then stru
 
 Before presenting: run the failure-mode checklist from the writing guide against the draft. Fix what it catches. If any operations were `[unverified]`, carry the marking into the output skill so the `verified` date does not overstate what was tested.
 
-Present the complete skill to the user and get explicit approval via `AskUserQuestion`. Then write to `skills/<name>/SKILL.md`.
+Output the complete skill as text so the user can read it, then ask for approval via `AskUserQuestion` (approve / request changes). Then write to `skills/<name>/SKILL.md`.
 
 **If updating:** use `Edit` on the existing file rather than rewriting, unless the changes are so extensive that a rewrite is cleaner. Show the diff first.
 

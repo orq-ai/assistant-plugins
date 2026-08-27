@@ -16,7 +16,9 @@ Run this checklist against the draft before presenting it.
 
 ## Invocation decision
 
-Does this skill need to fire without the user typing its name? If not, set `disable-model-invocation: true` (if the harness supports it) and write the description as one human-facing sentence.
+Does this skill need to fire without the user typing its name?
+
+If not, write the description as one human-facing sentence. The agent will only invoke it when the user types its name.
 
 If yes: front-load the leading word in the description and keep one trigger per distinct branch. Include "Use when..." phrasing with the concrete user intents that should route here, plus "Do NOT use when..." for the nearest neighbour skills. See `orq-evaluator-alignment` or `orq-analyze-agent` for examples.
 
