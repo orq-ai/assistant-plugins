@@ -9,7 +9,7 @@ description: >
   applied. Do NOT use to re-architect a pipeline (use orq-build-agent), to align
   a judge that already exists (use orq-evaluator-alignment), or to build the
   failure taxonomy in the first place (use orq-analyze-agent).
-allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces list-facet-values:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq reporting query:*), Bash(orq agents retrieve:*), Bash(orq agents get-response:*), Bash(orq deployments get-config:*), Bash(orq agents update:*), Bash(orq tools:*), Bash(orq knowledge-bases:*), Bash(orq memory-stores:*), Bash(orq evals:*), Bash(orq skills:*), mcp__orq__search_entities, mcp__orq__get_agent, mcp__orq__get_span, mcp__orq__get_deployment, mcp__orq__list_traces, mcp__orq__search_docs
+allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces list-facet-values:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq reporting query:*), Bash(orq agents retrieve:*), Bash(orq agents get-response:*), Bash(orq deployments get-config:*), Bash(orq agents update:*), Bash(orq tools retrieve:*), Bash(orq knowledge-bases retrieve:*), Bash(orq memory-stores retrieve:*), Bash(orq evals get:*), Bash(orq skills get:*), mcp__orq__search_entities, mcp__orq__get_agent, mcp__orq__get_span, mcp__orq__get_deployment, mcp__orq__list_traces, mcp__orq__search_docs
 ---
 
 # Improve Agent
