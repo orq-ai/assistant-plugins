@@ -34,6 +34,14 @@ You **slice** aggregate AI metrics by any dimension the user asks for. One endpo
 
 8. **Retention limit.** Querying with a `from` timestamp beyond the workspace's retention window (typically 30 days) returns HTTP 400. Shorten the range.
 
+9. **Evaluator cost is not in the Reporting API.** The eval/guardrail dimensions (`evaluator_name`, `evaluator_stage`, `guardrail_origin`, etc.) are rejected or return $0 for cost metrics (`genai.cost`, `genai.usage`). The evaluator-specific metrics (`genai.evaluator.runs`, `genai.guardrail.runs`) may also return 0 even when evaluator spans exist in traces. To get eval cost, walk traces: paginate `orq traces search` with `--eval-passed`, call `list_spans` per trace, and sum `orq.billing.total_cost` on `span.evaluator`-type children. The `billing_billable` filter (`"field": "billing_billable", "op": "eq", "values": ["1"]`) isolates platform-routed traffic (which includes evals) from prompt-cached Claude Code traffic.
+
+10. **MCP and CLI hit different backends.** `mcp__orq__query_analytics` uses legacy analytics rollup tables; the CLI `orq reporting query` uses the newer Reporting API. Project IDs differ between them, and cost totals for the same window will not match. Use CLI for authoritative numbers.
+
+11. **MCP requires `project_id`.** `mcp__orq__query_analytics` fails without a `project_id` filter when the API key spans multiple projects. The CLI has no such requirement and returns workspace-wide data by default.
+
+12. **JMESPath quoting is shell-dependent.** The `-j` projection flag needs different escaping per shell. Bash: `metrics.\"genai.cost\"`. PowerShell: `` metrics.`"genai.cost`" ``.
+
 ## Steps
 
 ### 1. Map question to metric and slice
@@ -46,6 +54,7 @@ You **slice** aggregate AI metrics by any dimension the user asks for. One endpo
 | Latency, slowness | `genai.latency.p95` | `model`, `provider` |
 | Evaluator quality | `genai.evaluator.pass_rate` | `evaluator`, `evaluator_name` |
 | Guardrail enforcement | `genai.guardrail.block_rate` | `guardrail_action`, `evaluator_name` |
+| Eval cost / spend | Not in Reporting API | Use trace span walk (Gotcha 9) |
 | Time to first token | `genai.ttft.p95` | `model`, `provider` only (Gotcha 1) |
 
 If the question is vague ("how's the system doing?"), start with `mcp__orq__get_analytics_overview` for a zero-config snapshot, then drill into any anomaly it surfaces.
@@ -102,9 +111,9 @@ orq reporting query --from-file query.json --json -j "totals"
 orq reporting query ... --json -j "data[].{model: dimensions.model, cost: metrics.\"genai.cost\"}"
 ```
 
-**MCP** (quick checks, fewer dimensions):
+**MCP** (quick single-project checks, fewer dimensions):
 
-`mcp__orq__query_analytics` covers 6 metric categories (`usage`, `cost`, `latency`, `errors`, `agents`, `model_performance`) and 5 dimensions (`provider`, `model`, `project_id`, `http_status_code`, `agent_name`). Sufficient for most simple questions. Fall back to CLI for evaluator/guardrail metrics, identity slices, or the full 34 dimensions.
+`mcp__orq__query_analytics` covers 6 metric categories (`usage`, `cost`, `latency`, `errors`, `agents`, `model_performance`) and 5 dimensions (`provider`, `model`, `project_id`, `http_status_code`, `agent_name`). Requires a `project_id` filter when the API key spans multiple projects (Gotcha 11). Hits a different backend than the CLI, so numbers will not match (Gotcha 10). Best category is `model_performance` (returns cost + latency per model in one query). The `errors` and `latency` categories may return empty model strings or non-standard status codes. The `agents` category may return empty even when agent traffic exists in the CLI view. Fall back to CLI for workspace-wide queries, evaluator/guardrail metrics, identity slices, cross-project aggregation, or the full 34 dimensions.
 
 **Done when:** the response contains `"object": "report"` and data rows, or an empty `data: []` confirming no matching traffic.
 
