@@ -423,6 +423,29 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ---
 
+## `orq-reporting`
+
+### Scenario 1: Cost breakdown by model
+
+- Ask: "What are we spending on models this month?"
+- Verify Step 1: maps to `genai.cost` or `genai.usage` metric, sliced by `model`
+- Verify Step 2: builds a CLI query with `--metric genai.cost --group-by model` or uses `mcp__orq__query_analytics`
+- Verify Step 3: presents cost in USD with model breakdown
+
+### Scenario 2: TTFT with entity dimension (Gotcha 1)
+
+- Ask: "Show me time-to-first-token by agent"
+- Verify: recognizes TTFT + `agent` dimension is invalid (Gotcha 1)
+- Verify: suggests slicing by `model` or `provider` instead
+
+### Scenario 3: MCP fallback for simple queries
+
+- Ask: "Quick overview of how the system is doing"
+- Verify: uses `mcp__orq__get_analytics_overview` for zero-config snapshot
+- Verify: drills into anomalies with CLI if needed
+
+---
+
 ## Critical Files
 
 - `docs/run-key-preflight.md`
@@ -466,3 +489,4 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-manage-skills/resources/governance-guide.md`
 - `skills/orq-manage-skills/resources/known-caveats.md`
 - `commands/orq-manage-skills.md`
+- `skills/orq-reporting/SKILL.md`

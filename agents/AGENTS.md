@@ -23,6 +23,7 @@ These skills are:
  - orq-run-experiment -> "skills/orq-run-experiment/SKILL.md"
  - orq-setup-observability -> "skills/orq-setup-observability/SKILL.md"
  - orq-simulate-agent -> "skills/orq-simulate-agent/SKILL.md"
+ - orq-reporting -> "skills/orq-reporting/SKILL.md"
 
 IMPORTANT: You MUST read the SKILL.md file whenever the description of the skills matches the user intent, or may help accomplish their task.
 
@@ -57,6 +58,8 @@ orq-manage-skills: `Manage orq.ai Skills (the platform entity, formerly Snippets
 orq-cli: `Drive the orq command-line interface — verify the install, authenticate, select a workspace, resolve the active workspace key, and run read/write commands against any orq.ai resource with JSON output and JMESPath queries. Use when a task needs shell access to orq.ai, when a script or CI job must read workspace data, or when the CLI itself is misbehaving (orq doctor). Do NOT use for writing application code that calls orq.ai (use orq-invoke-deployment) or for guided evaluation workflows (use orq-run-experiment).`
 
 orq-simulate-agent: `Run multi-turn agent simulations using evaluatorq's first-class simulation primitives (simulate(), generate_and_simulate(), wrap_simulation_agent()). Drive an agent under test with a UserSimulatorAgent and built-in JudgeAgent that terminates on goal achievement or rule violations. Use when generating realistic multi-turn data, stress-testing conversational agents, or producing seed transcripts. Do NOT use when real production conversations exist (use orq-analyze-trace-failures) or for adversarial red-teaming sweeps (call evaluatorq.red_team() directly).`
+
+orq-reporting: `Slice orq.ai reporting metrics (cost, latency, usage, evaluator, guardrail) by any dimension. Covers the POST /v2/reporting endpoint (18 metrics, 34 dimensions) via CLI (orq reporting query) and MCP (query_analytics/get_analytics_overview). Use when the user asks about spend, token volume, error rates, latency percentiles, evaluator pass rates, guardrail enforcement, or wants a cost/usage breakdown.`
 
 </available_skills>
 
