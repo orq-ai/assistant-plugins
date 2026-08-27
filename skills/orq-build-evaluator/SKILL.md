@@ -18,7 +18,7 @@ You are an **orq.ai evaluation designer**. Your job is to design and create prod
 
 ## Constraints
 
-- **NEVER** use Likert scales (1-5, 1-10) — always default to binary Pass/Fail.
+- **Prefer** binary Pass/Fail over Likert scales (1-5, 1-10) — binary is simpler to validate and requires fewer labels. Use numeric scales when the criterion genuinely needs granularity (e.g., fluency 0-1) and you can provide a detailed rubric. Use categorical when the criterion naturally classifies into 3+ distinct labels (e.g., tone: professional/casual/aggressive, language detection, failure-mode triage).
 - **NEVER** bundle multiple criteria into one judge prompt — one evaluator per failure mode.
 - **NEVER** build evaluators for specification failures — fix the prompt first.
 - **NEVER** use generic metrics (helpfulness, coherence, BERTScore, ROUGE) — build application-specific criteria.
@@ -28,7 +28,7 @@ You are an **orq.ai evaluation designer**. Your job is to design and create prod
 - **ALWAYS** put reasoning before the answer in judge output (chain-of-thought).
 - **ALWAYS** start with the most capable judge model, optimize cost later.
 
-**Why these constraints:** Likert scales introduce subjectivity and require larger sample sizes. Bundled criteria produce uninterpretable scores. Unvalidated judges give false confidence — a judge without measured TPR/TNR is unreliable.
+**Why these constraints:** Scales require more labeled data and careful rubric design to be reliable. Bundled criteria produce uninterpretable scores. Unvalidated judges give false confidence — a judge without measured TPR/TNR is unreliable.
 
 ## Workflow Checklist
 
@@ -80,12 +80,42 @@ Evaluator Build Progress:
 
 [Evaluators](https://docs.orq.ai/docs/evaluators/overview) · [Creating Evaluators](https://docs.orq.ai/docs/evaluators/creating) · [Evaluator Library](https://docs.orq.ai/docs/evaluators/library) · [Evaluators API](https://docs.orq.ai/docs/evaluators/api-usage) · [Human Review](https://docs.orq.ai/docs/evaluators/human-review) · [Datasets](https://docs.orq.ai/docs/datasets/overview) · [Traces](https://docs.orq.ai/docs/observability/traces)
 
-### orq.ai LLM Evaluator Details
-- orq.ai supports **LLM evaluators** with Boolean or Number output types
-- Available template variables (v4.14+): `{{input.user_query}}`, `{{output.response}}`, `{{input.all_messages}}`, `{{input.retrievals}}`, `{{input.expected_output}}`, `{{input.system_instructions}}`, `{{output.tools_called}}`. Legacy `{{log.input}}`/`{{log.output}}`/`{{log.messages}}`/`{{log.retrievals}}`/`{{log.reference}}` still resolve, so existing evaluators keep working — write new ones in the `input.*`/`output.*` form
+### Output Types
+
+| Type | Returns | When to Use |
+|------|---------|-------------|
+| `boolean` | `true` / `false` | Default. Binary Pass/Fail for a single criterion. |
+| `number` | numeric score | Continuous metrics (e.g., relevance 0-1). Requires detailed rubric. |
+| `categorical` | one of N labels | Classification into 3+ distinct categories (e.g., tone, failure-mode triage). Requires `categories` list. |
+| `string` | free text | Open-ended judge reasoning (rarely used for automated eval). |
+
+**Categorical evaluators** need a `categories` list (the allowed label values) and optionally `categorical_labels` with a `description` per value to guide the judge. The MCP `create_llm_eval` tool accepts `output_type: "categorical"` but does not expose `categories` or `categorical_labels` fields. After creating the evaluator via MCP, set them with a direct HTTP PATCH (see "HTTP Fallback for MCP Gaps" below). The CLI (`--categories`, `--categorical-labels`) also works.
+
+### Evaluator Variables (LLM Evaluators)
+
+LLM evaluator prompts use `{{double_braces}}` template variables (v4.14+): `{{input.user_query}}`, `{{output.response}}`, `{{input.expected_output}}`, `{{input.all_messages}}`, `{{input.system_instructions}}`, `{{input.retrievals}}`, `{{output.tools_called}}`. Custom variables via the `variables` field at invocation. Legacy `{{log.*}}` variables still work but are deprecated. See `resources/judge-prompt-template.md` for the full reference with indexing syntax and descriptions.
+
+### Python Evaluator `log` Dict
+
+Python evaluators receive a single `log` dict argument. Every key is always present (lists are empty when unused; `reference`/`expected_output` can be `None`):
+
+| Key | Type | Content |
+|-----|------|---------|
+| `log["input"]` | `str` | The last user message |
+| `log["output"]` | `str` | The model's generated response |
+| `log["reference"]` | `str \| None` | Reference/expected answer |
+| `log["expected_output"]` | `str \| None` | Same value as `reference` |
+| `log["messages"]` | `list[dict]` | Conversation history; each entry has `role` and `content` |
+| `log["retrievals"]` | `list[str]` | Knowledge Base retrieval chunks |
+| `log["tool_calls"]` | `list[dict]` | Tool invocations; each has `tool_name`, `tool_arguments`, `tool_id`, `tool_run_id`, `tool_type`, `response["raw_response"]` |
+
+Python evals return `bool` (for boolean output type) or a numeric value (for number). Code limit: 1 MB. Available stdlib: `re`, `json`, `math`, `string`, `collections`, `itertools`, `functools`, `difflib`. Available third-party: `numpy`, `nltk`.
+
+> The last `def` in the code editor is the entry-point. You can define helper functions above it.
+
 - Choose judge model from the Model Garden
 - Evaluators can be used as **guardrails** on deployments (block responses below threshold)
-- Also supports **Python evaluators** (Python 3.12, numpy, nltk, re, json) and **JSON schema evaluators** for code-based checks
+- Also supports **JSON schema**, **function** (`contains`, `regex`, `exact_match`, `length_*`, `bert_score`, etc.), **HTTP**, and **RAGAS** evaluator types (outside this skill's scope; see orq docs and orq-cli)
 
 ### orq MCP Tools
 
@@ -99,37 +129,36 @@ Use the orq MCP server (`https://my.orq.ai/v2/mcp`) as the primary interface. Fo
 | `create_python_eval` | Create a Python evaluator for code-based checks |
 | `get_llm_eval` / `get_python_eval` | Retrieve an evaluator by ID |
 | `list_models` | List available judge models |
+| *(HTTP API)* | Set `categories`, `categorical_labels`, `model_parameters`, `jury` mode, and other fields not exposed by MCP tools (see below) |
 
-**HTTP API fallback** (for operations not yet in MCP):
+### HTTP Fallback for MCP Gaps
 
-```bash
-# List existing evaluators (paginated: returns {data: [...], has_more: bool})
-# Use ?limit=N to control page size. If has_more is true, fetch the next page with ?after=<last_id>
-curl -s https://api.orq.ai/v2/evaluators \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" | jq
+The MCP tools omit several fields the HTTP API supports. Pattern: create via MCP, then PATCH to set the missing fields.
 
-# Get evaluator details
-curl -s https://api.orq.ai/v2/evaluators/<ID> \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" | jq
-
-# Test-invoke an evaluator against a sample output
-curl -s https://api.orq.ai/v2/evaluators/<ID>/invoke \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"output": "The LLM output to evaluate", "query": "The original input", "reference": "Expected answer"}' | jq
 ```
+PATCH https://api.orq.ai/v2/evaluators/{evaluator_id}
+Authorization: Bearer $ORQ_API_KEY
+Content-Type: application/json
+```
+
+| Priority | Fields | Notes |
+|----------|--------|-------|
+| **High** | `categories`, `categorical_labels` | Required for categorical evaluators |
+| **Medium** | `model.model_parameters` (temperature, max_tokens, etc.), `mode` + `jury`, `repetitions` | Judge tuning and jury consensus |
+| **Low** | `dataset_id`, `project_id`, `versionIncrement`, `versionDescription` | Metadata and versioning |
+
+The `create_python_eval` MCP tool restricts `output_type` to `boolean` and `number`. For categorical or string Python evaluators, create via HTTP API directly (`POST /v2/evaluators` with `type: "python_eval"`) or the CLI.
+
+**Programmatic invoke:** `POST /v3/evaluators/{id}/invoke` runs an evaluator against a single input/output pair. Useful for rapid Phase 5 iteration without creating a full experiment. Pass `{ "input": "...", "output": "...", "expected_output": "..." }`.
 
 ## Core Principles
 
 Before building anything, internalize these non-negotiable best practices:
 
-### 1. Binary Pass/Fail over Likert Scales
-- **ALWAYS default to binary (Pass/Fail) judgments**, not numeric scores (1-5, 1-10)
-- Likert scales introduce subjectivity, middle-value defaulting, and require larger sample sizes
-- If multiple quality dimensions exist, create **separate binary evaluators per dimension**
-- Exception: only use finer scales when explicitly justified and you provide detailed rubric examples for every point
+### 1. Prefer Binary Pass/Fail
+- **Default to binary (Pass/Fail) judgments** — they are simpler to validate and need fewer labels
+- Numeric scales (1-5, 1-10) are valid when the criterion genuinely needs granularity, but require a detailed rubric with examples for every score point and more labeled data to validate
+- If multiple quality dimensions exist, create **separate evaluators per dimension**
 
 ### 2. One Evaluator per Failure Mode
 - **NEVER bundle multiple criteria into a single judge prompt**
@@ -223,9 +252,11 @@ Return your evaluation as a JSON object with exactly two keys:
 [2-6 more examples, drawn from labeled training set]
 
 ## Now evaluate the following:
-**Input**: {{input}}
-**Output**: {{output}}
-[OPTIONAL: **Reference**: {{reference}}]
+**Input**: {{input.user_query}}
+**Output**: {{output.response}}
+[OPTIONAL: **Reference**: {{input.expected_output}}]
+[OPTIONAL: **System Instructions**: {{input.system_instructions}}]
+[OPTIONAL: **Tools Called**: {{output.tools_called}}]
 
 Your JSON Evaluation:
 ```
@@ -245,7 +276,7 @@ Your JSON Evaluation:
    - Create an annotation queue for the target criterion in the orq.ai platform
    - Configure it to show: input, output, and any relevant context (retrievals, reference)
    - Assign domain experts as reviewers
-   - Use binary Pass/Fail labels only (no scales)
+   - Prefer binary Pass/Fail labels (scales need more calibration data)
    - See: https://docs.orq.ai/docs/administer/annotation-queue
 
    **Using orq.ai Human Review:**
@@ -268,7 +299,8 @@ Your JSON Evaluation:
    - Target: at least **30-50 Pass and 30-50 Fail** in dev and test each.
    - Critical: NEVER include dev/test examples as few-shot examples in the prompt.
 
-10. **Refinement loop** (repeat until TPR and TNR > 90% on dev set):
+10. **Refinement loop** (repeat until TPR and TNR > 90% on dev set).
+    Use `POST /v3/evaluators/{id}/invoke` for rapid single-item checks during iteration, or run a full experiment for batch evaluation.
     a. Run the evaluator over all dev examples
     b. Compare each judgment to human ground truth
     c. Compute TPR = (true passes correctly identified) / (total actual passes)
@@ -298,28 +330,41 @@ Your JSON Evaluation:
     | **LLM-as-Judge** | Subjective/nuanced criteria that code can't capture: tone, faithfulness, persona consistency | `create_llm_eval` |
 
     **If code-based (`create_python_eval`):**
-    - Write a Python 3.12 function: `def evaluate(log) -> bool` (or `-> float` for numeric scores)
-    - The `log` dict has keys: `output`, `input`, `reference`
-    - Available imports: `numpy`, `nltk`, `re`, `json`
-    - Example:
+    - Write a Python function: `def evaluate(log) -> bool` (boolean) or `-> float` (number)
+    - The `log` dict keys are documented in the "Python Evaluator `log` Dict" section above
+    - Example (format validation):
       ```python
-      import re, json
+      import json
 
       def evaluate(log):
-          output = log["output"]
-          # Check that output is valid JSON with required fields
           try:
-              parsed = json.loads(output)
+              parsed = json.loads(log["output"])
               return "reasoning" in parsed and "answer" in parsed
-          except json.JSONDecodeError:
+          except (json.JSONDecodeError, TypeError):
               return False
       ```
+    - Example (tool-call check):
+      ```python
+      def evaluate(log):
+          tool_calls = log["tool_calls"]
+          if not tool_calls:
+              return False
+          return any(tc["tool_name"] == "search_knowledge_base" for tc in tool_calls)
+      ```
+    - Example (conversation-length check):
+      ```python
+      def evaluate(log):
+          messages = log["messages"]
+          return len(log["output"]) <= 500 and len(messages) > 0
+      ```
     - Create using `create_python_eval` MCP tool with the Python code
+    - Note: MCP `create_python_eval` restricts `output_type` to `boolean`/`number`. For categorical or string Python evaluators, use the HTTP API or CLI.
 
     **If LLM-as-Judge (`create_llm_eval`):**
     - Use `create_llm_eval` with the refined judge prompt from Phase 3-5
     - Set appropriate model (start capable, optimize later)
-    - Map variables: `{{input.user_query}}`, `{{output.response}}`, `{{input.expected_output}}` as needed
+    - Use the current template variables: `{{input.user_query}}`, `{{output.response}}`, `{{input.expected_output}}`, `{{input.all_messages}}`, `{{output.tools_called}}` as needed (see "Evaluator Variables" section above)
+    - For **categorical** evaluators: after `create_llm_eval` returns the evaluator ID, immediately PATCH to set `categories` and `categorical_labels` (see "HTTP Fallback for MCP Gaps")
 
 14. **Create the evaluator** on orq.ai:
     - Link to relevant dataset and experiment
@@ -331,6 +376,9 @@ Your JSON Evaluation:
     - Judge model used (if LLM)
     - TPR and TNR on test set (with number of examples, if LLM)
     - Known limitations or edge cases
+
+16. **Recommend evaluator alignment** (LLM-as-Judge only):
+    After creating an LLM evaluator, suggest running `orq-evaluator-alignment` to measure cross-model stability and judge-human agreement on production traces. This validates the evaluator beyond the held-out test set and catches drift over time. Not applicable to Python/code-based evaluators.
 
 ### Phase 7: Ongoing Maintenance
 
@@ -346,7 +394,7 @@ When building evaluators, STOP the user if they attempt any of these:
 
 | Anti-Pattern | What to Do Instead |
 |---|---|
-| Using 1-10 or 1-5 scales | Binary Pass/Fail per criterion — scales introduce subjectivity and require more data |
+| Using scales without a detailed rubric | Provide rubric examples for every score point, or simplify to binary Pass/Fail |
 | Bundling multiple criteria in one judge | One evaluator per failure mode — bundled judges are ambiguous and hard to debug |
 | Using generic metrics (helpfulness, coherence, BERTScore, ROUGE) | Build application-specific criteria from error analysis |
 | Skipping judge validation | Measure TPR/TNR on held-out labeled test set (100+ examples) |
@@ -360,7 +408,7 @@ When building evaluators, STOP the user if they attempt any of these:
 Before finalizing any judge prompt, verify:
 
 - [ ] Targets exactly ONE failure mode (not multiple)
-- [ ] Output is binary Pass/Fail (not a scale)
+- [ ] Output is binary Pass/Fail (preferred) or has a detailed rubric for every score point
 - [ ] Has clear, precise Pass definition
 - [ ] Has clear, precise Fail definition
 - [ ] Includes 2-8 few-shot examples from the training split

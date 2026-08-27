@@ -45,9 +45,11 @@ Do NOT include any text outside the JSON object.
 [Add 1-5 more examples. Total: 2-8 examples. In-context learning saturates after ~8.]
 
 ## Now evaluate the following:
-**Input**: {{input}}
-**Output**: {{output}}
-[OPTIONAL: **Reference**: {{reference}}]
+**Input**: {{input.user_query}}
+**Output**: {{output.response}}
+[OPTIONAL: **Reference**: {{input.expected_output}}]
+[OPTIONAL: **System Instructions**: {{input.system_instructions}}]
+[OPTIONAL: **Tools Called**: {{output.tools_called}}]
 
 Your JSON Evaluation:
 ```
@@ -58,7 +60,7 @@ Your JSON Evaluation:
 
 1. **[SYSTEM DESCRIPTION]**: Be specific. "A real estate CRM assistant" is better than "an AI chatbot".
 
-2. **[SPECIFIC BINARY QUESTION]**: Must be answerable with Pass or Fail. Good: "maintains the Flemish cowboy persona throughout". Bad: "how good is the response".
+2. **[SPECIFIC BINARY QUESTION]**: Must be answerable with Pass or Fail (or a categorical label if using categorical output type). Good: "maintains the Flemish cowboy persona throughout". Bad: "how good is the response".
 
 3. **Pass/Fail definitions**: Define Fail FIRST (it's the failure mode you're detecting). Pass is the absence of that failure. Be concrete — include what specific behaviors constitute pass vs fail.
 
@@ -69,4 +71,13 @@ Your JSON Evaluation:
 
 5. **Reasoning before answer**: The template puts "reasoning" before "answer" in the JSON to encourage chain-of-thought before the final judgment.
 
-6. **Variables**: Use `{{input}}`, `{{output}}`, and optionally `{{reference}}` as template variables. On orq.ai, these map to `{{input.user_query}}`, `{{output.response}}`, `{{input.expected_output}}` (v4.14+; the legacy `{{log.input}}`/`{{log.output}}`/`{{log.reference}}` names still resolve).
+6. **Variables** (v4.14+):
+   - `{{input.user_query}}` — last user message
+   - `{{output.response}}` — model's generated response
+   - `{{input.expected_output}}` — reference/expected answer
+   - `{{input.system_instructions}}` — the system prompt the model ran with
+   - `{{input.all_messages}}` — full conversation (indexable: `[0].content`, `[-1].role`)
+   - `{{input.retrievals}}` — Knowledge Base chunks (indexable: `[0]`)
+   - `{{output.tools_called}}` — tool invocations (indexable: `[0].name`, `.arguments`, `.output`)
+   - Custom variables via the `variables` field at invocation: `{{my_custom_var}}`
+   - Legacy `{{log.input}}`, `{{log.output}}`, `{{log.reference}}`, `{{log.messages}}`, `{{log.retrievals}}` still work but are deprecated.
