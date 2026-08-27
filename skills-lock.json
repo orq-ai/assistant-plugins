@@ -4,7 +4,7 @@
     "create-skill": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "07a2d10c9bf346b2320ba25ad1996f32d8f211dd13010f5c2a060c8ef92e19a1"
+      "computedHash": "b8993dd379aba35484d2f908875dcb79ab2136e364d1a3f9905f38600136dcac"
     },
     "evaluatorq": {
       "source": "orq-ai/assistant-plugins",
