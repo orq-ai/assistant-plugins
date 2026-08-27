@@ -36,24 +36,30 @@ You are a **skill author**. You take a capability **surface** (an API, a CLI, or
 
 ### Phase 1: Gather requirements
 
-Ask the user with `AskUserQuestion`. Three things:
+Use `AskUserQuestion` in two rounds.
 
-1. **What surface?** A name or description. If the user already said what it is, confirm.
+**Round 1 — Create or update?**
 
-2. **Where are the docs?** Accept any of:
-   - A URL (API docs, OpenAPI spec, reference pages)
-   - A file path (local spec, README, config)
-   - A CLI command name (you run `--help` yourself)
-   - An MCP server name (you use `ToolSearch` to pull schemas)
-   - "I'll paste it"
+Ask a single question: does the user want to **create a new skill** or **update an existing one**?
 
-3. **Fast or thorough?**
+- **Create new**: a brand-new skill for a surface that has no skill yet.
+- **Update existing**: re-probe a surface whose skill is stale or incomplete.
+
+If the user chose update, immediately search for the existing skill (Phase 3 logic) so you can show them what exists before asking for more detail.
+
+**Round 2 — Surface and scope**
+
+Ask two questions in one `AskUserQuestion` call:
+
+1. **Describe what you want.** The surface to probe: a name, URL, CLI tool, MCP server, file path, or "I'll paste it". If updating, pre-fill what you found and ask the user to confirm or correct.
+
+2. **Fast or thorough?**
    - **Fast**: read docs, extract the inventory, spot-check 2-3 operations. Minutes.
    - **Thorough**: test every operation with real calls, including error and edge cases, and record each gotcha from the actual response. Longer.
 
-If the user already provided some of this, ask only for what is missing.
+If the user already provided some of this in their initial message, skip the answered questions and ask only for what is missing.
 
-**Done when:** you have a surface name, a source to read, and a scope mode.
+**Done when:** you know create vs. update, have a surface to probe, and have a scope mode.
 
 ### Phase 2: Build the inventory
 
@@ -76,6 +82,10 @@ Write the inventory to a scratchpad file.
 
 ### Phase 3: Check for existing skills
 
+If the user chose **update** in Phase 1, you already searched and found the skill. Read it now and diff against the inventory from Phase 2. Scope Phase 4 testing to what is new or changed.
+
+If the user chose **create**, search to make sure no skill already covers this surface:
+
 ```
 Glob: skills/*/SKILL.md
 Grep: <surface name or key terms> in those files
@@ -83,11 +93,11 @@ Grep: <surface name or key terms> in those files
 
 If no `skills/` directory exists (running outside a plugin repo), check the runtime skill listing instead. Plugin-scoped skills (e.g. `orq:` prefix) are registered externally and never appear on disk, so always check the listing for platform capabilities regardless of context.
 
-**Match found:** read it, diff the verified inventory against what it documents, propose an update. Show the diff to the user. Scope Phase 4 testing to what is new or changed.
+**Match found:** show the user and ask whether to update the existing skill instead of creating a duplicate.
 
 **No match:** proceed to create.
 
-**Done when:** you know whether you are creating or updating, and the user agrees.
+**Done when:** you have the existing skill content (if updating) or confirmed no duplicate exists (if creating).
 
 ### Phase 4: Test and verify
 
