@@ -4,7 +4,7 @@
     "evaluatorq": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "e049e204835ea0e619035f292842d5a22fc42bbb5147b21bafa4b1ea77f49450"
+      "computedHash": "4bb7679cbfbd0526dcda5860bae3348582cfd387ee9403ee97901bb04c387d10"
     },
     "orq-analyze-trace-failures": {
       "source": "orq-ai/assistant-plugins",
@@ -29,7 +29,7 @@
     "orq-compare-agents": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "aad6ef23f1417425f3cce40fa4405314f18d6b3509a6d0594bb999ed6d3f8fd0"
+      "computedHash": "7321d428b2a28fc52a38a5fb9f83185fe37c995bca771135ac21e402f1f07bbd"
     },
     "orq-evaluator-alignment": {
       "source": "orq-ai/assistant-plugins",

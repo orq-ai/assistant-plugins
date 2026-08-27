@@ -147,9 +147,15 @@ async def main():
         evaluators=[
             {"name": "quality", "scorer": my_scorer},
         ],
-        parallelism=5,
+        parallelism=5,  # default is 10
     )
 ```
+
+> **`jobs` is a list, and every job runs against every data point.** That is the comparison
+> mechanism — one `evaluatorq()` call with N jobs, never a loop of N calls with one job each.
+> A single call yields one experiment and one evaluator × job results table; a loop yields N
+> unrelated experiments. `parallelism` gates both concurrent data points and concurrent jobs
+> within a data point.
 
 **TypeScript:**
 ```typescript
@@ -176,7 +182,7 @@ async def evaluatorq(
     data: DatasetIdInput | Sequence[DataPoint] | None = None,
     jobs: list[Job] | None = None,
     evaluators: list[Evaluator] | None = None,
-    parallelism: int = 1,
+    parallelism: int = 10,
     print_results: bool = True,
     description: str | None = None,
 ) -> EvaluatorqResult
