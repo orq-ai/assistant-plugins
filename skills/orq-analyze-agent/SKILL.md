@@ -9,18 +9,37 @@ description: >
   comes first. Do NOT use when the failure modes are already identified and you
   need evaluators (use orq-build-evaluator), datasets
   (use orq-generate-synthetic-dataset), or a fix applied (use orq-improve-agent).
-allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces list-facet-values:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq reporting query:*), Bash(orq agents retrieve:*), Bash(orq deployments get-config:*), mcp__orq-workspace__list_traces, mcp__orq-workspace__list_spans, mcp__orq-workspace__get_span, mcp__orq-workspace__get_analytics_overview, mcp__orq-workspace__query_analytics, mcp__orq-workspace__search_entities, mcp__orq-workspace__search_docs
+allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces list-facet-values:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq reporting query:*), Bash(orq agents retrieve:*), Bash(orq agents get-response:*), Bash(orq deployments get-config:*), Bash(orq tools:*), Bash(orq knowledge-bases:*), Bash(orq memory-stores:*), Bash(orq evals:*), Bash(orq skills:*), mcp__orq__list_traces, mcp__orq__list_spans, mcp__orq__get_span, mcp__orq__get_agent, mcp__orq__get_analytics_overview, mcp__orq__query_analytics, mcp__orq__search_entities, mcp__orq__search_docs
 ---
 
 # Analyze Agent
 
-> `allowed-tools` here is a curated read/search allowlist. The shell grant is **enumerated read verbs only** — the `orq traces` query commands, `orq reporting query`, `orq agents retrieve`, `orq deployments get-config` — so a mistyped or hallucinated `orq agents update` / `orq ... delete` still prompts rather than executing silently. A broad `Bash(orq:*)` would prefix-match every write and delete the CLI has, which is why it is not used here. Every other shell command prompts, `create_*`/`update_*`/`delete_*`/`invoke_*` MCP tools prompt, and `delete_*` is disabled entirely while this skill is active. **This skill never writes to the platform** — the write path lives in `orq-improve-agent`.
+> `allowed-tools` here is a curated read/search allowlist. The shell grant is **enumerated read verbs only** — the `orq traces` query commands, `orq reporting query`, `orq agents retrieve`, `orq agents get-response`, `orq deployments get-config`, and read verbs for related entities (`orq tools`, `orq knowledge-bases`, `orq memory-stores`, `orq evals`, `orq skills`) — so a mistyped or hallucinated `orq agents update` / `orq ... delete` still prompts rather than executing silently. A broad `Bash(orq:*)` would prefix-match every write and delete the CLI has, which is why it is not used here. Every other shell command prompts, `create_*`/`update_*`/`delete_*`/`invoke_*` MCP tools prompt, and `delete_*` is disabled entirely while this skill is active. **This skill never writes to the platform** — the write path lives in `orq-improve-agent`.
 
 You are an **orq.ai failure analyst**. Your job is to read production traces, **relay** how the agent is configured and how its runs ended, and build an actionable failure taxonomy using grounded theory (open coding → axial coding) — then write it to a file the rest of the suite can read.
 
 **Before your first `orq traces` call, read [`docs/trace-queries.md`](../../docs/trace-queries.md) — the invocation details there are not optional.** Three of them fail loudly; two fail silently by returning a confident empty answer. It lives in the plugin repo, not inside this skill folder; if it is not reachable from your checkout, say so and fall back to the four rules restated in Constraints below rather than proceeding unguarded.
 
 **Before any sweep, resolve the agent or deployment key** with [`docs/run-key-preflight.md`](../../docs/run-key-preflight.md). Without it a wrong or cross-project key reads as *"no traces"* rather than a 404, and Phase 0 relays an empty population as a clean one.
+
+### CLI vs MCP — when to use which
+
+The CLI and MCP overlap on most read operations but differ in two critical ways: **scope** and **projection**.
+
+| | CLI (`orq`) | MCP (`mcp__orq__*`) |
+|---|---|---|
+| **Scope** | Project-scoped. Returns 404 / empty for entities in other projects. | Workspace-scoped. Finds entities across all projects the API key can reach. |
+| **Projection** | `-j` (JMESPath) projects 115 KB spans down to ~7 lines. Essential for keeping trace data out of context. | `get_span mode=compact` (metadata + string-serialized I/O) vs `mode=full` (structured messages, all turns, tool calls, system instructions). `list_spans` always returns full attributes. |
+| **Best for** | Aggregate queries, filtered search, projected span detail, entity CRUD (tools, KBs, memory stores). | Agent discovery from a vague description, agent config retrieval, full conversation content for deep reading. |
+
+**Default rule: MCP for discovery and content, CLI for projection and aggregation.**
+
+- **Agent discovery:** `mcp__orq__search_entities type=agent query="..."` — fuzzy-matches name, key, and description across the workspace. Then `mcp__orq__get_agent key=...` for the full config (model, instructions, tools, KBs, memory stores, settings, URL).
+- **Trace aggregates and search:** CLI `orq traces aggregate` / `search` with `--from-file` — the only path that supports `group_by`, `compute`, and arbitrary filters.
+- **Span tree (compact):** CLI `orq traces list-spans -j "data[].{...}"` — the projection keeps 83-span traces under 10 KB.
+- **Span detail (projected):** CLI `orq traces get-span -j 'span.summary'` for metadata, `span.attributes.*` for config knobs.
+- **Full conversation content:** `mcp__orq__get_span span_id=... mode=full` — returns structured message arrays with all turns, tool calls, tool responses, system instructions, and per-message `finish_reason`. Use selectively on traces that need deep reading (failures, outliers). This is also the only reliable path for `finish_reason` on agent traces when `agents get-response` is unavailable.
+- **Related entities:** CLI `orq tools retrieve`, `orq knowledge-bases retrieve`, `orq memory-stores retrieve`, `orq evals get` — resolve the IDs from the agent config into full definitions.
 
 ## Vocabulary
 
@@ -98,7 +117,7 @@ The target is **optional**. Three modes, and the config read degrades across the
 
 | Mode | Config read | Config write | Behaviour |
 |---|---|---|---|
-| **orq agent** (key or id given) | `orq agents retrieve <key> --json` — full | `orq agents update` (in `orq-improve-agent`) | Full loop. |
+| **orq agent** (key or id given) | `mcp__orq__get_agent key=<key>` (primary, workspace-scoped) or `orq agents retrieve <key> --json` (fallback, project-scoped — 404s if agent is in another project) | `orq agents update` (in `orq-improve-agent`) | Full loop. |
 | **orq deployment** | `orq deployments get-config` | prompt versions via HTTP only | Analysis is full; config fixes are recommended in prose. |
 | **local / no orq entity** | **ask the user** | none | Full analysis; fixes are handed back as a diff to apply by hand. |
 
@@ -142,11 +161,17 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
 
    `max_iterations` and `max_time` are **explicit terminal reasons** — the platform is saying the run hit the cap. No distribution-shape inference needed.
 
-2. **Declared config — what the agent is set to** (from `orq agents retrieve`, `orq deployments get-config`, or the user in local mode):
+2. **Declared config — what the agent is set to** (from `mcp__orq__get_agent`, `orq agents retrieve`, `orq deployments get-config`, or the user in local mode):
    - `model.id` and `fallback_models`
    - `model.parameters.*` — `temperature`, `top_p`, `max_tokens`, `reasoning_effort`, `tool_choice`, `parallel_tool_calls`
    - `settings.*` — `max_iterations`, `max_execution_time`, `max_cost`, `tools[]`, `evaluators[]` **with each `sample_rate`**
    - `knowledge_bases`, `memory_stores`
+
+   When the agent config references entity IDs (tools, knowledge bases, memory stores, evaluators), resolve them into full definitions to understand what the agent can actually do:
+   - `orq tools retrieve <id> --json` — tool function schemas and descriptions
+   - `orq knowledge-bases retrieve <id> --json` — KB config and datasource attachments
+   - `orq memory-stores retrieve <id> --json` — memory store config
+   - `orq evals get <id> --json` — evaluator definition and scoring criteria
 
 3. **Observed behaviour — what actually happened**, so declared and actual can be compared:
    - model actually served vs. declared (is a fallback firing?)
@@ -186,6 +211,8 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
    **Mix:** random (50%), failure-driven (30%), outlier (20%).
 
 8. **Ensure trace completeness.** For each trace you need the original input, the final output, all intermediate steps (LLM calls, tool calls with args and responses, retrieved documents, reasoning), and the metadata (latency, tokens, model, cost).
+
+   **For deep reading of specific traces, use `mcp__orq__get_span` with `mode=full`.** This returns structured message arrays with all conversation turns, tool calls and responses, system instructions, and per-message `finish_reason`. Use it selectively on traces that need full content (failures, outliers), not on every trace. For the span tree and metadata, CLI `list-spans` with `-j` projection stays the compact path.
 
 ### Phase 2: Open Coding — Read and Annotate
 

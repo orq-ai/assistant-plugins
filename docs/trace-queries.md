@@ -1,6 +1,6 @@
 # Trace Queries — the `orq` CLI contract
 
-Shared reference for `orq-analyze-agent` and `orq-improve-agent`. Everything here was probed live against `orq` CLI 4.13.1 on 2026-08-26.
+Shared reference for `orq-analyze-agent` and `orq-improve-agent`. Everything here was probed live against `orq` CLI 4.13.1 on 2026-08-26, and re-verified against **4.14.0** the same day with no behavioural drift observed.
 
 **Read this before your first `orq traces` call. The invocation details below are not optional** — three of them (`--from-file`, the required sort, the null-safe projection) fail loudly, and two (a stale field name, a mid-deploy empty result) fail *silently* by returning a confident empty answer.
 
@@ -19,16 +19,23 @@ orq traces list-facets --json     # the 28 that are facetable
 
 **A mid-deploy query returns a confident, empty, non-erroring result.** During the 2026-08-26 rollout, `attributes.*` facets returned `[]` and `attributes.*` filters returned zero rows, both without an error. Re-probe before trusting a zero: run the same query with the filter removed and confirm the population is non-empty.
 
+### Every capability claim in this file must carry the command that produced it
+
+This document has twice described behaviour that was never run: a capability cell filled in by inference, and a *"the only way to X"* sentence that a five-minute check refuted. Both read as verified because they sat beside genuinely verified text.
+
+**Rule: a cell in a capability table, or any sentence of the form "X is the only way to Y", must be accompanied by the command that produced it. If it was not run, write `untested` in the cell.** `untested` is useful. A plausible guess formatted as a measurement is worse than a blank, because the next reader cannot tell the two apart.
+
 ---
 
-## 1. The three-layer read
+## 1. The layered read
 
 | Layer | Command | Cost | Answers |
 |---|---|---|---|
 | **1. Population sweep** | `orq traces aggregate --from-file <body>.json --json` | one call, one row per group | Distributions for any signal, **scoped to the target** via `filters` |
 | **2. Row selection** | `orq traces search --from-file <body>.json --json -j 'data[].trace_id'` | one call, ids only | Which traces exhibit the swept condition |
 | **3. Config detail** | `orq traces get-span <trace-id> <span-id> --json -j '<projection>'` | one call/span, **projected** | Per-span knobs layers 1–2 cannot see |
-| **Span order** | `orq traces list-spans <trace-id> --json -j '<projection>'` | one call/trace, **projected** | The ordered state sequence, for `where` |
+| **3a. Span order** | `orq traces list-spans <trace-id> --json -j '<projection>'` | one call/trace, **projected** | The ordered state sequence, for `where` |
+| **4. Content + terminal state** | `orq agents get-response <agent-key> <agent_execution_span_id> --json -j '<projection>'` | one call/trace, **projected** | **Agent targets only.** The real `finish_reason` and the message text, neither of which exists on any span — see §3.5 |
 
 ### Why `aggregate` and not `list-facet-values`
 
@@ -58,16 +65,21 @@ Returns one `{"group": {...}, "metrics": {"trace_id.count": N}}` row per group.
 
 ## 2. Invocation details that fail loudly
 
-**Bodies go in a file, never on stdin.** Piping JSON from PowerShell fails with `invalid character 'ï'` — the UTF-8 BOM. Write the file without a BOM:
+**Bodies go in a file, never on stdin.** Piping JSON from PowerShell fails with `invalid character 'ï'` — the UTF-8 BOM. **Use one file per query type and overwrite it each time** — `body.json` for sweeps, `body.json` again for the next sweep. Never create a new file per call.
 
 ```powershell
-[System.IO.File]::WriteAllText("$PWD\body.json", $json)   # no BOM
+[System.IO.File]::WriteAllText("$PWD\body.json", $json)   # no BOM, overwrite
 orq traces aggregate --from-file body.json --json
+# next query: overwrite the same body.json
 ```
 
 The same applies to `orq reporting query`: inline `--filters` JSON from PowerShell is mangled before it reaches the CLI. Use `--from-file`.
 
+**Delete `body.json` when the run is done.**
+
 **`--from` / `--to` are required, RFC3339, and bounded by 30-day retention.** `2026-08-12T09:00:00Z` parses; anything older than 30 days is rejected with `range outside retention`. **NEVER hard-code a `--from`** — it ages into that error. Compute the window at call time.
+
+**`filters[].values` must be an array of STRINGS, even for a numeric field.** `values: [0]` is rejected with `HTTP 400: invalid value for string field values: 0`; `values: ["0"]` is accepted. A field's declared `type: "number"` in `list-fields` does not change this.
 
 **`traces search` has exactly one legal sort:**
 
@@ -130,6 +142,44 @@ The response is `{data[], has_more, next_page_token, object}`. Each row is a **f
 
 ---
 
+## 3.5. `agents get-response` — the layer that is not a span
+
+**On an orq Agent target, the terminal state and the message text are not in the trace store at all.** `traces get`, `get-span`, `list-spans` and the MCP read path all return metadata only. Both live on the agents endpoint:
+
+```bash
+# task-id is the span.agent_execution span id. The "| [0]" and --raw are REQUIRED:
+# without them -j returns a formatted JSON array, which word-splits and 404s.
+AE=$(orq traces list-spans <trace-id> --raw -j "data[?type=='span.agent_execution'].span_id | [0]")
+orq agents get-response <agent-key> "$AE" --json -j 'finish_reason'
+```
+
+*(Verified end to end 2026-08-26 on CLI 4.14.0: returns `"max_iterations"`.)*
+
+**1. `finish_reason` — the agent-level terminal state.** This is *not* `attributes.gen_ai.response.finish_reasons`, which is null on **246/246** orq-hosted agent traces across **all 6 agents** in the probed workspace (measured 2026-08-26, 14-day window) while populating richly workspace-wide. Observed values, one agent per row:
+
+| Agent | Binding knob | n | `finish_reason` |
+|---|---|---|---|
+| loop-capped | `max_iterations: 2` | 15/15 | `max_iterations` |
+| loop-capped (second) | — | 5/5 | `max_iterations` |
+| token-capped | `max_tokens: 800` | 10/10 | **`length`** |
+| token-capped (second) | — | 10/10 | **`length`** |
+| uncapped control | `max_iterations: 15` | 10/10 | `stop` |
+| uncapped (second) | — | 2/2 | `stop` |
+
+**`length` is the token-truncation case and `max_iterations` the loop-cap case** — the two symptoms this skill family exists to tell apart, and neither is expressible in any span attribute. `{stop, max_iterations, length}` is what was *observed*, not a documented enumeration: treat an unseen value as possible.
+
+**2. `output[]` — the FINAL TURN ONLY, not a transcript.** `output[]` was length 1 on every trace tested, across 4 agents and all three terminal states. Its `parts[]` entries are `kind: "text"` (carrying `text`) or `kind: "tool_call"` (carrying `tool_name`, `arguments`, `tool_call_id`).
+
+The final assistant text is reliable: `output[0].parts[?kind=='text'].text` returned one well-formed message (9,221 chars on an agent required to write 800+ words), with no truncation or redaction markers in any sample.
+
+> **It does NOT give a tool-call inventory. Never use it as one.** A `tool_call` part appears only when the run was cut off *mid-call*. A normally-completed run shows none even when tools certainly ran — a control agent whose instructions mandate three `web_scraper` calls, with 5 chat-completion turns, returned **zero** `tool_call` parts. With `span.agent_tool_execution` never emitted either, **whether an agent's tools ran is currently unobservable from the CLI.** Record it as `unobservable`; do not infer it from either source.
+
+**Every bad id returns the same 404.** `{"message":"Agent response not found for this task"}` comes back identically for a trace id, a root span id, a chat-completion span id, the correct span id with the wrong agent key, and a garbage string. The error cannot tell you which mistake you made — re-derive the id from `list-spans` rather than guessing.
+
+**Project it.** A full response embeds every scraped page; one observed run carried 176k tokens in a single turn. **Never call this without `-j`.**
+
+**Project it.** A full response embeds every scraped page and one observed run carried 176k tokens in a single turn. `-j 'finish_reason'` is a few bytes; an unprojected `--json` is not. **Never call this without `-j`.**
+
 ## 4. Where the config knobs live
 
 `orq traces list-fields` returns 57 fields (re-read it; do not trust that number).
@@ -139,6 +189,14 @@ The response is `{data[], has_more, next_page_token, object}`. Each row is a **f
 **Attribute-scoped** (facetable, filterable, groupable): `attributes.gen_ai.response.finish_reasons`, `attributes.gen_ai.usage.input_tokens`, `attributes.gen_ai.tool.type`, `attributes.orq.span_type`, `attributes.orq.model.id`, `attributes.orq.billing.*`, `attributes.http.response.status_code`, `attributes.type`.
 
 **Not in the registry at all — per-span only:** `temperature`, `top_p`, `max_tokens`, and the entire `openresponses.*` block.
+
+> **Queryable is not groupable is not computable.** The three capabilities are independent, and `list-fields` does not distinguish them — a field listed there may still be rejected by `group_by` or `compute`. Verified:
+>
+> | Field | `filters` | `group_by` | `compute` |
+> |---|---|---|---|
+> | `agent.iterations.count` | **silently 0 rows** | **400** `field "agent.iterations.count" cannot be grouped` | **400** `unsupported aggregate metric` |
+>
+> **Probe a field before building a finding on it.** The `group_by` and `compute` rejections are at least loud. **The `filters` cell is §0's hazard in its purest form:** `agent.iterations.count` is declared filterable with operators `[eq,gt,gte,lt,lte]`, throws no error, and matches **zero rows every time** — even `gte "0"`, a condition true of any non-negative number — because nothing backs the field in `span.attributes`. A filter on it silently empties whatever query it touches. For agent turn depth, count `span.chat_completion` spans instead.
 
 Per span, on an **orq-hosted Responses-API span**:
 
@@ -158,6 +216,7 @@ They exist on **orq-hosted invocation spans**. They are **absent** on:
 
 - **OTLP-ingested** third-party spans — `gen_ai` carries only model/provider/usage; no `request.temperature`, no `openresponses` (verified on an `orq.claude_code.session` trace).
 - **AI-Router passthrough** spans — same gap; the projection above returned `temp:null, max:null, finish:null` (verified on a `chat.cerebras` trace).
+- **orq Agent invocation** spans — `gen_ai.request` carries only `{temperature, max_tokens, model, stream}`. **No `top_p`, no `finish_reasons`, and no `openresponses` block at all**, so `truncation` and `reasoning_effort` are unreadable from spans. `span.agent_tool_execution` is never emitted, so tool activity is invisible too. Verified across 55 traces on each of two agents. **Everything in this bullet is available from `agents get-response` (§3.5) instead — treat it as the fallback before recording any of these as `unobservable`.**
 
 **Anything unreadable is `unobservable` with a reason. Absence never reads as a pass.**
 
@@ -248,12 +307,13 @@ FROM=$(date -u -v-14d +%Y-%m-%dT%H:%M:%SZ);          TO=$(date -u +%Y-%m-%dT%H:%
 orq traces list-fields --json                    # resolve names first
 orq traces list-facets --json
 
-orq traces aggregate  --from-file sweep.json --json
-orq traces search     --from-file rows.json  --json -j 'data[].trace_id'
+orq traces aggregate  --from-file body.json --json
+orq traces search     --from-file body.json  --json -j 'data[].trace_id'   # same file, overwritten
 orq traces list-spans <trace> --json -j "data[].{id:span_id,name:name,type:type,start:started_at,status:status}"
 orq traces get-span   <trace> <span> --json -j '{temp:span.attributes.gen_ai.request.temperature}'
 
-orq reporting query   --from-file report.json --json     # mode: scalar
+orq reporting query   --from-file body.json --json       # same file, overwritten
 orq agents retrieve   <key> --json
 orq agents update     <key> --from-file patch.json --version-increment patch --version-description "..."
+# clean up: delete body.json and patch.json when done
 ```

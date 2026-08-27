@@ -3,6 +3,7 @@
 Conversational tests for each skill. Trigger each with a simple scenario and verify the first phase responds correctly. **No pre-existing resources are modified.**
 
 Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
+The `orq-analyze-agent` / `orq-improve-agent` tests additionally need the live `res886-fixture-*` agents (see [`fixtures-res886/`](./fixtures-res886/)). **Which fixture carries which defect is held outside this repo on purpose** — a session run inside the repo can read any file in it, so an in-repo answer key contaminates the very judgement these tests measure. Run them from a working directory outside the repo.
 
 ---
 
@@ -208,8 +209,9 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 ### Scenario 2: The config cause is attributed, not pre-flagged
 
 - Point it at an agent with a known config problem (e.g. `max_iterations: 2` on a task needing more)
+  — use one of the `res886-fixture-*` agents; do not look up which one first
 - Verify: the coder attributes the failure cluster back to that cap **without being told to**, and records `caused_by` + `knob` on the mode
-- Then point it at a healthy agent
+- Then point it at the fixture that is healthy — take it from the out-of-repo key, not from this file
 - Verify: it does **not** invent config problems from ordinary values (`temperature: 0.7` is not a finding)
 
 ### Scenario 3: The artifact
