@@ -231,11 +231,49 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: analyzes against the 11-dimension framework
 - Verify: produces concrete suggestions
 
+## `orq-analyze-agent`
+
+### Scenario 1: Agent from a vague description
+
+- Ask: "Analyze the support agent — it's been giving bad answers"
+- Verify Phase 0: uses `mcp__orq__search_entities type=agent` to discover the agent, then `mcp__orq__get_agent` for full config
+- Verify Phase 0: relays config (model, instructions, settings, tools, KBs) and terminal states before any coding
+- Verify Phase 0: resolves related entity IDs (tools, knowledge-bases, memory-stores) via CLI read verbs
+- Verify Phase 1: runs `orq traces aggregate` and `orq traces search` with `--from-file`, not inline JSON
+- Verify Phase 1: uses `mcp__orq__get_span mode=full` for deep reading of specific failure traces
+- Verify: writes an `error-analysis-*.md` file with failure modes, evidence trace IDs, and lever assignments
+
+### Scenario 2: Cross-project agent
+
+- Ask: "Analyze the checkout agent" (agent is in a different project than the CLI's active project)
+- Verify: `mcp__orq__get_agent` finds it (workspace-scoped), while `orq agents retrieve` would 404
+- Verify: does not silently report "no traces" when the issue is project scoping
+
 ## `orq-analyze-trace-failures`
 
 - Ask: "Analyze recent trace failures"
 - Verify: calls `list_traces`, attempts to read spans
 - Verify: describes sampling strategy
+
+## `orq-improve-agent`
+
+### Scenario 1: Fix from an error-analysis artifact
+
+- Ask: "Fix the issues from the error analysis"
+- Verify Phase 1: globs `error-analysis-*.md` and reads the artifact
+- Verify Phase 1: reads the agent config via `mcp__orq__get_agent` (primary) or `orq agents retrieve` (fallback)
+- Verify Phase 1: checks config-vs-instructions contradictions before any trace work
+- Verify Phase 2: routes each failure mode to its lever (prompt, config, tools, structure, evaluator)
+- Verify Phase 3: shows a diff with each change tied to a failure mode before applying
+- Verify Phase 4: applies with `--version-increment` and `--version-description`
+- Verify Phase 5: recommends `orq-run-experiment` with evidence + passing IDs
+
+### Scenario 2: Config contradiction
+
+- Provide: an agent with `max_iterations: 2` and instructions requiring 3 sequential tool steps
+- Ask: "My agent keeps failing to complete tasks"
+- Verify Phase 1: detects the contradiction without running any traces
+- Verify: routes straight to Phase 3b (config lever) rather than a trace sweep
 
 ## `orq-run-experiment`
 
@@ -475,6 +513,9 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 ## Critical Files
 
 - `docs/run-key-preflight.md`
+- `docs/trace-queries.md`
+- `skills/orq-analyze-agent/SKILL.md`
+- `skills/orq-improve-agent/SKILL.md`
 - `skills/orq-setup-observability/SKILL.md`
 - `skills/orq-setup-observability/resources/traced-decorator-guide.md`
 - `skills/orq-setup-observability/resources/framework-integrations.md`

@@ -8,6 +8,7 @@ description: orq.ai workspace assistant — routes to skills and commands for bu
 You have additional SKILLs documented in directories containing a "SKILL.md" file.
 
 These skills are:
+ - orq-analyze-agent -> "skills/orq-analyze-agent/SKILL.md"
  - orq-analyze-trace-failures -> "skills/orq-analyze-trace-failures/SKILL.md"
  - orq-build-agent -> "skills/orq-build-agent/SKILL.md"
  - orq-build-evaluator -> "skills/orq-build-evaluator/SKILL.md"
@@ -17,6 +18,7 @@ These skills are:
  - orq-compare-agents -> "skills/orq-compare-agents/SKILL.md"
  - evaluatorq -> "skills/evaluatorq/SKILL.md"
  - orq-generate-synthetic-dataset -> "skills/orq-generate-synthetic-dataset/SKILL.md"
+ - orq-improve-agent -> "skills/orq-improve-agent/SKILL.md"
  - orq-invoke-deployment -> "skills/orq-invoke-deployment/SKILL.md"
  - orq-manage-skills -> "skills/orq-manage-skills/SKILL.md"
  - orq-optimize-prompt -> "skills/orq-optimize-prompt/SKILL.md"
@@ -35,7 +37,11 @@ orq-build-evaluator: `Create validated LLM-as-a-Judge evaluators following best 
 
 orq-evaluator-alignment: `Align, calibrate, or improve an existing LLM-as-a-judge (orq evaluator) so its verdicts match human judgment — boolean, categorical, or numeric judges. Measures judge self-consistency as one 0..1 instability score via repeated runs, groups the least reliable examples by what makes them hard and asks a few questions instead of making the user label every row, rewrites the judge prompt from those answers, and creates the new evaluator only after human approval. Use to "align my evaluator", "annotate an evaluator", "my judge keeps changing its mind", or "find ambiguous cases". Do NOT use to build an evaluator from scratch (use orq-build-evaluator) or to fix failures with prompt tweaks (use orq-optimize-prompt).`
 
+orq-analyze-agent: `Analyze a live agent, deployment, or local agent from its production traces — relay its configuration and terminal states, then build a failure taxonomy by open coding and axial coding, and write it to an error-analysis file other skills read. Use when debugging agent or pipeline quality, when you have traces and no idea where to start, or before building any evaluator — error analysis comes first. Do NOT use when the failure modes are already identified and you need evaluators (use orq-build-evaluator), datasets (use orq-generate-synthetic-dataset), or a fix applied (use orq-improve-agent).`
+
 orq-analyze-trace-failures: `Read production traces, identify what's failing, build failure taxonomies, and categorize issues using open coding and axial coding methodology`
+
+orq-improve-agent: `Improve an underperforming orq agent, deployment, or local agent — rewrite its instructions against a structured prompting framework, or move a configuration knob, grounded in the error-analysis file orq-analyze-agent writes. Use when a prompt needs improvement, when a config knob is wrong (truncated answers, iteration caps, sampling), or when you have a failure taxonomy and want the fix applied. Do NOT use to re-architect a pipeline (use orq-build-agent), to align a judge that already exists (use orq-evaluator-alignment), or to build the failure taxonomy in the first place (use orq-analyze-agent).`
 
 orq-invoke-deployment: `Invoke orq.ai deployments, agents, and models via the Python SDK or HTTP API — pass prompt variables, stream responses, handle multi-turn agent conversations, and generate integration code`
 
