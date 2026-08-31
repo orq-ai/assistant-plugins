@@ -381,11 +381,5 @@ Is the average score above your threshold?
 
 ## Documentation & Resolution
 
-When you need to look up orq.ai platform details, check in this order:
+**Lookup order: [`doc-resolution.md`](../orq-shared/resources/doc-resolution.md).** Live queries first — for this skill that means `mcp__orq-workspace__create_experiment`, `get_experiment_run`, `list_experiment_runs`.
 
-1. **orq MCP tools** — query live data first (`create_experiment`, `get_experiment_run`, `list_experiment_runs`); API responses are always authoritative
-2. **orq.ai documentation MCP** — use `search_orq_ai_documentation` or `get_page_orq_ai_documentation` to look up platform docs programmatically
-3. **[docs.orq.ai](https://docs.orq.ai)** — browse official documentation directly
-4. **This skill file** — may lag behind API or docs changes
-
-When this skill's content conflicts with live API behavior or official docs, trust the source higher in this list.

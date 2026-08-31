@@ -378,12 +378,5 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
 
 ## Documentation & Resolution
 
-Look up orq.ai platform details in this order:
+**Lookup order: [`doc-resolution.md`](../orq-shared/resources/doc-resolution.md).** Live queries first — for this skill that means `orq traces …` and the orq MCP read tools, then [`trace-queries.md`](../orq-shared/resources/trace-queries.md) — the verified CLI contract for everything in this skill.
 
-1. **Live queries** — `orq traces …` and the orq MCP read tools; API responses are always authoritative
-2. **[`trace-queries.md`](../orq-shared/resources/trace-queries.md)** — the verified CLI contract for everything in this skill
-3. **orq.ai documentation MCP** — `search_orq_ai_documentation` / `get_page_orq_ai_documentation`
-4. **[docs.orq.ai](https://docs.orq.ai)** — [Traces](https://docs.orq.ai/docs/observability/traces) · [LLM Logs](https://docs.orq.ai/docs/observability/logs) · [Trace Automations](https://docs.orq.ai/docs/observability/trace-automation) · [Annotation Queues](https://docs.orq.ai/docs/administer/annotation-queue) · [Human Review](https://docs.orq.ai/docs/evaluators/human-review) · [Threads](https://docs.orq.ai/docs/observability/threads)
-5. **This skill file** — may lag behind API or docs changes
-
-When this skill conflicts with live API behaviour or official docs, trust the source higher in this list.

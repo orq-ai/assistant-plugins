@@ -9,8 +9,7 @@ description: >
   stress-testing conversational agents, or producing seed transcripts for
   dataset curation. Do NOT use when you have enough real production
   conversations (use `orq-analyze-traces`). Do NOT use for adversarial
-  red-teaming sweeps (use evaluatorq's built-in `red_team()` directly, see
-  `resources/redteam-mode.md`).
+  red-teaming sweeps (use `orq-red-team`).
 allowed-tools: Bash(curl:*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities
 ---
 
@@ -56,7 +55,9 @@ violations. You almost never need to hand-roll the loop.
 
 - Real production conversations are available, use `orq-analyze-traces`
 - Single-turn input/output evaluation, use `orq-run-experiment`
-- Red-teaming sweeps with attack categories, call `red_team()` directly (`from evaluatorq.redteam import red_team` — see [resources/redteam-mode.md](resources/redteam-mode.md))
+- Red-teaming sweeps with attack categories, use [`orq-red-team`](../orq-red-team/SKILL.md) — it owns `evaluatorq.redteam.red_team()`, the OWASP categories and the ASR reporting
+
+  Come back here when the goal is realism rather than adversarial coverage: personas spanning non-attack axes (politeness, urgency, expertise), or simulated conversations that seed an experiment dataset.
 
 ## Workflow Checklist
 
@@ -199,4 +200,3 @@ Tell the user all four. The OTel span and Experiment URL are what designers and 
 
 - [resources/persona-scenario-template.md](resources/persona-scenario-template.md), `Persona` and `Scenario` filled examples with all enum values listed
 - [resources/simulation-loop.md](resources/simulation-loop.md), `simulate()`, `generate_and_simulate()`, `wrap_simulation_agent()` patterns with all target shapes
-- [resources/redteam-mode.md](resources/redteam-mode.md), when to switch to `evaluatorq.redteam.red_team()` instead

@@ -317,10 +317,5 @@ Both write with the same required version bump, so neither can corrupt the other
 
 ## Documentation & Resolution
 
-1. **Live queries** — `mcp__orq-workspace__get_agent`, `mcp__orq-workspace__get_span`, `orq agents retrieve`, `orq traces …`, and the orq MCP read tools; API responses are always authoritative
-2. **[`trace-queries.md`](../orq-shared/resources/trace-queries.md)** — the verified CLI contract, including the write path and its parameter bounds
-3. **orq.ai documentation MCP** — `search_orq_ai_documentation` / `get_page_orq_ai_documentation`
-4. **[docs.orq.ai](https://docs.orq.ai)** — [Prompt Engineering Guide](https://docs.orq.ai/docs/prompts/engineering-guide#prompt-engineering-guide-best-practices) · [Agents](https://docs.orq.ai/docs/agents/overview) · [Prompts](https://docs.orq.ai/docs/prompts/overview) · [Versioning](https://docs.orq.ai/docs/prompts/versioning) · [Deployments](https://docs.orq.ai/docs/deployments/overview)
-5. **This skill file** — may lag behind API or docs changes
+**Lookup order: [`doc-resolution.md`](../orq-shared/resources/doc-resolution.md).** Live queries first — for this skill that means `mcp__orq-workspace__get_agent`, `get_span`, `orq agents retrieve`, `orq traces …`, then [`trace-queries.md`](../orq-shared/resources/trace-queries.md) — the verified CLI contract, including the write path and its parameter bounds.
 
-When this skill conflicts with live API behaviour or official docs, trust the source higher in this list.

@@ -18,6 +18,8 @@ Two shipped skills were removed and replaced under new names. Per the versioning
 
 ### Changed
 - **Shared references moved from `docs/` into the `orq-shared` skill.** `npx skills add` copies a skill folder and nothing else, so a `../../docs/...` link resolved only in a repo checkout — for every skills-only install the references were simply missing. Sibling links (`../orq-shared/resources/<file>.md`) resolve after any install, because skills land next to each other. This repoints all 11 links across 7 skills, including the 9 that already pointed at `docs/run-key-preflight.md` before this release.
+- **The doc-resolution ladder is now stated once**, in `skills/orq-shared/resources/doc-resolution.md`. Six skills carried the same four-step order and the same closing sentence, differing only in which live-query tools they named; each now links the shared order and keeps only its own first step. `## orq.ai Documentation` is deliberately untouched — those deep links and Key Concepts are per-skill and should differ.
+- `orq-simulate-agent`: dropped `resources/redteam-mode.md`. Three of its four sections were a thinner copy of the `orq-red-team` skill, including an SDK example that had already drifted from `orq-red-team/resources/python-sdk.md`; the routing decision it existed for is now two lines in the skill pointing at `orq-red-team`.
 - `commands/quickstart.md`: the eval cycle now reads analyze → improve → run-experiment, matching what the skills themselves do. The previous order put validation before the fix and made the evaluator step unconditional.
 
 ### Removed

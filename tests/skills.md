@@ -537,6 +537,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-shared/SKILL.md`
 - `skills/orq-shared/resources/run-key-preflight.md`
 - `skills/orq-shared/resources/trace-queries.md`
+- `skills/orq-shared/resources/doc-resolution.md`
 - `skills/orq-analyze-traces/SKILL.md`
 - `skills/orq-improve-agent/SKILL.md`
 - `skills/orq-setup-observability/SKILL.md`
@@ -571,7 +572,6 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-cli/SKILL.md`
 - `skills/orq-cli/resources/command-map.md`
 - `skills/orq-simulate-agent/resources/simulation-loop.md`
-- `skills/orq-simulate-agent/resources/redteam-mode.md`
 - `skills/orq-manage-skills/SKILL.md`
 - `skills/orq-manage-skills/resources/authoring-guide.md`
 - `skills/orq-manage-skills/resources/governance-guide.md`

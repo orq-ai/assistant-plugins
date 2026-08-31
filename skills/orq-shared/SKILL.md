@@ -29,6 +29,7 @@ skill folder and nothing else.
 |------|---------------|------------------------|
 | [`resources/trace-queries.md`](resources/trace-queries.md) | The verified `orq` CLI trace contract: runtime field resolution, the layered read, invocation details that fail loudly or silently, projections, where config knobs live, `reporting query`, what does not work, and the `orq agents update` write path with its parameter bounds. | `orq-analyze-traces`, `orq-improve-agent` |
 | [`resources/run-key-preflight.md`](resources/run-key-preflight.md) | Resolving and verifying an agent or deployment key with the run key before invoking or sweeping, the `ORQ_API_KEY` export pattern, the MCP-vs-run-key caveat, and HTTP 000. | `evaluatorq`, `orq-analyze-traces`, `orq-compare-agents`, `orq-improve-agent`, `orq-invoke-deployment`, `orq-red-team`, `orq-simulate-agent` |
+| [`resources/doc-resolution.md`](resources/doc-resolution.md) | The lookup order when a platform detail is needed: live queries, then the documentation MCP, then docs.orq.ai, then the skill file — and which source wins on a conflict. | `orq-analyze-traces`, `orq-build-agent`, `orq-build-evaluator`, `orq-generate-synthetic-dataset`, `orq-improve-agent`, `orq-run-experiment` |
 
 ## Rules for editing these files
 
