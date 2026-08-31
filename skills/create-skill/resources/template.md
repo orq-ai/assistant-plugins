@@ -10,10 +10,6 @@ description: >
   This routes skill selection, so be specific enough that the agent
   picks this skill and not a neighbour.>
 allowed-tools: <curated list>
-metadata:
-  verified: "<YYYY-MM-DD>"
-  surface: <api | cli | mcp>
-  source: "<URL or path to the primary doc/spec>"
 ---
 
 # <Title>
@@ -32,6 +28,11 @@ if you do not know it. Grounded in a real test or doc review.>
 ## When NOT to use
 
 <Boundaries. Name the neighbouring skill for each exclusion.>
+
+## Constraints
+
+<Rules that hold across every step: what must be verified, what must never
+be written, what needs user approval. Omit if the steps carry them.>
 
 ## <Grouped capability sections>
 
@@ -62,4 +63,4 @@ without blind forwarding.>
 
 - **Gotchas lead.** The agent reads them first and avoids the traps.
 - **Tested invocations only.** Every example call in the skill must have been run (thorough) or confirmed against docs (fast).
-- **`verified` dates the contract.** A skill with no date has unknown staleness. Mark operations that could not be tested as `[unverified: reason]`.
+- **Frontmatter is closed.** Only `name`, `description`, `license`, `compatibility`, `metadata`, `allowed-tools`. Record the verification date in the CHANGELOG entry, not in a custom frontmatter field, and mark operations that could not be tested as `[unverified: reason]`.

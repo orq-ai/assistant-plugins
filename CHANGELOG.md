@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.7.0] - 2026-08-31
 
 ### Added
-- **`create-skill`**: meta-skill that probes a capability surface (API, CLI, or MCP server), builds a verified inventory, and writes a tested SKILL.md contract. Six-phase workflow: gather requirements, build inventory, check existing skills, test/verify, write contract, clean up. Includes `resources/writing-guide.md` (failure-mode checklist, security boundary rules, pruning passes) and `resources/template.md` (output skeleton).
+- **`create-skill`**: meta-skill that probes a capability surface (API, CLI, or MCP server), builds a verified inventory, and writes a tested SKILL.md contract. Seven-phase workflow: gather requirements, build inventory, check existing skills, test/verify, write contract (including an adversarial self-review), register the skill on every surface the repo's contribution contract requires, clean up. Includes `resources/writing-guide.md` (failure-mode checklist, invocation decision, allowed-tools security boundary) and `resources/template.md` (output skeleton). Verified against the `orq` CLI and the orq MCP server on 2026-08-31.
 
 ## [2.6.0] - 2026-08-31
 

@@ -7,10 +7,6 @@ description: >
   when editing an existing skill without re-probing the surface, or when
   documenting internal code conventions (that belongs in CLAUDE.md).
 allowed-tools: Read, Write, Edit, Grep, Glob, Bash, AskUserQuestion, WebFetch, WebSearch, ToolSearch
-metadata:
-  verified: "2026-08-27"
-  surface: meta
-  source: "skills/create-skill/resources/"
 ---
 
 # Create Skill
@@ -18,6 +14,13 @@ metadata:
 > `allowed-tools` grants bare `Bash` because this skill probes unknown surfaces: arbitrary CLIs via `--help`, `curl` against undocumented APIs, whatever the target requires. The surface is not known at skill-authoring time, so the grant cannot be enumerated. Every other tool is standard read/write. **The output skill this produces must NOT inherit the broad grant** -- its `allowed-tools` enumerates write operations individually (see [`resources/writing-guide.md`](resources/writing-guide.md)).
 
 You are a **skill author**. You take a capability **surface** (an API, a CLI, or an MCP server), build a verified **inventory** of what it offers, and write it into a **contract**: a SKILL.md the agent can rely on because every claim in it was tested.
+
+## Gotchas (read first)
+
+1. **A written SKILL.md is not a registered skill.** In a repo with a contribution contract (this one has five surfaces, see Phase 6), a skill that exists only as `skills/<name>/SKILL.md` fails CI. Phase 6 is not optional there.
+2. **Frontmatter is a closed field set.** `name`, `description`, `license`, `compatibility`, `metadata`, `allowed-tools` and nothing else. One extra field makes a conformant client skip the whole skill — a typo'd `allowed_tools:` costs the skill everywhere. `allowed-tools` is a comma-separated string, never a YAML list.
+3. **The scratchpad holds the only evidence** until the gotchas land in the skill. Delete it in Phase 7, after the skill is written and registered — not before.
+4. **Docs lie about error shapes more than about happy paths.** The gotchas worth recording almost always come from Phase 4's error-path calls, not from the successful ones.
 
 ## When NOT to use
 
@@ -28,7 +31,7 @@ You are a **skill author**. You take a capability **surface** (an API, a CLI, or
 ## Constraints
 
 - Verify every endpoint, flag, schema, and behaviour against the live surface or its current docs. Training-data claims are hypotheses until confirmed.
-- Date the contract. The frontmatter carries `verified: YYYY-MM-DD` in metadata so staleness is visible.
+- Date the contract in the CHANGELOG entry that ships the skill, so staleness is traceable to a commit.
 - Search for an existing skill before creating a new one. Duplicates rot independently.
 - Show the complete skill to the user and get approval before writing.
 
@@ -69,14 +72,14 @@ Read the source material and extract a structured inventory.
 
 **For a CLI:** commands and subcommands (`<tool> --help`, `<tool> <cmd> --help`), flags (required, defaults, valid values), input/output formats, exit codes, environment variables.
 
-**For MCP:** use `ToolSearch` to pull tool schemas; for each tool: name, description, required/optional params, return shape; resource types if exposed; which tools are read-only vs. write/mutate.
+**For MCP:** use `ToolSearch` (`select:<tool>,<tool>` for exact names) to pull tool schemas. `ToolSearch` returns the **input** schema only — descriptions are often one terse line and there is no declared return shape, so the return shape has to come from an actual call. For each tool: name, description, required/optional params, observed return shape; resource types if exposed; which tools are read-only vs. write/mutate.
 
 **For all types:**
 - Group related operations (CRUD sets, query variants, lifecycle commands)
 - Mark which operations are safe (read) vs. dangerous (write/delete)
 - Identify common workflows (sequences of calls that accomplish a task)
 
-Write the inventory to a scratchpad file.
+Write the inventory to the scratchpad: `.create-skill/<surface-name>.md`, relative to the repo root (or the working directory outside a repo). One directory, one run, deleted whole in Phase 7. Never write it inside `skills/` — a stray inventory there gets committed and hashed into `skills-lock.json`.
 
 **Done when:** every operation the surface exposes is listed in the scratchpad with its params, response shape, and safe/dangerous classification.
 
@@ -118,9 +121,9 @@ Test every operation with real calls against the live surface. Do not trust docs
 
 **For common workflows**, run the full sequence end-to-end: e.g. create -> list (verify it appears) -> get by ID -> update -> get (verify change) -> delete -> get (verify 404). This catches ordering dependencies, eventual consistency, and silent failures.
 
-**For CLI surfaces**, run each command and subcommand. Capture `--help` output AND run a real invocation. Flags that accept values: test with a real value and confirm the output format.
+**For CLI surfaces**, run each command and subcommand. Capture `--help` output AND run a real invocation — help text is where CLIs lie most (duplicate rows, flags that no longer exist). Flags that accept values: test with a real value and confirm the output format. Check the exit code separately from the output; a CLI that prints help on an unknown subcommand may still exit 0, which makes the failure invisible to any script wrapping it.
 
-**For MCP surfaces**, call each tool via the MCP client with real parameters. Verify the return shape matches the schema from `ToolSearch`.
+**For MCP surfaces**, load the schemas in one batched `ToolSearch` call, then invoke each tool with real parameters and record the response — the return shape is not in the schema, so an uncalled tool has an unknown output. Batch the loads: one `ToolSearch` per tool wastes a round-trip each.
 
 **Large surfaces (20+ operations):** confirm with the user before proceeding. Show the count and estimated time.
 
@@ -141,47 +144,63 @@ Gotcha 1: <command> with <flag> silently returns empty instead of erroring
 
 Read [`resources/writing-guide.md`](resources/writing-guide.md) first. Then structure the output following [`resources/template.md`](resources/template.md). Fill the skeleton with the verified inventory and gotchas from the scratchpad.
 
-**Naming**: use kebab-case. Prefix with the platform domain when the skill wraps a specific product (e.g. `orq-analyze-agent`, `orq-improve-agent`). Cross-cutting skills use a descriptive name (e.g. `wiki-vault`, `create-skill`).
+**Naming**: use kebab-case. Prefix with the platform domain when the skill wraps a specific product (e.g. `orq-analyze-trace-failures`, `orq-compare-agents`). Cross-cutting skills use a descriptive name (e.g. `create-skill`).
 
 **Grouping**: organize capability sections by user workflow (what the user is trying to do), not by HTTP method or CLI subcommand hierarchy. Each group should correspond to a task the agent would perform.
 
 **Companion skills**: search `skills/*/SKILL.md` for related skills and populate the Companion skills section with verified names and one-line boundaries. Do not guess skill names.
 
-Before presenting: run the failure-mode checklist from the writing guide against the draft. Fix what it catches. If any operations were `[unverified]`, carry the marking into the output skill so the `verified` date does not overstate what was tested.
+**Review the draft adversarially before anyone sees it.** For each claim, ask:
+
+1. **Did I actually test this, or am I restating the docs?** If a section says "returns X" but you never saw X in a real response, either test it now or mark it `[unverified: reason]`.
+2. **Would an agent following this skill hit a wall?** Walk each workflow as if executing it for the first time. Missing setup steps, unstated prerequisites, parameter values that only make sense if you already know the surface.
+3. **Are the gotchas complete?** Re-read the test results for any surprise that did not make it into the skill. Silent failures, unexpected defaults, and undocumented required fields are the most common omissions.
+4. **Are the examples real?** Every command, call, or snippet must be one you ran (thorough) or took from current docs (fast). No invented examples.
+
+Fix what the review catches, running additional tests if the fix needs them, then run the failure-mode checklist from the writing guide against the corrected draft.
 
 Output the complete skill as text so the user can read it, then ask for approval via `AskUserQuestion` (approve / request changes). Then write to `skills/<name>/SKILL.md`.
 
 **If updating:** use `Edit` on the existing file rather than rewriting, unless the changes are so extensive that a rewrite is cleaner. Show the diff first.
 
-**Done when:** the user approved the content, the file is written, the writing-guide checklist passes, and every claim traces to a test result (thorough) or doc reference (fast) in the scratchpad.
+**Done when:** the user approved the content, the file is written, the writing-guide checklist passes, no untested doc claim is left unmarked, and every claim traces to a test result (thorough) or doc reference (fast) in the scratchpad.
 
-### Phase 6: Critical review
+### Phase 6: Register the skill
 
-Before presenting the skill to the user, review the draft adversarially. For each claim in the skill, ask:
+A SKILL.md alone is not a registered skill. Check whether the repo has a contribution contract: a `CLAUDE.md` or `AGENTS.md` describing where skills must be listed, or a validator under `tests/`.
 
-1. **Did I actually test this, or am I restating the docs?** If a section says "returns X" but you never saw X in a real response, either test it now or mark it `[unverified]`.
-2. **Would an agent following this skill hit a wall?** Walk through each workflow section as if you were the agent executing it for the first time. Are there missing setup steps, unstated prerequisites, or parameter values that only make sense if you already know the surface?
-3. **Are the gotchas complete?** Review your test results for any surprise that did not make it into the skill. Silent failures, unexpected defaults, and undocumented required fields are the most common omissions.
-4. **Are the examples real?** Every code example, command snippet, or API call in the skill must be something you actually ran (thorough) or extracted from current docs (fast). No invented examples.
+**No contract found:** skip to Phase 7.
 
-Fix what the review catches. If fixing requires additional tests, run them now.
+**Contract found:** follow it, then run its validator. In this repo the contract is five surfaces plus a lock file:
 
-**Done when:** every claim traces to evidence, no untested doc claims remain unmarked, and the workflows are executable by a cold-start agent.
+- `skills/<name>/SKILL.md` (written in Phase 5)
+- `agents/AGENTS.md` — the path list and the `<available_skills>` description block
+- `README.md` — a row in the skills table, label and link target agreeing
+- `tests/skills.md` — a `## \`<name>\`` smoke-test section, plus the Critical Files list (free prose, nothing validates it)
+- `skills-lock.json` — regenerate with `git add skills/ && node tests/scripts/validate-skills.mjs --fix` (it hashes **staged** content)
+- Version bump across all four `plugin.json` manifests plus a `CHANGELOG.md` entry — a new skill is a MINOR bump
+
+**Done when:** the repo's validator passes, or no contract exists.
 
 ### Phase 7: Clean up
 
-Delete the scratchpad inventory file. The evidence now lives in the skill itself (gotchas with tested calls) and in the `verified` date.
+Delete the `.create-skill/` scratchpad directory. The evidence now lives in the skill itself: gotchas carry the exact calls that produced them.
 
-**Done when:** no intermediate files from this run remain in the scratchpad directory.
+**Done when:** `.create-skill/` no longer exists.
 
 ## Done When
 
 All of these are true:
 
 - The SKILL.md is written (or updated) and the user approved it
-- The writing-guide failure-mode checklist passes
-- The critical review (Phase 6) passed with no untested claims remaining
+- The adversarial review and the writing-guide failure-mode checklist both pass, with no untested claims remaining
 - Every claim traces to a test result (thorough) or doc reference (fast)
 - Unverified operations are marked `[unverified: reason]` in the output
 - Companion skills section references verified skill names
-- The scratchpad is clean
+- The skill is registered on every surface the repo's contract requires, and its validator passes
+- The scratchpad is deleted
+
+## Companion skills
+
+- **orq-manage-skills** — orq.ai Skills, the *platform* entity injected into prompts via `{{skill.<display_name>}}`. Different thing entirely; this skill writes SKILL.md files for coding agents.
+- **orq-cli** — reference for the `orq` CLI itself. Use it when probing orq as a surface; this skill only tells you how to write up what you find.
