@@ -36,8 +36,8 @@ For operations not yet in MCP.
 ### Evaluators
 
 ```bash
-# List evaluators
-curl -s https://api.orq.ai/v2/evaluators \
+# List evaluators (paginate with starting_after=<last _id> while has_more is true; `after=` is ignored)
+curl -s "https://api.orq.ai/v2/evaluators?limit=50" \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" | jq
 
@@ -47,7 +47,7 @@ curl -s https://api.orq.ai/v2/evaluators/<ID> \
   -H "Content-Type: application/json" | jq
 
 # Invoke an evaluator
-curl -s https://api.orq.ai/v2/evaluators/<ID>/invoke \
+curl -s https://api.orq.ai/v3/evaluators/<ID>/invoke \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"output": "LLM output", "query": "Original input", "reference": "Expected answer"}' | jq

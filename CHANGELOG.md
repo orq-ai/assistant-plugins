@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0] - 2026-08-31
+
+### Added
+- `orq-build-evaluator`: categorical output type — a verified single-request `POST /v2/evaluators` body with `categorical_labels`, plus per-label criteria in Phase 2, per-label few-shot examples in Phase 3, per-label sample-size targets in Phase 4, and a confusion-matrix / per-label precision-recall gate in Phase 5. MCP `create_llm_eval` cannot create categorical evaluators: `categorical_labels` is required at creation and the tool has no such field.
+- `orq-build-evaluator`: Python evaluator `log` dict full 7-key reference with three runnable examples
+- `orq-build-evaluator`: `POST /v3/evaluators/{id}/invoke` for rapid Phase 5 iteration, with the response shape and a payload-field-to-template-variable table. Evaluator CRUD is v2-only and invoke is v3-only — `/v3/evaluators` 404s, `POST /v2/…/invoke` returns `403 insufficient_scope` for a workspace key.
+- `orq-build-evaluator`: `orq evals create` invocation for categorical evaluators alongside the raw HTTP body, for scripts and CI
+- `orq-build-evaluator`: `orq evals invoke` flag reference — the flat flags fold into `context` as the JSON shorthand does, `--context` takes the inner object while `--from-file` takes the full body, and `system_instructions`/`tools_called` have no flag of their own
+- `orq-build-evaluator`: Phase 6 step 16 recommends running `orq-evaluator-alignment` after creating an LLM evaluator
+
+### Changed
+- `orq-build-evaluator`: HTTP Fallback section now enumerates what MCP cannot do at all (categorical creation, categorical/string Python evals, listing, invoke) rather than a create-then-PATCH pattern
+- `orq-build-evaluator`: evaluator variables updated from legacy `{{log.*}}` to v4.14+ `{{input.*}}`/`{{output.*}}`; `resources/judge-prompt-template.md` §6 is now the single canonical list
+- `orq-run-experiment`: `{{log.*}}` occurrences updated to the v4.14+ names with a pointer to the canonical list
+- `orq-build-evaluator`: softened binary-only stance to recommend binary Pass/Fail while allowing numeric scales with detailed rubrics and categorical for 3+ labels; frontmatter, "Done When" and the quality checklist follow suit
+- `orq-build-evaluator`: TPR/TNR and the prevalence-correction formula are now explicitly scoped to binary evaluators
+
+### Fixed
+- `orq-build-evaluator`: duplicate step 16 — Phase 7's maintenance step is now 17
+- `orq-build-evaluator`: the Python response-length example scored Pass on an empty output — a failed generation reads as a short response. It now guards for empty and checks one criterion instead of two.
+- `orq-build-evaluator`: the create examples used `openai/gpt-4o-mini`, contradicting the skill's own "start with the most capable judge model" constraint; both now use `openai/gpt-4.1`
+- `orq-run-experiment`, `orq-build-agent`: evaluator invoke endpoint corrected from `/v2/evaluators/<ID>/invoke` (403) to `/v3/…`
+- `orq-run-experiment`: evaluator list pagination corrected from `after=` (silently ignored, re-serves page 1) to `starting_after=`
+- `orq-build-evaluator`: dropped the unverified `string` output type row and the unverified JSON-schema/HTTP evaluator types; `function_eval` and `ragas` are documented with their real parameter shapes
+- `orq-build-evaluator`: the Python evaluator's library list was invented (a stdlib enumeration plus `nltk`). Replaced with what the docs actually name as preloaded — `numpy` 1.26.4, and since v4.10 `requests` and `pydantic`, the replacement for the retired HTTP and JSON evaluator types — and the byte-exact 1 MB limit with its `Code exceeds maximum size` error
+- `orq-build-evaluator`: `log["messages"]` is documented as excluding the graded turn, matching the same caveat already carried for legacy `{{log.messages}}`
+- `orq-build-evaluator`: the Phase 5 thresholds are **targets, not pass/fail gates**. The categorical pair (macro recall > 90%, no label under 80%) is mine and the numeric one (Spearman > 0.7, MAE inside the downstream tolerance) is a convention; neither is measured, and a skill that presents a number as a standard gets that number obeyed instead of examined. The table now says to pick your own before starting and to judge a miss on the disagreements rather than the number
+- `orq-build-evaluator`: the HTTP/CLI reference — the fallback table, the verified categorical `POST /v2/evaluators` body, and the invoke payload with its body-path-to-variable mapping — moved to `resources/api-reference.md`, leaving a pointer. `SKILL.md` drops from 550 to 470 lines, under the spec's 500-line recommendation. It is lookup material, not procedure, so it survives the split; the procedure steps that need it link to it
+- `orq-build-evaluator`: invoke payload documented as the `context` form the docs prefer, with the flat shorthand as the legacy alias. `context` is the request envelope, not a prompt namespace — there is no `{{context.…}}` variable. Of its four sub-objects only `input` and `output` share names with the variables they feed: `context.messages` renders as `{{input.all_messages}}` and `context.variables.<name>` as bare `{{<name>}}`. `input` and `expected_output` are not flat aliases and are dropped silently; `system_instructions` and `tools_called` are reachable only through `context`.
+- `orq-build-evaluator`: `resources/judge-prompt-template.md` §6 now carries all seven template variables, the indexing syntax, the message and tool-call shapes, and the full legacy `{{log.*}}` mapping
+- `orq-build-evaluator`, `orq-run-experiment`: `{{log.messages}}` is **not** equivalent to `{{input.all_messages}}` — it omits the graded turn. The previous entry mapped them as the same variable.
+
 ## [2.7.0] - 2026-08-31
 
 ### Added

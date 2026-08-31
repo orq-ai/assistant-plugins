@@ -189,6 +189,13 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: recommends code-based evaluator (`create_python_eval`), not LLM judge
 - Ask: "Build an evaluator for tone and helpfulness"
 - Verify: suggests splitting into separate evaluators (one per criterion)
+- Ask: "Build an evaluator that classifies tone as professional, casual or aggressive"
+- Verify: picks `categorical`, and creates it with `POST /v2/evaluators` carrying `categorical_labels` — never `create_llm_eval`, which cannot supply the labels the API requires at creation
+- Verify: the labels it proposes are mutually exclusive and include a catch-all
+- Verify: validation targets per-label precision/recall, NOT TPR/TNR (undefined for 3+ labels), and does not offer the prevalence-correction formula
+- Ask: "Write me a judge prompt for persona consistency"
+- Verify: the prompt uses `{{input.*}}` / `{{output.*}}` variables, not `{{log.*}}` and not bare `{{input}}` / `{{output}}`
+- Verify: after creating an LLM evaluator, recommends `orq-evaluator-alignment`
 
 ## `orq-evaluator-alignment`
 

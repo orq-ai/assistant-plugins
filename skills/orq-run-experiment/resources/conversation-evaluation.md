@@ -89,7 +89,7 @@ For sessions that failed, find the first failing turn:
 
 | Check | Method | Evaluator Type |
 |-------|--------|---------------|
-| **Context retention** | Does the response reference earlier information correctly? | LLM-as-Judge with `{{input.all_messages}}` |
+| **Context retention** | Does the response reference earlier information correctly? | LLM-as-Judge with `{{input.all_messages}}` (the legacy `{{log.messages}}` omits the graded turn) |
 | **Instruction compliance** | Does the response follow rules stated earlier? | LLM-as-Judge checking specific rules |
 | **Consistency** | Does the response contradict earlier statements? | LLM-as-Judge comparing turns |
 | **Persona maintenance** | Does the character hold across turns? | LLM-as-Judge per-turn |
