@@ -618,6 +618,31 @@ rm "$d/tests/skills.md"
 git -C "$d" add -A
 expect_fail "missing tests/skills.md" "$d" "tests/skills.md is missing or unreadable"
 
+# --- 11. legacy orq template variables ---
+d=$(build_fixture legacy-template-var)
+printf '\n- Available template variables: `{{log.input}}`, `{{log.output}}`\n' \
+  >> "$d/skills/example-skill/SKILL.md"
+git -C "$d" add -A
+expect_fail "legacy orq template variable in skill markdown" "$d" "legacy orq template variable"
+
+# A compatibility note is the one legitimate reason to name the old spelling.
+d=$(build_fixture legacy-template-var-annotated)
+printf '\n- Legacy `{{log.input}}` still resolves; write `{{input.user_query}}` in new evaluators.\n' \
+  >> "$d/skills/example-skill/SKILL.md"
+git -C "$d" add -A
+node "$validator" "$d" --fix >/dev/null 2>&1
+git -C "$d" add -A
+expect_pass "legacy variable on a line marked legacy is allowed" "$d"
+
+# Python keeps `{{log.*}}` on purpose — docstrings describing the bug that a
+# legacy variable caused, and fixtures pinning backward compatibility.
+d=$(build_fixture legacy-template-var-python)
+printf '"""Judge reads {{log.output}}."""\n' > "$d/skills/example-skill/notes.py"
+git -C "$d" add -A
+node "$validator" "$d" --fix >/dev/null 2>&1
+git -C "$d" add -A
+expect_pass "legacy variable in a python file is not linted" "$d"
+
 # --- git-failure paths ---
 d=$(build_fixture no-git)
 rm -rf "$d/.git"

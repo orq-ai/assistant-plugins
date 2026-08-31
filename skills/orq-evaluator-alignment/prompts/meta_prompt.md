@@ -29,7 +29,7 @@ The <input_instructions> summarize where the judge disagreed with human labels a
 - Keep a specified, stressed output format. If the original judge returns the explanation BEFORE the value, keep that ordering.
 - If the judging task benefits from reasoning, instruct for it, and require the reasoning BEFORE the derived verdict.
 - Remove only genuinely unnecessary text (contradictions, dead markdown). Do NOT remove any statement of the verdict space, the label set, or the numeric scale.
-- Template variables (double curly brackets, e.g. `{{output.response}}` or legacy `{{log.output}}`) must be preserved EXACTLY — same set, same names, no additions, no removals. They usually sit once near the end of the prompt; keep them where and how they appear.
+- Template variables (double curly brackets, e.g. `{{output.response}}`, `{{input.user_query}}`, `{{input.all_messages}}`, or legacy `{{log.output}}`) must be preserved EXACTLY — same set, same names, no additions, no removals. They usually sit once near the end of the prompt; keep them where and how they appear.
 - End with a one-sentence recap of the judging task and the required output format.
 
 Return ONLY the rewritten judge prompt. No preamble, no commentary, no code fences.

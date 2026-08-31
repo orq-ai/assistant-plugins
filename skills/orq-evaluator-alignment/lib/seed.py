@@ -37,7 +37,8 @@ def map_datapoint(datapoint: dict[str, Any], mapping: dict[str, str] | None = No
     traces never hit this because orq's `gen_ai.input` supplies `output` outright;
     the dataset path is the one that has to derive, and had no rule to derive with.
     """
-    row: dict[str, Any] = {'query': '', 'output': '', 'messages': None, 'reference': ''}
+    row: dict[str, Any] = {'query': '', 'output': '', 'messages': None, 'reference': '',
+                           'retrievals': None, 'system_instructions': '', 'tools_called': None}
     for name, value in (datapoint.get('inputs') or {}).items():
         field = field_for_variable(name)
         if field is not None:
@@ -72,7 +73,7 @@ def map_datapoint(datapoint: dict[str, Any], mapping: dict[str, str] | None = No
 def unresolved_variables(row: dict[str, Any], variables: list[str]) -> list[str]:
     """The evaluator `{{variables}}` a mapped row can NOT satisfy — either the
     field the variable's leaf maps to is empty/None, or the leaf is one the row
-    shape can't carry (only query/output/messages/reference are fillable, mirroring
+    shape can't carry (`_FIELD_BY_LEAF`'s fields are the fillable set, mirroring
     `make_replacements`). Empty list ⇒ the row is usable as-is; anything returned
     is what the conductor must map by hand (§11.4) before the row is judged.
 
@@ -86,8 +87,8 @@ def unresolved_variables(row: dict[str, Any], variables: list[str]) -> list[str]
         field = field_for_variable(var)
         if field is None:
             ok = False  # unknown leaf — a standard datapoint can't fill it
-        elif field == 'messages':
-            ok = row.get('messages') is not None
+        elif field in ('messages', 'retrievals', 'tools_called'):
+            ok = row.get(field) is not None
         else:
             ok = bool(row.get(field))
         if not ok:
@@ -102,10 +103,15 @@ def row_to_datapoint(row: dict[str, Any], variables: list[str]) -> dict[str, Any
     `expected_output` ride along when present."""
     inputs: dict[str, Any] = {}
     for var in variables:
-        # Only query/output go in `inputs`; `messages` and `expected_output` are
-        # top-level datapoint fields in orq's shape, added below.
-        if field_for_variable(var) in ('query', 'output'):
-            inputs[var] = row.get(field_for_variable(var), '')
+        # `messages` and `expected_output` are top-level datapoint fields in orq's
+        # shape (added below); everything else the judge reads rides in `inputs`,
+        # keyed by the evaluator's own variable name — including retrievals,
+        # system_instructions and tools_called, which have no top-level home and
+        # would otherwise be dropped from a dataset saved back from rows that
+        # carried them.
+        field = field_for_variable(var)
+        if field in ('query', 'output', 'retrievals', 'system_instructions', 'tools_called'):
+            inputs[var] = row.get(field, '')
     datapoint: dict[str, Any] = {'inputs': inputs, 'expected_output': row.get('reference') or ''}
     if row.get('messages') is not None:
         datapoint['messages'] = row['messages']

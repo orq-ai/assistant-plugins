@@ -82,7 +82,7 @@ Evaluator Build Progress:
 
 ### orq.ai LLM Evaluator Details
 - orq.ai supports **LLM evaluators** with Boolean or Number output types
-- Available template variables: `{{log.input}}`, `{{log.output}}`, `{{log.messages}}`, `{{log.retrievals}}`, `{{log.reference}}`
+- Available template variables (v4.14+): `{{input.user_query}}`, `{{output.response}}`, `{{input.all_messages}}`, `{{input.retrievals}}`, `{{input.expected_output}}`, `{{input.system_instructions}}`, `{{output.tools_called}}`. Legacy `{{log.input}}`/`{{log.output}}`/`{{log.messages}}`/`{{log.retrievals}}`/`{{log.reference}}` still resolve, so existing evaluators keep working — write new ones in the `input.*`/`output.*` form
 - Choose judge model from the Model Garden
 - Evaluators can be used as **guardrails** on deployments (block responses below threshold)
 - Also supports **Python evaluators** (Python 3.12, numpy, nltk, re, json) and **JSON schema evaluators** for code-based checks
@@ -319,7 +319,7 @@ Your JSON Evaluation:
     **If LLM-as-Judge (`create_llm_eval`):**
     - Use `create_llm_eval` with the refined judge prompt from Phase 3-5
     - Set appropriate model (start capable, optimize later)
-    - Map variables: `{{log.input}}`, `{{log.output}}`, `{{log.reference}}` as needed
+    - Map variables: `{{input.user_query}}`, `{{output.response}}`, `{{input.expected_output}}` as needed
 
 14. **Create the evaluator** on orq.ai:
     - Link to relevant dataset and experiment

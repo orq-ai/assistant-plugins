@@ -402,6 +402,61 @@ def test_make_replacements_reads_parts_shaped_conversation():
     assert repl['log.expected_output'] == 'gold'
 
 
+def test_make_replacements_fills_v414_prefixed_variables():
+    # The v4.14 rename is only a no-op if the RENDERER agrees with the leaf table,
+    # and it is the renderer that decides what the judge actually reads. A leaf
+    # mapped but rendered blank re-judges against an empty variable — the silent
+    # loss `lib.content`'s docstring names. `retrievals` renders newline-joined
+    # because that is what orq substitutes (verified against a live evaluator).
+    from lib.judge import make_replacements
+
+    repl = make_replacements(
+        ['input.user_query', 'output.response', 'input.all_messages',
+         'input.expected_output', 'input.retrievals', 'input.system_instructions',
+         'output.tools_called'],
+        {
+            'query': 'where is my order',
+            'output': 'it shipped',
+            'messages': [{'role': 'user', 'content': 'where is my order'}],
+            'reference': 'gold',
+            'retrievals': ['chunk one', 'chunk two'],
+            'system_instructions': 'be terse',
+            'tools_called': [{'name': 'lookup_order', 'arguments': '{"id":42}', 'output': 'shipped'}],
+        },
+    )
+    assert repl['input.user_query'] == 'where is my order'
+    assert repl['output.response'] == 'it shipped'
+    assert 'where is my order' in repl['input.all_messages']
+    assert repl['input.expected_output'] == 'gold'
+    assert repl['input.retrievals'] == 'chunk one\nchunk two'
+    assert repl['input.system_instructions'] == 'be terse'
+    assert repl['output.tools_called'] == '1. lookup_order({"id":42})\n   Status: ✅ Success\n   Response: shipped'
+
+
+def test_stringify_tools_called_matches_orq_rendering():
+    # Pinned against a live evaluator (2026-08-31), because a near-miss here is
+    # invisible: the run completes and reports agreement for a judge that read a
+    # differently-formatted prompt than production ever showed it.
+    from lib.content import stringify_tools_called
+
+    assert stringify_tools_called([
+        {'name': 'lookup_order', 'arguments': '{"id":42}', 'output': 'shipped'},
+        {'name': 'send_email', 'arguments': '{"to":"a@b.c"}', 'output': 'sent'},
+    ]) == ('1. lookup_order({"id":42})\n   Status: ✅ Success\n   Response: shipped\n\n'
+           '2. send_email({"to":"a@b.c"})\n   Status: ✅ Success\n   Response: sent')
+    # Absent arguments render `({})`, an absent result `N/A`.
+    assert stringify_tools_called([{'name': 'ping'}]) == '1. ping({})\n   Status: ✅ Success\n   Response: N/A'
+    # An empty list is content, not absence: the judge is told no tools ran.
+    assert stringify_tools_called([]) == 'No tool calls were made.'
+    assert stringify_tools_called(None) == ''
+    # A nameless call is dropped and the survivors renumber from 1, as orq does.
+    assert stringify_tools_called([{'output': 'x'}, {'name': 'keep', 'output': 'yes'}]) == (
+        '1. keep({})\n   Status: ✅ Success\n   Response: yes')
+    # A block the trace stencil already recovered is passed through, not re-formatted.
+    assert stringify_tools_called('1. already({})\n   Status: ✅ Success') == (
+        '1. already({})\n   Status: ✅ Success')
+
+
 # Canned per-row verdicts keyed by a substring of the judged input, per type. The
 # "useless" row is unstable in every type; the other two are unanimous (stable).
 _CANNED = {

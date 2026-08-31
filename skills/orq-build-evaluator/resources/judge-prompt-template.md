@@ -69,4 +69,4 @@ Your JSON Evaluation:
 
 5. **Reasoning before answer**: The template puts "reasoning" before "answer" in the JSON to encourage chain-of-thought before the final judgment.
 
-6. **Variables**: Use `{{input}}`, `{{output}}`, and optionally `{{reference}}` as template variables. On orq.ai, these map to `{{log.input}}`, `{{log.output}}`, `{{log.reference}}`.
+6. **Variables**: Use `{{input}}`, `{{output}}`, and optionally `{{reference}}` as template variables. On orq.ai, these map to `{{input.user_query}}`, `{{output.response}}`, `{{input.expected_output}}` (v4.14+; the legacy `{{log.input}}`/`{{log.output}}`/`{{log.reference}}` names still resolve).
