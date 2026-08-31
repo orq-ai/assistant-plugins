@@ -1,9 +1,13 @@
 # orq CLI Command Map
 
-Verified live against the **4.13** CLI (last full pass: build 4.13.0-rc.62,
-2026-08-07). The CLI is
+Verified live against **orq CLI 5.1.0** (built against orq API 4.14.3), last
+full pass 2026-08-31. The CLI is
 generated from the orq.ai OpenAPI spec, so this drifts between releases —
 `orq <group> --help` wins over anything written here.
+
+Since 5.0.0 the CLI's version is its own and no longer tracks the API's; run
+`orq version --json` to read both. The command surface is tracked upstream in
+`surface.json`, so it cannot change silently, but it can change deliberately.
 
 To re-derive the tree after a CLI upgrade, instead of editing it by hand. Run it
 with `bash` explicitly — under `zsh` (the macOS default) unquoted parameters are
@@ -38,13 +42,26 @@ curl -fsSL https://raw.githubusercontent.com/orq-ai/orq-cli/main/openapi.yaml -o
 | `-o, --output-format` | `json`, `yaml`, or `toon` (default `toon`) |
 | `-j, --jmespath` | JMESPath expression applied to the response |
 | `--raw` | Emit the `--jmespath` result unquoted instead of as JSON |
-| `--profile` | Credential profile (default `default`) |
-| `--server` | Override the server URL for this call |
-| `--verbose` | Verbose log output. **Prints every stored API key in plaintext — never use in shared output.** |
+| `--profile` | Credential profile (default `default`). An explicit one outranks `ORQ_API_KEY` |
+| `--server` | Override the server URL for this call. Replaces the deprecated `--api-base-url` |
+| `--workspace` | Workspace key for this invocation, overriding the session's active one. Does not persist |
+| `--no-color` | Disable colour (`NO_COLOR` is honoured too) |
+| `--no-input` | Never prompt; fail instead of asking |
+| `--verbose` | Verbose log output. **Prints every stored API key in plaintext on stderr — never use in shared output.** |
 
 Each flag has an env-var twin: uppercase, `ORQ_` prefix, underscores for dashes.
 `ORQ_VERBOSE=1` equals `--verbose`, `ORQ_PROFILE=ci` equals `--profile ci`,
-`ORQ_JMESPATH='auth.status'` equals `-j 'auth.status'`.
+`ORQ_JMESPATH='auth.status'` equals `-j 'auth.status'`,
+`ORQ_WORKSPACE=orq-research` equals `--workspace orq-research`.
+
+Note the asymmetry: an explicitly typed `--profile` beats an exported
+`ORQ_API_KEY`, but `ORQ_PROFILE` does not — env against env has no statement of
+intent to break the tie. `--workspace` loses to an API key either way, with a
+warning on stderr.
+
+Two deprecated spellings still resolve and warn: `--api-base-url` (six built-in
+commands only) and `ORQ_API_BASE_URL`. Both mean `--server` / `ORQ_SERVER`; both
+are scheduled for removal.
 
 **There is no `-q`/`--query` global flag.** Muscle memory from other CLIs (or
 older orq builds) will produce `Error: unknown shorthand flag: 'q' in -q` on
@@ -95,21 +112,29 @@ Unix), using the same key names:
 |---|---|
 | `ORQ_API_KEY` | API key for headless / CI auth. **Resource commands only** — not `whoami` / `workspace` |
 | `ORQ_PROFILE` | Default profile |
-| `ORQ_SERVER` | Base URL for **generated resource** commands. Verified: setting it redirects `projects list` |
-| `ORQ_API_BASE_URL` | Base URL for the **built-in auth** commands only. Verified: has **no effect** on resource commands |
+| `ORQ_SERVER` | Base URL for **every** command, built-in and generated. The one host name |
+| `ORQ_WORKSPACE` | Workspace key for the invocation. Overrides the session's active workspace, persists nothing |
+| `ORQ_API_BASE_URL` | **Deprecated.** Now just a spelling of `ORQ_SERVER`; warns on stderr, will be removed |
 | `ORQ_V1_BASE_URL` | Override the v1 base URL (local dev) |
 | `ORQ_PROFILE_BASE_URL` | Override the profile endpoint (local dev) |
+| `ORQ_NO_UPDATE_CHECK` | Suppress the daily update notice (also skipped when `CI` is set) |
 | `ORQ_CLI_VERSION` | Version pin for `install.sh` |
+| `ORQ_CLI_CHANNEL` | `rc` installs the pre-release line (`install.sh --channel rc`) |
 | `ORQ_CLI_INSTALL_DIR` | Install directory for `install.sh` |
 
-`ORQ_SERVER` and `ORQ_API_BASE_URL` are **two different hosts**, not aliases.
-Confirmed by `strings` on the binary, the full set it reads is `ORQ_API_BASE_URL`,
-`ORQ_API_KEY`, `ORQ_AUTHORIZATION`, `ORQ_PROFILE_BASE_URL`, `ORQ_TOKEN`, and the
-`ORQ_V1_*` pair, plus the generic `ORQ_<FLAG>` twins.
+`ORQ_SERVER` and `ORQ_API_BASE_URL` **used to be two different hosts.** Until
+5.0.0 the six built-in commands took `--api-base-url` and rejected `--server`
+while every generated command did the reverse, so a single run could reach two
+hosts at once. They are now one value under one name, and the default host moved
+from `https://api.orq.ai` to `https://my.orq.ai`. Set `ORQ_SERVER`.
 
-`ORQ_WORKSPACE`, `ORQ_WORKSPACE_SLUG`, `ORQ_UI_BASE_URL`, and `ORQ_BASE_URL` are
-**not** CLI variables. They are evaluatorq conventions. Setting them changes
-nothing about `orq` behaviour; only honour them in your own scripts.
+The CLI also reads `ORQ_AUTHORIZATION` and `ORQ_TOKEN` as credential inputs
+alongside `ORQ_API_KEY`, plus the generic `ORQ_<FLAG>` twins.
+
+`ORQ_WORKSPACE_SLUG`, `ORQ_UI_BASE_URL`, and `ORQ_BASE_URL` are **not** CLI
+variables — those remain evaluatorq conventions, and setting them changes
+nothing about `orq` behaviour. `ORQ_WORKSPACE` was in that list until 5.x and no
+longer is.
 
 ---
 
@@ -126,12 +151,20 @@ logged in` when a valid key is exported, and they exit **0** while doing it.
 | `orq auth logout` | Revoke the refresh token, clear the local session |
 | `orq auth whoami` | Current identity, workspaces, resolved URLs (alias: `orq whoami`) |
 | `orq auth setup` | Interactive auth configuration |
-| `orq auth add-profile apikey <name> <key>` | Save an API-key profile |
-| `orq auth list-profiles` | List configured credential profiles |
+| `orq auth add-profile apikey <name> --api-key-file <f>` | Save an API-key profile (`-` reads stdin; a positional key is visible via `ps`) |
+| `orq auth list-profiles` | List credential profiles. Keys are **masked** since 5.0.0, and it honours `--json` / `-o` |
 | `orq workspace list` | List workspaces for the active identity |
 | `orq workspace use <key>` | Switch the active workspace (persisted in the session) |
-| `orq doctor` | Config, auth, and reachability diagnostics |
-| `orq request <method> <path>` | Raw API call using configured auth and server |
+| `orq doctor` | Config, auth, permissions, agent-wiring, and reachability diagnostics |
+| `orq doctor --fix` | Chmod loose credential paths (0600 files, 0700 dirs); exits 1 if a repair fails |
+| `orq doctor --report` | Pre-filled GitHub issue URL for a bug report |
+| `orq version` | CLI version, orq API version, and install method (`--json`) |
+| `orq update` | Replace the binary via its original install method (`--check` to look only) |
+| `orq setup` | Authenticate, mint a gateway key, and wire detected coding agents |
+| `orq connect [agent…] [capability…]` | Wire agents. `--status` and `--dry-run` change nothing |
+| `orq disconnect` | Remove what `connect` wrote |
+| `orq launch <agent>` | Run one coding agent through the AI Router; propagates the agent's exit status |
+| `orq request <method> <path>` | Raw API call using configured auth and server. `DELETE` needs `--force` off a TTY |
 | `orq server list \| current \| set \| use \| clear` | Inspect or persist server defaults |
 | `orq default-format <json\|yaml\|toon>` | Persist a default output format |
 | `orq completion bash\|zsh\|fish\|powershell` | Shell completions |
@@ -198,19 +231,24 @@ never print it.
 `doctor` runs without credentials and always exits 0, so it is safe to run first
 — and its exit code tells you nothing. Two limits to know before trusting it:
 
-- **It ignores `ORQ_API_KEY`.** With a valid key exported and `orq agents list`
-  returning real data, `doctor` still reports `auth.status: "missing"`. Its auth
-  block only understands OAuth sessions.
-- **It never reports `ORQ_SERVER` or the resource-command server.** Setting
-  `ORQ_SERVER` changes where requests go but produces no change anywhere in
-  `doctor` output. Use `orq server current` instead.
+- **It ignores `ORQ_API_KEY`.** With a valid key exported and resource commands
+  returning real data, `doctor`'s auth block still reports no login. It only
+  understands OAuth sessions.
+- **`orq server current` is the direct answer for the resolved server.** Doctor
+  reports each URL's `source`, which is usually enough to explain a wrong host,
+  but it does not print the resource-command server as such.
 
-Abridged real output from a logged-out session:
+**`auth.status` no longer uses the old vocabulary.** It reads `authenticated`
+with a session; the `ok` / `missing` / `invalid` set documented for 4.x is gone.
+Do not match on a remembered literal — read the whole block.
+
+Abridged real output from a logged-out session (field names verified on 5.1.0;
+`binary` now carries `api_version` alongside `version`):
 
 ```json
 {
-  "binary":  { "name": "orq", "version": "4.13.0" },
-  "runtime": { "name": "go", "version": "go1.26.5", "platform": "darwin", "arch": "arm64" },
+  "binary":  { "name": "orq", "version": "5.1.0", "api_version": "4.14.3" },
+  "runtime": { "name": "go", "version": "go1.27.0", "platform": "darwin", "arch": "arm64" },
   "output":  { "default_format": "toon", "supported_formats": ["json", "yaml", "toon"] },
   "config": {
     "profile": "default",
@@ -235,6 +273,17 @@ Abridged real output from a logged-out session:
 }
 ```
 
+The `checks` array grew a lot in 5.x. Observed ids on a healthy 5.1.0 machine,
+in order: `session_file`, `bootstrap_token`, `coding_agent_<name>` (one per
+detected agent), `coding_agents`, `skills`, `mcp`, `gateway_key_expiry`,
+`credential_permissions`, `api_base_url`, `auth_base_url`, `profile_base_url`.
+Check `status` values are `pass`, `warn`, and `info` — **`info` is not a
+failure**, and the coding-agent rows use it for "detected but not wired".
+
+`credential_permissions` is the one to act on: it flags credential files that
+are group- or world-readable, names the `chmod` that fixes each, and `orq doctor
+--fix` applies them. A clean run says nothing at all, so silence there is good.
+
 Two things to read carefully:
 
 - Config entries carry a `value` **and** a `source` (`flag`, `session`, `env`,
@@ -247,8 +296,9 @@ Two things to read carefully:
 Quick unauthenticated triage:
 
 ```sh
-orq doctor --json -j 'auth.status' --raw            # missing | ok | invalid
-orq doctor --json -j "checks[?status!='pass']"      # only the problems
+orq doctor --json -j 'auth.status' --raw            # "authenticated" with a session
+orq doctor --json -j 'auth'                         # status + source + workspace, all of it
+orq doctor --json -j "checks[?status=='warn']"      # real problems ('info' rows are not)
 ```
 
 ---
@@ -262,9 +312,12 @@ knowing by heart.
 → agents             create delete get-response invoke list retrieve run
                      stream stream-run update
   agents-responses   create
+  alerts             create delete get list list-trigger-events list-triggers
+                     update
   annotation-queues  add-items clear create delete get get-item list
                      query-items remove-items update
   api-keys           create delete get list list-capabilities update
+  budgets            create delete get list reset-consumption update
   chat               create
   chunking           parse
   completions        create
@@ -281,8 +334,15 @@ knowing by heart.
   knowledge-bases    create create-chunks create-datasource delete delete-chunk
                      delete-chunks delete-datasource list list-chunks
                      list-chunks-paginated list-datasources retrieve
-                     retrieve-chunk retrieve-datasource search update
-                     update-chunk update-datasource
+                     retrieve-chunk retrieve-datasource retrieve-file-url
+                     retrieve-processing-status search toggle-chunk update
+                     update-chunk update-datasource get-chunks-count
+  logs               aggregate get get-context get-patterns list-facet-values
+                     list-facets list-fields list-trace query search
+  management-keys    create delete get list list-capabilities update
+  mcp-gateways       create delete list list-tools retrieve update
+  mcp-servers        create delete list retrieve sync test-tool update
+  model-catalog      get list list-offerings
   memory-stores      create create-document create-memory delete delete-document
                      delete-memory list list-documents list-memories retrieve
                      retrieve-document retrieve-memory update update-document
@@ -293,6 +353,7 @@ knowing by heart.
                      azure-foundry-deployments
                      update-aws-bedrock update-openai-like validate-aws-bedrock
   moderations        create
+  notifiers          create delete get list update
   ocr                ocr
   pii                detect redact restore
 → projects           create delete get list update
@@ -302,13 +363,19 @@ knowing by heart.
   responses          create get
   schedules          create delete list retrieve trigger update
 → skills             create delete get list update
+  smart-routers      create delete get list update
   speech             create
   tools              create delete get-version list list-versions retrieve update
 → traces             aggregate create delete get get-span list-facet-values
                      list-facets list-fields list-spans query-oql search
+                     insights-service-* (18 subcommands, see below)
   transcriptions     create
   translations       create
   webhooks           count create delete generate-secret get list query update
+  workspace-security add-ip-range create-domain delete-domain delete-ip-range
+                     get-ip-allowlist list-domains update-ip-allowlist
+                     verify-domain
+  workspace-settings get update
 ```
 
 There is no `experiments` group — experiments are MCP/evaluatorq-only.
@@ -316,11 +383,13 @@ There is no `experiments` group — experiments are MCP/evaluatorq-only.
 unified-annotation model (annotation review workflows); its subcommands parse
 correctly but have not yet been exercised against production data.
 
-The CLI also lists groups that are intentionally not covered by this skill
-(`budgets`, `notifiers`, `management-keys`, `activities`, `alerts`, `logs`,
-`people`, `smart-routers`, `workspace-settings`) — leave them out when
-re-deriving the tree. Autorouter management lives in `smart-routers` and is
-likewise not covered.
+`traces insights-service-*` is a family of 18 subcommands (`…-create-insight`,
+`…-list-clusters`, `…-run-analysis`, `…-get-run-artifacts`, and so on) wrapping
+the trace-insights service. *[unverified: enumerated from `--help`, not called.]*
+
+**Every group is now listed.** The previous pass excluded several as "not
+covered by this skill", and two of the names it listed (`activities`, `people`)
+do not exist as groups at all — do not filter them out when re-deriving the tree.
 
 Note `orq evals all` (not `list`) is the evaluator listing command, and
 `orq traces create` / `orq traces delete` add and remove **span annotations**,
@@ -393,14 +462,26 @@ orq auth whoami --json -j active_workspace_key --raw
 orq workspace list --json -j 'workspaces[].{key: key, name: name}'
 
 # agent id + display name (agents use _id; deployments use id, projects project_id)
-orq agents list --json -j 'data[].{id: _id, name: display_name}'
+# --limit is REQUIRED here: a bare `agents list` blocks for minutes, then 503s
+orq agents list --json --limit 200 -j 'data[].{id: _id, name: display_name}'
 
 # first agent's key, bare
-orq agents list --json -j 'data[0].key' --raw
+orq agents list --json --limit 1 -j 'data[0].key' --raw
 
 # models have no envelope — project the array directly
 orq models list --json -j '[].id'
+
+# OQL results nest under `search`, so the usual data[] projections miss
+orq traces query-oql --json --from ... --to ... \
+  --oql 'fetch traces | filter status in ("error") | sort end_time desc | limit 20' \
+  -j 'search.data[].trace_id'
 ```
+
+**A projection whose key is absent does not always yield `null`.** On some
+commands it aborts: `orq logs query … -j '[length(data),has_more]'` gives
+`FATAL logs_commands.go:637 formatting failed Invalid type for: <nil>, expected:
+[]jmespath.jpType{"string","array","object"}`. Check the envelope with
+`-j 'keys(@)'` before projecting into an unfamiliar response.
 
 `-j` works on `traces search` too (remember `--query` there is the body's
 full-text field, not a projection). `jq` remains handy for multi-step
@@ -547,10 +628,25 @@ orq server current --json                        # resource commands
 orq doctor --json -j 'config.api_base_url'       # built-in auth commands
 ```
 
-`orq server current` returns `server`, `server_index`, and `server_override`.
+`orq server current` returns `server`, `server_index`, `server_override`, and —
+new in 5.0.0 — `profile_server` and `server_default`. `orq server list` dropped
+its per-entry `override` field for a top-level `overridden` boolean, so anything
+reading the old shape needs updating. Verified on 5.1.0:
+
+```json
+// orq server current --json
+{"profile_server": "", "server": "https://api.orq.ai", "server_default": "",
+ "server_index": 0, "server_override": "https://api.orq.ai"}
+
+// orq server list --json
+{"overridden": true, "selected_server": "https://api.orq.ai",
+ "servers": [{"description": "", "index": 0, "selected": false, "url": "https://my.orq.ai"}]}
+```
+
 Read `server_override` first: **`orq auth login` persists an override to the host
-it authenticated against**, so the resource host is not fixed. Observed on the
-same machine:
+it authenticated against**, so the resource host is not fixed. A profile also
+carries its own host now, and that binding outranks a globally persisted
+`orq server set`. Observed on the same machine:
 
 | State | `server` | `server_override` |
 |---|---|---|
@@ -563,11 +659,12 @@ every later command on that profile follows, with no `--server` needed.
 `https://my.orq.ai` is additionally the **Studio/browser** host — the one that
 belongs in the app URLs above — regardless of what the CLI is pointed at.
 
-Override the resource host with `--server` or `ORQ_SERVER`; the auth host with
-`--api-base-url` or `ORQ_API_BASE_URL`. They are not interchangeable: a bogus
-`ORQ_API_BASE_URL` leaves `projects list` working, while a bogus `ORQ_SERVER`
-breaks it immediately. `orq server set` / `use` / `clear` persist or drop the
-override.
+**Override both with `--server` / `ORQ_SERVER` — there is one host name now.**
+Until 5.0.0 the resource host and the auth host were separate values under
+separate names, so a bogus `ORQ_API_BASE_URL` left `projects list` working while
+a bogus `ORQ_SERVER` broke it. `--api-base-url` and `ORQ_API_BASE_URL` are now
+deprecated spellings of the same value, hidden from help and warning on stderr.
+`orq server set` / `use` / `clear` persist or drop the override.
 
 **Do not shell out to `orq` from library code to get the slug.** evaluatorq tried
 that and removed it — the subprocess blocks and can 404. Prefer, in order: a URL
