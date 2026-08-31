@@ -47,7 +47,7 @@ Evaluator Build Progress:
 ## Done When
 
 - Judge prompt passes all items in the Judge Prompt Quality Checklist (Phase 6 reference)
-- The output type's step-10 gate is met on the held-out test set (100+ labeled examples): TPR **and** TNR > 90% for binary; macro recall > 90% with no label under 80% for categorical; the pre-declared error/correlation target for numeric
+- The output type's step-10 target is met, or a deliberate alternative is recorded, on the held-out test set (100+ labeled examples): TPR **and** TNR > 90% for binary; macro recall > 90% with no label under 80% for categorical; the pre-declared error/correlation target for numeric
 - Evaluator created on orq.ai via `create_llm_eval` / `create_python_eval`, or via `POST /v2/evaluators` for categorical (no MCP tool)
 - Evaluator documented: criterion, output type, label or pass/fail definitions, the metrics above, known limitations
 
@@ -90,7 +90,7 @@ Evaluator Build Progress:
 | `number` | numeric score | Continuous metrics (e.g., relevance 0-1). Requires detailed rubric. |
 | `categorical` | one of N labels | Classification into 3+ distinct categories (e.g., tone, failure-mode triage). Requires `categorical_labels`. |
 
-**Categorical evaluators must be created via HTTP or the CLI, not MCP.** `categorical_labels` is required at creation — the API rejects a categorical evaluator without it (`ZodError: categorical_labels is required when output_type is "categorical"`), so the MCP `create_llm_eval` tool, which exposes no label field, cannot create one at all. There is no create-then-patch path. Use the single `POST /v2/evaluators` body in "Creating a Categorical Evaluator" below.
+**Categorical evaluators must be created via HTTP or the CLI, not MCP.** `categorical_labels` is required at creation — the API rejects a categorical evaluator without it (`ZodError: categorical_labels is required when output_type is "categorical"`), so the MCP `create_llm_eval` tool, which exposes no label field, cannot create one at all. There is no create-then-patch path. Use the verified `POST /v2/evaluators` body in `resources/api-reference.md`.
 
 ### Evaluator Variables (LLM Evaluators)
 
@@ -130,104 +130,19 @@ Use the orq MCP server (`https://my.orq.ai/v2/mcp`) as the primary interface. Fo
 | `create_python_eval` | Create a Python evaluator for code-based checks |
 | `get_llm_eval` / `get_python_eval` | Retrieve an evaluator by ID |
 | `list_models` | List available judge models |
-| *(HTTP API)* | Anything MCP omits — categorical creation, `model_parameters`, `jury` mode, listing, invoke (see below) |
+| *(HTTP API)* | Anything MCP omits — categorical creation, `model_parameters`, `jury` mode, listing, invoke (`resources/api-reference.md`) |
 
 ### HTTP Fallback for MCP Gaps
 
-MCP covers boolean and numeric LLM/Python evaluators. Everything below has no MCP tool and must go over HTTP (`Authorization: Bearer $ORQ_API_KEY`, `Content-Type: application/json`, base `https://api.orq.ai`) or the CLI.
+MCP covers boolean and numeric LLM/Python evaluators only. Categorical creation, judge
+tuning (`model_parameters`, `jury`, `repetitions`), listing and invoke have no MCP tool and
+go over HTTP or the CLI. **Evaluator CRUD is v2 and invoke is v3** — not a typo to
+normalise; `/v3/evaluators` 404s and there is no v2 invoke route.
 
-| Need | Call |
-|------|------|
-| Create a categorical evaluator | `POST /v2/evaluators` — see below; MCP cannot do this |
-| Categorical or string **Python** evaluator | `POST /v2/evaluators` with `type: "python_eval"` — MCP's `create_python_eval` allows only `boolean`/`number` |
-| Judge tuning after creation (`model_parameters`, `mode` + `jury`, `repetitions`) | `PATCH /v2/evaluators/{id}` |
-| List evaluators | `GET /v2/evaluators?limit=50` — paginate with `starting_after=<last _id>` while `has_more` is true. **Not** `after=` — that parameter is silently ignored and re-serves page 1 forever. |
-| Test-run one evaluator | `POST /v3/evaluators/{id}/invoke` — see below |
-
-**Evaluator CRUD is v2 and invoke is v3.** Not a typo to normalise — `/v3/evaluators` 404s and there is no v2 invoke route. Older snippets pointing at `/v2/…/invoke` predate the move.
-
-#### Creating a Categorical Evaluator
-
-`categorical_labels` is required at creation. `categories` is the flat mirror of the same label values; send both. `guardrail_config.values` lists the labels that count as passing.
-
-```json
-POST /v2/evaluators
-{
-  "type": "llm_eval",
-  "mode": "single",
-  "model": "openai/gpt-4.1",
-  "prompt": "<the judge prompt, with {{input.user_query}} / {{output.response}}>",
-  "output_type": "categorical",
-  "key": "tone-classifier",
-  "path": "Default",
-  "categorical_labels": [
-    {"value": "professional", "description": "Formal and courteous"},
-    {"value": "casual", "description": "Informal but polite"},
-    {"value": "aggressive", "description": "Hostile or rude"}
-  ],
-  "categories": ["professional", "casual", "aggressive"],
-  "guardrail_config": {"type": "categorical", "values": ["professional", "casual"], "enabled": true, "alert_on_failure": false}
-}
-```
-
-The response echoes `categories` and `categorical_labels` but returns `output_type: null` — read the label fields, not `output_type`, to confirm the evaluator is categorical.
-
-The same call via the CLI, which is the better option in a script or CI job (`orq` handles auth and workspace selection):
-
-```bash
-orq evals create --json \
-  --key tone-classifier --type llm_eval --mode single --model openai/gpt-4.1 \
-  --output-type categorical --path Default \
-  --prompt "$(cat judge-prompt.txt)" \
-  --categories professional --categories casual --categories aggressive \
-  --categorical-labels '[{"value":"professional","description":"Formal and courteous"},{"value":"casual","description":"Informal but polite"},{"value":"aggressive","description":"Hostile or rude"}]' \
-  --guardrail-config '{"type":"categorical","values":["professional","casual"],"enabled":true,"alert_on_failure":false}'
-```
-
-`--categories` is repeatable; `--categorical-labels` and `--guardrail-config` take JSON strings. See the `orq-cli` skill for auth and profile selection.
-
-#### Programmatic Invoke
-
-`POST /v3/evaluators/{id}/invoke` runs one evaluator against a single input/output pair — use it for rapid Phase 5 iteration instead of a full experiment. Or `orq evals invoke <id> --json --query ... --output ...`, which calls the same endpoint.
-
-Send the run under `context`. **`context` is the request envelope, not a namespace you can reference from the prompt** — there is no `{{context.…}}` variable; writing one renders empty. It is the wrapper whose contents feed the variables:
-
-```json
-{
-  "context": {
-    "input": {"user_query": "...", "system_instructions": "...", "retrievals": ["..."], "expected_output": "..."},
-    "output": {"response": "...", "tools_called": [{"name": "...", "arguments": "...", "output": "..."}]},
-    "messages": [{"role": "user", "content": "..."}],
-    "variables": {"my_custom_var": "..."}
-  }
-}
-```
-
-| Body path | Renders as |
-|-----------|-----------|
-| `context.input.<field>` | `{{input.<field>}}` — name matches |
-| `context.output.<field>` | `{{output.<field>}}` — name matches |
-| `context.messages` | `{{input.all_messages}}` — **name does not match** |
-| `context.variables.<name>` | `{{<name>}}` — **the `variables.` prefix is dropped**; `{{variables.<name>}}` renders empty |
-
-A flat shorthand is still accepted and folds into `context`: `query` → `input.user_query`, `output` → `output.response`, `reference` → `input.expected_output`, and `messages`/`retrievals`/`variables` keep their top-level names. **There is no flat alias for `system_instructions` or `tools_called` — those two variables are reachable only through `context`.**
-
-The CLI mirrors this. `--query`/`--output`/`--reference`/`--retrievals`/`--messages` fold into `context` the same way, `--variables` takes repeatable `key=value`, and there is no `--system-instructions` or `--tools-called` flag — reach those through `--context`. Note which level each flag expects:
-
-```bash
-# --context takes the INNER object (no "context" key)
-orq evals invoke <id> --json \
-  --context '{"input":{"system_instructions":"...","user_query":"..."},"output":{"response":"..."}}'
-
-# --from-file takes the FULL body (with "context")
-orq evals invoke <id> --json --from-file body.json   # {"context":{"input":{...}}}
-```
-
-**Unknown fields are ignored silently — no error, the variable renders empty and the judge scores a prompt with a hole in it.** `input` and `expected_output` are not flat aliases (they exist only inside `context.input`), so `{"input": …}` at the top level is dropped. When `messages` is present it is the conversation and `input.user_query` is ignored; `output.response` is appended only if the conversation has no assistant turn.
-
-Returns `{"type", "value", "evaluator_id", "status", "passed", "explanation", "categories"}`, and optionally `trace_id`, `span_id`, `confidence` — `value` is the verdict (`true`/`false`, a number, or the chosen label). A categorical evaluator reports `type: "string"`, not `"categorical"`. `passed` is the guardrail's decision when the evaluator has one and the grader's own judgement otherwise, so read `guardrail_config` to tell which. The `id` also accepts `id@version` or `id@environment` to grade against a published version.
-
-> Verify a new judge sees what you think it sees: invoke it twice with the deciding fact moved in and out of one field. If the verdict does not change, that field is not reaching the prompt.
+`resources/api-reference.md` has the calls, the verified categorical `POST /v2/evaluators`
+body, the CLI equivalents, and the `POST /v3/evaluators/{id}/invoke` payload with its
+body-path-to-variable mapping. Read it there rather than reconstructing a payload from memory —
+unknown fields are dropped silently and the judge scores a prompt with a hole in it.
 
 ## Core Principles
 
@@ -377,8 +292,8 @@ Your JSON Evaluation:
    - Target: at least **30-50 Pass and 30-50 Fail** in dev and test each — for categorical, at least **15-20 examples of every label** in dev and test each.
    - Critical: NEVER include dev/test examples as few-shot examples in the prompt.
 
-10. **Refinement loop** (repeat until the target metric clears 90% on the dev set).
-    Use `POST /v3/evaluators/{id}/invoke` for rapid single-item checks during iteration, or run a full experiment for batch evaluation.
+10. **Refinement loop** (repeat until the target metric holds on the dev set).
+    Use `POST /v3/evaluators/{id}/invoke` (`resources/api-reference.md`) for rapid single-item checks during iteration, or run a full experiment for batch evaluation.
     a. Run the evaluator over all dev examples
     b. Compare each judgment to human ground truth
     c. Compute the metric for the output type (below)
@@ -388,11 +303,16 @@ Your JSON Evaluation:
 
     **The target metric depends on the output type. TPR/TNR is a 2x2 measure and is undefined for 3+ labels — do not report it for a categorical evaluator.**
 
-    | Output type | Compute | Gate |
-    |-------------|---------|------|
+    | Output type | Compute | Target |
+    |-------------|---------|--------|
     | `boolean` | TPR = true passes correctly identified / total actual passes; TNR = true fails correctly identified / total actual fails | TPR **and** TNR > 90% |
-    | `categorical` | Full N x N confusion matrix, then per-label precision and recall. Report both **per label** and as a macro average (unweighted mean across labels, so a rare label cannot be hidden by a common one). | Macro-averaged recall > 90% **and** no single label below 80% recall — a starting heuristic, not a sourced standard: it mirrors the binary bar and adds a per-label floor so a rare label cannot be averaged away. Move it deliberately and record where you put it. |
-    | `number` | Mean absolute error against human scores, plus Spearman correlation | No universal gate exists — set one before you start and record it. Absent a reason to differ, start at Spearman > 0.7 and an MAE inside the tolerance the downstream decision can absorb; that default is a convention, not a measurement. |
+    | `categorical` | Full N x N confusion matrix, then per-label precision and recall. Report both **per label** and as a macro average (unweighted mean across labels, so a rare label cannot be hidden by a common one). | Macro recall > 90%, no single label below 80% recall |
+    | `number` | Mean absolute error against human scores, plus Spearman correlation | Spearman > 0.7, MAE inside the tolerance the downstream decision can absorb |
+
+    **These targets are starting points, not pass/fail gates.** 90% mirrors common practice, the
+    per-label floor stops a rare label being averaged away, and the numeric pair is a convention —
+    none is a measured threshold. Pick your own before you start, record it, and judge a miss on
+    what the disagreements actually are rather than on the number.
 
     For categorical, the confusion matrix is the artifact to inspect, not the headline number: off-diagonal mass concentrated in one label pair means those two label definitions overlap and should be merged or sharpened.
 
@@ -448,13 +368,13 @@ Your JSON Evaluation:
           return len(output) <= 500
       ```
     - Create using `create_python_eval` MCP tool with the Python code
-    - Note: MCP `create_python_eval` covers `boolean`/`number` only — see "HTTP Fallback for MCP Gaps" for the rest.
+    - Note: MCP `create_python_eval` covers `boolean`/`number` only — see `resources/api-reference.md` for the rest.
 
     **If LLM-as-Judge (`create_llm_eval`):**
     - Use `create_llm_eval` with the refined judge prompt from Phase 3-5
     - Set appropriate model (start capable, optimize later)
     - Use the current template variables (canonical list: `resources/judge-prompt-template.md` §6)
-    - For **categorical** evaluators, do NOT use `create_llm_eval` — it cannot supply `categorical_labels`, which the API requires at creation. Use the `POST /v2/evaluators` body under "Creating a Categorical Evaluator".
+    - For **categorical** evaluators, do NOT use `create_llm_eval` — it cannot supply `categorical_labels`, which the API requires at creation. Use the `POST /v2/evaluators` body in `resources/api-reference.md`.
 
 14. **Create the evaluator** on orq.ai:
     - Link to relevant dataset and experiment
