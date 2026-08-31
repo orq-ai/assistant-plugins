@@ -18,9 +18,10 @@ You are a **skill author**. You take a capability **surface** (an API, a CLI, or
 ## Gotchas (read first)
 
 1. **A written SKILL.md is not a registered skill.** In a repo with a contribution contract (this one has five surfaces, see Phase 6), a skill that exists only as `skills/<name>/SKILL.md` fails CI. Phase 6 is not optional there.
-2. **Frontmatter is a closed field set.** `name`, `description`, `license`, `compatibility`, `metadata`, `allowed-tools` and nothing else. One extra field makes a conformant client skip the whole skill — a typo'd `allowed_tools:` costs the skill everywhere. `allowed-tools` is a comma-separated string, never a YAML list.
-3. **The scratchpad holds the only evidence** until the gotchas land in the skill. Delete it in Phase 7, after the skill is written and registered — not before.
-4. **Docs lie about error shapes more than about happy paths.** The gotchas worth recording almost always come from Phase 4's error-path calls, not from the successful ones.
+2. **The probe environment lies as readily as the docs.** A stray `ORQ_API_KEY` in the shell silently redirected every `orq models list` read to another workspace and returned `HTTP 401`, while `orq auth whoami` kept reporting the session's workspace. Before recording a failure as a surface gotcha, check whether your own environment caused it.
+3. **`$?` after a pipeline is the last command's status.** `orq models list 2>&1 | head -5; echo $?` printed 0 for a command that exits 1. Measure exit codes with the command alone, redirecting to a file if you need the output — a piped measurement produced a wrong gotcha on the first run of this skill.
+4. **An empty result is the most common disguised error.** `list_skills` with `starting_after: skill_doesnotexist` returns `{"data":[],"has_more":false}` — no error, no hint the cursor was garbage. Every list operation needs one deliberate bad-input call before you can claim it validates anything.
+5. **The scratchpad holds the only evidence** until the gotchas land in the skill. Delete it in Phase 7, after the skill is written and registered — not before.
 
 ## When NOT to use
 
@@ -94,7 +95,7 @@ Glob: skills/*/SKILL.md
 Grep: <surface name or key terms> in those files
 ```
 
-If no `skills/` directory exists (running outside a plugin repo), check the runtime skill listing instead. Plugin-scoped skills (e.g. `orq:` prefix) are registered externally and never appear on disk, so always check the listing for platform capabilities regardless of context.
+Plugin-scoped skills (an `orq:` or `superpowers:` prefix) are registered externally and never appear under `skills/`, so the Glob misses them. Read the available-skills list in your own context — the harness injects it at session start — and scan it for the surface name. Do this whether or not `skills/` exists; outside a plugin repo it is the only listing there is.
 
 **Match found:** show the user and ask whether to update the existing skill instead of creating a duplicate.
 
@@ -104,10 +105,13 @@ If no `skills/` directory exists (running outside a plugin repo), check the runt
 
 ### Phase 4: Test and verify
 
+The mode chosen in Phase 1 sets what the scratchpad must contain, and Phase 5 refuses to ship a claim whose evidence is not there. Fast and thorough differ in how many operations carry a recorded call, never in whether the recording is optional.
+
 **Fast mode:**
 - Confirm the surface exists (hit one endpoint, run one command, call one tool)
 - Spot-check 2-3 operations likely to have gotchas (create, error case, pagination boundary)
 - Record anything that behaved differently from the docs
+- Every operation without a recorded call is `[unverified: fast mode, doc-only]`. That marking is the mode's cost and it belongs in the output skill.
 
 **Thorough mode:**
 
@@ -117,7 +121,7 @@ Test every operation with real calls against the live surface. Do not trust docs
 1. **Run it** with a concrete example (real IDs, real data, not placeholders). For read operations, call them. For write operations, create a test entity, verify it exists, then clean it up.
 2. **Record the exact call and the actual response** in the scratchpad. Copy the real output, not a paraphrase.
 3. **Compare to docs**: note every difference between what the docs say and what actually happened (different field names, missing fields, extra fields, different status codes, different error shapes).
-4. **Test the error path**: call with missing required params, invalid values, or a nonexistent ID. Record the actual error response shape.
+4. **Test the error path**: call with missing required params, invalid values, or a nonexistent ID. Record the actual error response shape — including the case where there isn't one. A list operation that answers a garbage cursor with an empty array is a silent failure, and it only shows up if you ask for something that cannot exist.
 
 **For common workflows**, run the full sequence end-to-end: e.g. create -> list (verify it appears) -> get by ID -> update -> get (verify change) -> delete -> get (verify 404). This catches ordering dependencies, eventual consistency, and silent failures.
 
@@ -152,7 +156,7 @@ Read [`resources/writing-guide.md`](resources/writing-guide.md) first. Then stru
 
 **Review the draft adversarially before anyone sees it.** For each claim, ask:
 
-1. **Did I actually test this, or am I restating the docs?** If a section says "returns X" but you never saw X in a real response, either test it now or mark it `[unverified: reason]`.
+1. **Did I actually test this, or am I restating the docs?** Check each claim against the scratchpad: thorough mode means a recorded call per operation, fast mode means a recorded call for the spot-checks and `[unverified: fast mode, doc-only]` on the rest. A claim with no entry behind it either gets tested now or ships marked — the mode does not change that, only how much of the surface it covers.
 2. **Would an agent following this skill hit a wall?** Walk each workflow as if executing it for the first time. Missing setup steps, unstated prerequisites, parameter values that only make sense if you already know the surface.
 3. **Are the gotchas complete?** Re-read the test results for any surprise that did not make it into the skill. Silent failures, unexpected defaults, and undocumented required fields are the most common omissions.
 4. **Are the examples real?** Every command, call, or snippet must be one you ran (thorough) or took from current docs (fast). No invented examples.

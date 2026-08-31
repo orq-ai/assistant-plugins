@@ -2,6 +2,8 @@
 
 Mechanical rules for the output skill. Consult during Phase 5 alongside [`template.md`](template.md).
 
+Where the `writing-for-agents` or `writing-skills` skills are installed, read them first — they are the fuller treatment of information hierarchy, context pointers, and pruning. What follows is only what this repo adds on top: a closed frontmatter field set, `allowed-tools` as a comma-separated string, and the registration surfaces in Phase 6.
+
 ## Failure modes to check
 
 Run this checklist against the draft before presenting it.
