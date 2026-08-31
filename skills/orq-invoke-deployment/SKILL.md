@@ -29,7 +29,7 @@ You are an **orq.ai integration engineer**. Your job is to help users invoke orq
 - `orq-improve-agent` — improve a deployment's prompt before invoking it
 - `orq-build-agent` — create and configure an agent before invoking it
 - `orq-run-experiment` — evaluate invocation quality across a dataset
-- `orq-analyze-agent` — diagnose failures from invocation traces
+- `orq-analyze-traces` — diagnose failures from invocation traces
 - `orq-setup-observability` — instrument the application that calls the deployment
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 

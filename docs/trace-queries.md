@@ -1,6 +1,6 @@
 # Trace Queries — the `orq` CLI contract
 
-Shared reference for `orq-analyze-agent` and `orq-improve-agent`. Everything here was probed live against `orq` CLI 4.13.1 on 2026-08-26, and re-verified against **4.14.0** the same day with no behavioural drift observed.
+Shared reference for `orq-analyze-traces` and `orq-improve-agent`. Everything here was probed live against `orq` CLI 4.13.1 on 2026-08-26, and re-verified against **4.14.0** the same day with no behavioural drift observed.
 
 **Read this before your first `orq traces` call. The invocation details below are not optional** — three of them (`--from-file`, the required sort, the null-safe projection) fail loudly, and two (a stale field name, a mid-deploy empty result) fail *silently* by returning a confident empty answer.
 

@@ -183,8 +183,8 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 | **orq-build-agent** | Design, create, and configure an orq.ai Agent with tools, instructions, knowledge bases, and memory | [SKILL.md](skills/orq-build-agent/SKILL.md) |
 | **orq-build-evaluator** | Create validated LLM-as-a-Judge evaluators following evaluation best practices | [SKILL.md](skills/orq-build-evaluator/SKILL.md) |
 | **orq-evaluator-alignment** | Align an existing LLM-judge (boolean, categorical, numeric) to human judgment — measure how often it changes its mind, group the least reliable cases and ask a few questions instead of labelling every row, rewrite the judge prompt, and recreate the evaluator after approval | [SKILL.md](skills/orq-evaluator-alignment/SKILL.md) |
-| **orq-analyze-agent** | Analyze a live agent from its production traces — relay config and terminal states, build a failure taxonomy by open/axial coding, write an error-analysis file other skills read | [SKILL.md](skills/orq-analyze-agent/SKILL.md) |
-| **orq-improve-agent** | Improve an underperforming agent — rewrite instructions against a prompting framework, or move a config knob, grounded in the error-analysis file orq-analyze-agent writes | [SKILL.md](skills/orq-improve-agent/SKILL.md) |
+| **orq-analyze-traces** | Analyze a live agent from its production traces — relay config and terminal states, build a failure taxonomy by open/axial coding, write an error-analysis file other skills read | [SKILL.md](skills/orq-analyze-traces/SKILL.md) |
+| **orq-improve-agent** | Improve an underperforming agent — rewrite instructions against a prompting framework, or move a config knob, grounded in the error-analysis file orq-analyze-traces writes | [SKILL.md](skills/orq-improve-agent/SKILL.md) |
 | **orq-run-experiment** | Create and run orq.ai experiments — compare configurations with specialized agent, conversation, and RAG evaluation | [SKILL.md](skills/orq-run-experiment/SKILL.md) |
 | **evaluatorq** | Write and run evaluatorq evaluation scripts (Python or TypeScript), use the evaluatorq CLI for red teaming (`eq redteam`) and simulation (`eq sim`) | [SKILL.md](skills/evaluatorq/SKILL.md) |
 | **orq-compare-agents** | Run cross-framework agent comparisons using evaluatorq — compare orq.ai, LangGraph, CrewAI, OpenAI Agents SDK, and others | [SKILL.md](skills/orq-compare-agents/SKILL.md) |
@@ -213,7 +213,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 
 ```
 /orq:traces --status error --last 24h          # Find errors
-"Analyze these failures"                       → orq-analyze-agent
+"Analyze these failures"                       → orq-analyze-traces
 "Fix the prompt based on the failure analysis" → orq-improve-agent
 "Re-run the experiment to verify the fix"      → orq-run-experiment
 ```
@@ -222,7 +222,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 
 ```
 /orq:analytics --group-by deployment           # Spot high error rates
-"Analyze traces for the checkout agent"        → orq-analyze-agent
+"Analyze traces for the checkout agent"        → orq-analyze-traces
 "Build evaluators for the failure modes"       → orq-build-evaluator
 "Generate a dataset covering edge cases"       → orq-generate-synthetic-dataset
 "Run an experiment and compare"                → orq-run-experiment

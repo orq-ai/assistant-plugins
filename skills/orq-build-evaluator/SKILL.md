@@ -7,7 +7,7 @@ description: >
   Use when you need to automate quality checks, build guardrails, or measure
   a specific failure mode identified during trace analysis. Do NOT use when
   failures are fixable with prompt changes (use orq-improve-agent) or when failure
-  modes are unknown (use orq-analyze-agent first).
+  modes are unknown (use orq-analyze-traces first).
 allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__get_llm_eval, mcp__orq-workspace__get_python_eval, mcp__orq-workspace__search_entities, mcp__orq-workspace__search_docs
 ---
 
@@ -53,7 +53,7 @@ Evaluator Build Progress:
 
 **Companion skills:**
 - `orq-run-experiment` — run experiments using the evaluators you build
-- `orq-analyze-agent` — identify failure modes that evaluators should target
+- `orq-analyze-traces` — identify failure modes that evaluators should target
 - `orq-generate-synthetic-dataset` — generate test data for evaluator validation
 - `orq-improve-agent` — iterate on prompts based on evaluator results
 - `orq-evaluator-alignment` — measure cross-model stability and judge-human agreement for an evaluator you already created (step 16)
@@ -72,7 +72,7 @@ Evaluator Build Progress:
 ## When NOT to use
 
 - Need to run an experiment? → `orq-run-experiment`
-- Need to identify failure modes first? → `orq-analyze-agent`
+- Need to identify failure modes first? → `orq-analyze-traces`
 - Need to optimize a prompt? → `orq-improve-agent`
 - Need to generate test data? → `orq-generate-synthetic-dataset`
 

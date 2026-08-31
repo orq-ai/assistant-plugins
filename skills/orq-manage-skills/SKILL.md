@@ -49,14 +49,14 @@ When the user says "create a Skill" without context, ask which one they mean. Th
 - **Invoke a deployment or agent?** → `orq-invoke-deployment`
 - **Evaluate an agent that uses the Skill?** → `orq-run-experiment`
 - **Improve the prose inside `instructions`?** → `orq-improve-agent` is tuned for system prompts; reuse its clarity heuristics but apply judgment — Skill `instructions` are typically shorter and more capability-scoped.
-- **Debug why a referenced Skill isn't rendering?** → `orq-analyze-agent`
+- **Debug why a referenced Skill isn't rendering?** → `orq-analyze-traces`
 
 ## Companion Skills
 
 - `orq-build-agent` — author the agents whose instructions reference these Skills via `{{skill.<key>}}`
 - `orq-improve-agent` — review prose quality for `instructions`
 - `orq-run-experiment` — verify a Skill change improves downstream behavior
-- `orq-analyze-agent` — diagnose Skills that aren't producing the expected output in production
+- `orq-analyze-traces` — diagnose Skills that aren't producing the expected output in production
 - `orq-cli` — the same Skills CRUD from a shell (`orq skills list|get|create|update|delete`), for scripting or bulk audits. See its "MCP tools or the CLI?" table before choosing.
 
 ## Constraints

@@ -9,32 +9,32 @@
     "evaluatorq": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "51d2719e77c66abf6df8f3296fb33b38ec7697da92d75e661c3998220c1abb75"
+      "computedHash": "866b6dc52c7b6e52a2b5261dd27c7f4c92b7c01c146704aee9516f5ff3b532b7"
     },
-    "orq-analyze-agent": {
+    "orq-analyze-traces": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "fabc1984a899258d84300f7630446d064c93736431dd1b0274c52d207e3e773a"
+      "computedHash": "4d8cdb4f4ca758c932c238a8d0b9329542a4a60e8ab8cc5d8590c12e97824c1d"
     },
     "orq-build-agent": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "fba7ab5b56b70c3c676cff4abb41ca69dfc328ba3cb122166a42d198239bb89b"
+      "computedHash": "fb9389a7d2a5995e1f2a2c98099f7166fa28da9e06b01e27ea8da288d6b409cd"
     },
     "orq-build-evaluator": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "c8c9f027ec76f97c6958197dae87cdaf8cf7b6db3dc2ad96e9d8a091ff1884a8"
+      "computedHash": "7d30868bd840becc2fbf4b39db1b0f01083b11a87694caf1ac499879237291ac"
     },
     "orq-cli": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "22abe1687ec0f9e562dd8c3804b671a3a35406a8cb8ba21dae9636d26e73b6f3"
+      "computedHash": "e8b147076a6ef8b687b5a3c52ad674f98946f11b4804f2cd3f3027dba1e081e4"
     },
     "orq-compare-agents": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "ad91b74d1304bf9eb14f4e0d84b264a4b500ae485f75c62ade847fcea80ea78b"
+      "computedHash": "c885e0e86dbe7583145adf81a888a4d32c30cef3b4c28c766a02d3fe79460336"
     },
     "orq-evaluator-alignment": {
       "source": "orq-ai/assistant-plugins",
@@ -44,42 +44,42 @@
     "orq-generate-synthetic-dataset": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "48bdb210075414f7bc41eaee90fb99ee1be0196e0e87a292043d7555e8eb6671"
+      "computedHash": "d69d4b6182a67687b4acf38b3074fed57793e011b2109a59db9adcf6446a4b2a"
     },
     "orq-improve-agent": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "87578c17ab7ff4210475dd7174a7d21a541539c0b1a7b7b64b0437674ec8caa0"
+      "computedHash": "4edad07090ea4717c1127f44c8d4e304d78626fb77076dbb9026b7fc2e30c5b8"
     },
     "orq-invoke-deployment": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "39de44ff6c003a9832f96bc36b750303a8d9f120c7679aa3aab51ba8fe6b1d58"
+      "computedHash": "d1d8380220591af37d665e4ce79dbc8f03af9af61f59e5726df330162c171c52"
     },
     "orq-manage-skills": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "e17487d598a9d9e862686865fbde4a77be2d57509a22203ce3466040d87d00b5"
+      "computedHash": "b0304d5a59799a02b8ee70f10d211f4e00e271874f187a9e5afe296c60b98c6c"
     },
     "orq-red-team": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "eeaff5ebbae0020245bd4aa259844df1b7262e9c0d1b1f0a1409f03f2e69cffd"
+      "computedHash": "addb0e1caba47ea0644339262d3813475935b2dbc717c9699b8f8b5a18347041"
     },
     "orq-run-experiment": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "23c8b35747eb5d0d0d8bb5f53167f3c61f8092d00ab48f8e6092760ac7894ff5"
+      "computedHash": "c071a11a03f14057b4e1ab61da90f8a65da07a34a2667487687ba78f1706751d"
     },
     "orq-setup-observability": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "1e0eaf8e90d3f74a3c325d3bdfef6dfce753f8fc151f1a940e0f7f72db7cc560"
+      "computedHash": "e598fc63b8c1874e4f8499c4256e60fda62ce966cad6451002c1c51d0e7cdf55"
     },
     "orq-simulate-agent": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "f1cf351f86642b7bf64ce2c44a32cc4fcbdfd3f34c5a149749bdfa9527951f78"
+      "computedHash": "b7246ffafbccea561f900342870f721c0003cb88ffb7b77b376ffe8b807d0d79"
     }
   }
 }

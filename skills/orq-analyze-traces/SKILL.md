@@ -1,5 +1,5 @@
 ---
-name: orq-analyze-agent
+name: orq-analyze-traces
 description: >
   Analyze a live agent, deployment, or local agent from its production traces —
   relay its configuration and terminal states, then build a failure taxonomy by
@@ -9,10 +9,10 @@ description: >
   comes first. Do NOT use when the failure modes are already identified and you
   need evaluators (use orq-build-evaluator), datasets
   (use orq-generate-synthetic-dataset), or a fix applied (use orq-improve-agent).
-allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces list-facet-values:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq reporting query:*), Bash(orq agents retrieve:*), Bash(orq agents get-response:*), Bash(orq deployments get-config:*), Bash(orq tools retrieve:*), Bash(orq knowledge-bases retrieve:*), Bash(orq memory-stores retrieve:*), Bash(orq evals get:*), Bash(orq skills get:*), mcp__orq__list_traces, mcp__orq__list_spans, mcp__orq__get_span, mcp__orq__get_agent, mcp__orq__get_analytics_overview, mcp__orq__query_analytics, mcp__orq__search_entities, mcp__orq__search_docs
+allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces list-facet-values:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq reporting query:*), Bash(orq agents retrieve:*), Bash(orq agents get-response:*), Bash(orq deployments get-config:*), Bash(orq tools retrieve:*), Bash(orq knowledge-bases retrieve:*), Bash(orq memory-stores retrieve:*), Bash(orq evals get:*), Bash(orq skills get:*), mcp__orq-workspace__list_traces, mcp__orq-workspace__list_spans, mcp__orq-workspace__get_span, mcp__orq-workspace__get_agent, mcp__orq-workspace__get_deployment, mcp__orq-workspace__get_analytics_overview, mcp__orq-workspace__query_analytics, mcp__orq-workspace__search_entities, mcp__orq-workspace__search_docs
 ---
 
-# Analyze Agent
+# Analyze Traces
 
 > `allowed-tools` here is a curated read/search allowlist. The shell grant is **enumerated read verbs only** — the `orq traces` query commands, `orq reporting query`, `orq agents retrieve`, `orq agents get-response`, `orq deployments get-config`, and explicit retrieve verbs for related entities (`orq tools retrieve`, `orq knowledge-bases retrieve`, `orq memory-stores retrieve`, `orq evals get`, `orq skills get`) — so a mistyped or hallucinated `orq agents update` / `orq ... delete` still prompts rather than executing silently. A broad `Bash(orq:*)` would prefix-match every write and delete the CLI has, which is why it is not used here. Every other shell command prompts, `create_*`/`update_*`/`delete_*`/`invoke_*` MCP tools prompt, and `delete_*` is disabled entirely while this skill is active. **This skill never writes to the platform** — the write path lives in `orq-improve-agent`.
 
@@ -26,7 +26,7 @@ You are an **orq.ai failure analyst**. Your job is to read production traces, **
 
 The CLI and MCP overlap on most read operations but differ in two critical ways: **scope** and **projection**.
 
-| | CLI (`orq`) | MCP (`mcp__orq__*`) |
+| | CLI (`orq`) | MCP (`mcp__orq-workspace__*`) |
 |---|---|---|
 | **Scope** | Project-scoped. Returns 404 / empty for entities in other projects. | Workspace-scoped. Finds entities across all projects the API key can reach. |
 | **Projection** | `-j` (JMESPath) projects 115 KB spans down to ~7 lines. Essential for keeping trace data out of context. | `get_span mode=compact` (metadata + string-serialized I/O) vs `mode=full` (structured messages, all turns, tool calls, system instructions). `list_spans` always returns full attributes. |
@@ -34,11 +34,11 @@ The CLI and MCP overlap on most read operations but differ in two critical ways:
 
 **Default rule: MCP for discovery and content, CLI for projection and aggregation.**
 
-- **Agent discovery:** `mcp__orq__search_entities type=agent query="..."` — fuzzy-matches name, key, and description across the workspace. Then `mcp__orq__get_agent key=...` for the full config (model, instructions, tools, KBs, memory stores, settings, URL).
+- **Agent discovery:** `mcp__orq-workspace__search_entities type=agent query="..."` — fuzzy-matches name, key, and description across the workspace. Then `mcp__orq-workspace__get_agent key=...` for the full config (model, instructions, tools, KBs, memory stores, settings, URL).
 - **Trace aggregates and search:** CLI `orq traces aggregate` / `search` with `--from-file` — the only path that supports `group_by`, `compute`, and arbitrary filters.
 - **Span tree (compact):** CLI `orq traces list-spans -j "data[].{...}"` — the projection keeps 83-span traces under 10 KB.
 - **Span detail (projected):** CLI `orq traces get-span -j 'span.summary'` for metadata, `span.attributes.*` for config knobs.
-- **Full conversation content:** `mcp__orq__get_span span_id=... mode=full` — returns structured message arrays with all turns, tool calls, tool responses, system instructions, and per-message `finish_reason`. Use selectively on traces that need deep reading (failures, outliers). This is also the only reliable path for `finish_reason` on agent traces when `agents get-response` is unavailable.
+- **Full conversation content:** `mcp__orq-workspace__get_span span_id=... mode=full` — returns structured message arrays with all turns, tool calls, tool responses, system instructions, and per-message `finish_reason`. Use selectively on traces that need deep reading (failures, outliers). This is also the only reliable path for `finish_reason` on agent traces when `agents get-response` is unavailable.
 - **Related entities:** CLI `orq tools retrieve`, `orq knowledge-bases retrieve`, `orq memory-stores retrieve`, `orq evals get` — resolve the IDs from the agent config into full definitions.
 
 ## Vocabulary
@@ -119,8 +119,8 @@ The target is **optional**. Three modes, and the config read degrades across the
 
 | Mode | Config read | Config write | Behaviour |
 |---|---|---|---|
-| **orq agent** (key or id given) | `mcp__orq__get_agent key=<key>` (primary, workspace-scoped) or `orq agents retrieve <key> --json` (fallback, project-scoped — 404s if agent is in another project) | `orq agents update` (in `orq-improve-agent`) | Full loop. |
-| **orq deployment** | `orq deployments get-config` | prompt versions via HTTP only | Analysis is full; config fixes are recommended in prose. |
+| **orq agent** (key or id given) | `mcp__orq-workspace__get_agent key=<key>` (primary, workspace-scoped) or `orq agents retrieve <key> --json` (fallback, project-scoped — 404s if agent is in another project) | `orq agents update` (in `orq-improve-agent`) | Full loop. |
+| **orq deployment** | `mcp__orq-workspace__get_deployment key=<key>` (primary, workspace-scoped) or `orq deployments get-config` (fallback, project-scoped — 404s if the deployment is in another project) | prompt versions via HTTP only | Analysis is full; config fixes are recommended in prose. |
 | **local / no orq entity** | **ask the user** | none | Full analysis; fixes are handed back as a diff to apply by hand. |
 
 **In local mode, ask for the config — do not give up.** A local agent still has a temperature, a `max_tokens` and a tool list; they live in the user's code rather than in orq. Ask the user to paste them or point at a config file. The declared-vs-observed comparisons then work normally.
@@ -132,7 +132,7 @@ If the user declines to supply a config, the affected items go in `unobservable`
 ## Core Principles
 
 ### 1. Read Before You Automate
-Never build evaluators, change prompts, or switch models until you've read at least 50–100 traces and understand the failure patterns.
+Never build evaluators, change prompts, or switch models until you've read at least 50 traces and understand the failure patterns.
 
 ### 2. Focus on the First Upstream Failure
 In multi-step pipelines, a single upstream error cascades. Always identify the **first thing that went wrong** — fixing it often resolves the entire chain. **One config bug produces the same cascade one level up:** a `max_iterations` cap can generate six behavioural symptoms. That is what Phase 0 exists to make visible before coding starts.
@@ -163,7 +163,7 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
 
    `max_iterations` and `max_time` are **explicit terminal reasons** — the platform is saying the run hit the cap. No distribution-shape inference needed.
 
-2. **Declared config — what the agent is set to** (from `mcp__orq__get_agent`, `orq agents retrieve`, `orq deployments get-config`, or the user in local mode):
+2. **Declared config — what the agent is set to** (from `mcp__orq-workspace__get_agent`, `orq agents retrieve`, `orq deployments get-config`, or the user in local mode):
    - `model.id` and `fallback_models`
    - `model.parameters.*` — `temperature`, `top_p`, `max_tokens`, `reasoning_effort`, `tool_choice`, `parallel_tool_calls`
    - `settings.*` — `max_iterations`, `max_execution_time`, `max_cost`, `tools[]`, `evaluators[]` **with each `sample_rate`**
@@ -214,7 +214,7 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
 
 8. **Ensure trace completeness.** For each trace you need the original input, the final output, all intermediate steps (LLM calls, tool calls with args and responses, retrieved documents, reasoning), and the metadata (latency, tokens, model, cost).
 
-   **For deep reading of specific traces, use `mcp__orq__get_span` with `mode=full`.** This returns structured message arrays with all conversation turns, tool calls and responses, system instructions, and per-message `finish_reason`. Use it selectively on traces that need full content (failures, outliers), not on every trace. For the span tree and metadata, CLI `list-spans` with `-j` projection stays the compact path.
+   **For deep reading of specific traces, use `mcp__orq-workspace__get_span` with `mode=full`.** This returns structured message arrays with all conversation turns, tool calls and responses, system instructions, and per-message `finish_reason`. Use it selectively on traces that need full content (failures, outliers), not on every trace. For the span tree and metadata, CLI `list-spans` with `-j` projection stays the compact path.
 
 ### Phase 2: Open Coding — Read and Annotate
 

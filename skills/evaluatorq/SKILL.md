@@ -34,7 +34,7 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 - `orq-build-evaluator` — design an LLM-as-a-judge evaluator prompt
 - `orq-compare-agents` — run the same evaluatorq evaluation across multiple agents
 - `orq-run-experiment` — run orq.ai-native experiments without writing code
-- `orq-analyze-agent` — diagnose agent failures from production traces
+- `orq-analyze-traces` — diagnose agent failures from production traces
 - `orq-red-team` — full `eq redteam` walkthrough: modes, categories, output, dashboard
 - `orq-simulate-agent` — full `eq sim` walkthrough: personas, scenarios, goal scoring
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
@@ -51,7 +51,7 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 - **Comparing multiple agents?** → `orq-compare-agents`
 - **orq.ai-native experiments only, no custom code?** → `orq-run-experiment`
 - **No dataset yet?** → `orq-generate-synthetic-dataset` first
-- **Need to diagnose what's failing in production?** → `orq-analyze-agent`
+- **Need to diagnose what's failing in production?** → `orq-analyze-traces`
 
 ## Workflow Checklist
 

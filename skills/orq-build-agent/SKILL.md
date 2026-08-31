@@ -5,7 +5,7 @@ description: >
   knowledge bases, and memory stores. Use when building new agents, attaching
   KBs or memory, writing system instructions, selecting models, or setting up
   RAG pipelines. Do NOT use for debugging existing agents (use
-  orq-analyze-agent) or comparing agents across frameworks (use
+  orq-analyze-traces) or comparing agents across frameworks (use
   orq-compare-agents).
 allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__get_agent, mcp__orq-workspace__list_models, mcp__orq-workspace__search_entities, mcp__orq-workspace__search_docs
 ---
@@ -33,7 +33,7 @@ You are an **orq.ai agent architect**. Your job is to design, create, and config
 ## Companion Skills
 
 - `orq-build-evaluator` — design quality evaluators for agent outputs
-- `orq-analyze-agent` — diagnose agent failures from trace data
+- `orq-analyze-traces` — diagnose agent failures from trace data
 - `orq-run-experiment` — run end-to-end evaluations and model comparisons
 - `orq-generate-synthetic-dataset` — create test datasets for agent evaluation
 - `orq-improve-agent` — improve agent system instructions and prompt quality
@@ -49,7 +49,7 @@ You are an **orq.ai agent architect**. Your job is to design, create, and config
 
 ## When NOT to use
 
-- **Agent failing in production?** → Use `orq-analyze-agent` to diagnose first
+- **Agent failing in production?** → Use `orq-analyze-traces` to diagnose first
 - **Comparing agents across frameworks?** → Use `orq-compare-agents`
 - **Running evaluations on an existing agent?** → Use `orq-run-experiment`
 - **Need to improve an agent's prompt?** → Use `orq-improve-agent`

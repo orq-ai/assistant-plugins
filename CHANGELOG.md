@@ -5,16 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.6.0] - 2026-08-27
+## [3.0.0] - 2026-08-31
+
+Two shipped skills were removed and replaced under new names. Per the versioning table in `CLAUDE.md`, a removed or renamed skill is a MAJOR bump: an installer following semver would otherwise treat this as safe to auto-apply and silently lose two skills. There is no alias or redirect stub for the old names — update any script, macro or saved prompt that invokes them.
 
 ### Added
-- `orq-analyze-agent` skill: trace-grounded failure analysis using open/axial coding, replaces `orq-analyze-trace-failures` (deleted)
+- `orq-analyze-traces` skill: trace-grounded failure analysis using open/axial coding, replaces `orq-analyze-trace-failures` (deleted)
 - `orq-improve-agent` skill: prompt rewrite and config knob fixes grounded in error-analysis artifacts, replaces `orq-optimize-prompt` (deleted)
 - `docs/trace-queries.md`: verified CLI trace query contract
 - HTTP 000 / TLS interception handling in `docs/run-key-preflight.md`
 
 ### Removed
-- `orq-analyze-trace-failures` skill (replaced by `orq-analyze-agent`)
+- `orq-analyze-trace-failures` skill (replaced by `orq-analyze-traces`)
 - `orq-optimize-prompt` skill (replaced by `orq-improve-agent`)
 
 ## [2.8.0] - 2026-08-31

@@ -81,7 +81,7 @@ commands exit 0, and one shadowed flag returns an empty list instead of an error
 
 ## Companion Skills
 
-- `orq-analyze-agent` — once you have pulled traces, analyze them
+- `orq-analyze-traces` — once you have pulled traces, analyze them
 - `orq-invoke-deployment` — call deployments and agents from application code
 - `orq-manage-skills` — richer workflow for the platform Skills entity that
   `orq skills` exposes
@@ -102,7 +102,7 @@ commands exit 0, and one shadowed flag returns an empty list instead of an error
 - **Writing application code that calls orq.ai?** → Use `orq-invoke-deployment`
 - **A guided evaluation or experiment workflow?** → Use `orq-run-experiment`
 - **Analyzing trace content rather than fetching it?** → Use
-  `orq-analyze-agent`
+  `orq-analyze-traces`
 
 ## MCP tools or the CLI?
 

@@ -6,7 +6,7 @@ description: >
   deployment", "test my agent for vulnerabilities", "OWASP red team", or "check
   how my agent handles adversarial inputs". Do NOT use when you only need to build
   evaluators (use orq-build-evaluator) or analyze existing trace failures (use
-  orq-analyze-agent).
+  orq-analyze-traces).
 allowed-tools: Bash(eq:*), Bash(jq:*), Bash(uv:*), Bash(curl:*), Read, Write, Edit, Grep, Glob, mcp__orq-workspace__search_entities, mcp__orq-workspace__get_agent
 ---
 
@@ -475,6 +475,6 @@ The CLI covers the common case (red-teaming an orq `agent:`/`deployment:` target
 ## Companion Skills
 
 - `orq-build-evaluator` — build custom LLM judges for failure modes surfaced by red teaming
-- `orq-analyze-agent` — deeper failure taxonomy from production traces
+- `orq-analyze-traces` — deeper failure taxonomy from production traces
 - `orq-run-experiment` — run controlled experiments using orq deployments
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.

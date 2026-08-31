@@ -225,22 +225,22 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: proposes dimensions of variation OR generates diverse cases
 - Verify: calls `create_dataset` + `create_datapoints` with `orq-skills-test-` prefix
 
-## `orq-analyze-agent`
+## `orq-analyze-traces`
 
 ### Scenario 1: Agent from a vague description
 
 - Ask: "Analyze the support agent — it's been giving bad answers"
-- Verify Phase 0: uses `mcp__orq__search_entities type=agent` to discover the agent, then `mcp__orq__get_agent` for full config
+- Verify Phase 0: uses `mcp__orq-workspace__search_entities type=agent` to discover the agent, then `mcp__orq-workspace__get_agent` for full config
 - Verify Phase 0: relays config (model, instructions, settings, tools, KBs) and terminal states before any coding
 - Verify Phase 0: resolves related entity IDs (tools, knowledge-bases, memory-stores) via CLI read verbs
 - Verify Phase 1: runs `orq traces aggregate` and `orq traces search` with `--from-file`, not inline JSON
-- Verify Phase 1: uses `mcp__orq__get_span mode=full` for deep reading of specific failure traces
+- Verify Phase 1: uses `mcp__orq-workspace__get_span mode=full` for deep reading of specific failure traces
 - Verify: writes an `error-analysis-*.md` file with failure modes, evidence trace IDs, and lever assignments
 
 ### Scenario 2: Cross-project agent
 
 - Ask: "Analyze the checkout agent" (agent is in a different project than the CLI's active project)
-- Verify: `mcp__orq__get_agent` finds it (workspace-scoped), while `orq agents retrieve` would 404
+- Verify: `mcp__orq-workspace__get_agent` finds it (workspace-scoped), while `orq agents retrieve` would 404
 - Verify: does not silently report "no traces" when the issue is project scoping
 
 ## `orq-improve-agent`
@@ -249,7 +249,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 - Ask: "Fix the issues from the error analysis"
 - Verify Phase 1: globs `error-analysis-*.md` and reads the artifact
-- Verify Phase 1: reads the agent config via `mcp__orq__get_agent` (primary) or `orq agents retrieve` (fallback)
+- Verify Phase 1: reads the agent config via `mcp__orq-workspace__get_agent` (primary) or `orq agents retrieve` (fallback)
 - Verify Phase 1: checks config-vs-instructions contradictions before any trace work
 - Verify Phase 2: routes each failure mode to its lever (prompt, config, tools, structure, evaluator)
 - Verify Phase 3: shows a diff with each change tied to a failure mode before applying
@@ -262,6 +262,16 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Ask: "My agent keeps failing to complete tasks"
 - Verify Phase 1: detects the contradiction without running any traces
 - Verify: routes straight to Phase 3b (config lever) rather than a trace sweep
+
+### Scenario 3: Inline prompt, no orq entity (prompt lever)
+
+- Provide: a prompt pasted inline — no agent key, no deployment, no error-analysis artifact
+- Ask: "Improve this prompt"
+- Verify Phase 1: takes the fourth route — skips all trace work, does not glob for `error-analysis-*.md`, does not call `get_agent`
+- Verify Phase 3a: evaluates against the 11-guideline framework and names guidelines by number in the suggestions
+- Verify Phase 3a: labels every suggestion **Best-practice suggestion** (no artifact, so nothing is evidence-backed)
+- Verify Phase 3a: leaves `{{template_variables}}` unsubstituted and does not propose removing tool definitions
+- Verify: asks which suggestions to apply before rewriting, and skips Phase 4 unless the user asks to save
 
 ## `orq-run-experiment`
 
@@ -502,7 +512,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 - `docs/run-key-preflight.md`
 - `docs/trace-queries.md`
-- `skills/orq-analyze-agent/SKILL.md`
+- `skills/orq-analyze-traces/SKILL.md`
 - `skills/orq-improve-agent/SKILL.md`
 - `skills/orq-setup-observability/SKILL.md`
 - `skills/orq-setup-observability/resources/traced-decorator-guide.md`
@@ -528,8 +538,6 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-evaluator-alignment/scripts/grey_zone.py`
 - `skills/orq-evaluator-alignment/scripts/retest.py`
 - `skills/orq-generate-synthetic-dataset/SKILL.md`
-- `skills/orq-analyze-agent/SKILL.md`
-- `skills/orq-improve-agent/SKILL.md`
 - `skills/orq-run-experiment/SKILL.md`
 - `skills/orq-red-team/SKILL.md`
 - `skills/orq-red-team/resources/python-sdk.md`

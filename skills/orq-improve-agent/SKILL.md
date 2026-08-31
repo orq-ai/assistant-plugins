@@ -3,13 +3,13 @@ name: orq-improve-agent
 description: >
   Improve an underperforming orq agent, deployment, or local agent — rewrite its
   instructions against a structured prompting framework, or move a configuration
-  knob, grounded in the error-analysis file orq-analyze-agent writes. Use when a
+  knob, grounded in the error-analysis file orq-analyze-traces writes. Use when a
   prompt needs improvement, when a config knob is wrong (truncated answers,
   iteration caps, sampling), or when you have a failure taxonomy and want the fix
   applied. Do NOT use to re-architect a pipeline (use orq-build-agent), to align
   a judge that already exists (use orq-evaluator-alignment), or to build the
-  failure taxonomy in the first place (use orq-analyze-agent).
-allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces list-facet-values:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq reporting query:*), Bash(orq agents retrieve:*), Bash(orq agents get-response:*), Bash(orq deployments get-config:*), Bash(orq agents update:*), Bash(orq tools retrieve:*), Bash(orq knowledge-bases retrieve:*), Bash(orq memory-stores retrieve:*), Bash(orq evals get:*), Bash(orq skills get:*), mcp__orq__search_entities, mcp__orq__get_agent, mcp__orq__get_span, mcp__orq__get_deployment, mcp__orq__list_traces, mcp__orq__search_docs
+  failure taxonomy in the first place (use orq-analyze-traces).
+allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces list-facet-values:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq reporting query:*), Bash(orq agents retrieve:*), Bash(orq agents get-response:*), Bash(orq deployments get-config:*), Bash(orq agents update:*), Bash(orq tools retrieve:*), Bash(orq knowledge-bases retrieve:*), Bash(orq memory-stores retrieve:*), Bash(orq evals get:*), Bash(orq skills get:*), mcp__orq-workspace__search_entities, mcp__orq-workspace__get_agent, mcp__orq-workspace__get_span, mcp__orq-workspace__get_deployment, mcp__orq-workspace__list_traces, mcp__orq-workspace__search_docs
 ---
 
 # Improve Agent
@@ -17,8 +17,8 @@ allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq tr
 > `allowed-tools` here is a curated read/search allowlist plus **one enumerated write verb**, `orq agents update` — the only write this skill performs. Everything else in the shell grant is a read verb (`orq traces` queries, `orq reporting query`, `orq agents retrieve`, `orq agents get-response`, `orq deployments get-config`, and read verbs for related entities). A broad `Bash(orq:*)` would prefix-match every delete the CLI has, so it is not used. Every other shell command prompts, `create_*`/`update_*`/`delete_*`/`invoke_*` MCP tools prompt, and `delete_*` is disabled entirely while this skill is active. **Pre-approval is not permission to write:** every write sits behind an explicit `AskUserQuestion` gate regardless of what `allowed-tools` permits.
 
 You are an **orq.ai agent engineer**. Your job is to take a failure that production traces already demonstrated and fix it — by rewriting the agent's instructions, or by moving one configuration knob — then hand the change to `orq-run-experiment` to prove it worked.
-The first step is to ask the user if the agent lives in orq, is local, and if it lives in orq to provide a name or ID so that you can find it. After this you will ask the user if they have an error-analysis artifact, if they have traces, or if they can describe the problem. If they have an artifact, you will use it to route each failure mode to its lever. If they have traces, you will recommend `orq-analyze-agent` first, and if they can describe the problem you will run a narrow, targeted sweep to ground the complaint in real traces. 
-Be sure to read traces if there are any, and if there are many, recommend `orq-analyze-agent`.You will never re-run a mini error analysis inline when an artifact exists or could be produced. 
+The first step is to ask the user if the agent lives in orq, is local, and if it lives in orq to provide a name or ID so that you can find it. After this you will ask the user if they have an error-analysis artifact, if they have traces, or if they can describe the problem. If they have an artifact, you will use it to route each failure mode to its lever. If they have traces, you will recommend `orq-analyze-traces` first, and if they can describe the problem you will run a narrow, targeted sweep to ground the complaint in real traces. 
+Be sure to read traces if there are any, and if there are many, recommend `orq-analyze-traces`.You will never re-run a mini error analysis inline when an artifact exists or could be produced. 
 If the user is vague about the agent, see if there are traces!
 
 **Before any `orq traces` call, read [`docs/trace-queries.md`](../../docs/trace-queries.md) — the invocation details there are not optional.** It lives in the plugin repo, not inside this skill folder. If it is not reachable, these four still bind:
@@ -34,7 +34,7 @@ If the user is vague about the agent, see if there are traces!
 
 The CLI and MCP overlap on most read operations but differ in two critical ways: **scope** and **projection**.
 
-| | CLI (`orq`) | MCP (`mcp__orq__*`) |
+| | CLI (`orq`) | MCP (`mcp__orq-workspace__*`) |
 |---|---|---|
 | **Scope** | Project-scoped. Returns 404 / empty for entities in other projects. | Workspace-scoped. Finds entities across all projects the API key can reach. |
 | **Projection** | `-j` (JMESPath) projects 115 KB spans down to ~7 lines. Essential for keeping trace data out of context. | `get_span mode=compact` (metadata + string-serialized I/O) vs `mode=full` (structured messages, all turns, tool calls, system instructions). `list_spans` always returns full attributes. |
@@ -42,8 +42,8 @@ The CLI and MCP overlap on most read operations but differ in two critical ways:
 
 **Default rule: MCP for discovery and content, CLI for projection and aggregation.**
 
-- **Agent discovery:** `mcp__orq__search_entities type=agent query="..."` — fuzzy-matches name, key, and description across the workspace. Then `mcp__orq__get_agent key=...` for the full config.
-- **Full conversation content:** `mcp__orq__get_span span_id=... mode=full` — returns structured messages with all turns and tool calls. Use to ground prompt suggestions in real trace content.
+- **Agent discovery:** `mcp__orq-workspace__search_entities type=agent query="..."` — fuzzy-matches name, key, and description across the workspace. Then `mcp__orq-workspace__get_agent key=...` for the full config.
+- **Full conversation content:** `mcp__orq-workspace__get_span span_id=... mode=full` — returns structured messages with all turns and tool calls. Use to ground prompt suggestions in real trace content.
 - **Related entities:** CLI `orq tools retrieve`, `orq knowledge-bases retrieve`, `orq evals get` — resolve IDs from the agent config into full definitions.
 
 ## Vocabulary
@@ -62,7 +62,7 @@ The CLI and MCP overlap on most read operations but differ in two critical ways:
 - **NEVER** substitute template variables (`{{variable_name}}`) with actual content.
 - **NEVER** send a partial nested object. **ALWAYS** retrieve the object, change one key, send it back whole (see "Read-modify-write" below).
 - **NEVER** change `model.id` and a behaviour parameter in the same step — you lose attribution.
-- **NEVER** re-run a mini error analysis inline when an artifact exists or could be produced. That duplication is what `orq-analyze-agent` exists to remove.
+- **NEVER** re-run a mini error analysis inline when an artifact exists or could be produced. That duplication is what `orq-analyze-traces` exists to remove.
 - **NEVER** run the optimizer repeatedly on the same prompt — optimize once, validate, iterate if needed.
 - **ALWAYS** pass `--version-increment` and `--version-description` on every write. The CLI documents both as *Optional*, so omitting them succeeds and publishes no version — silently costing the rollback story.
 - **ALWAYS** preserve the prior version for rollback.
@@ -90,7 +90,7 @@ Agent Improvement Progress:
 - `orq-run-experiment` recommended, with the `evidence` + `passing` ids handed over
 
 **Companion skills:**
-- `orq-analyze-agent` — produces the error-analysis artifact this skill consumes
+- `orq-analyze-traces` — produces the error-analysis artifact this skill consumes
 - `orq-build-agent` — re-architecture: decomposition, a new pipeline stage, `team_of_agents`
 - `orq-build-evaluator` — an evaluator for a failure mode that has none
 - `orq-evaluator-alignment` — realign an evaluator that already exists and disagrees
@@ -108,7 +108,7 @@ Three distinct branches:
 
 ## When NOT to use
 
-- **Need the failure taxonomy first?** → `orq-analyze-agent`
+- **Need the failure taxonomy first?** → `orq-analyze-traces`
 - **The fix is a re-architecture?** → `orq-build-agent`
 - **An evaluator exists and disagrees with humans?** → `orq-evaluator-alignment`
 - **No evaluator exists for the failure mode?** → `orq-build-evaluator`
@@ -118,8 +118,8 @@ Three distinct branches:
 
 | Mode | Config read | Prompt write | Config write |
 |---|---|---|---|
-| **orq agent** | **Primary:** `mcp__orq__get_agent key=...` (workspace-scoped, always works). **Fallback:** `orq agents retrieve <key> --json` (project-scoped, 404 cross-project). | `orq agents update` → `instructions` | `orq agents update` → `settings` / `model` |
-| **orq deployment** | **Primary:** `mcp__orq__get_deployment key=...`. **Fallback:** `orq deployments get-config`. | `POST /v2/prompts/<id>/versions` | **none** — recommend in prose |
+| **orq agent** | **Primary:** `mcp__orq-workspace__get_agent key=...` (workspace-scoped, always works). **Fallback:** `orq agents retrieve <key> --json` (project-scoped, 404 cross-project). | `orq agents update` → `instructions` | `orq agents update` → `settings` / `model` |
+| **orq deployment** | **Primary:** `mcp__orq-workspace__get_deployment key=...`. **Fallback:** `orq deployments get-config`. | `POST /v2/prompts/<id>/versions` | **none** — recommend in prose |
 | **local / no orq entity** | ask the user | diff in the response, user applies it | diff in the response, user applies it |
 
 `orq deployments` exposes only `get-config`, `invoke`, `list`, `stream` — there is no `update`. Deployment config is read-only here; say so rather than implying a write happened.
@@ -128,7 +128,7 @@ Three distinct branches:
 
 ### Phase 1: Find the Evidence
 
-**Before any of the four: read the target's own config and test it against its own instructions.** Use `mcp__orq__get_agent key=...` (workspace-scoped, finds agents across projects) as the primary path; fall back to `orq agents retrieve <key> --json` if MCP is unavailable. Then ask the single question: *does any setting make these instructions impossible to follow?* Instructions that mandate three sequential tool steps under `max_iterations: 2`, or an 800-word minimum under `max_tokens: 800`, are a contradiction visible without a single trace query.
+**Before any of the four: read the target's own config and test it against its own instructions.** Use `mcp__orq-workspace__get_agent key=...` (workspace-scoped, finds agents across projects) as the primary path; fall back to `orq agents retrieve <key> --json` if MCP is unavailable. Then ask the single question: *does any setting make these instructions impossible to follow?* Instructions that mandate three sequential tool steps under `max_iterations: 2`, or an 800-word minimum under `max_tokens: 800`, are a contradiction visible without a single trace query.
 
 If the agent config references tool IDs, knowledge-base IDs, memory-store IDs, or eval IDs, resolve them into full definitions before proceeding:
 - `orq tools retrieve <id>` — tool schema and description
@@ -149,16 +149,16 @@ A contradiction found here is a **`fix: config` finding already**. Take it strai
    | | Do |
    |---|---|
    | **Same version** | Proceed. |
-   | **Version moved** | Say so, and offer to re-run `orq-analyze-agent` rather than routing off a taxonomy measured against a config that no longer exists. |
+   | **Version moved** | Say so, and offer to re-run `orq-analyze-traces` rather than routing off a taxonomy measured against a config that no longer exists. |
    | **`mode: local`** | Nothing to compare. Proceed, and say the config is unverified. |
 
    **Check `unobservable` before claiming anything about what the analysis covered.**
 
-2. **No artifact, the user has traces** → recommend `orq-analyze-agent` first. **Do not silently re-run a mini error analysis inline.**
+2. **No artifact, the user has traces** → recommend `orq-analyze-traces` first. **Do not silently re-run a mini error analysis inline.**
 
-3. **No artifact, the user can describe the problem** ("it keeps cutting off mid-answer") → run a **narrow, targeted sweep** to ground the complaint in real traces: `orq traces aggregate` on **one or two signals only** — typically `attributes.gen_ai.response.finish_reasons` and `status` — then `orq traces search` for a handful of matching ids. This is the "start right away" path, and it is **hard-bounded to those one or two signals**. Anything wider must route to `orq-analyze-agent`.
+3. **No artifact, the user can describe the problem** ("it keeps cutting off mid-answer") → run a **narrow, targeted sweep** to ground the complaint in real traces: `orq traces aggregate` on **one or two signals only** — typically `attributes.gen_ai.response.finish_reasons` and `status` — then `orq traces search` for a handful of matching ids. This is the "start right away" path, and it is **hard-bounded to those one or two signals**. Anything wider must route to `orq-analyze-traces`.
 
-   > **On an orq-hosted agent, that default pair is usually blind.** Measured 2026-08-26 on a 14-day window: `finish_reasons` was null on **246/246** traces across **all 6 agents** in the workspace, and `status` was `ok` on every one, while the same field was richly populated workspace-wide (3,174 `stop`, 5 `length` — a window-dependent count; a 20-day window returned 3,431 `stop`). A silent-quality failure emits no terminal-state signal at all, so the default pair reads *"clean"* when it is merely blind.
+   > **On an orq-hosted agent, expect that default pair to be blind — verify, do not assume.** In one workspace on 2026-08-26, over a 14-day window, `finish_reasons` was null on **246/246** traces across **all 6 agents** in that workspace and `status` was `ok` on every one, while the same field was richly populated workspace-wide (3,174 `stop`, 5 `length` — a window-dependent count; a 20-day window returned 3,431 `stop`). That is one workspace on one platform version, not a guarantee: run `orq traces aggregate` on `finish_reasons` for the target before trusting *or* dismissing it. Either way, a silent-quality failure emits no terminal-state signal at all, so the default pair can read *"clean"* when it is merely blind.
    >
    > **The terminal state is not missing, it is on a different endpoint.** `orq agents get-response <agent-key> <agent_execution_span_id>` returns an agent-level **`finish_reason`** whose vocabulary names the cause outright — including **`max_iterations`**, which no span attribute ever exposes. Verified across 6 agents: loop-capped agents returned `max_iterations` (15/15 and 5/5), token-capped agents returned **`length`** (10/10 and 10/10), uncapped agents returned `stop` (10/10 and 2/2). **`length` is the token-truncation case** — the exact "answers cut off" symptom in this skill's own *When to use* list.
    >
@@ -242,7 +242,7 @@ Present the analysis, ask which suggestions to apply, then rewrite:
 
 ### Phase 3b: The Config Lever
 
-1. **Read the current config** — `mcp__orq__get_agent key=...` or `orq agents retrieve <key> --json` (or `mcp__orq__get_deployment` / `orq deployments get-config`, or ask, in local mode).
+1. **Read the current config** — `mcp__orq-workspace__get_agent key=...` or `orq agents retrieve <key> --json` (or `mcp__orq-workspace__get_deployment` / `orq deployments get-config`, or ask, in local mode).
 2. **Propose a minimal diff — one knob per finding.** Never a wholesale config rewrite. On a `fix: config` mode the artifact already carries `knob` + `current` + `suggest`: build the patch from those three, without re-reading a trace.
 3. **Clamp to the real bounds** — `max_iterations` 1–100, `max_execution_time` 2–600, `temperature` 0–2, `top_p` 0–1, `retry.count` 1–5, `reasoning_effort` in `none|minimal|low|medium|high|xhigh`. Proposing outside them just earns a 400.
 
@@ -304,7 +304,7 @@ orq datasets create  →  create-datapoint (batched, ≤100 per call)
 >
 > **On an agent target, try `agents get-response` before concluding anything is unrecoverable.** Spans carry metadata only, but `orq agents get-response <agent-key> <agent_execution_span_id>` returns the agent's **final turn** as `parts[]` entries. `output[]` is length 1 — it is not a transcript — but the final assistant text is reliable and is enough for an expected-output column. **A dataset handed over without expected outputs, on an agent target, means this endpoint was not tried.**
 >
-> **For the full conversation transcript, use `mcp__orq__get_span span_id=... mode=full`.** This returns structured messages with all turns, tool calls, tool responses, and system instructions. Use it to recover the full input/output pairs when `get-response` only gives the final turn. `mode=compact` gives a lighter string-serialized version when you only need metadata + I/O summary.
+> **For the full conversation transcript, use `mcp__orq-workspace__get_span span_id=... mode=full`.** This returns structured messages with all turns, tool calls, tool responses, and system instructions. Use it to recover the full input/output pairs when `get-response` only gives the final turn. `mode=compact` gives a lighter string-serialized version when you only need metadata + I/O summary.
 >
 > **It does not tell you whether the agent's tools ran.** A `parts[].kind == "tool_call"` entry appears only when a run was cut off *mid-call*; a normally-completed run shows none even when tools certainly ran. With `span.agent_tool_execution` never emitted either, tool execution is **`unobservable`** — record it, never infer it.
 >
@@ -332,7 +332,7 @@ Both write with the same required version bump, so neither can corrupt the other
 | Moving several knobs at once | One knob per finding |
 | Rewriting `system_prompt` | Rewrite `instructions`. If `system_prompt` is non-null, show it and ask |
 | Prompt-patching around a config cause | Fix the knob first, re-measure, then look at the prompt |
-| Re-running error analysis inline | Route to `orq-analyze-agent`; the narrow path is bounded to 1–2 signals |
+| Re-running error analysis inline | Route to `orq-analyze-traces`; the narrow path is bounded to 1–2 signals |
 | Forwarding a `structure` mode into a third skill | Name `orq-build-agent` as the destination and stop |
 | Acting on a mode whose only evidence is `eval_*` | Route to `orq-evaluator-alignment` first |
 | Running the optimizer repeatedly on one prompt | Optimize once, validate, then iterate |
@@ -346,7 +346,7 @@ Both write with the same required version bump, so neither can corrupt the other
 
 ## Documentation & Resolution
 
-1. **Live queries** — `mcp__orq__get_agent`, `mcp__orq__get_span`, `orq agents retrieve`, `orq traces …`, and the orq MCP read tools; API responses are always authoritative
+1. **Live queries** — `mcp__orq-workspace__get_agent`, `mcp__orq-workspace__get_span`, `orq agents retrieve`, `orq traces …`, and the orq MCP read tools; API responses are always authoritative
 2. **[`docs/trace-queries.md`](../../docs/trace-queries.md)** — the verified CLI contract, including the write path and its parameter bounds
 3. **orq.ai documentation MCP** — `search_orq_ai_documentation` / `get_page_orq_ai_documentation`
 4. **[docs.orq.ai](https://docs.orq.ai)** — [Prompt Engineering Guide](https://docs.orq.ai/docs/prompts/engineering-guide#prompt-engineering-guide-best-practices) · [Agents](https://docs.orq.ai/docs/agents/overview) · [Prompts](https://docs.orq.ai/docs/prompts/overview) · [Versioning](https://docs.orq.ai/docs/prompts/versioning) · [Deployments](https://docs.orq.ai/docs/deployments/overview)
