@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `orq-build-evaluator`: duplicate step 16 — Phase 7's maintenance step is now 17
+- `orq-build-evaluator`: the Python response-length example scored Pass on an empty output — a failed generation reads as a short response. It now guards for empty and checks one criterion instead of two.
+- `orq-build-evaluator`: the create examples used `openai/gpt-4o-mini`, contradicting the skill's own "start with the most capable judge model" constraint; both now use `openai/gpt-4.1`
 - `orq-run-experiment`, `orq-build-agent`: evaluator invoke endpoint corrected from `/v2/evaluators/<ID>/invoke` (403) to `/v3/…`
 - `orq-run-experiment`: evaluator list pagination corrected from `after=` (silently ignored, re-serves page 1) to `starting_after=`
 - `orq-build-evaluator`: dropped the unverified `string` output type row and the unverified JSON-schema/HTTP evaluator types; `function_eval` and `ragas` are documented with their real parameter shapes

@@ -103,7 +103,7 @@ Python evaluators receive a single `log` dict argument. Every key is always pres
 | Key | Type | Content |
 |-----|------|---------|
 | `log["input"]` | `str` | The last user message |
-| `log["output"]` | `str` | The model's generated response |
+| `log["output"]` | `str` | The model's generated response. Guard for empty anyway — a failed generation should not score Pass by default. |
 | `log["reference"]` | `str \| None` | Reference/expected answer |
 | `log["expected_output"]` | `str \| None` | Same value as `reference` |
 | `log["messages"]` | `list[dict]` | Conversation history; each entry has `role` and `content` |
@@ -155,7 +155,7 @@ POST /v2/evaluators
 {
   "type": "llm_eval",
   "mode": "single",
-  "model": "openai/gpt-4o-mini",
+  "model": "openai/gpt-4.1",
   "prompt": "<the judge prompt, with {{input.user_query}} / {{output.response}}>",
   "output_type": "categorical",
   "key": "tone-classifier",
@@ -176,7 +176,7 @@ The same call via the CLI, which is the better option in a script or CI job (`or
 
 ```bash
 orq evals create --json \
-  --key tone-classifier --type llm_eval --mode single --model openai/gpt-4o-mini \
+  --key tone-classifier --type llm_eval --mode single --model openai/gpt-4.1 \
   --output-type categorical --path Default \
   --prompt "$(cat judge-prompt.txt)" \
   --categories professional --categories casual --categories aggressive \
@@ -439,11 +439,13 @@ Your JSON Evaluation:
               return False
           return any(tc["tool_name"] == "search_knowledge_base" for tc in tool_calls)
       ```
-    - Example (conversation-length check):
+    - Example (response-length check — one criterion, and an empty output fails rather than passing):
       ```python
       def evaluate(log):
-          messages = log["messages"]
-          return len(log["output"] or "") <= 500 and len(messages) > 0
+          output = log["output"]
+          if not output:
+              return False
+          return len(output) <= 500
       ```
     - Create using `create_python_eval` MCP tool with the Python code
     - Note: MCP `create_python_eval` covers `boolean`/`number` only — see "HTTP Fallback for MCP Gaps" for the rest.
