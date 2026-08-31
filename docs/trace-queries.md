@@ -11,9 +11,11 @@ Shared reference for `orq-analyze-traces` and `orq-improve-agent`. Everything he
 Field names in the trace registry **changed once in a single afternoon** — the 2026-08-26 release renamed every `attr.*` field to `attributes.*` and grew the registry from 56 fields to 57. A hard-coded name that no longer resolves returns **zero rows without erroring**, which reads as "clean" rather than "broken".
 
 ```bash
-orq traces list-fields --json     # the 57 queryable fields
-orq traces list-facets --json     # the 28 that are facetable
+orq traces list-fields --json     # the queryable fields
+orq traces list-facets --json     # the facetable subset
 ```
+
+> **Canonical source: `skills/orq-cli/SKILL.md`, "The trace filter contract" onward.** That skill owns the CLI's general query constraints — field discovery, the `end_time desc` sort, the 30-day retention `400`. This file states each as a one-line rule because it is read at call time, and links there for the detail. **Correct them there first**; a rule fixed in one file and missed in the other is exactly the stale guidance §0 is about.
 
 **ALWAYS** resolve names from those two commands before building a query body. **NEVER** copy a field name out of this document into a query. When a name you expected is absent, say so and stop — do not fall back to a filter that silently matches nothing.
 
@@ -77,7 +79,7 @@ The same applies to `orq reporting query`: inline `--filters` JSON from PowerShe
 
 **Delete `body.json` when the run is done.**
 
-**`--from` / `--to` are required, RFC3339, and bounded by 30-day retention.** `2026-08-12T09:00:00Z` parses; anything older than 30 days is rejected with `range outside retention`. **NEVER hard-code a `--from`** — it ages into that error. Compute the window at call time.
+**`--from` / `--to` are required, RFC3339, and bounded by 30-day retention** (`skills/orq-cli/SKILL.md`, "Traces expire after 30 days"). **NEVER hard-code a `--from`** — it ages past the boundary and starts erroring. Compute the window at call time.
 
 **`filters[].values` must be an array of STRINGS, even for a numeric field.** `values: [0]` is rejected with `HTTP 400: invalid value for string field values: 0`; `values: ["0"]` is accepted. A field's declared `type: "number"` in `list-fields` does not change this.
 
@@ -87,7 +89,7 @@ The same applies to `orq reporting query`: inline `--filters` JSON from PowerShe
 "sort": [{ "field": "end_time", "order": "desc" }]
 ```
 
-`started_at` is rejected 400. **Without an explicit sort, rows are not time-ordered** — pass it every time. Paginate on `page_token`.
+Anything else is a 400 (`skills/orq-cli/SKILL.md`, "Results are unordered, and only one sort exists"). **Without an explicit sort, rows are not time-ordered** — pass it every time. Paginate on `page_token`.
 
 **JMESPath `length()` over a missing key crashes the CLI:**
 
