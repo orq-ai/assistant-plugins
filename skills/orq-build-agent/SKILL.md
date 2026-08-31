@@ -5,7 +5,7 @@ description: >
   knowledge bases, and memory stores. Use when building new agents, attaching
   KBs or memory, writing system instructions, selecting models, or setting up
   RAG pipelines. Do NOT use for debugging existing agents (use
-  orq-analyze-trace-failures) or comparing agents across frameworks (use
+  orq-analyze-traces) or comparing agents across frameworks (use
   orq-compare-agents).
 allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__get_agent, mcp__orq-workspace__list_models, mcp__orq-workspace__search_entities, mcp__orq-workspace__search_docs
 ---
@@ -33,10 +33,10 @@ You are an **orq.ai agent architect**. Your job is to design, create, and config
 ## Companion Skills
 
 - `orq-build-evaluator` — design quality evaluators for agent outputs
-- `orq-analyze-trace-failures` — diagnose agent failures from trace data
+- `orq-analyze-traces` — diagnose agent failures from trace data
 - `orq-run-experiment` — run end-to-end evaluations and model comparisons
 - `orq-generate-synthetic-dataset` — create test datasets for agent evaluation
-- `orq-optimize-prompt` — improve agent system instructions and prompt quality
+- `orq-improve-agent` — improve agent system instructions and prompt quality
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
 ## When to use
@@ -49,10 +49,10 @@ You are an **orq.ai agent architect**. Your job is to design, create, and config
 
 ## When NOT to use
 
-- **Agent failing in production?** → Use `orq-analyze-trace-failures` to diagnose first
+- **Agent failing in production?** → Use `orq-analyze-traces` to diagnose first
 - **Comparing agents across frameworks?** → Use `orq-compare-agents`
 - **Running evaluations on an existing agent?** → Use `orq-run-experiment`
-- **Need to improve an agent's prompt?** → Use `orq-optimize-prompt`
+- **Need to improve an agent's prompt?** → Use `orq-improve-agent`
 
 ## Workflow Checklist
 
@@ -298,11 +298,5 @@ After completing this skill, direct the user to:
 
 ## Documentation & Resolution
 
-When you need to look up orq.ai platform details, check in this order:
+**Lookup order: [`doc-resolution.md`](../orq-shared/resources/doc-resolution.md).** Live queries first — for this skill that means `mcp__orq-workspace__create_agent`, `get_agent`, `list_models`.
 
-1. **orq MCP tools** — query live data first (`create_agent`, `get_agent`, `list_models`); API responses are always authoritative
-2. **orq.ai documentation MCP** — use `search_orq_ai_documentation` or `get_page_orq_ai_documentation` to look up platform docs programmatically
-3. **[docs.orq.ai](https://docs.orq.ai)** — browse official documentation directly
-4. **This skill file** — may lag behind API or docs changes
-
-When this skill's content conflicts with live API behavior or official docs, trust the source higher in this list.

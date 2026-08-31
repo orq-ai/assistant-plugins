@@ -6,8 +6,8 @@ description: >
   against human labels for measuring specific failure modes.
   Use when you need to automate quality checks, build guardrails, or measure
   a specific failure mode identified during trace analysis. Do NOT use when
-  failures are fixable with prompt changes (use orq-optimize-prompt) or when failure
-  modes are unknown (use orq-analyze-trace-failures first).
+  failures are fixable with prompt changes (use orq-improve-agent) or when failure
+  modes are unknown (use orq-analyze-traces first).
 allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__get_llm_eval, mcp__orq-workspace__get_python_eval, mcp__orq-workspace__search_entities, mcp__orq-workspace__search_docs
 ---
 
@@ -53,9 +53,9 @@ Evaluator Build Progress:
 
 **Companion skills:**
 - `orq-run-experiment` — run experiments using the evaluators you build
-- `orq-analyze-trace-failures` — identify failure modes that evaluators should target
+- `orq-analyze-traces` — identify failure modes that evaluators should target
 - `orq-generate-synthetic-dataset` — generate test data for evaluator validation
-- `orq-optimize-prompt` — iterate on prompts based on evaluator results
+- `orq-improve-agent` — iterate on prompts based on evaluator results
 - `orq-evaluator-alignment` — measure cross-model stability and judge-human agreement for an evaluator you already created (step 16)
 - `orq-build-agent` — create agents that evaluators assess
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
@@ -72,8 +72,8 @@ Evaluator Build Progress:
 ## When NOT to use
 
 - Need to run an experiment? → `orq-run-experiment`
-- Need to identify failure modes first? → `orq-analyze-trace-failures`
-- Need to optimize a prompt? → `orq-optimize-prompt`
+- Need to identify failure modes first? → `orq-analyze-traces`
+- Need to optimize a prompt? → `orq-improve-agent`
 - Need to generate test data? → `orq-generate-synthetic-dataset`
 
 ## orq.ai Documentation
@@ -459,12 +459,5 @@ This two-step process produces more diverse data than asking an LLM to "generate
 
 ## Documentation & Resolution
 
-When you need to look up orq.ai platform details, check in this order:
-
-1. **orq MCP tools** — query live data first (`create_llm_eval`, `create_python_eval`); API responses are always authoritative
-2. **orq.ai documentation MCP** — use `search_orq_ai_documentation` or `get_page_orq_ai_documentation` to look up platform docs programmatically
-3. **[docs.orq.ai](https://docs.orq.ai)** — browse official documentation directly
-4. **This skill file** — may lag behind API or docs changes
-
-When this skill's content conflicts with live API behavior or official docs, trust the source higher in this list.
+**Lookup order: [`doc-resolution.md`](../orq-shared/resources/doc-resolution.md).** Live queries first — for this skill that means `mcp__orq-workspace__create_llm_eval`, `create_python_eval`.
 

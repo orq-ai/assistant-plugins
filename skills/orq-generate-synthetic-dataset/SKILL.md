@@ -6,7 +6,7 @@ description: >
   plus dataset maintenance through deduplication, rebalancing, and gap-filling.
   Use when creating eval data, expanding test coverage, or cleaning datasets.
   Do NOT use when sufficient real production data exists (use
-  orq-analyze-trace-failures instead). Do NOT use for evaluator creation (use
+  orq-analyze-traces instead). Do NOT use for evaluator creation (use
   orq-build-evaluator).
 allowed-tools: Bash(curl:*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__list_models, mcp__orq-workspace__list_datapoints, mcp__orq-workspace__get_llm_eval, mcp__orq-workspace__get_python_eval, mcp__orq-workspace__create_dataset, mcp__orq-workspace__create_datapoints, mcp__orq-workspace__update_datapoint
 ---
@@ -33,8 +33,8 @@ You are an **orq.ai dataset engineer**. Your job is to generate high-quality, di
 
 - `orq-run-experiment` — run experiments against the generated dataset
 - `orq-build-evaluator` — design evaluators to score outputs against the dataset
-- `orq-analyze-trace-failures` — identify failure modes that inform dataset design
-- `orq-optimize-prompt` — iterate on prompts based on experiment results
+- `orq-analyze-traces` — identify failure modes that inform dataset design
+- `orq-improve-agent` — iterate on prompts based on experiment results
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
 ## When to use
@@ -48,10 +48,10 @@ You are an **orq.ai dataset engineer**. Your job is to generate high-quality, di
 
 ## When NOT to use
 
-- **Have real production traces?** → Use `orq-analyze-trace-failures` to work with real data first
+- **Have real production traces?** → Use `orq-analyze-traces` to work with real data first
 - **Need to build an evaluator?** → Use `orq-build-evaluator`
 - **Want to run an experiment?** → Use `orq-run-experiment` (but create the dataset first)
-- **Need to optimize a prompt?** → Use `orq-optimize-prompt`
+- **Need to optimize a prompt?** → Use `orq-improve-agent`
 
 ## Workflow Checklist
 
@@ -329,11 +329,5 @@ Aim for **at least 3 adversarial test cases per attack vector** relevant to your
 
 ## Documentation & Resolution
 
-When you need to look up orq.ai platform details, check in this order:
+**Lookup order: [`doc-resolution.md`](../orq-shared/resources/doc-resolution.md).** Live queries first — for this skill that means `mcp__orq-workspace__create_dataset`, `create_datapoints`.
 
-1. **orq MCP tools** — query live data first (`create_dataset`, `create_datapoints`); API responses are always authoritative
-2. **orq.ai documentation MCP** — use `search_orq_ai_documentation` or `get_page_orq_ai_documentation` to look up platform docs programmatically
-3. **[docs.orq.ai](https://docs.orq.ai)** — browse official documentation directly
-4. **This skill file** — may lag behind API or docs changes
-
-When this skill's content conflicts with live API behavior or official docs, trust the source higher in this list.

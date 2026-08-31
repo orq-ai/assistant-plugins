@@ -4,7 +4,7 @@ description: >
   Invoke orq.ai deployments, agents, and models via the Python SDK or HTTP API.
   Use when a user wants to call a deployment with prompt variables, invoke an
   agent in a conversation, or call a model directly through the AI Router.
-  Do NOT use for creating or editing deployments/agents (use orq-optimize-prompt
+  Do NOT use for creating or editing deployments/agents (use orq-improve-agent
   or orq-build-agent). Do NOT use for running evaluations (use orq-run-experiment).
 allowed-tools: Bash(curl:*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__list_models, mcp__orq-workspace__list_traces
 ---
@@ -20,16 +20,16 @@ You are an **orq.ai integration engineer**. Your job is to help users invoke orq
 - **NEVER** skip `identity.id` in production calls — it links requests to contacts in orq.ai and enables per-user analytics and cost attribution.
 - **ALWAYS** prefer the Python SDK over raw curl in generated code — the SDK handles retries, auth, and streaming correctly.
 - **ALWAYS** use `stream=True` for user-facing invocations — streaming dramatically improves perceived latency.
-- **ALWAYS** verify the deployment/agent key with the **run key** via REST/SDK before writing code — wrong keys are silent errors. Use `search_entities` to **browse** for keys, then verify with the run key (see [run-key preflight](../../docs/run-key-preflight.md)).
+- **ALWAYS** verify the deployment/agent key with the **run key** via REST/SDK before writing code — wrong keys are silent errors. Use `search_entities` to **browse** for keys, then verify with the run key (see [run-key preflight](../orq-shared/resources/run-key-preflight.md)).
 
 **Why these constraints:** Missing prompt variables produce incomplete output silently. Hardcoded API keys are a security risk. Wrong keys waste budget. Skipping identity makes traces unattributable.
 
 ## Companion Skills
 
-- `orq-optimize-prompt` — improve a deployment's prompt before invoking it
+- `orq-improve-agent` — improve a deployment's prompt before invoking it
 - `orq-build-agent` — create and configure an agent before invoking it
 - `orq-run-experiment` — evaluate invocation quality across a dataset
-- `orq-analyze-trace-failures` — diagnose failures from invocation traces
+- `orq-analyze-traces` — diagnose failures from invocation traces
 - `orq-setup-observability` — instrument the application that calls the deployment
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
@@ -46,7 +46,7 @@ You are an **orq.ai integration engineer**. Your job is to help users invoke orq
 
 ## When NOT to use
 
-- **Need to create or edit a deployment/prompt?** → Use `orq-optimize-prompt`
+- **Need to create or edit a deployment/prompt?** → Use `orq-improve-agent`
 - **Need to build or configure an agent?** → Use `orq-build-agent`
 - **Need to evaluate quality?** → Use `orq-run-experiment`
 - **Traces not appearing?** → Use `orq-setup-observability`
@@ -117,7 +117,7 @@ Follow these steps **in order**. Do NOT skip steps.
    - Deployments: `type: "deployment"`
    - Agents: `type: "agent"`
 
-3. **Verify the key with the run key** (agents and deployments only — skip for model direct calls) — whether the key came from MCP browsing or the user provided it directly. Follow the [run-key preflight](../../docs/run-key-preflight.md) using the `ORQ_API_KEY` the invocation will use. For deployments, save the `get_config` response — it contains the prompt template needed in step 4. If `get_config` returns 204, the deployment has no published version — stop and ask the user to publish it before proceeding.
+3. **Verify the key with the run key** (agents and deployments only — skip for model direct calls) — whether the key came from MCP browsing or the user provided it directly. Follow the [run-key preflight](../orq-shared/resources/run-key-preflight.md) using the `ORQ_API_KEY` the invocation will use. For deployments, save the `get_config` response — it contains the prompt template needed in step 4. If `get_config` returns 204, the deployment has no published version — stop and ask the user to publish it before proceeding.
 
 4. **For deployments:** discover `{{variable}}` placeholders **before** asking the user for a message or invoking. Use the `get_config` response from step 3 — it already contains the prompt template.
 

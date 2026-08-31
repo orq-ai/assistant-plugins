@@ -8,9 +8,8 @@ description: >
   broken. Use when generating realistic multi-turn data for experiments,
   stress-testing conversational agents, or producing seed transcripts for
   dataset curation. Do NOT use when you have enough real production
-  conversations (use `orq-analyze-trace-failures`). Do NOT use for adversarial
-  red-teaming sweeps (use evaluatorq's built-in `red_team()` directly, see
-  `resources/redteam-mode.md`).
+  conversations (use `orq-analyze-traces`). Do NOT use for adversarial
+  red-teaming sweeps (use `orq-red-team`).
 allowed-tools: Bash(curl:*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities
 ---
 
@@ -42,7 +41,7 @@ violations. You almost never need to hand-roll the loop.
 - `orq-generate-synthetic-dataset`, turn reviewed simulation transcripts into a curated dataset
 - `orq-run-experiment`, once transcripts exist, evaluate them with conversation-level scorers
 - `orq-build-evaluator`, design a `SimulationScorer` that reads `SimulationResult`
-- `orq-analyze-trace-failures`, prefer this if real production conversations already exist
+- `orq-analyze-traces`, prefer this if real production conversations already exist
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
 ## When to use
@@ -54,9 +53,11 @@ violations. You almost never need to hand-roll the loop.
 
 ## When NOT to use
 
-- Real production conversations are available, use `orq-analyze-trace-failures`
+- Real production conversations are available, use `orq-analyze-traces`
 - Single-turn input/output evaluation, use `orq-run-experiment`
-- Red-teaming sweeps with attack categories, call `red_team()` directly (`from evaluatorq.redteam import red_team` — see [resources/redteam-mode.md](resources/redteam-mode.md))
+- Red-teaming sweeps with attack categories, use [`orq-red-team`](../orq-red-team/SKILL.md) — it owns `evaluatorq.redteam.red_team()`, the OWASP categories and the ASR reporting
+
+  Come back here when the goal is realism rather than adversarial coverage: personas spanning non-attack axes (politeness, urgency, expertise), or simulated conversations that seed an experiment dataset.
 
 ## Workflow Checklist
 
@@ -82,7 +83,7 @@ Pick one of the three target shapes that `simulate()` accepts:
 | `target=fn` | Agent is a local function or third-party SDK | Wrap with `from_chat_completions(...)` or write a `Callable[[list[Message]], str]` |
 | `target=AgentTarget(...)` | Full control over memory, clone, agent context, or building a custom agent on top of the orq.ai Responses API | Implement the `AgentTarget` protocol from `evaluatorq.contracts`, or use the bundled `OrqResponsesTarget(config=LLMCallConfig(...))`. See [resources/simulation-loop.md](resources/simulation-loop.md) for the full signature |
 
-If the user wants to drive an existing orq agent or deployment, use `search_entities` to **browse** available keys (`type: "agent"` or `type: "deployment"`). Then **verify the key with the run key** via REST or SDK (see [run-key preflight](../../docs/run-key-preflight.md)) — agents via `GET /v2/agents/<key>` (confirm `"status":"live"`), deployments via `POST /v2/deployments/get_config` (200 = invokable; 204 = no published version, stop and ask). After the key is verified, confirm it answers one turn end-to-end before wrapping it in a loop.
+If the user wants to drive an existing orq agent or deployment, use `search_entities` to **browse** available keys (`type: "agent"` or `type: "deployment"`). Then **verify the key with the run key** via REST or SDK (see [run-key preflight](../orq-shared/resources/run-key-preflight.md)) — agents via `GET /v2/agents/<key>` (confirm `"status":"live"`), deployments via `POST /v2/deployments/get_config` (200 = invokable; 204 = no published version, stop and ask). After the key is verified, confirm it answers one turn end-to-end before wrapping it in a loop.
 
 The framework ships `from_orq_deployment(agent_key)` and `from_chat_completions(fn)` adapters in `evaluatorq.simulation.adapters`. For Vercel AI SDK or LangChain agents, write a small callable and pass it as `target=` — it calls your agent's generate/invoke method and returns the assistant text.
 
@@ -199,4 +200,3 @@ Tell the user all four. The OTel span and Experiment URL are what designers and 
 
 - [resources/persona-scenario-template.md](resources/persona-scenario-template.md), `Persona` and `Scenario` filled examples with all enum values listed
 - [resources/simulation-loop.md](resources/simulation-loop.md), `simulate()`, `generate_and_simulate()`, `wrap_simulation_agent()` patterns with all target shapes
-- [resources/redteam-mode.md](resources/redteam-mode.md), when to switch to `evaluatorq.redteam.red_team()` instead

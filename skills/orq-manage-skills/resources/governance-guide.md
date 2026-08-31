@@ -70,7 +70,7 @@ Always start project-scoped (set `project_id`). Wire one consumer first (a singl
 
 ### Iterate
 - Iterate on `instructions` and `description`, not `display_name`. **Renaming `display_name` breaks every `{{snippet.<old-name>}}` reference.** See [known-caveats.md](known-caveats.md) for the rename workflow.
-- Sanity-check `instructions` rewrites (clarity, structure, no prose-negation anti-patterns) — see `orq-optimize-prompt` for prose heuristics, but apply judgment: Skill `instructions` are usually shorter and more capability-scoped than a system prompt.
+- Sanity-check `instructions` rewrites (clarity, structure, no prose-negation anti-patterns) — see `orq-improve-agent` for prose heuristics, but apply judgment: Skill `instructions` are usually shorter and more capability-scoped than a system prompt.
 - After each meaningful change, run `orq-run-experiment` against an agent or deployment that consumes the Skill to confirm the change improves (or at least doesn't regress) behavior.
 
 ### Stabilize

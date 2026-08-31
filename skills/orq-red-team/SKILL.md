@@ -6,7 +6,7 @@ description: >
   deployment", "test my agent for vulnerabilities", "OWASP red team", or "check
   how my agent handles adversarial inputs". Do NOT use when you only need to build
   evaluators (use orq-build-evaluator) or analyze existing trace failures (use
-  orq-analyze-trace-failures).
+  orq-analyze-traces).
 allowed-tools: Bash(eq:*), Bash(jq:*), Bash(uv:*), Bash(curl:*), Read, Write, Edit, Grep, Glob, mcp__orq-workspace__search_entities, mcp__orq-workspace__get_agent
 ---
 
@@ -150,7 +150,7 @@ If the user's target is `agent:<key>` or `deployment:<key>` and `ORQ_API_KEY` is
 
 A wrong `--target agent:<key>` (or `deployment:<key>`) does **not** fail fast — it fails deep in the run, after context retrieval, with a cryptic `Agent not found` / `deployment_not_found`. Confirm the key resolves up front.
 
-**Verify with the run key, not the MCP.** Full pattern, key-resolution bash, curl examples, and MCP caveat: see [run-key preflight](../../docs/run-key-preflight.md). Key points:
+**Verify with the run key, not the MCP.** Full pattern, key-resolution bash, curl examples, and MCP caveat: see [run-key preflight](../orq-shared/resources/run-key-preflight.md). Key points:
 
 - Resolve `ORQ_API_KEY` and check in **one shell block** (each Bash call is a fresh shell).
 - **Export** the resolved key so `eq` sees the same key the check used — `eq` does NOT auto-read `.env`.
@@ -445,7 +445,7 @@ vulnerabilities_found: 7
 | `eq: command not found` | Package not installed or not on PATH | Run the discovery ladder (PATH / `.venv` / uv workspace / `python -m`) before installing; install into a project venv with `uv pip install 'evaluatorq[redteam]'` (global `uv tool install` only as a last resort) |
 | Bare model names (`gpt-5-mini`) fail via `uv run` even after `unset ORQ_API_KEY` | uv loaded `ORQ_API_KEY` from an env-file (`UV_ENV_FILE` / explicit `--env-file`) after your `unset`, keeping routing on the gateway (uv does **not** auto-read `./.env`) | `env -u ORQ_API_KEY uv run --no-env-file …`, or run `eq` directly off PATH. See the uv `.env` trap section |
 | `Agent not found` / `deployment_not_found` mid-run | Wrong `--target` key, **or** the shell `ORQ_API_KEY` is scoped to a different project than the target (MCP said it exists, but the run key can't see it) | Verify up front with the **shell `ORQ_API_KEY`** — agents via `GET /v2/agents/{key}` (or SDK `agents.retrieve`), deployments via `POST /v2/deployments/get_config` (or SDK `deployments.get_config`). An MCP hit alone is not proof — its key may be another project. On a mismatch, ask the user for the right key (the one scoped to the target's project). See "Verify the target agent or deployment exists" |
-| `ORQ_API_KEY not set` or 401 errors | Missing env var for target agent | **Export** `ORQ_API_KEY` in your shell (`export ORQ_API_KEY=…`); a key only in `.env` is **not** auto-read by a bare `eq` run. See the [run-key preflight](../../docs/run-key-preflight.md) for the full resolution-and-export pattern |
+| `ORQ_API_KEY not set` or 401 errors | Missing env var for target agent | **Export** `ORQ_API_KEY` in your shell (`export ORQ_API_KEY=…`); a key only in `.env` is **not** auto-read by a bare `eq` run. See the [run-key preflight](../orq-shared/resources/run-key-preflight.md) for the full resolution-and-export pattern |
 | `ImportError` for `huggingface-hub`/`streamlit` | Incomplete install (missing extra) | `pip install 'evaluatorq[redteam]'` (`openai`/`typer` are core — an ImportError on those means the package itself is missing) |
 | `CredentialError` / run hangs at attack generation | No LLM credential for attack/evaluator | Set `OPENAI_API_KEY` (bare model names) **or** `ORQ_API_KEY` (provider-prefixed, e.g. `openai/gpt-5-mini`) |
 | ASR = 0.0 on all categories | Evaluator routing/credential issue, or genuinely resistant | Confirm the evaluator model string matches the active route (gateway → `openai/gpt-5-mini`); check creds before assuming a stronger judge is needed |
@@ -475,6 +475,6 @@ The CLI covers the common case (red-teaming an orq `agent:`/`deployment:` target
 ## Companion Skills
 
 - `orq-build-evaluator` — build custom LLM judges for failure modes surfaced by red teaming
-- `orq-analyze-trace-failures` — deeper failure taxonomy from production traces
+- `orq-analyze-traces` — deeper failure taxonomy from production traces
 - `orq-run-experiment` — run controlled experiments using orq deployments
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.

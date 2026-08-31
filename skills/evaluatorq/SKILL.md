@@ -34,7 +34,7 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 - `orq-build-evaluator` — design an LLM-as-a-judge evaluator prompt
 - `orq-compare-agents` — run the same evaluatorq evaluation across multiple agents
 - `orq-run-experiment` — run orq.ai-native experiments without writing code
-- `orq-analyze-trace-failures` — diagnose agent failures from production traces
+- `orq-analyze-traces` — diagnose agent failures from production traces
 - `orq-red-team` — full `eq redteam` walkthrough: modes, categories, output, dashboard
 - `orq-simulate-agent` — full `eq sim` walkthrough: personas, scenarios, goal scoring
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
@@ -51,7 +51,7 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 - **Comparing multiple agents?** → `orq-compare-agents`
 - **orq.ai-native experiments only, no custom code?** → `orq-run-experiment`
 - **No dataset yet?** → `orq-generate-synthetic-dataset` first
-- **Need to diagnose what's failing in production?** → `orq-analyze-trace-failures`
+- **Need to diagnose what's failing in production?** → `orq-analyze-traces`
 
 ## Workflow Checklist
 
@@ -91,7 +91,7 @@ Since v1.10 the library also exports **LLM-jury and pairwise judging**: `llm_jur
 - What is the agent key (orq.ai) or the function/endpoint to call?
 - What language — Python or TypeScript?
 
-For orq.ai targets, use `search_entities` MCP tool to **browse** available keys (`type: "agent"` or `type: "deployment"`). Then **verify the key with the run key** via REST or SDK (see [run-key preflight](../../docs/run-key-preflight.md)) — agents via `GET /v2/agents/<key>` (confirm `"status":"live"`), deployments via `POST /v2/deployments/get_config` (200 = invokable; 204 = no published version, stop and ask).
+For orq.ai targets, use `search_entities` MCP tool to **browse** available keys (`type: "agent"` or `type: "deployment"`). Then **verify the key with the run key** via REST or SDK (see [run-key preflight](../orq-shared/resources/run-key-preflight.md)) — agents via `GET /v2/agents/<key>` (confirm `"status":"live"`), deployments via `POST /v2/deployments/get_config` (200 = invokable; 204 = no published version, stop and ask).
 
 **For CLI** (`eq redteam` or `eq sim`): orient the user, then hand off to the appropriate companion skill — `orq-red-team` for adversarial testing, `orq-simulate-agent` for user simulation.
 

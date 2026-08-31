@@ -8,7 +8,7 @@ description: orq.ai workspace assistant — routes to skills and commands for bu
 You have additional SKILLs documented in directories containing a "SKILL.md" file.
 
 These skills are:
- - orq-analyze-trace-failures -> "skills/orq-analyze-trace-failures/SKILL.md"
+ - orq-analyze-traces -> "skills/orq-analyze-traces/SKILL.md"
  - orq-build-agent -> "skills/orq-build-agent/SKILL.md"
  - orq-build-evaluator -> "skills/orq-build-evaluator/SKILL.md"
  - create-skill -> "skills/create-skill/SKILL.md"
@@ -17,12 +17,13 @@ These skills are:
  - orq-compare-agents -> "skills/orq-compare-agents/SKILL.md"
  - evaluatorq -> "skills/evaluatorq/SKILL.md"
  - orq-generate-synthetic-dataset -> "skills/orq-generate-synthetic-dataset/SKILL.md"
+ - orq-improve-agent -> "skills/orq-improve-agent/SKILL.md"
  - orq-invoke-deployment -> "skills/orq-invoke-deployment/SKILL.md"
  - orq-manage-skills -> "skills/orq-manage-skills/SKILL.md"
- - orq-optimize-prompt -> "skills/orq-optimize-prompt/SKILL.md"
  - orq-red-team -> "skills/orq-red-team/SKILL.md"
  - orq-run-experiment -> "skills/orq-run-experiment/SKILL.md"
  - orq-setup-observability -> "skills/orq-setup-observability/SKILL.md"
+ - orq-shared -> "skills/orq-shared/SKILL.md"
  - orq-simulate-agent -> "skills/orq-simulate-agent/SKILL.md"
 
 IMPORTANT: You MUST read the SKILL.md file whenever the description of the skills matches the user intent, or may help accomplish their task.
@@ -33,9 +34,11 @@ orq-build-agent: `Design, create, and configure an orq.ai Agent with tools, inst
 
 orq-build-evaluator: `Create validated LLM-as-a-Judge evaluators following best practices — binary Pass/Fail judges with TPR/TNR validation for measuring specific failure modes`
 
-orq-evaluator-alignment: `Align, calibrate, or improve an existing LLM-as-a-judge (orq evaluator) so its verdicts match human judgment — boolean, categorical, or numeric judges. Measures judge self-consistency as one 0..1 instability score via repeated runs, groups the least reliable examples by what makes them hard and asks a few questions instead of making the user label every row, rewrites the judge prompt from those answers, and creates the new evaluator only after human approval. Use to "align my evaluator", "annotate an evaluator", "my judge keeps changing its mind", or "find ambiguous cases". Do NOT use to build an evaluator from scratch (use orq-build-evaluator) or to fix failures with prompt tweaks (use orq-optimize-prompt).`
+orq-evaluator-alignment: `Align, calibrate, or improve an existing LLM-as-a-judge (orq evaluator) so its verdicts match human judgment — boolean, categorical, or numeric judges. Measures judge self-consistency as one 0..1 instability score via repeated runs, groups the least reliable examples by what makes them hard and asks a few questions instead of making the user label every row, rewrites the judge prompt from those answers, and creates the new evaluator only after human approval. Use to "align my evaluator", "annotate an evaluator", "my judge keeps changing its mind", or "find ambiguous cases". Do NOT use to build an evaluator from scratch (use orq-build-evaluator) or to fix failures with prompt tweaks (use orq-improve-agent).`
 
-orq-analyze-trace-failures: `Read production traces, identify what's failing, build failure taxonomies, and categorize issues using open coding and axial coding methodology`
+orq-analyze-traces: `Analyze a live agent, deployment, or local agent from its production traces — relay its configuration and terminal states, then build a failure taxonomy by open coding and axial coding, and write it to an error-analysis file other skills read. Use when debugging agent or pipeline quality, when you have traces and no idea where to start, or before building any evaluator — error analysis comes first. Do NOT use when the failure modes are already identified and you need evaluators (use orq-build-evaluator), datasets (use orq-generate-synthetic-dataset), or a fix applied (use orq-improve-agent).`
+
+orq-improve-agent: `Improve an underperforming orq agent, deployment, or local agent — rewrite its instructions against a structured prompting framework, or move a configuration knob, grounded in the error-analysis file orq-analyze-traces writes. Use when a prompt needs improvement, when a config knob is wrong (truncated answers, iteration caps, sampling), or when you have a failure taxonomy and want the fix applied. Do NOT use to re-architect a pipeline (use orq-build-agent), to align a judge that already exists (use orq-evaluator-alignment), or to build the failure taxonomy in the first place (use orq-analyze-traces).`
 
 orq-invoke-deployment: `Invoke orq.ai deployments, agents, and models via the Python SDK or HTTP API — pass prompt variables, stream responses, handle multi-turn agent conversations, and generate integration code`
 
@@ -43,15 +46,13 @@ orq-run-experiment: `Create and run orq.ai experiments — compare configuration
 
 orq-generate-synthetic-dataset: `Generate and curate evaluation datasets — structured generation, quick from description, expansion from existing data, plus dataset maintenance and quality improvement`
 
-orq-optimize-prompt: `Analyze and optimize system prompts using a structured prompting guidelines framework — AI-powered analysis and rewriting`
-
 evaluatorq: `Write and run evaluatorq evaluation scripts (Python or TypeScript) for a single agent, use custom or built-in scorers, or run the evaluatorq CLI — eq redteam for adversarial testing, eq sim for multi-turn simulation. Do NOT use when comparing multiple agents (use orq-compare-agents).`
 
 orq-compare-agents: `Run cross-framework agent comparisons using evaluatorq — compares any combination of agents (orq.ai, LangGraph, CrewAI, OpenAI Agents SDK, Vercel AI SDK) head-to-head on the same dataset with LLM-as-a-judge scoring. Do NOT use when comparing only orq.ai configurations with no external agents (use orq-run-experiment instead).`
 
-orq-setup-observability: `Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment. Use when setting up tracing, adding the AI Router proxy, integrating OpenTelemetry, auditing existing instrumentation, or enriching traces with metadata. Do NOT use when traces already exist and you need to debug failures (use orq-analyze-trace-failures).`
+orq-setup-observability: `Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment. Use when setting up tracing, adding the AI Router proxy, integrating OpenTelemetry, auditing existing instrumentation, or enriching traces with metadata. Do NOT use when traces already exist and you need to debug failures (use orq-analyze-traces).`
 
-orq-red-team: `Run adversarial red teaming against deployed orq agents or static datasets using the orq red teaming library — adaptive attacks, OWASP Agentic/LLM category coverage, ASR reporting. Use when asked to run a red team, test an agent for vulnerabilities, or check OWASP coverage. Do NOT use when you only need evaluators (use orq-build-evaluator) or trace analysis (use orq-analyze-trace-failures).`
+orq-red-team: `Run adversarial red teaming against deployed orq agents or static datasets using the orq red teaming library — adaptive attacks, OWASP Agentic/LLM category coverage, ASR reporting. Use when asked to run a red team, test an agent for vulnerabilities, or check OWASP coverage. Do NOT use when you only need evaluators (use orq-build-evaluator) or trace analysis (use orq-analyze-traces).`
 
 orq-manage-skills: `Manage orq.ai Skills (the platform entity, formerly Snippets — distinct from this repo's code-assistant skills) end-to-end: list, get, create, update, retire (tag as retired), and delete Skills via the /v2/skills API. Covers authoring guidance (display_name, description, tags, project_id, path), how Skills get consumed via {{skill.<display_name>}} (canonical) and {{snippet.<display_name>}} (backward-compat alias) placeholders in prompts and agent instructions, the reference-scan-before-delete workflow, the rename-breaks-references warning, and the +NEVER+ prose anti-pattern. Use when the user wants to create, audit, edit, or retire orq.ai Skills.`
 
@@ -59,7 +60,9 @@ create-skill: `Build or update an agent skill from an API, CLI, or MCP surface. 
 
 orq-cli: `Drive the orq command-line interface — verify the install, authenticate, select a workspace, resolve the active workspace key, and run read/write commands against any orq.ai resource with JSON output and JMESPath queries. Use when a task needs shell access to orq.ai, when a script or CI job must read workspace data, or when the CLI itself is misbehaving (orq doctor). Do NOT use for writing application code that calls orq.ai (use orq-invoke-deployment) or for guided evaluation workflows (use orq-run-experiment).`
 
-orq-simulate-agent: `Run multi-turn agent simulations using evaluatorq's first-class simulation primitives (simulate(), generate_and_simulate(), wrap_simulation_agent()). Drive an agent under test with a UserSimulatorAgent and built-in JudgeAgent that terminates on goal achievement or rule violations. Use when generating realistic multi-turn data, stress-testing conversational agents, or producing seed transcripts. Do NOT use when real production conversations exist (use orq-analyze-trace-failures) or for adversarial red-teaming sweeps (call evaluatorq.red_team() directly).`
+orq-simulate-agent: `Run multi-turn agent simulations using evaluatorq's first-class simulation primitives (simulate(), generate_and_simulate(), wrap_simulation_agent()). Drive an agent under test with a UserSimulatorAgent and built-in JudgeAgent that terminates on goal achievement or rule violations. Use when generating realistic multi-turn data, stress-testing conversational agents, or producing seed transcripts. Do NOT use when real production conversations exist (use orq-analyze-traces) or for adversarial red-teaming sweeps (call evaluatorq.red_team() directly).`
+
+orq-shared: `Reference bundle shared by the other orq skills — the verified orq CLI trace query contract (trace-queries.md) and the run-key preflight that resolves an agent or deployment key before any call (run-key-preflight.md). Read the file another skill points you at; do not invoke this skill on its own. Do NOT use to run CLI commands (use orq-cli), to analyze traces (use orq-analyze-traces), or to fix an agent (use orq-improve-agent).`
 
 </available_skills>
 

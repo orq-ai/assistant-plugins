@@ -25,6 +25,7 @@ curl -s -w '\nHTTP %{http_code}\n' "https://api.orq.ai/v2/agents/<key>" \
 # 200 → exists (confirm "status":"live" in body)
 # 404 → not found or not in this key's project
 # 401 → bad key
+# 000 → TLS failure, NOT a verdict — see "HTTP 000 is not a verdict" below
 ```
 
 Python SDK equivalent:
@@ -57,6 +58,7 @@ curl -s -w '\nHTTP %{http_code}\n' -X POST "https://api.orq.ai/v2/deployments/ge
 # 204 → deployment exists but has no published version — treat as a miss (stop and ask the user to publish)
 # 404 → deployment_not_found or not in this key's project
 # 401 → bad key
+# 000 → TLS failure, NOT a verdict — see "HTTP 000 is not a verdict" below
 ```
 
 Python SDK equivalent:
@@ -73,6 +75,21 @@ with Orq(api_key=os.environ["ORQ_API_KEY"]) as orq:
 
 - **404** — the key is wrong or scoped to another project. If the MCP shows the target but REST 404s, the run key is in the wrong project — **ask the user for the right key** (or its `.env`/path). Then re-check.
 - **204** (deployments only) — the deployment exists but has no published version (only drafts). The agent cannot proceed without a config. **Stop and ask the user** to publish a version of the deployment, then re-check.
+
+## HTTP 000 is not a verdict
+
+`curl` reports `000` with *"unable to get local issuer certificate"* or *"failed to verify the legitimacy of the server"* when TLS is being intercepted locally — a corporate proxy, or antivirus with HTTPS scanning. **The request never reached orq.ai.** It is not a missing agent, not a wrong project, and not a bad key. Never record it as a miss, and never let it trigger the "ask the user for a different key" path.
+
+Retry with verification off, the same posture this repo already takes on Windows (`httpx(verify=False)`):
+
+```bash
+curl -s -k -w '\nHTTP %{http_code}\n' "https://api.orq.ai/v2/agents/<key>" \
+  -H "Authorization: Bearer $KEY"
+```
+
+If `-k` turns `000` into `200`, the key and the agent were fine all along; carry on. If it still fails, the host is genuinely unreachable, and *that* is worth reporting to the user.
+
+**Then read the response body, not just the status code.** A 200 here returns the agent's entire config — model, `instructions`, and `settings`. `orq-improve-agent` opens by checking that config against those instructions, so parsing it now saves re-fetching it later.
 
 ## MCP caveat — a miss is not proof of nonexistence
 

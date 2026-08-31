@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-08-31
+
+Two shipped skills were removed and replaced under new names. Per the versioning table in `CLAUDE.md`, a removed or renamed skill is a MAJOR bump: an installer following semver would otherwise treat this as safe to auto-apply and silently lose two skills. There is no alias or redirect stub for the old names — update any script, macro or saved prompt that invokes them.
+
+### Added
+- `orq-analyze-traces` skill: trace-grounded failure analysis using open/axial coding, replaces `orq-analyze-trace-failures` (deleted)
+- `orq-improve-agent` skill: prompt rewrite and config knob fixes grounded in error-analysis artifacts, replaces `orq-optimize-prompt` (deleted)
+- `orq-shared` skill: reference bundle the other skills read — holds no procedure, is not invoked on its own
+- `skills/orq-shared/resources/trace-queries.md`: verified CLI trace query contract, now also the single home for the CLI-vs-MCP rules, the `lever`/`knob`/`unobservable` vocabulary, and the `settings.tools[]` read-vs-write schema translation that `orq-analyze-traces` and `orq-improve-agent` previously each restated
+- HTTP 000 / TLS interception handling in `run-key-preflight.md`
+
+### Changed
+- **Shared references moved from `docs/` into the `orq-shared` skill.** `npx skills add` copies a skill folder and nothing else, so a `../../docs/...` link resolved only in a repo checkout — for every skills-only install the references were simply missing. Sibling links (`../orq-shared/resources/<file>.md`) resolve after any install, because skills land next to each other. This repoints all 11 links across 7 skills, including the 9 that already pointed at `docs/run-key-preflight.md` before this release.
+- **The doc-resolution ladder is now stated once**, in `skills/orq-shared/resources/doc-resolution.md`. Six skills carried the same four-step order and the same closing sentence, differing only in which live-query tools they named; each now links the shared order and keeps only its own first step. `## orq.ai Documentation` is deliberately untouched — those deep links and Key Concepts are per-skill and should differ.
+- `orq-simulate-agent`: dropped `resources/redteam-mode.md`. Three of its four sections were a thinner copy of the `orq-red-team` skill, including an SDK example that had already drifted from `orq-red-team/resources/python-sdk.md`; the routing decision it existed for is now two lines in the skill pointing at `orq-red-team`.
+- `commands/quickstart.md`: the eval cycle now reads analyze → improve → run-experiment, matching what the skills themselves do. The previous order put validation before the fix and made the evaluator step unconditional.
+
+### Removed
+- `orq-analyze-trace-failures` skill (replaced by `orq-analyze-traces`)
+- `orq-optimize-prompt` skill (replaced by `orq-improve-agent`)
+- `docs/trace-queries.md` and `docs/run-key-preflight.md` (moved into `skills/orq-shared/resources/`)
+
 ## [2.8.0] - 2026-08-31
 
 ### Added

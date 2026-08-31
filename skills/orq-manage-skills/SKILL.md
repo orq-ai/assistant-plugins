@@ -48,15 +48,15 @@ When the user says "create a Skill" without context, ask which one they mean. Th
 - **Build the agent itself?** → `orq-build-agent`
 - **Invoke a deployment or agent?** → `orq-invoke-deployment`
 - **Evaluate an agent that uses the Skill?** → `orq-run-experiment`
-- **Improve the prose inside `instructions`?** → `orq-optimize-prompt` is tuned for system prompts; reuse its clarity heuristics but apply judgment — Skill `instructions` are typically shorter and more capability-scoped.
-- **Debug why a referenced Skill isn't rendering?** → `orq-analyze-trace-failures`
+- **Improve the prose inside `instructions`?** → `orq-improve-agent` is tuned for system prompts; reuse its clarity heuristics but apply judgment — Skill `instructions` are typically shorter and more capability-scoped.
+- **Debug why a referenced Skill isn't rendering?** → `orq-analyze-traces`
 
 ## Companion Skills
 
 - `orq-build-agent` — author the agents whose instructions reference these Skills via `{{skill.<key>}}`
-- `orq-optimize-prompt` — review prose quality for `instructions`
+- `orq-improve-agent` — review prose quality for `instructions`
 - `orq-run-experiment` — verify a Skill change improves downstream behavior
-- `orq-analyze-trace-failures` — diagnose Skills that aren't producing the expected output in production
+- `orq-analyze-traces` — diagnose Skills that aren't producing the expected output in production
 - `orq-cli` — the same Skills CRUD from a shell (`orq skills list|get|create|update|delete`), for scripting or bulk audits. See its "MCP tools or the CLI?" table before choosing.
 
 ## Constraints
@@ -211,7 +211,7 @@ Use when the user wants to edit an existing Skill.
 2. **Patch fields explicitly.** Only send the fields being changed (`update_skill` is a patch — don't echo back unchanged tags or `instructions`).
 3. **`display_name` rename — DANGER.** The `display_name` IS the lookup key for `{{skill.<display_name>}}` and `{{snippet.<display_name>}}`. Renaming it silently breaks every prompt or agent instruction that references the old name. Before sending a rename, run the reference scan from Phase 5 step 1 and warn the user. Offer to update the references in the same session.
 4. **Soft-retire pattern** — adding a `retired` tag via `update_skill` is the recommended first step before deletion. It's visible in the Studio, reversible, and leaves a clear signal for audits. Reserve `delete_skill` for actual cleanup after the Skill has been confirmed unused.
-5. **`instructions` changes:** if the user is rewriting the body, run a clarity pass first — reuse `orq-optimize-prompt`'s heuristics (clarity, structure, no soft-constraint anti-patterns) but adapt; Skill `instructions` are typically shorter and capability-scoped, not full system prompts.
+5. **`instructions` changes:** if the user is rewriting the body, run a clarity pass first — reuse `orq-improve-agent`'s heuristics (clarity, structure, no soft-constraint anti-patterns) but adapt; Skill `instructions` are typically shorter and capability-scoped, not full system prompts.
 6. **Verify** by calling `get_skill` post-update and confirming the change landed.
 
 ### Phase 5: Delete (with reference scan)
