@@ -620,13 +620,17 @@ echo "https://my.orq.ai/${key}/traces?query=$(printf 'trace_id:is:%s' "$trace_id
 
 ### Which host am I actually talking to?
 
-**Do not memorise a host. Ask.** There are two independent settings, and one of
-them moves when you log in:
+**Do not memorise a host. Ask.** There is now **one** setting — `--server` /
+`ORQ_SERVER` — and it moves when you log in:
 
 ```sh
-orq server current --json                        # resource commands
-orq doctor --json -j 'config.api_base_url'       # built-in auth commands
+orq server current --json                        # the resolved host
+orq doctor --json -j 'config'                    # every URL, each with its source
 ```
+
+`config.api_base_url` in doctor's output is a *response field name* and keeps
+that spelling; it is not the deprecated `--api-base-url` flag. Reading it is
+fine. Setting a host through anything but `--server` / `ORQ_SERVER` is not.
 
 `orq server current` returns `server`, `server_index`, `server_override`, and —
 new in 5.0.0 — `profile_server` and `server_default`. `orq server list` dropped

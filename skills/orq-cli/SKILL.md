@@ -40,9 +40,10 @@ The CLI's version is its own since 5.0.0 and no longer tracks the API line, so a
 - **NEVER** run a generated `delete` command, or `orq request DELETE`, without
   `--force` in any non-interactive context. Since 5.0.0 they prompt for
   confirmation and **refuse to run when there is no terminal** — which is every
-  agent and CI invocation. 40 commands are affected. `--force` skips the
-  prompt; think before adding it, because it is the confirmation you are
-  removing.
+  agent and CI invocation. 40 commands are affected. This one fails *loudly*
+  (exit 1, message on stderr, no request sent), so it costs a retry rather than
+  data; `--force` skips the prompt, so think before adding it — it is the
+  confirmation you are removing.
 - **NEVER** trust the exit code for auth. `orq auth whoami`, `orq workspace
   list`, and `orq doctor` all exit **0** when unauthenticated. Read the payload:
   `authenticated` from `whoami`, `auth.status` from `doctor`. Verified on 5.1.0:
@@ -772,6 +773,25 @@ orq agents delete <id> --force        # required non-interactively
 orq request DELETE /v2/agents/<id> --force
 ```
 
+**What happens without it**, verified on 5.1.0 — exit **1**, nothing on stdout,
+one line on stderr, and **no request is sent**:
+
+```
+Error: refusing to run "orq agents delete <id>" without --force in a non-interactive shell
+```
+
+`orq request DELETE` gives the identical message with its own command line in
+it. That the request is never sent is not an inference: the same nonexistent id
+*with* `--force` reached the API and came back `HTTP 404: Agent not found`,
+while without it there was no HTTP response at all.
+
+So this is a **loud** failure, unlike most of the traps in this skill — it costs
+a retry, never data. If a script that used to work now exits 1 with that
+message, the fix is to add `--force` after confirming the id, not to debug auth.
+
+Only DELETE is gated. Reads and writes on the same resource are unaffected:
+`orq agents retrieve <id>` and `orq agents update …` need no flag.
+
 Two related 5.0.0 changes make delete safer rather than just noisier: path
 parameters are URL-escaped (`orq datasets retrieve '../../etc/passwd'` now 404s
 instead of traversing), and an **empty id is rejected before any request** —
@@ -821,7 +841,7 @@ session path, the base URLs with their source, credential-file permissions (with
 |---|---|---|
 | `you are not logged in` on `whoami` / `workspace`, but resource commands work | key-only setup; these need a session | `orq auth login`, or accept the limitation |
 | `doctor` reports no login but commands work | `doctor`'s auth block ignores `ORQ_API_KEY` | confirm with `orq projects list --json --limit 200 -j 'length(data)' --raw` |
-| A `delete` exits non-zero in CI with no useful message | 5.0.0 requires confirmation; no TTY means refuse | add `--force` after checking the id |
+| `refusing to run "…" without --force in a non-interactive shell` | 5.0.0 gates DELETE on confirmation; no TTY means refuse. Nothing was sent | add `--force` after confirming the id resolves |
 | A typo'd subcommand "succeeds" with no data | unknown subcommands print help to stdout at exit **0** | compare the output against `--help`; do not trust `$?` alone |
 | `agents list` hangs for minutes, then `HTTP 503` | no `--limit`; the unpaginated read times out | always pass `--limit` |
 | `--workspace` appears ignored | an API key outranks it | read stderr for the `--workspace has no effect` warning; unset the key or use `--profile` |
@@ -833,7 +853,8 @@ session path, the base URLs with their source, credential-file permissions (with
 | `unknown shorthand flag: 'q'` | there is no `-q` — the projection flag is `-j/--jmespath` | re-run with `-j`; do **not** switch to `--query` |
 | `unknown command` | subcommand moved or renamed between releases | `orq <group> --help`; check `orq --version` |
 | Output is unparseable | TOON default | add `--json` |
-| Requests hit the wrong host | `ORQ_SERVER`, or a persisted server default | `orq server current` (not `doctor`) |
+| Requests hit the wrong host | `ORQ_SERVER`, a profile-bound host, or a persisted default | `orq server current`; set hosts with `--server` only |
+| `warning: --api-base-url is deprecated` | the pre-5.0.0 flag for the auth host | replace it with `--server` — same value, one name |
 | `HTTP 404` on a documented command | endpoint in the spec but not served by this deployment | confirm with `orq request GET <path>`; if that also 404s it is server-side |
 | Works locally, fails in CI | OAuth session is not portable | use `ORQ_API_KEY`, and avoid `whoami` / `workspace` in CI |
 
@@ -843,15 +864,40 @@ project file can silently change behaviour. Note the env var the CLI reads for a
 key is `ORQ_API_KEY` specifically; a project using a different name (`ORQ_KEY`,
 say) will not authenticate the CLI even though the file loaded.
 
-**One name for the host, and it changed.** `--server` / `ORQ_SERVER` now works
-on every command, including `orq auth login --server https://orq.acme.internal`.
-The old `--api-base-url` flag and `ORQ_API_BASE_URL` variable are **deprecated**:
-verified on 5.1.0, `orq doctor --api-base-url …` still works but prints
-`warning: --api-base-url is deprecated and will be removed in a future release;
-use --server instead`, and the flag was never accepted on generated commands at
-all (`orq projects list --api-base-url …` → `Error: unknown flag`). The default host also
-moved from `https://api.orq.ai` to `https://my.orq.ai` — both answer the same
-routes, but a self-hosted deployment that only allow-listed one name will notice.
+### Setting the host: `--server`, and nothing else
+
+**`--server <url>` / `ORQ_SERVER` is the only way to point the CLI at a host.**
+It works on every command, built-in and generated, including
+`orq auth login --server https://orq.acme.internal`. Use it and stop there.
+
+`--api-base-url` and `ORQ_API_BASE_URL` are the **deprecated** old spellings.
+Do not write them into anything new, and replace them when you find them — the
+value is identical, so it is a rename, not a migration:
+
+```sh
+orq doctor --api-base-url https://api.orq.ai      # old — deprecated
+orq doctor --server       https://api.orq.ai      # new — do this
+```
+
+Verified on 5.1.0: the old flag still runs and prints `warning: --api-base-url
+is deprecated and will be removed in a future release; use --server instead`.
+Upstream states it will be removed in a following minor, so treat it as already
+gone. It was also never accepted on generated commands — `orq projects list
+--api-base-url …` gives `Error: unknown flag` — which is exactly the split
+`--server` exists to end.
+
+Why it matters beyond tidiness: until 5.0.0 these were **two different hosts**,
+not two names for one. Six built-in commands took `--api-base-url` and rejected
+`--server`, every generated command did the reverse, and a single run could talk
+to two hosts at once. Anything you find that sets both is working around that
+old split and should collapse to one `--server`.
+
+The default host also moved from `https://api.orq.ai` to `https://my.orq.ai` —
+both answer the same routes, but a self-hosted deployment that only allow-listed
+one name will notice.
+
+(The `config.api_base_url` field in `orq doctor --json` output is unrelated —
+that is a response field name, not the flag, and it keeps its spelling.)
 
 A profile now carries its own host as well as its own credentials, and both beat
 the wider setting: `orq auth login --server <url> --profile acme` binds that
