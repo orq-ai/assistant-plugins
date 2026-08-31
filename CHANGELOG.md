@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [3.1.0] - 2026-08-31
 
 ### Changed
+- `orq-cli`: document that the `--version` flag silently ignores `--json` (and that
+  `orq --version -o json` fails with `unknown command "json"`); only `orq version
+  --json` emits JSON.
 - **`orq-cli` skill re-probed against orq CLI 5.1.0** (built against orq API 4.14.3); it was previously verified against 4.13.0. Several load-bearing claims were wrong and are corrected:
   - `--workspace` / `ORQ_WORKSPACE` are now real CLI surfaces. The skill previously stated the CLI ignored them and that they were an evaluatorq-only convention. `orq --workspace <key> <cmd>` scopes one invocation without changing the session's active workspace.
   - `agents list` now paginates (default 10, `has_more: true`). The old text claimed it returned everything unpaginated, and built the workspace-canary guidance on that. Omitting `--limit` blocked for 4m16s and then returned `HTTP 503`, so the flag is documented as required. The 503 itself is **not** attributed to pagination: `orq agents retrieve <valid-key>` — one entity, no pagination — hung 4m14s with the same error, while a nonexistent key returned `HTTP 404` in 0.19s. The skill says so explicitly, since "add `--limit`" is useless advice for a hanging single-entity read.

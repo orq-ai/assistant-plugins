@@ -194,6 +194,13 @@ only `orq version --json` reports both plus how the binary was installed
 its *first* line for compatibility but now prints a second line under it, which
 breaks anything reading the whole output.
 
+The `--version` *flag* also **silently ignores `--json`**. Verified on 5.1.0:
+`orq --version --json`, `orq --json --version` and `ORQ_JSON=1 orq --version`
+all print the same plain text and exit `0` — a script piping that into `jq`
+gets a parse error, not JSON. `orq --version -o json` is worse: `-o`'s value
+lands in subcommand position and it fails with `Error: unknown command "json"
+for "orq"` at exit `1`. Only the `version` **subcommand** honours the flag.
+
 ### Installing
 
 **npm is the recommended route, and the only one for Windows** (needs Node ≥ 14):
@@ -891,6 +898,7 @@ session path, the base URLs with their source, credential-file permissions (with
 | Empty lists where data should be | wrong workspace, or a projection sent as `--query` full-text search | `orq workspace list`; re-run with `-j`, not `--query` |
 | `unknown shorthand flag: 'q'` | there is no `-q` — the projection flag is `-j/--jmespath` | re-run with `-j`; do **not** switch to `--query` |
 | `unknown command` | subcommand moved or renamed between releases | `orq <group> --help`; check `orq --version` |
+| `jq` fails on `orq --version --json` | the `--version` flag ignores `--json` and prints plain text | use the subcommand: `orq version --json` |
 | Output is unparseable | TOON default | add `--json` |
 | Requests hit the wrong host | `ORQ_SERVER`, a profile-bound host, or a persisted default | `orq server current`; set hosts with `--server` only |
 | `warning: --api-base-url is deprecated` | the pre-5.0.0 flag for the auth host | replace it with `--server` — same value, one name |
