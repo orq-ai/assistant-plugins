@@ -212,6 +212,17 @@ Send the run under `context`. **`context` is the request envelope, not a namespa
 
 A flat shorthand is still accepted and folds into `context`: `query` → `input.user_query`, `output` → `output.response`, `reference` → `input.expected_output`, and `messages`/`retrievals`/`variables` keep their top-level names. **There is no flat alias for `system_instructions` or `tools_called` — those two variables are reachable only through `context`.**
 
+The CLI mirrors this. `--query`/`--output`/`--reference`/`--retrievals`/`--messages` fold into `context` the same way, `--variables` takes repeatable `key=value`, and there is no `--system-instructions` or `--tools-called` flag — reach those through `--context`. Note which level each flag expects:
+
+```bash
+# --context takes the INNER object (no "context" key)
+orq evals invoke <id> --json \
+  --context '{"input":{"system_instructions":"...","user_query":"..."},"output":{"response":"..."}}'
+
+# --from-file takes the FULL body (with "context")
+orq evals invoke <id> --json --from-file body.json   # {"context":{"input":{...}}}
+```
+
 **Unknown fields are ignored silently — no error, the variable renders empty and the judge scores a prompt with a hole in it.** `input` and `expected_output` are not flat aliases (they exist only inside `context.input`), so `{"input": …}` at the top level is dropped. When `messages` is present it is the conversation and `input.user_query` is ignored; `output.response` is appended only if the conversation has no assistant turn.
 
 Returns `{"type", "value", "evaluator_id", "status", "passed", "explanation", "categories"}`, and optionally `trace_id`, `span_id`, `confidence` — `value` is the verdict (`true`/`false`, a number, or the chosen label). A categorical evaluator reports `type: "string"`, not `"categorical"`. `passed` is the guardrail's decision when the evaluator has one and the grader's own judgement otherwise, so read `guardrail_config` to tell which. The `id` also accepts `id@version` or `id@environment` to grade against a published version.

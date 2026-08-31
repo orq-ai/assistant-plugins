@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `orq-build-evaluator`: Python evaluator `log` dict full 7-key reference with three runnable examples
 - `orq-build-evaluator`: `POST /v3/evaluators/{id}/invoke` for rapid Phase 5 iteration, with the response shape and a payload-field-to-template-variable table. Evaluator CRUD is v2-only and invoke is v3-only — `/v3/evaluators` 404s, `POST /v2/…/invoke` returns `403 insufficient_scope` for a workspace key.
 - `orq-build-evaluator`: `orq evals create` invocation for categorical evaluators alongside the raw HTTP body, for scripts and CI
+- `orq-build-evaluator`: `orq evals invoke` flag reference — the flat flags fold into `context` as the JSON shorthand does, `--context` takes the inner object while `--from-file` takes the full body, and `system_instructions`/`tools_called` have no flag of their own
 - `orq-build-evaluator`: Phase 6 step 16 recommends running `orq-evaluator-alignment` after creating an LLM evaluator
 
 ### Changed
