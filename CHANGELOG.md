@@ -44,7 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `orq-run-experiment`, `orq-build-agent`: evaluator invoke endpoint corrected from `/v2/evaluators/<ID>/invoke` (403) to `/v3/…`
 - `orq-run-experiment`: evaluator list pagination corrected from `after=` (silently ignored, re-serves page 1) to `starting_after=`
 - `orq-build-evaluator`: dropped the unverified `string` output type row and the unverified JSON-schema/HTTP evaluator types; `function_eval` and `ragas` are documented with their real parameter shapes
-- `orq-build-evaluator`: invoke payload corrected to `query`/`reference` — `input` and `expected_output` are not accepted and are dropped silently, rendering `{{input.user_query}}` / `{{input.expected_output}}` empty with no error
+- `orq-build-evaluator`: invoke payload documented as the `context` form the docs prefer, with the flat shorthand as the legacy alias. `input` and `expected_output` are not flat aliases and are dropped silently, rendering their variables empty with no error; `system_instructions` and `tools_called` have no flat alias at all.
+- `orq-build-evaluator`: `resources/judge-prompt-template.md` §6 now carries all seven template variables, the indexing syntax, the message and tool-call shapes, and the full legacy `{{log.*}}` mapping
+- `orq-build-evaluator`, `orq-run-experiment`: `{{log.messages}}` is **not** equivalent to `{{input.all_messages}}` — it omits the graded turn. The previous entry mapped them as the same variable.
 
 ## [2.5.1] - 2026-08-27
 

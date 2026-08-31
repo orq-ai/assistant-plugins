@@ -24,7 +24,7 @@
     "orq-build-evaluator": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "4323170783a9ee52c3e8b6516619fa6048415f54797bf4e03c055c0d3cc159b0"
+      "computedHash": "a32fc4aa968426670f4a5f493e44b50b44c5b038ef2a5c28321b59b9ade6c07f"
     },
     "orq-cli": {
       "source": "orq-ai/assistant-plugins",
@@ -69,7 +69,7 @@
     "orq-run-experiment": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "590205187fc1c56835156e2f4978a23c4edb94c6c1a4d56c9b943b3eb0de3fa8"
+      "computedHash": "bd7b63402c76f328d902677e9da8e453851564d495a9d9d3de9696af74464d91"
     },
     "orq-setup-observability": {
       "source": "orq-ai/assistant-plugins",

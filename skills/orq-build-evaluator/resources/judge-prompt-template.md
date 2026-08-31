@@ -89,13 +89,41 @@ Your JSON Evaluation:
 
 5. **Reasoning before answer**: The template puts "reasoning" before "answer" in the JSON to encourage chain-of-thought before the final judgment.
 
-6. **Variables** (v4.14+) — this list is canonical for the skill; add new variables here, not in `SKILL.md`:
-   - `{{input.user_query}}` — last user message
-   - `{{output.response}}` — model's generated response
-   - `{{input.expected_output}}` — reference/expected answer
-   - `{{input.system_instructions}}` — the system prompt the model ran with
-   - `{{input.all_messages}}` — full conversation (indexable: `[0].content`, `[-1].role`)
-   - `{{input.retrievals}}` — Knowledge Base chunks (indexable: `[0]`)
-   - `{{output.tools_called}}` — tool invocations (indexable: `[0].name`, `.arguments`, `.output`)
-   - Custom variables via the `variables` field at invocation: `{{my_custom_var}}`
-   - Legacy `{{log.input}}`, `{{log.output}}`, `{{log.reference}}`, `{{log.messages}}`, `{{log.retrievals}}` still work but are deprecated.
+6. **Variables** (v4.14+) — this list is canonical for the skill; add new variables here, not in `SKILL.md`.
+   These are the seven the prompt editor offers (type `{{` in the editor to pick from the list). All render as strings.
+
+   | Variable | Content |
+   |----------|---------|
+   | `{{input.user_query}}` | The last message sent to the model |
+   | `{{input.all_messages}}` | The full conversation, **including** the graded turn |
+   | `{{input.system_instructions}}` | The system prompt the run used |
+   | `{{input.retrievals}}` | Knowledge Base retrievals |
+   | `{{input.expected_output}}` | The reference to compare the output against |
+   | `{{output.response}}` | The response the evaluated model generated |
+   | `{{output.tools_called}}` | The tool calls made during the run, with their results |
+
+   Custom values passed at invocation are available under their own name: `{{my_custom_var}}`.
+
+   **Indexing.** Index into a variable to reach one message or tool call:
+
+   ```text
+   {{input.all_messages[0].content}}
+   {{input.all_messages[-1].role}}
+   {{output.tools_called[0].name}}
+   {{output.tools_called[0].arguments}}
+   ```
+
+   A tool call has `name`, `arguments`, `status` (`""`, `in_progress`, `completed`, `incomplete`, `failed`) and an optional `output`. A message is role-tagged: `system`/`developer`/`user` carry `content`; `assistant` carries an optional `content` plus optional `tool_calls[]` of `{id, type, function: {name, arguments}}`; `tool` carries `tool_call_id` and `content`.
+
+   **Legacy `{{log.*}}` variables** still resolve, so existing evaluators keep working — prefer the above for new ones. The mapping is not quite one-to-one:
+
+   | Legacy | Current |
+   |--------|---------|
+   | `{{log.input}}` | `{{input.user_query}}` |
+   | `{{log.output}}` | `{{output.response}}` |
+   | `{{log.retrievals}}` | `{{input.retrievals}}` |
+   | `{{log.reference}}` | `{{input.expected_output}}` |
+   | `{{log.tool_calls}}` | `{{output.tools_called}}` |
+   | `{{log.messages}}` | **Not** `{{input.all_messages}}` — `log.messages` excludes the graded turn, `input.all_messages` includes it. Swapping them changes what the judge sees. |
+
+   There is no `log.*` equivalent for `{{input.system_instructions}}`.

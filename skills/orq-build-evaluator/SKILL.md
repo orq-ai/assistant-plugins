@@ -144,7 +144,7 @@ MCP covers boolean and numeric LLM/Python evaluators. Everything below has no MC
 | List evaluators | `GET /v2/evaluators?limit=50` — paginate with `starting_after=<last _id>` while `has_more` is true. **Not** `after=` — that parameter is silently ignored and re-serves page 1 forever. |
 | Test-run one evaluator | `POST /v3/evaluators/{id}/invoke` — see below |
 
-**Evaluator CRUD is v2-only and invoke is v3-only.** This is not a typo to normalise: `GET`/`POST /v3/evaluators` returns 404, and `POST /v2/evaluators/{id}/invoke` returns `403 insufficient_scope` for a workspace API key. Use each version where it works.
+**Evaluator CRUD is v2-only and invoke is v3-only.** This is not a typo to normalise: `GET`/`POST /v3/evaluators` 404s, and there is no v2 invoke route left — a gateway key gets a plain `404` from `POST /v2/evaluators/{id}/invoke`, a management key gets `403 insufficient_scope` from the auth layer before routing. Older snippets pointing at `/v2/…/invoke` predate the move. Both `api.orq.ai` and `my.orq.ai` serve the v3 route.
 
 #### Creating a Categorical Evaluator
 
@@ -190,23 +190,24 @@ orq evals create --json \
 
 `POST /v3/evaluators/{id}/invoke` runs one evaluator against a single input/output pair — use it for rapid Phase 5 iteration instead of a full experiment. Or `orq evals invoke <id> --json --query ... --output ...`, which calls the same endpoint.
 
+Send the run under `context`, whose field names are the template variables they fill — `input.user_query` in the body is `{{input.user_query}}` in the prompt. This is the form to use for anything new:
+
 ```json
-{"query": "the original user query", "output": "the response to judge", "reference": "the expected answer"}
+{
+  "context": {
+    "input": {"user_query": "...", "system_instructions": "...", "retrievals": ["..."], "expected_output": "..."},
+    "output": {"response": "...", "tools_called": [{"name": "...", "arguments": "...", "output": "..."}]},
+    "messages": [{"role": "user", "content": "..."}],
+    "variables": {"my_custom_var": "..."}
+  }
+}
 ```
 
-**The payload field names are not the template variable names, and unknown fields are silently ignored — no error, the variable just renders empty and the judge scores a prompt with a hole in it.** Send exactly these:
+A flat shorthand is still accepted and folds into `context`: `query` → `input.user_query`, `output` → `output.response`, `reference` → `input.expected_output`, and `messages`/`retrievals`/`variables` keep their names. **There is no flat alias for `system_instructions` or `tools_called` — those need the `context` form.**
 
-| Payload field | Renders as | Notes |
-|---------------|-----------|-------|
-| `query` | `{{input.user_query}}` | **Not** `input` — `input` is dropped silently |
-| `output` | `{{output.response}}` | |
-| `reference` | `{{input.expected_output}}` | **Not** `expected_output` — also dropped silently |
-| `messages` | `{{input.all_messages}}` | `[{role, content}]`; when present it takes precedence over `query`/`output` |
-| `retrievals` | `{{input.retrievals}}` | list of strings |
-| `variables` | `{{my_custom_var}}` | map, for custom variables |
-| `context`, `model` | — | optional context object and judge-model override |
+**Unknown fields are ignored silently — no error, the variable renders empty and the judge scores a prompt with a hole in it.** `input` and `expected_output` are not flat aliases (they exist only inside `context.input`), so `{"input": …}` at the top level is dropped. When `messages` is present it is the conversation and `input.user_query` is ignored; `output.response` is appended only if the conversation has no assistant turn.
 
-Returns `{"type", "value", "evaluator_id", "status", "passed", "explanation"}` — `value` is the verdict (`true`/`false`, a number, or the chosen label). A categorical evaluator reports `type: "string"`, not `"categorical"`.
+Returns `{"type", "value", "evaluator_id", "status", "passed", "explanation", "categories"}`, and optionally `trace_id`, `span_id`, `confidence` — `value` is the verdict (`true`/`false`, a number, or the chosen label). A categorical evaluator reports `type: "string"`, not `"categorical"`. `passed` is the guardrail's decision when the evaluator has one and the grader's own judgement otherwise, so read `guardrail_config` to tell which. The `id` also accepts `id@version` or `id@environment` to grade against a published version.
 
 > Verify a new judge sees what you think it sees: invoke it twice with the deciding fact moved in and out of one field. If the verdict does not change, that field is not reaching the prompt.
 
