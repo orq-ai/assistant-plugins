@@ -546,14 +546,24 @@ orq deployments list --json -j 'has_more' --raw      # true → the count below 
 orq deployments list --json --limit 50 -j 'length(data)' --raw
 ```
 
-**On `agents list`, omitting `--limit` is worse than truncating: it hangs.**
-Earlier releases returned every agent in one unpaginated response, and the old
-version of this skill said so. On 5.1.0 a bare `orq agents list` against a
-workspace of any size blocked for **4m16s** and then failed with `HTTP 503:
-upstream connect error or disconnect/reset before headers`. The same command
-with `--limit 10` answered in 0.17s (`has_more: true`), and with `--limit 200`
-in 0.16s. Always pass `--limit` here — a missing one reads as a network outage,
-not as a pagination mistake.
+**On `agents list`, always pass `--limit`.** Earlier releases returned every
+agent in one unpaginated response, and the old version of this skill said so.
+On 5.1.0 a bare `orq agents list` blocked for **4m16s** and then failed with
+`HTTP 503: upstream connect error or disconnect/reset before headers`, while
+`--limit 10` answered in 0.17s (`has_more: true`) and `--limit 200` in 0.16s.
+
+**Do not read that 503 as "the unpaginated read timed out" — it is broader than
+pagination.** On the same workspace, `orq agents retrieve <valid-key>` — one
+entity, no pagination anywhere — also hung 4m14s and returned the same 503,
+while `orq agents retrieve <nonexistent-key>` came back `HTTP 404` in 0.19s.
+Requests that would carry a full agent config hang; requests that return nothing
+are fast. That points at a server-side condition on the agents detail path, not
+a CLI rule, and it may well not reproduce on your workspace or next week.
+
+Practical consequence: `--limit` is verified-good advice for `agents list`, but
+if a **single** `agents retrieve` hangs for minutes and 503s, adding flags will
+not help. Treat a multi-minute hang followed by `upstream connect error` as an
+upstream fault to report, not as something to tune.
 
 `-j` takes JMESPath and runs after the response is parsed. `--raw` unwraps the
 result so a single string comes out unquoted — use it whenever the value feeds a
@@ -843,7 +853,7 @@ session path, the base URLs with their source, credential-file permissions (with
 | `doctor` reports no login but commands work | `doctor`'s auth block ignores `ORQ_API_KEY` | confirm with `orq projects list --json --limit 200 -j 'length(data)' --raw` |
 | `refusing to run "…" without --force in a non-interactive shell` | 5.0.0 gates DELETE on confirmation; no TTY means refuse. Nothing was sent | add `--force` after confirming the id resolves |
 | A typo'd subcommand "succeeds" with no data | unknown subcommands print help to stdout at exit **0** | compare the output against `--help`; do not trust `$?` alone |
-| `agents list` hangs for minutes, then `HTTP 503` | no `--limit`; the unpaginated read times out | always pass `--limit` |
+| An `agents` read hangs for minutes, then `HTTP 503 upstream connect error` | server-side on the agents detail path — reproduced on `retrieve` of a single valid key, so not a pagination fault | pass `--limit` on `list` regardless; for `retrieve`, report it rather than tuning flags |
 | `--workspace` appears ignored | an API key outranks it | read stderr for the `--workspace has no effect` warning; unset the key or use `--profile` |
 | `unknown profile "x"` becomes an unexplained `HTTP 401` | a stray `ORQ_API_KEY` masks the unknown-profile check | re-run with the key unset to see the real error |
 | `invalid oql: invalid filter` on an obviously valid filter | OQL has no `=`; equality is `in (…)` | rewrite as `filter f in ("v")` |

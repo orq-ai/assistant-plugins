@@ -462,7 +462,9 @@ orq auth whoami --json -j active_workspace_key --raw
 orq workspace list --json -j 'workspaces[].{key: key, name: name}'
 
 # agent id + display name (agents use _id; deployments use id, projects project_id)
-# --limit is REQUIRED here: a bare `agents list` blocks for minutes, then 503s
+# --limit is REQUIRED here: a bare `agents list` blocks for minutes, then 503s.
+# (A single `agents retrieve <valid-key>` did the same, so the 503 is upstream,
+#  not a pagination fault — see SKILL.md "Lists truncate silently".)
 orq agents list --json --limit 200 -j 'data[].{id: _id, name: display_name}'
 
 # first agent's key, bare
