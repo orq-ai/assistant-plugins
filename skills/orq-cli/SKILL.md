@@ -178,7 +178,9 @@ orq CLI Progress:
 
 ---
 
-## Phase 1 — Verify the install
+## Phase 1 — Install and verify
+
+Check first — it is usually already there:
 
 ```sh
 orq version --json     # {"api_version":"4.14.3","cli":"5.1.0","install_method":"npm"}
@@ -192,12 +194,35 @@ only `orq version --json` reports both plus how the binary was installed
 its *first* line for compatibility but now prints a second line under it, which
 breaks anything reading the whole output.
 
-If it is missing:
+### Installing
+
+**npm is the recommended route, and the only one for Windows** (needs Node ≥ 14):
 
 ```sh
-npm install -g @orq-ai/cli                                        # npm
-curl -fsSL https://raw.githubusercontent.com/orq-ai/orq-cli/main/install.sh | sh   # installs to ~/.orq/bin/orq
+npm install -g @orq-ai/cli
 ```
+
+Or the raw-binary installer, which writes `~/.orq/bin/orq` and checksum-verifies
+it. **Its two defaults matter off a terminal:** left alone it offers to edit your
+shell profile and then runs `orq setup`, an interactive OAuth login that also
+rewires this machine's coding agents. Unattended, decline both:
+
+```sh
+curl -fsSL https://cli.orq.ai/install.sh | sh                              # interactive
+curl -fsSL https://cli.orq.ai/install.sh | sh -s -- --no-modify-path --no-setup   # unattended
+```
+
+Then confirm, and read `install_method` to learn which upgrade path applies:
+
+```sh
+orq version --json          # or ~/.orq/bin/orq version --json if PATH is not set up
+```
+
+See [resources/install.md](resources/install.md) for the installer's full flag
+and env-var set, the pinning and `rc`-channel options, checksum behaviour,
+pre-built binaries and building from source, and the `PATH` markers to undo.
+
+### Upgrading
 
 To upgrade an existing install, use `orq update` — it resolves the latest
 release, reuses the install method the binary arrived through, verifies the
@@ -214,13 +239,14 @@ box reports itself up to date forever and never crosses into `5.x`. That one
 hop needs an explicit `npm install -g @orq-ai/cli@latest`. `orq update` and
 `install.sh` are unaffected — both install an exact resolved version.
 
-The `install.sh` route drops the binary in `~/.orq/bin`, which is often not on
-`PATH`. If `orq --version` fails right after installing, check `~/.orq/bin/orq`
-before concluding the install failed.
+### If `orq` is not found, or is the wrong `orq`
 
-If `orq` resolves to something that prints Node or oclif stack traces, `which orq`
-is pointing at a different tool with the same name. Use the real binary's full
-path rather than fighting `PATH`.
+A "failed" `install.sh` is usually `~/.orq/bin` not being on `PATH` — run
+`~/.orq/bin/orq version --json` before concluding anything. If `orq` resolves to
+something printing Node or oclif stack traces, `which orq` is finding a
+different tool of the same name; use the real binary's full path rather than
+fighting `PATH`. Details and the profile markers to undo are in
+[resources/install.md](resources/install.md).
 
 ## Phase 2 — Authenticate
 
@@ -859,6 +885,9 @@ session path, the base URLs with their source, credential-file permissions (with
 | `invalid oql: invalid filter` on an obviously valid filter | OQL has no `=`; equality is `in (…)` | rewrite as `filter f in ("v")` |
 | `-j` gives `formatting failed Invalid type for: <nil>` | projecting a key the envelope lacks (common on OQL) | check `-j 'keys(@)'`; OQL nests results under `search` |
 | `npm update -g` says the CLI is current, but it is on `4.x` | a global install is pinned to a caret range | `npm install -g @orq-ai/cli@latest`, or use `orq update` |
+| `orq: command not found` right after `install.sh` | the binary is at `~/.orq/bin`, not on `PATH` | run `~/.orq/bin/orq version --json`; add the dir to `PATH` |
+| `install.sh` starts an interactive login you did not want | it runs `orq setup` unless told otherwise | re-run with `--no-setup` (and `--no-modify-path`) |
+| `orq update` refuses to act on this binary | a dev build, or an install method it cannot drive | rebuild from source, or reinstall via npm / `install.sh` |
 | Empty lists where data should be | wrong workspace, or a projection sent as `--query` full-text search | `orq workspace list`; re-run with `-j`, not `--query` |
 | `unknown shorthand flag: 'q'` | there is no `-q` — the projection flag is `-j/--jmespath` | re-run with `-j`; do **not** switch to `--query` |
 | `unknown command` | subcommand moved or renamed between releases | `orq <group> --help`; check `orq --version` |
@@ -919,7 +948,13 @@ host, so `orq --profile acme …` routes there with no flag.
 
 **CLI:** [orq-cli repository](https://github.com/orq-ai/orq-cli) ·
 [Releases](https://github.com/orq-ai/orq-cli/releases) ·
-[`@orq-ai/cli` on npm](https://www.npmjs.com/package/@orq-ai/cli)
+[`@orq-ai/cli` on npm](https://www.npmjs.com/package/@orq-ai/cli) ·
+[installer](https://cli.orq.ai/install.sh) ·
+[CHANGELOG](https://github.com/orq-ai/orq-cli/blob/main/CHANGELOG.md)
+
+The upstream CHANGELOG is the authority on behaviour changes between releases —
+it carries a stability contract and flags breaking changes explicitly. Read it
+before assuming this skill is current.
 
 **API:** [API reference](https://docs.orq.ai/reference) ·
 [Agents](https://docs.orq.ai/reference/agents)
