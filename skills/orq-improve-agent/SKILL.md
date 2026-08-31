@@ -17,42 +17,29 @@ allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq tr
 > `allowed-tools` here is a curated read/search allowlist plus **one enumerated write verb**, `orq agents update` — the only write this skill performs. Everything else in the shell grant is a read verb (`orq traces` queries, `orq reporting query`, `orq agents retrieve`, `orq agents get-response`, `orq deployments get-config`, and read verbs for related entities). A broad `Bash(orq:*)` would prefix-match every delete the CLI has, so it is not used. Every other shell command prompts, `create_*`/`update_*`/`delete_*`/`invoke_*` MCP tools prompt, and `delete_*` is disabled entirely while this skill is active. **Pre-approval is not permission to write:** every write sits behind an explicit `AskUserQuestion` gate regardless of what `allowed-tools` permits.
 
 You are an **orq.ai agent engineer**. Your job is to take a failure that production traces already demonstrated and fix it — by rewriting the agent's instructions, or by moving one configuration knob — then hand the change to `orq-run-experiment` to prove it worked.
-The first step is to ask the user if the agent lives in orq, is local, and if it lives in orq to provide a name or ID so that you can find it. After this you will ask the user if they have an error-analysis artifact, if they have traces, or if they can describe the problem. If they have an artifact, you will use it to route each failure mode to its lever. If they have traces, you will recommend `orq-analyze-traces` first, and if they can describe the problem you will run a narrow, targeted sweep to ground the complaint in real traces. 
-Be sure to read traces if there are any, and if there are many, recommend `orq-analyze-traces`.You will never re-run a mini error analysis inline when an artifact exists or could be produced. 
-If the user is vague about the agent, see if there are traces!
+Start by establishing where the agent lives and what evidence exists — Phase 1 has the four ways in and where each one lands.
 
-**Before any `orq traces` call, read [`docs/trace-queries.md`](../../docs/trace-queries.md) — the invocation details there are not optional.** It lives in the plugin repo, not inside this skill folder. If it is not reachable, these four still bind:
+**Before any `orq traces` call, read [`trace-queries.md`](../orq-shared/resources/trace-queries.md) — the invocation details there are not optional.** It ships in the sibling `orq-shared` skill. If that skill is not installed, these four still bind:
 
 - **Resolve every trace field name at runtime** from `orq traces list-fields` / `list-facets`. A stale name returns **zero rows without erroring**, which reads as "clean" rather than "broken" — re-probe before trusting a zero.
 - **Pass query bodies via `--from-file`**, written without a BOM. Piping JSON from PowerShell fails with `invalid character 'ï'`.
 - **`--from`/`--to` are required, RFC3339, and bounded by 30-day retention** — compute the window at call time, never hard-code it.
 - **Never call `get-span` or `list-spans` without a null-safe `-j` projection.** One trace's spans measured 115,868 bytes raw, and `length()` over a missing key crashes the CLI.
 
-**Before any sweep or write, resolve the agent or deployment key** with [`docs/run-key-preflight.md`](../../docs/run-key-preflight.md). A wrong or cross-project key reads as *"no traces"* rather than a 404.
+**Before any sweep or write, resolve the agent or deployment key** with [`run-key-preflight.md`](../orq-shared/resources/run-key-preflight.md). A wrong or cross-project key reads as *"no traces"* rather than a 404.
 
 ### CLI vs MCP — when to use which
 
-The CLI and MCP overlap on most read operations but differ in two critical ways: **scope** and **projection**.
+**Scope, projection, the default rule, and which call to reach for: [`trace-queries.md` → "CLI vs MCP"](../orq-shared/resources/trace-queries.md#cli-vs-mcp--when-to-use-which).** Do not restate those rules here — correct them there.
 
-| | CLI (`orq`) | MCP (`mcp__orq-workspace__*`) |
-|---|---|---|
-| **Scope** | Project-scoped. Returns 404 / empty for entities in other projects. | Workspace-scoped. Finds entities across all projects the API key can reach. |
-| **Projection** | `-j` (JMESPath) projects 115 KB spans down to ~7 lines. Essential for keeping trace data out of context. | `get_span mode=compact` (metadata + string-serialized I/O) vs `mode=full` (structured messages, all turns, tool calls, system instructions). `list_spans` always returns full attributes. |
-| **Best for** | Aggregate queries, filtered search, projected span detail, agent updates. | Agent discovery from a vague description, agent config retrieval, full conversation content for grounding fixes. |
+What this skill leans on each for:
 
-**Default rule: MCP for discovery and content, CLI for projection and aggregation.**
-
-- **Agent discovery:** `mcp__orq-workspace__search_entities type=agent query="..."` — fuzzy-matches name, key, and description across the workspace. Then `mcp__orq-workspace__get_agent key=...` for the full config.
-- **Full conversation content:** `mcp__orq-workspace__get_span span_id=... mode=full` — returns structured messages with all turns and tool calls. Use to ground prompt suggestions in real trace content.
-- **Related entities:** CLI `orq tools retrieve`, `orq knowledge-bases retrieve`, `orq evals get` — resolve IDs from the agent config into full definitions.
+- **CLI** — aggregate queries, filtered search, projected span detail, and the one write, `orq agents update`.
+- **MCP** — agent discovery from a vague description, agent config retrieval, and full conversation content to ground prompt suggestions in what the agent actually said.
 
 ## Vocabulary
 
-| Word | What it means here |
-|---|---|
-| **lever** | which *kind* of change fixes a failure mode. The artifact writes it as `fix`. |
-| **knob** | the single parameter a config lever moves. **One knob per change** is the whole guardrail. |
-| **unobservable** | something the analysis could not read. Check it before claiming a run was clean. |
+`lever`, `knob`, and `unobservable` are defined in [`trace-queries.md` → "Shared vocabulary"](../orq-shared/resources/trace-queries.md#shared-vocabulary). This skill adds no terms of its own.
 
 ## Constraints
 
@@ -248,23 +235,7 @@ Present the analysis, ask which suggestions to apply, then rewrite:
 
 #### Read-modify-write every nested object you touch, whole
 
-`orq agents update` documents *"only the fields provided in the request body will be updated"*, but does **not** say whether a **nested** object deep-merges or replaces.
-
-If it replaces, `{"settings":{"max_iterations":20}}` wipes `tools[]`, `max_cost`, `max_execution_time` and `tool_approval_required` — silently deleting the agent's tools in the same command whose guardrail forbids exactly that. `model` carries the identical hazard: it is `string | {id, parameters, retry}`, so a bare `{"model":{"parameters":{"temperature":0.5}}}` can drop `model.id`.
-
-**Retrieve the object, change one key, send it back whole.** Correct under either merge behaviour, costs one extra call, and means the question never has to be answered. This applies to `settings`, to `model`, and to any nested object a future lever touches.
-
-> **`settings.tools[]` does not round-trip. Read shape is not write shape.** A retrieve returns each tool as `{id, action_type, display_name, conditions, requires_approval}`; the update schema requires a **`type`** discriminator and rejects the read-side fields. Sending back exactly what you read fails with a `ZodError` 400 on `settings.tools[N]`. **Load the live write schema from the MCP `update_agent` tool before building any `settings` patch**, then translate:
->
-> | Read (`agents retrieve`) | Write (`agents update`) |
-> |---|---|
-> | `action_type: "web_scraper"` | `type: "web_scraper"` |
-> | `requires_approval: false` | `requires_approval: false` (keep) |
-> | `id`, `display_name`, `conditions` | **omit** — on write, `id`/`key` mean a *custom* tool reference, not a built-in |
->
-> **Never drop `tools[]` from the patch to dodge the 400.** That is precisely the silent tool deletion this section exists to prevent. Translate, do not delete.
->
-> While building the write: `--version-description` is capped at **300 characters** and a longer one is rejected.
+**The full rule, the `model` hazard, and the `settings.tools[]` read-vs-write schema translation: [`trace-queries.md` §7](../orq-shared/resources/trace-queries.md#7-write-path--orq-agents-update).** In short: retrieve the object, change one key, send it back whole — and never drop `tools[]` to dodge a `ZodError` 400, which is the silent tool deletion the guardrail exists to prevent.
 
 ```bash
 # 1. read
@@ -347,7 +318,7 @@ Both write with the same required version bump, so neither can corrupt the other
 ## Documentation & Resolution
 
 1. **Live queries** — `mcp__orq-workspace__get_agent`, `mcp__orq-workspace__get_span`, `orq agents retrieve`, `orq traces …`, and the orq MCP read tools; API responses are always authoritative
-2. **[`docs/trace-queries.md`](../../docs/trace-queries.md)** — the verified CLI contract, including the write path and its parameter bounds
+2. **[`trace-queries.md`](../orq-shared/resources/trace-queries.md)** — the verified CLI contract, including the write path and its parameter bounds
 3. **orq.ai documentation MCP** — `search_orq_ai_documentation` / `get_page_orq_ai_documentation`
 4. **[docs.orq.ai](https://docs.orq.ai)** — [Prompt Engineering Guide](https://docs.orq.ai/docs/prompts/engineering-guide#prompt-engineering-guide-best-practices) · [Agents](https://docs.orq.ai/docs/agents/overview) · [Prompts](https://docs.orq.ai/docs/prompts/overview) · [Versioning](https://docs.orq.ai/docs/prompts/versioning) · [Deployments](https://docs.orq.ai/docs/deployments/overview)
 5. **This skill file** — may lag behind API or docs changes

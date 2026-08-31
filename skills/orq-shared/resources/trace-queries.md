@@ -6,6 +6,36 @@ Shared reference for `orq-analyze-traces` and `orq-improve-agent`. Everything he
 
 ---
 
+## CLI vs MCP — when to use which
+
+The CLI and MCP overlap on most read operations but differ in two critical ways: **scope** and **projection**.
+
+| | CLI (`orq`) | MCP (`mcp__orq-workspace__*`) |
+|---|---|---|
+| **Scope** | Project-scoped. Returns 404 / empty for entities in other projects. | Workspace-scoped. Finds entities across all projects the API key can reach. |
+| **Projection** | `-j` (JMESPath) projects 115 KB spans down to ~7 lines. Essential for keeping trace data out of context. | `get_span mode=compact` (metadata + string-serialized I/O) vs `mode=full` (structured messages, all turns, tool calls, system instructions). `list_spans` always returns full attributes. |
+
+**Default rule: MCP for discovery and content, CLI for projection and aggregation.**
+
+- **Agent discovery:** `mcp__orq-workspace__search_entities type=agent query="..."` — fuzzy-matches name, key, and description across the workspace. Then `mcp__orq-workspace__get_agent key=...` for the full config (model, instructions, tools, KBs, memory stores, settings, URL).
+- **Trace aggregates and search:** CLI `orq traces aggregate` / `search` with `--from-file` — the only path that supports `group_by`, `compute`, and arbitrary filters.
+- **Span tree (compact):** CLI `orq traces list-spans -j "data[].{...}"` — the projection keeps 83-span traces under 10 KB.
+- **Span detail (projected):** CLI `orq traces get-span -j 'span.summary'` for metadata, `span.attributes.*` for config knobs.
+- **Full conversation content:** `mcp__orq-workspace__get_span span_id=... mode=full` — returns structured message arrays with all turns, tool calls, tool responses, system instructions, and per-message `finish_reason`. This is also the only reliable path for `finish_reason` on agent traces when `agents get-response` is unavailable.
+- **Related entities:** CLI `orq tools retrieve`, `orq knowledge-bases retrieve`, `orq memory-stores retrieve`, `orq evals get` — resolve the IDs from the agent config into full definitions.
+
+Each consuming skill states what it is **best for** on top of this; the scope and projection rows above do not change per skill.
+
+## Shared vocabulary
+
+| Word | What it means here |
+|---|---|
+| **lever** | which *kind* of change fixes a failure mode — prompt, config, tools, retrieval, structure, evaluator, code. Written to the error-analysis artifact as `fix`. |
+| **knob** | the single parameter a config lever moves. **One knob per change** is the whole guardrail. |
+| **unobservable** | honest absence: something that could not be read, named with a reason — never omitted, never assumed fine. Check it before claiming a run was clean. |
+
+---
+
 ## 0. Resolve field names at runtime. Always.
 
 Field names in the trace registry **changed once in a single afternoon** — the 2026-08-26 release renamed every `attr.*` field to `attributes.*` and grew the registry from 56 fields to 57. A hard-coded name that no longer resolves returns **zero rows without erroring**, which reads as "clean" rather than "broken".
@@ -286,9 +316,21 @@ If it replaces, `{"settings":{"max_iterations":20}}` destroys `tools[]`, `max_co
 
 **Retrieve the current object, change one key, send it back whole.** Correct under either merge behaviour, costs one extra `retrieve`, and means the semantics never have to be resolved.
 
+**`settings.tools[]` does not round-trip. Read shape is not write shape.** A retrieve returns each tool as `{id, action_type, display_name, conditions, requires_approval}`; the update schema requires a **`type`** discriminator and rejects the read-side fields. Sending back exactly what you read fails with a `ZodError` 400 on `settings.tools[N]`. **Load the live write schema from the MCP `update_agent` tool before building any `settings` patch**, then translate:
+
+| Read (`agents retrieve`) | Write (`agents update`) |
+|---|---|
+| `action_type: "web_scraper"` | `type: "web_scraper"` |
+| `requires_approval: false` | `requires_approval: false` (keep) |
+| `id`, `display_name`, `conditions` | **omit** — on write, `id`/`key` mean a *custom* tool reference, not a built-in |
+
+**Never drop `tools[]` from the patch to dodge the 400.** That is precisely the silent tool deletion this rule exists to prevent. Translate, do not delete.
+
 ### Version every write
 
 `--version-increment` and `--version-description` are documented as **"Optional"** on the CLI, so a write that omits them **succeeds and publishes no version** — costing the rollback story silently. **ALWAYS pass both.** This is a guardrail the skill enforces, not one the API enforces for you.
+
+A `--version-description` longer than **300 characters** is reported as rejected — `untested`, no probe was run. Keep descriptions short regardless; the field is a changelog line, not a report.
 
 ---
 

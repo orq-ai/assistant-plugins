@@ -87,7 +87,7 @@ Do **not** hardcode the list — read it from the skills actually available righ
 
 Then explain the lifecycle:
 
-> **The eval cycle:** orq-analyze-traces → orq-build-evaluator → orq-run-experiment → orq-improve-agent → repeat
+> **The eval cycle:** orq-analyze-traces → orq-improve-agent → orq-run-experiment → repeat. When a failure mode needs a judge to measure it, orq-build-evaluator slots in after the analysis.
 >
 > Skills are auto-discovered — just describe what you want to do in natural language and the right skill will activate.
 

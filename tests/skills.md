@@ -100,7 +100,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 ### Scenario 1: Deployment invocation (happy path)
 
 - Ask: "Invoke my deployment `customer-support` with variable `customer_name` set to 'Jane'"
-- Verify Phase 1: uses `search_entities` to browse, then verifies the key with the run key via the [run-key preflight](../docs/run-key-preflight.md)
+- Verify Phase 1: uses `search_entities` to browse, then verifies the key with the run key via the [run-key preflight](../skills/orq-shared/resources/run-key-preflight.md)
 - Verify Phase 2: identifies `{{customer_name}}` as a required input, maps it
 - Verify Phase 3: generates Python SDK code using `client.deployments.invoke(key=..., inputs={...})`
 - Verify: code uses `os.environ["ORQ_API_KEY"]`, never hardcodes the key
@@ -132,7 +132,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 ### Scenario 1: Write a Python evaluation script
 
 - Ask: "Help me evaluate my agent `my-support-agent` using evaluatorq"
-- Verify Phase 1: asks for agent key, browses via `search_entities`, then verifies with the run key via the [run-key preflight](../docs/run-key-preflight.md)
+- Verify Phase 1: asks for agent key, browses via `search_entities`, then verifies with the run key via the [run-key preflight](../skills/orq-shared/resources/run-key-preflight.md)
 - Verify Phase 3: generates a Python script with `@job`, `DataPoint`, `evaluatorq()`, and `await` call
 - Verify: uses `orq.evals.invoke_async()` (inside async scorers) or `orq.evals.invoke()` (sync), never `orq.evaluators.invoke()`
 - Verify: suggests `dataset_id` if dataset exists, inline only for quick tests
@@ -163,7 +163,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 ### Scenario 1: orq.ai vs orq.ai comparison
 
 - Ask: "Compare my two orq.ai agents `agent-gpt4o` and `agent-claude` head-to-head"
-- Verify Phase 1: identifies both agents, browses via `search_entities`, then verifies each key with the run key via the [run-key preflight](../docs/run-key-preflight.md)
+- Verify Phase 1: identifies both agents, browses via `search_entities`, then verifies each key with the run key via the [run-key preflight](../skills/orq-shared/resources/run-key-preflight.md)
 - Verify Phase 4: generates evaluatorq script with two `@job` functions, each using `agents.responses.create()` (not `agents.invoke()`)
 - Verify: script uses `from orq_ai_sdk import Orq` (not `from orq import ...`)
 - Verify: both jobs use the same evaluator for fair comparison
@@ -233,7 +233,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify Phase 0: uses `mcp__orq-workspace__search_entities type=agent` to discover the agent, then `mcp__orq-workspace__get_agent` for full config
 - Verify Phase 0: relays config (model, instructions, settings, tools, KBs) and terminal states before any coding
 - Verify Phase 0: resolves related entity IDs (tools, knowledge-bases, memory-stores) via CLI read verbs
-- Verify Phase 1: runs `orq traces aggregate` and `orq traces search` with `--from-file`, not inline JSON
+- Verify Phase 0: runs `orq traces aggregate` with `--from-file`, not inline JSON
+- Verify Phase 1: runs `orq traces search` with `--from-file`, not inline JSON
 - Verify Phase 1: uses `mcp__orq-workspace__get_span mode=full` for deep reading of specific failure traces
 - Verify: writes an `error-analysis-*.md` file with failure modes, evidence trace IDs, and lever assignments
 
@@ -252,8 +253,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify Phase 1: reads the agent config via `mcp__orq-workspace__get_agent` (primary) or `orq agents retrieve` (fallback)
 - Verify Phase 1: checks config-vs-instructions contradictions before any trace work
 - Verify Phase 2: routes each failure mode to its lever (prompt, config, tools, structure, evaluator)
-- Verify Phase 3: shows a diff with each change tied to a failure mode before applying
-- Verify Phase 4: applies with `--version-increment` and `--version-description`
+- Verify Phase 3a/3b: builds the fix on the routed lever — prompt rewrite, or one config knob
+- Verify Phase 4: shows a diff with each change tied to a failure mode, gets approval, then applies with `--version-increment` and `--version-description`
 - Verify Phase 5: recommends `orq-run-experiment` with evidence + passing IDs
 
 ### Scenario 2: Config contradiction
@@ -384,6 +385,29 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ---
 
+## `orq-shared`
+
+### Scenario 1: A consuming skill dereferences a shared file
+
+- Ask: "Analyze the support agent from its traces"
+- Verify: `orq-analyze-traces` reads `../orq-shared/resources/trace-queries.md` before its first `orq traces` call
+- Verify: the link resolves as a sibling path, not `../../docs/...` — a skill folder installed on its own or beside its siblings must still find it
+- Verify: the CLI-vs-MCP scope and projection rules are read from the shared file, not restated in the skill
+
+### Scenario 2: Invoked on its own
+
+- Ask: "Use orq-shared to query my traces"
+- Verify: does NOT run a procedure from this skill — it holds none
+- Verify: routes to `orq-cli` for running commands, `orq-analyze-traces` for analysis, `orq-improve-agent` for fixes
+
+### Scenario 3: The shared file is missing
+
+- Provide: a checkout with `skills/orq-shared/` absent
+- Verify: the consuming skill says the reference is unreachable rather than proceeding unguarded
+- Verify: falls back to the four restated rules in its own Constraints section
+
+---
+
 ## `orq-cli`
 
 ### Scenario 1: Not installed
@@ -510,8 +534,9 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ## Critical Files
 
-- `docs/run-key-preflight.md`
-- `docs/trace-queries.md`
+- `skills/orq-shared/SKILL.md`
+- `skills/orq-shared/resources/run-key-preflight.md`
+- `skills/orq-shared/resources/trace-queries.md`
 - `skills/orq-analyze-traces/SKILL.md`
 - `skills/orq-improve-agent/SKILL.md`
 - `skills/orq-setup-observability/SKILL.md`

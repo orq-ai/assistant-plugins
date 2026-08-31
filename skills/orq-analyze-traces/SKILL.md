@@ -18,37 +18,26 @@ allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq tr
 
 You are an **orq.ai failure analyst**. Your job is to read production traces, **relay** how the agent is configured and how its runs ended, and build an actionable failure taxonomy using grounded theory (open coding → axial coding) — then write it to a file the rest of the suite can read.
 
-**Before your first `orq traces` call, read [`docs/trace-queries.md`](../../docs/trace-queries.md) — the invocation details there are not optional.** Three of them fail loudly; two fail silently by returning a confident empty answer. It lives in the plugin repo, not inside this skill folder; if it is not reachable from your checkout, say so and fall back to the four rules restated in Constraints below rather than proceeding unguarded.
+**Before your first `orq traces` call, read [`trace-queries.md`](../orq-shared/resources/trace-queries.md) — the invocation details there are not optional.** Three of them fail loudly; two fail silently by returning a confident empty answer. It ships in the sibling `orq-shared` skill; if that skill is not installed, say so and fall back to the four rules restated in Constraints below rather than proceeding unguarded.
 
-**Before any sweep, resolve the agent or deployment key** with [`docs/run-key-preflight.md`](../../docs/run-key-preflight.md). Without it a wrong or cross-project key reads as *"no traces"* rather than a 404, and Phase 0 relays an empty population as a clean one.
+**Before any sweep, resolve the agent or deployment key** with [`run-key-preflight.md`](../orq-shared/resources/run-key-preflight.md). Without it a wrong or cross-project key reads as *"no traces"* rather than a 404, and Phase 0 relays an empty population as a clean one.
 
 ### CLI vs MCP — when to use which
 
-The CLI and MCP overlap on most read operations but differ in two critical ways: **scope** and **projection**.
+**Scope, projection, the default rule, and which call to reach for: [`trace-queries.md` → "CLI vs MCP"](../orq-shared/resources/trace-queries.md#cli-vs-mcp--when-to-use-which).** Do not restate those rules here — correct them there.
 
-| | CLI (`orq`) | MCP (`mcp__orq-workspace__*`) |
-|---|---|---|
-| **Scope** | Project-scoped. Returns 404 / empty for entities in other projects. | Workspace-scoped. Finds entities across all projects the API key can reach. |
-| **Projection** | `-j` (JMESPath) projects 115 KB spans down to ~7 lines. Essential for keeping trace data out of context. | `get_span mode=compact` (metadata + string-serialized I/O) vs `mode=full` (structured messages, all turns, tool calls, system instructions). `list_spans` always returns full attributes. |
-| **Best for** | Aggregate queries, filtered search, projected span detail, entity CRUD (tools, KBs, memory stores). | Agent discovery from a vague description, agent config retrieval, full conversation content for deep reading. |
+What this skill leans on each for:
 
-**Default rule: MCP for discovery and content, CLI for projection and aggregation.**
-
-- **Agent discovery:** `mcp__orq-workspace__search_entities type=agent query="..."` — fuzzy-matches name, key, and description across the workspace. Then `mcp__orq-workspace__get_agent key=...` for the full config (model, instructions, tools, KBs, memory stores, settings, URL).
-- **Trace aggregates and search:** CLI `orq traces aggregate` / `search` with `--from-file` — the only path that supports `group_by`, `compute`, and arbitrary filters.
-- **Span tree (compact):** CLI `orq traces list-spans -j "data[].{...}"` — the projection keeps 83-span traces under 10 KB.
-- **Span detail (projected):** CLI `orq traces get-span -j 'span.summary'` for metadata, `span.attributes.*` for config knobs.
-- **Full conversation content:** `mcp__orq-workspace__get_span span_id=... mode=full` — returns structured message arrays with all turns, tool calls, tool responses, system instructions, and per-message `finish_reason`. Use selectively on traces that need deep reading (failures, outliers). This is also the only reliable path for `finish_reason` on agent traces when `agents get-response` is unavailable.
-- **Related entities:** CLI `orq tools retrieve`, `orq knowledge-bases retrieve`, `orq memory-stores retrieve`, `orq evals get` — resolve the IDs from the agent config into full definitions.
+- **CLI** — aggregate queries, filtered search, projected span detail, entity CRUD (tools, KBs, memory stores).
+- **MCP** — agent discovery from a vague description, agent config retrieval, and full conversation content for the deep reading Phase 2 requires. Use `get_span mode=full` selectively, on traces worth reading closely (failures, outliers).
 
 ## Vocabulary
+
+`lever`, `knob`, and `unobservable` are defined in [`trace-queries.md` → "Shared vocabulary"](../orq-shared/resources/trace-queries.md#shared-vocabulary). Two more are local to this skill:
 
 | Word | What it means here |
 |---|---|
 | **relay** | Phase 0's contract: gather mechanical facts, format them, hand them to the coder. **Phase 0 relays; the coder judges.** |
-| **lever** | which *kind* of change fixes a failure mode — prompt, config, tools, retrieval, structure, evaluator, code. Written to the artifact as `fix`. |
-| **knob** | the single parameter a config lever moves. One knob per change. |
-| **unobservable** | honest absence. Something that could not be read, named with a reason — never omitted, never assumed fine. |
 | **where** | the pipeline state a failure mode first breaks in, and the state it followed. |
 
 ## Constraints
@@ -152,7 +141,7 @@ There are no flags, no thresholds and no pass/fail per check. A 12% truncation r
 
 Runs **before** open coding. Two passes: a **sweep** over the whole window, then **detail** on ~10–20 spans drawn from the traces you were going to read anyway — no extra sampling budget.
 
-All sweep signals go through `orq traces aggregate` with the target in `filters` (`docs/trace-queries.md` §1). Resolve every field name at runtime.
+All sweep signals go through `orq traces aggregate` with the target in `filters` (`trace-queries.md` §1). Resolve every field name at runtime.
 
 **Gather and relay. Do not judge.** Collect the mechanical facts, format them, hand them to the coding agent. That is the whole phase.
 
@@ -200,7 +189,7 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
 
 7. **Gather traces.** Target **100** for theoretical saturation.
 
-   From production: `orq traces search` (see `docs/trace-queries.md` §1 layer 2) or `list_traces`. With no production data, use `orq-generate-synthetic-dataset` and run the inputs through the pipeline.
+   From production: `orq traces search` (see `trace-queries.md` §1 layer 2) or `list_traces`. With no production data, use `orq-generate-synthetic-dataset` and run the inputs through the pipeline.
 
    | Strategy | How | When |
    |---|---|---|
@@ -263,7 +252,7 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
     where: ExecSQL after GenSQL
     ```
 
-    Build it from the ordered span sequence of the failed traces — **one projected `list-spans` call per failed trace**, verbatim from `docs/trace-queries.md` §3:
+    Build it from the ordered span sequence of the failed traces — **one projected `list-spans` call per failed trace**, verbatim from `trace-queries.md` §3:
 
     ```bash
     orq traces list-spans <trace-id> --json \
@@ -392,7 +381,7 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
 Look up orq.ai platform details in this order:
 
 1. **Live queries** — `orq traces …` and the orq MCP read tools; API responses are always authoritative
-2. **[`docs/trace-queries.md`](../../docs/trace-queries.md)** — the verified CLI contract for everything in this skill
+2. **[`trace-queries.md`](../orq-shared/resources/trace-queries.md)** — the verified CLI contract for everything in this skill
 3. **orq.ai documentation MCP** — `search_orq_ai_documentation` / `get_page_orq_ai_documentation`
 4. **[docs.orq.ai](https://docs.orq.ai)** — [Traces](https://docs.orq.ai/docs/observability/traces) · [LLM Logs](https://docs.orq.ai/docs/observability/logs) · [Trace Automations](https://docs.orq.ai/docs/observability/trace-automation) · [Annotation Queues](https://docs.orq.ai/docs/administer/annotation-queue) · [Human Review](https://docs.orq.ai/docs/evaluators/human-review) · [Threads](https://docs.orq.ai/docs/observability/threads)
 5. **This skill file** — may lag behind API or docs changes
