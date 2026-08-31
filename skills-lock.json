@@ -24,7 +24,7 @@
     "orq-build-evaluator": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "a32fc4aa968426670f4a5f493e44b50b44c5b038ef2a5c28321b59b9ade6c07f"
+      "computedHash": "36fef16dfc45ec61e71569ad7716626fab83c98a2959ec73e95ac155be45ef4d"
     },
     "orq-cli": {
       "source": "orq-ai/assistant-plugins",

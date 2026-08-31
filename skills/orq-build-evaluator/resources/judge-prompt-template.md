@@ -102,7 +102,9 @@ Your JSON Evaluation:
    | `{{output.response}}` | The response the evaluated model generated |
    | `{{output.tools_called}}` | The tool calls made during the run, with their results |
 
-   Custom values passed at invocation are available under their own name: `{{my_custom_var}}`.
+   Custom values passed at invocation are available under their own name: `{{my_custom_var}}` — the bare name, not `{{variables.my_custom_var}}`.
+
+   These seven plus custom names are the whole set. In particular there is no `{{context.…}}`: `context` is the invoke request's envelope, not a prompt namespace.
 
    **Indexing.** Index into a variable to reach one message or tool call:
 

@@ -144,7 +144,7 @@ MCP covers boolean and numeric LLM/Python evaluators. Everything below has no MC
 | List evaluators | `GET /v2/evaluators?limit=50` — paginate with `starting_after=<last _id>` while `has_more` is true. **Not** `after=` — that parameter is silently ignored and re-serves page 1 forever. |
 | Test-run one evaluator | `POST /v3/evaluators/{id}/invoke` — see below |
 
-**Evaluator CRUD is v2-only and invoke is v3-only.** This is not a typo to normalise: `GET`/`POST /v3/evaluators` 404s, and there is no v2 invoke route left — a gateway key gets a plain `404` from `POST /v2/evaluators/{id}/invoke`, a management key gets `403 insufficient_scope` from the auth layer before routing. Older snippets pointing at `/v2/…/invoke` predate the move. Both `api.orq.ai` and `my.orq.ai` serve the v3 route.
+**Evaluator CRUD is v2 and invoke is v3.** Not a typo to normalise — `/v3/evaluators` 404s and there is no v2 invoke route. Older snippets pointing at `/v2/…/invoke` predate the move.
 
 #### Creating a Categorical Evaluator
 
@@ -190,7 +190,7 @@ orq evals create --json \
 
 `POST /v3/evaluators/{id}/invoke` runs one evaluator against a single input/output pair — use it for rapid Phase 5 iteration instead of a full experiment. Or `orq evals invoke <id> --json --query ... --output ...`, which calls the same endpoint.
 
-Send the run under `context`, whose field names are the template variables they fill — `input.user_query` in the body is `{{input.user_query}}` in the prompt. This is the form to use for anything new:
+Send the run under `context`. **`context` is the request envelope, not a namespace you can reference from the prompt** — there is no `{{context.…}}` variable; writing one renders empty. It is the wrapper whose contents feed the variables:
 
 ```json
 {
@@ -203,7 +203,14 @@ Send the run under `context`, whose field names are the template variables they 
 }
 ```
 
-A flat shorthand is still accepted and folds into `context`: `query` → `input.user_query`, `output` → `output.response`, `reference` → `input.expected_output`, and `messages`/`retrievals`/`variables` keep their names. **There is no flat alias for `system_instructions` or `tools_called` — those need the `context` form.**
+| Body path | Renders as |
+|-----------|-----------|
+| `context.input.<field>` | `{{input.<field>}}` — name matches |
+| `context.output.<field>` | `{{output.<field>}}` — name matches |
+| `context.messages` | `{{input.all_messages}}` — **name does not match** |
+| `context.variables.<name>` | `{{<name>}}` — **the `variables.` prefix is dropped**; `{{variables.<name>}}` renders empty |
+
+A flat shorthand is still accepted and folds into `context`: `query` → `input.user_query`, `output` → `output.response`, `reference` → `input.expected_output`, and `messages`/`retrievals`/`variables` keep their top-level names. **There is no flat alias for `system_instructions` or `tools_called` — those two variables are reachable only through `context`.**
 
 **Unknown fields are ignored silently — no error, the variable renders empty and the judge scores a prompt with a hole in it.** `input` and `expected_output` are not flat aliases (they exist only inside `context.input`), so `{"input": …}` at the top level is dropped. When `messages` is present it is the conversation and `input.user_query` is ignored; `output.response` is appended only if the conversation has no assistant turn.
 
