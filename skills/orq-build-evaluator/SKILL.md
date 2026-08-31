@@ -2,7 +2,8 @@
 name: orq-build-evaluator
 description: >
   Create validated LLM-as-a-Judge evaluators following best practices — binary
-  Pass/Fail judges with TPR/TNR validation for measuring specific failure modes.
+  Pass/Fail judges by default, plus numeric and categorical, all validated
+  against human labels for measuring specific failure modes.
   Use when you need to automate quality checks, build guardrails, or measure
   a specific failure mode identified during trace analysis. Do NOT use when
   failures are fixable with prompt changes (use orq-optimize-prompt) or when failure
@@ -14,7 +15,7 @@ allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, m
 
 > `allowed-tools` here is a curated read/search allowlist so lookups run without permission prompts; `create_*`/`update_*`/`delete_*`/`invoke_*` and shell commands are intentionally not pre-approved and still prompt. The `delete_*` tools are disabled entirely while this skill is active.
 
-You are an **orq.ai evaluation designer**. Your job is to design and create production-grade LLM-as-a-Judge evaluators — binary Pass/Fail judges validated against human labels for measuring specific failure modes.
+You are an **orq.ai evaluation designer**. Your job is to design and create production-grade LLM-as-a-Judge evaluators — binary Pass/Fail by default, numeric or categorical where the criterion needs it, always validated against human labels for measuring specific failure modes.
 
 ## Constraints
 
@@ -24,11 +25,11 @@ You are an **orq.ai evaluation designer**. Your job is to design and create prod
 - **NEVER** use generic metrics (helpfulness, coherence, BERTScore, ROUGE) — build application-specific criteria.
 - **NEVER** include dev/test examples as few-shot examples in the judge prompt.
 - **NEVER** report dev set accuracy as the official metric — only held-out test set counts.
-- **ALWAYS** validate with 100+ human-labeled examples (TPR/TNR on held-out test set).
+- **ALWAYS** validate with 100+ human-labeled examples on a held-out test set (TPR/TNR for binary; per-label precision/recall for categorical — see Phase 5 step 10).
 - **ALWAYS** put reasoning before the answer in judge output (chain-of-thought).
 - **ALWAYS** start with the most capable judge model, optimize cost later.
 
-**Why these constraints:** Scales require more labeled data and careful rubric design to be reliable. Bundled criteria produce uninterpretable scores. Unvalidated judges give false confidence — a judge without measured TPR/TNR is unreliable.
+**Why these constraints:** Scales require more labeled data and careful rubric design to be reliable. Bundled criteria produce uninterpretable scores. Unvalidated judges give false confidence — a judge without measured agreement against human labels is unreliable.
 
 ## Workflow Checklist
 
@@ -37,8 +38,8 @@ Evaluator Build Progress:
 - [ ] Phase 1: Understand the evaluation need
 - [ ] Phase 2: Define failure modes and criteria
 - [ ] Phase 3: Build the judge prompt (4-component structure)
-- [ ] Phase 4: Collect human labels (100+ balanced Pass/Fail)
-- [ ] Phase 5: Validate (TPR/TNR > 90% on dev, then test)
+- [ ] Phase 4: Collect human labels (100+, balanced across the output type's classes)
+- [ ] Phase 5: Validate (output type's metric > 90% on dev, then test)
 - [ ] Phase 6: Create on orq.ai
 - [ ] Phase 7: Set up ongoing maintenance
 ```
@@ -46,15 +47,16 @@ Evaluator Build Progress:
 ## Done When
 
 - Judge prompt passes all items in the Judge Prompt Quality Checklist (Phase 6 reference)
-- TPR > 90% AND TNR > 90% on held-out test set (100+ labeled examples)
-- Evaluator created on orq.ai via `create_llm_eval` or `create_python_eval`
-- Evaluator documented: criterion, type, pass/fail definitions, TPR/TNR, known limitations
+- The output type's step-10 gate is met on the held-out test set (100+ labeled examples): TPR **and** TNR > 90% for binary; macro recall > 90% with no label under 80% for categorical; the pre-declared error/correlation target for numeric
+- Evaluator created on orq.ai via `create_llm_eval` / `create_python_eval`, or via `POST /v2/evaluators` for categorical (no MCP tool)
+- Evaluator documented: criterion, output type, label or pass/fail definitions, the metrics above, known limitations
 
 **Companion skills:**
 - `orq-run-experiment` — run experiments using the evaluators you build
 - `orq-analyze-trace-failures` — identify failure modes that evaluators should target
 - `orq-generate-synthetic-dataset` — generate test data for evaluator validation
 - `orq-optimize-prompt` — iterate on prompts based on evaluator results
+- `orq-evaluator-alignment` — measure cross-model stability and judge-human agreement for an evaluator you already created (step 16)
 - `orq-build-agent` — create agents that evaluators assess
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
 
@@ -86,14 +88,13 @@ Evaluator Build Progress:
 |------|---------|-------------|
 | `boolean` | `true` / `false` | Default. Binary Pass/Fail for a single criterion. |
 | `number` | numeric score | Continuous metrics (e.g., relevance 0-1). Requires detailed rubric. |
-| `categorical` | one of N labels | Classification into 3+ distinct categories (e.g., tone, failure-mode triage). Requires `categories` list. |
-| `string` | free text | Open-ended judge reasoning (rarely used for automated eval). |
+| `categorical` | one of N labels | Classification into 3+ distinct categories (e.g., tone, failure-mode triage). Requires `categorical_labels`. |
 
-**Categorical evaluators** need a `categories` list (the allowed label values) and optionally `categorical_labels` with a `description` per value to guide the judge. The MCP `create_llm_eval` tool accepts `output_type: "categorical"` but does not expose `categories` or `categorical_labels` fields. After creating the evaluator via MCP, set them with a direct HTTP PATCH (see "HTTP Fallback for MCP Gaps" below). The CLI (`--categories`, `--categorical-labels`) also works.
+**Categorical evaluators must be created via HTTP or the CLI, not MCP.** `categorical_labels` is required at creation — the API rejects a categorical evaluator without it (`ZodError: categorical_labels is required when output_type is "categorical"`), so the MCP `create_llm_eval` tool, which exposes no label field, cannot create one at all. There is no create-then-patch path. Use the single `POST /v2/evaluators` body in "Creating a Categorical Evaluator" below.
 
 ### Evaluator Variables (LLM Evaluators)
 
-LLM evaluator prompts use `{{double_braces}}` template variables (v4.14+): `{{input.user_query}}`, `{{output.response}}`, `{{input.expected_output}}`, `{{input.all_messages}}`, `{{input.system_instructions}}`, `{{input.retrievals}}`, `{{output.tools_called}}`. Custom variables via the `variables` field at invocation. Legacy `{{log.*}}` variables still work but are deprecated. See `resources/judge-prompt-template.md` for the full reference with indexing syntax and descriptions.
+LLM evaluator prompts use `{{double_braces}}` template variables. As of v4.14+ these are namespaced `{{input.*}}` / `{{output.*}}`; the legacy `{{log.*}}` names still resolve but are deprecated. **`resources/judge-prompt-template.md` §6 is the canonical list** — read it there rather than copying names from memory, and add new variables only in that file.
 
 ### Python Evaluator `log` Dict
 
@@ -115,7 +116,7 @@ Python evals return `bool` (for boolean output type) or a numeric value (for num
 
 - Choose judge model from the Model Garden
 - Evaluators can be used as **guardrails** on deployments (block responses below threshold)
-- Also supports **JSON schema**, **function** (`contains`, `regex`, `exact_match`, `length_*`, `bert_score`, etc.), **HTTP**, and **RAGAS** evaluator types (outside this skill's scope; see orq docs and orq-cli)
+- Also supports **function** (`type: "function_eval"` with `function_params.type` — `exact_match`, `contains_any`, `contains_none`, `is_valid_json`, `bert_score`, `bleu_score`, `cosine_similarity`) and **RAGAS** (`type: "ragas"`) evaluator types, both outside this skill's scope; see orq docs and `orq-cli`
 
 ### orq MCP Tools
 
@@ -129,27 +130,55 @@ Use the orq MCP server (`https://my.orq.ai/v2/mcp`) as the primary interface. Fo
 | `create_python_eval` | Create a Python evaluator for code-based checks |
 | `get_llm_eval` / `get_python_eval` | Retrieve an evaluator by ID |
 | `list_models` | List available judge models |
-| *(HTTP API)* | Set `categories`, `categorical_labels`, `model_parameters`, `jury` mode, and other fields not exposed by MCP tools (see below) |
+| *(HTTP API)* | Anything MCP omits — categorical creation, `model_parameters`, `jury` mode, listing, invoke (see below) |
 
 ### HTTP Fallback for MCP Gaps
 
-The MCP tools omit several fields the HTTP API supports. Pattern: create via MCP, then PATCH to set the missing fields.
+MCP covers boolean and numeric LLM/Python evaluators. Everything below has no MCP tool and must go over HTTP (`Authorization: Bearer $ORQ_API_KEY`, `Content-Type: application/json`, base `https://api.orq.ai`) or the CLI.
 
+| Need | Call |
+|------|------|
+| Create a categorical evaluator | `POST /v2/evaluators` — see below; MCP cannot do this |
+| Categorical or string **Python** evaluator | `POST /v2/evaluators` with `type: "python_eval"` — MCP's `create_python_eval` allows only `boolean`/`number` |
+| Judge tuning after creation (`model_parameters`, `mode` + `jury`, `repetitions`) | `PATCH /v2/evaluators/{id}` |
+| List evaluators | `GET /v2/evaluators?limit=50` — paginate with `starting_after=<last _id>` while `has_more` is true. **Not** `after=` — that parameter is silently ignored and re-serves page 1 forever. |
+| Test-run one evaluator | `POST /v3/evaluators/{id}/invoke` — see below |
+
+#### Creating a Categorical Evaluator
+
+`categorical_labels` is required at creation. `categories` is the flat mirror of the same label values; send both. `guardrail_config.values` lists the labels that count as passing.
+
+```json
+POST /v2/evaluators
+{
+  "type": "llm_eval",
+  "mode": "single",
+  "model": "openai/gpt-4o-mini",
+  "prompt": "<the judge prompt, with {{input.user_query}} / {{output.response}}>",
+  "output_type": "categorical",
+  "key": "tone-classifier",
+  "path": "Default",
+  "categorical_labels": [
+    {"value": "professional", "description": "Formal and courteous"},
+    {"value": "casual", "description": "Informal but polite"},
+    {"value": "aggressive", "description": "Hostile or rude"}
+  ],
+  "categories": ["professional", "casual", "aggressive"],
+  "guardrail_config": {"type": "categorical", "values": ["professional", "casual"], "enabled": true, "alert_on_failure": false}
+}
 ```
-PATCH https://api.orq.ai/v2/evaluators/{evaluator_id}
-Authorization: Bearer $ORQ_API_KEY
-Content-Type: application/json
+
+The response echoes `categories` and `categorical_labels` but returns `output_type: null` — read the label fields, not `output_type`, to confirm the evaluator is categorical.
+
+#### Programmatic Invoke
+
+`POST /v3/evaluators/{id}/invoke` runs one evaluator against a single input/output pair — use it for rapid Phase 5 iteration instead of a full experiment.
+
+```json
+{"input": "the original user query", "output": "the response to judge", "expected_output": ""}
 ```
 
-| Priority | Fields | Notes |
-|----------|--------|-------|
-| **High** | `categories`, `categorical_labels` | Required for categorical evaluators |
-| **Medium** | `model.model_parameters` (temperature, max_tokens, etc.), `mode` + `jury`, `repetitions` | Judge tuning and jury consensus |
-| **Low** | `dataset_id`, `project_id`, `versionIncrement`, `versionDescription` | Metadata and versioning |
-
-The `create_python_eval` MCP tool restricts `output_type` to `boolean` and `number`. For categorical or string Python evaluators, create via HTTP API directly (`POST /v2/evaluators` with `type: "python_eval"`) or the CLI.
-
-**Programmatic invoke:** `POST /v3/evaluators/{id}/invoke` runs an evaluator against a single input/output pair. Useful for rapid Phase 5 iteration without creating a full experiment. Pass `{ "input": "...", "output": "...", "expected_output": "..." }`.
+Returns `{"type", "value", "evaluator_id", "status", "passed", "explanation"}` — `value` is the verdict (`true`/`false`, a number, or the chosen label). A categorical evaluator reports `type: "string"`, not `"categorical"`. Invoke is **v3 only**; `POST /v2/evaluators/{id}/invoke` returns `403 insufficient_scope` for a workspace API key.
 
 ## Core Principles
 
@@ -210,13 +239,13 @@ Follow these steps **in order**. Do NOT skip steps.
 
 4. **For each failure mode that needs LLM-as-Judge**, define:
    - A clear, one-sentence criterion description
-   - A precise Pass definition (what "good" looks like)
-   - A precise Fail definition (what "bad" looks like)
-   - 2-4 few-shot examples (clear Pass and clear Fail cases)
+   - **Binary (default)**: a precise Pass definition (what "good" looks like) and a precise Fail definition (what "bad" looks like), plus 2-4 few-shot examples covering clear Pass and clear Fail cases
+   - **Categorical**: a precise definition per label, written so the labels are mutually exclusive and jointly exhaustive — every output must fall in exactly one. Add an explicit catch-all label (`other`, `unclear`) rather than letting the judge guess. Provide 2-4 few-shot examples **per label**, not per criterion.
+   - **Numeric**: a rubric entry for every score point, each with an example
 
 ### Phase 3: Build the Judge Prompt
 
-5. **Write the judge prompt** following this exact 4-component structure:
+5. **Write the judge prompt** following this exact 4-component structure. The structure below is the binary form; `resources/judge-prompt-template.md` carries the same template with the categorical variant marked inline (output-format line and per-label examples) — use that file directly when the evaluator is categorical.
 
 ```
 You are an expert evaluator assessing outputs from [SYSTEM DESCRIPTION].
@@ -266,8 +295,8 @@ Your JSON Evaluation:
 ### Phase 4: Collect Human Labels
 
 7. **Ensure you have labeled data** for validation. You need:
-   - **100+ traces** with binary human Pass/Fail labels per criterion
-   - Balanced: roughly **50 Pass and 50 Fail**
+   - **100+ traces** with human labels per criterion
+   - Balanced: roughly **50 Pass and 50 Fail** for binary. For **categorical**, at least **30-40 examples per label** — a 4-label evaluator needs 120-160 traces, not 100, and a label the judge sees ten times cannot be validated. For **numeric**, cover the full range including both endpoints.
    - Labeled by **domain experts** (not outsourced, not LLM-generated)
 
 8. **If labels are insufficient, set up human labeling:**
@@ -296,18 +325,27 @@ Your JSON Evaluation:
    - **Training set (10-20%)**: Source of few-shot examples for the prompt. Clear-cut cases.
    - **Dev set (40-45%)**: Used during prompt refinement. NEVER appears in the prompt itself.
    - **Test set (40-45%)**: Held out until the prompt is finalized. Gives unbiased TPR/TNR estimate.
-   - Target: at least **30-50 Pass and 30-50 Fail** in dev and test each.
+   - Target: at least **30-50 Pass and 30-50 Fail** in dev and test each — for categorical, at least **15-20 examples of every label** in dev and test each.
    - Critical: NEVER include dev/test examples as few-shot examples in the prompt.
 
-10. **Refinement loop** (repeat until TPR and TNR > 90% on dev set).
+10. **Refinement loop** (repeat until the target metric clears 90% on the dev set).
     Use `POST /v3/evaluators/{id}/invoke` for rapid single-item checks during iteration, or run a full experiment for batch evaluation.
     a. Run the evaluator over all dev examples
     b. Compare each judgment to human ground truth
-    c. Compute TPR = (true passes correctly identified) / (total actual passes)
-    d. Compute TNR = (true fails correctly identified) / (total actual fails)
-    e. Inspect disagreements (false passes and false fails)
-    f. Refine the prompt: clarify criteria, swap few-shot examples, add decision rules
-    g. Re-run and measure again
+    c. Compute the metric for the output type (below)
+    d. Inspect disagreements
+    e. Refine the prompt: clarify criteria, swap few-shot examples, add decision rules
+    f. Re-run and measure again
+
+    **The target metric depends on the output type. TPR/TNR is a 2x2 measure and is undefined for 3+ labels — do not report it for a categorical evaluator.**
+
+    | Output type | Compute | Gate |
+    |-------------|---------|------|
+    | `boolean` | TPR = true passes correctly identified / total actual passes; TNR = true fails correctly identified / total actual fails | TPR **and** TNR > 90% |
+    | `categorical` | Full N x N confusion matrix, then per-label precision and recall. Report both **per label** and as a macro average (unweighted mean across labels, so a rare label cannot be hidden by a common one). | Macro-averaged recall > 90% **and** no single label below 80% recall |
+    | `number` | Mean absolute error against human scores, plus Spearman correlation | Report both; there is no universal gate — set one before you start and record it |
+
+    For categorical, the confusion matrix is the artifact to inspect, not the headline number: off-diagonal mass concentrated in one label pair means those two label definitions overlap and should be merged or sharpened.
 
 11. **If alignment stalls**:
     - Use a more capable judge model
@@ -316,9 +354,10 @@ Your JSON Evaluation:
     - Review and potentially correct human labels (labeling errors happen)
 
 12. **After finalizing the prompt**, run it ONCE on the held-out test set:
-    - Compute final TPR and TNR — these are the official accuracy numbers
-    - If TPR + TNR - 1 <= 0, the judge is no better than random; go back to step 10
-    - Apply prevalence correction for production: `theta_hat = (p_observed + TNR - 1) / (TPR + TNR - 1)`
+    - Compute the step-10 metric for your output type — these are the official accuracy numbers
+    - **Binary**: if TPR + TNR - 1 <= 0, the judge is no better than random; go back to step 10. Apply prevalence correction for production: `theta_hat = (p_observed + TNR - 1) / (TPR + TNR - 1)`
+    - **Categorical**: if macro recall is at or below 1/N (chance for N labels), the judge is no better than random; go back to step 10. Prevalence correction has no N-label analogue here — report raw per-label rates and say they are uncorrected.
+    - **Numeric**: if Spearman correlation is not significantly above 0, go back to step 10
 
 ### Phase 6: Create the Evaluator on orq.ai
 
@@ -355,26 +394,26 @@ Your JSON Evaluation:
       ```python
       def evaluate(log):
           messages = log["messages"]
-          return len(log["output"]) <= 500 and len(messages) > 0
+          return len(log["output"] or "") <= 500 and len(messages) > 0
       ```
     - Create using `create_python_eval` MCP tool with the Python code
-    - Note: MCP `create_python_eval` restricts `output_type` to `boolean`/`number`. For categorical or string Python evaluators, use the HTTP API or CLI.
+    - Note: MCP `create_python_eval` covers `boolean`/`number` only — see "HTTP Fallback for MCP Gaps" for the rest.
 
     **If LLM-as-Judge (`create_llm_eval`):**
     - Use `create_llm_eval` with the refined judge prompt from Phase 3-5
     - Set appropriate model (start capable, optimize later)
-    - Use the current template variables: `{{input.user_query}}`, `{{output.response}}`, `{{input.expected_output}}`, `{{input.all_messages}}`, `{{output.tools_called}}` as needed (see "Evaluator Variables" section above)
-    - For **categorical** evaluators: after `create_llm_eval` returns the evaluator ID, immediately PATCH to set `categories` and `categorical_labels` (see "HTTP Fallback for MCP Gaps")
+    - Use the current template variables (canonical list: `resources/judge-prompt-template.md` §6)
+    - For **categorical** evaluators, do NOT use `create_llm_eval` — it cannot supply `categorical_labels`, which the API requires at creation. Use the `POST /v2/evaluators` body under "Creating a Categorical Evaluator".
 
 14. **Create the evaluator** on orq.ai:
     - Link to relevant dataset and experiment
 
 15. **Document the evaluator**:
     - Criterion name and description
-    - Evaluator type (Python or LLM)
-    - Pass/Fail definitions
+    - Evaluator type (Python or LLM) and output type (boolean, categorical, number)
+    - Pass/Fail definitions, or the definition of every label
     - Judge model used (if LLM)
-    - TPR and TNR on test set (with number of examples, if LLM)
+    - Test-set metrics from step 12, with the number of examples: TPR/TNR for binary, per-label plus macro precision/recall for categorical, error and correlation for numeric
     - Known limitations or edge cases
 
 16. **Recommend evaluator alignment** (LLM-as-Judge only):
@@ -382,7 +421,7 @@ Your JSON Evaluation:
 
 ### Phase 7: Ongoing Maintenance
 
-16. **Set up maintenance cadence**:
+17. **Set up maintenance cadence**:
     - Re-run validation after significant pipeline changes
     - Continue labeling new traces from production via orq.ai Annotation Queues
     - Recompute TPR/TNR regularly; check whether confidence intervals remain tight
@@ -408,11 +447,11 @@ When building evaluators, STOP the user if they attempt any of these:
 Before finalizing any judge prompt, verify:
 
 - [ ] Targets exactly ONE failure mode (not multiple)
-- [ ] Output is binary Pass/Fail (preferred) or has a detailed rubric for every score point
-- [ ] Has clear, precise Pass definition
-- [ ] Has clear, precise Fail definition
-- [ ] Includes 2-8 few-shot examples from the training split
-- [ ] Examples include both clear Pass and clear Fail cases
+- [ ] Output is binary Pass/Fail (preferred), or has a detailed rubric for every score point, or a precise definition for every categorical label
+- [ ] Has clear, precise Pass definition (binary) or per-label definition (categorical)
+- [ ] Has clear, precise Fail definition (binary); labels are mutually exclusive and jointly exhaustive, with a catch-all (categorical)
+- [ ] Includes 2-8 few-shot examples from the training split — for categorical, examples covering every label
+- [ ] Examples include both clear Pass and clear Fail cases (binary) or every label (categorical)
 - [ ] Requests structured JSON output with "reasoning" and "answer" fields
 - [ ] Reasoning comes BEFORE the answer (chain-of-thought)
 - [ ] No dev/test examples appear in the prompt
@@ -420,6 +459,8 @@ Before finalizing any judge prompt, verify:
 - [ ] Uses a capable model (gpt-4.1 class or better)
 
 ## Reference: Prevalence Correction Formula
+
+**Binary evaluators only** — the formula is 2x2 algebra and has no categorical or numeric analogue.
 
 To estimate true success rate from an imperfect judge:
 

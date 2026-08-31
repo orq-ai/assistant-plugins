@@ -78,9 +78,9 @@ Enable these from the Evaluator Library for RAG evaluation:
 - **Coherence** -- checks if the answer is logically coherent
 - **Noise Sensitivity** -- measures robustness to irrelevant retrieved context
 
-These evaluators use `{{input.retrievals}}` automatically.
+These evaluators use the retrieved chunks automatically.
 
-For custom evaluators, use the `orq-build-evaluator` skill with template variables: `{{input.user_query}}` (question), `{{output.response}}` (answer), `{{input.retrievals}}` (retrieved chunks), `{{input.expected_output}}` (ideal answer). One evaluator per criterion (faithfulness, relevance, completeness).
+For custom evaluators, use the `orq-build-evaluator` skill with template variables: `{{input.user_query}}` (question), `{{output.response}}` (answer), `{{input.retrievals}}` (retrieved chunks), `{{input.expected_output}}` (ideal answer). The legacy `{{log.*}}` names still resolve but are deprecated; the canonical list is `skills/orq-build-evaluator/resources/judge-prompt-template.md` §6. One evaluator per criterion (faithfulness, relevance, completeness).
 
 ## RAG Failure Diagnosis Decision Tree
 

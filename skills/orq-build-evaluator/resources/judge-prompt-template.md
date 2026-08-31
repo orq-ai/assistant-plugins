@@ -16,6 +16,15 @@ Determine if the assistant's response [SPECIFIC BINARY QUESTION — e.g., "corre
 - **Fail**: [PRECISE DESCRIPTION — e.g., "The response references a store policy that does not exist, misquotes an existing policy, or makes promises that contradict the actual refund policy."]
 - **Pass**: [PRECISE DESCRIPTION — e.g., "The response accurately reflects the store's refund policy as documented, or appropriately declines to answer if the policy is unclear."]
 
+[FOR CATEGORICAL EVALUATORS, replace the two definitions above with one per label:]
+### Definition of Each Label
+- **[LABEL_1]**: [PRECISE DESCRIPTION]
+- **[LABEL_2]**: [PRECISE DESCRIPTION]
+- **[LABEL_3]**: [PRECISE DESCRIPTION]
+- **other**: [Catch-all. Always include one — without it the judge invents a label or forces a bad fit.]
+
+Labels must be mutually exclusive and jointly exhaustive: every output falls in exactly one.
+
 [OPTIONAL CONTEXT SECTION — domain knowledge, persona descriptions, policy documents, etc.]
 
 ## Output Format
@@ -80,7 +89,7 @@ Your JSON Evaluation:
 
 5. **Reasoning before answer**: The template puts "reasoning" before "answer" in the JSON to encourage chain-of-thought before the final judgment.
 
-6. **Variables** (v4.14+):
+6. **Variables** (v4.14+) — this list is canonical for the skill; add new variables here, not in `SKILL.md`:
    - `{{input.user_query}}` — last user message
    - `{{output.response}}` — model's generated response
    - `{{input.expected_output}}` — reference/expected answer

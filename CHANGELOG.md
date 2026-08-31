@@ -25,6 +25,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `orq-evaluator-alignment`: meta prompt example lists the v4.14+ input variables alongside `{{output.response}}` and the legacy `{{log.output}}`; the `--map` example in `SKILL.md` and `dataset_inputs.py` no longer teaches the legacy spelling.
 - `orq-run-experiment`: template variable references updated from legacy `{{log.*}}` to v4.14+ `{{input.*}}`/`{{output.*}}` format across SKILL.md and resource files.
 
+### Added
+- `orq-build-evaluator`: categorical output type — a verified single-request `POST /v2/evaluators` body with `categorical_labels`, plus per-label criteria in Phase 2, per-label few-shot examples in Phase 3, per-label sample-size targets in Phase 4, and a confusion-matrix / per-label precision-recall gate in Phase 5. MCP `create_llm_eval` cannot create categorical evaluators: `categorical_labels` is required at creation and the tool has no such field.
+- `orq-build-evaluator`: Python evaluator `log` dict full 7-key reference with three runnable examples
+- `orq-build-evaluator`: `POST /v3/evaluators/{id}/invoke` for rapid Phase 5 iteration, with the response shape. `POST /v2/…/invoke` returns `403 insufficient_scope` for a workspace key.
+- `orq-build-evaluator`: Phase 6 step 16 recommends running `orq-evaluator-alignment` after creating an LLM evaluator
+
+### Changed
+- `orq-build-evaluator`: HTTP Fallback section now enumerates what MCP cannot do at all (categorical creation, categorical/string Python evals, listing, invoke) rather than a create-then-PATCH pattern
+- `orq-build-evaluator`: evaluator variables updated from legacy `{{log.*}}` to v4.14+ `{{input.*}}`/`{{output.*}}`; `resources/judge-prompt-template.md` §6 is now the single canonical list
+- `orq-run-experiment`: `{{log.*}}` occurrences updated to the v4.14+ names with a pointer to the canonical list
+- `orq-build-evaluator`: softened binary-only stance to recommend binary Pass/Fail while allowing numeric scales with detailed rubrics and categorical for 3+ labels; frontmatter, "Done When" and the quality checklist follow suit
+- `orq-build-evaluator`: TPR/TNR and the prevalence-correction formula are now explicitly scoped to binary evaluators
+
+### Fixed
+- `orq-build-evaluator`: duplicate step 16 — Phase 7's maintenance step is now 17
+- `orq-run-experiment`, `orq-build-agent`: evaluator invoke endpoint corrected from `/v2/evaluators/<ID>/invoke` (403) to `/v3/…`
+- `orq-run-experiment`: evaluator list pagination corrected from `after=` (silently ignored, re-serves page 1) to `starting_after=`
+- `orq-build-evaluator`: dropped the unverified `string` output type row and the unverified JSON-schema/HTTP evaluator types; `function_eval` and `ragas` are documented with their real parameter shapes
+
 ## [2.5.1] - 2026-08-27
 
 ### Fixed

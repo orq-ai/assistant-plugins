@@ -129,7 +129,7 @@ curl -s https://api.orq.ai/v2/tools \
 
 ```bash
 # Invoke evaluator to compare model outputs
-curl -s https://api.orq.ai/v2/evaluators/<ID>/invoke \
+curl -s https://api.orq.ai/v3/evaluators/<ID>/invoke \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"output": "Model output to evaluate", "query": "Original question"}' | jq

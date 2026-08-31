@@ -109,7 +109,7 @@ Consult these docs as needed:
 - **Experiment tabs:** Runs (compare iterations), Review (individual responses), Compare (models side-by-side)
 - **Agents** can have executable tools in experiments — HTTP, Python, data fetching
 - **Traces** show step-by-step tool interactions: tool names, args, payloads, responses
-- **LLM evaluators** access `{{input.all_messages}}` (conversation history) and `{{input.retrievals}}` (KB results)
+- **LLM evaluators** access conversation history and KB results via `{{input.all_messages}}` and `{{input.retrievals}}` (v4.14+; the legacy `{{log.messages}}` / `{{log.retrievals}}` names still resolve but are deprecated — canonical list: `skills/orq-build-evaluator/resources/judge-prompt-template.md` §6)
 - **Prompts** support versioning; **Deployments** expose versions to the API
 
 ## Prerequisites
