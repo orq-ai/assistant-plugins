@@ -10,6 +10,7 @@
 //   8. agents/AGENTS.md <-> skills/ (path list + <available_skills>)
 //   9. README.md skills table <-> skills/
 //  10. tests/skills.md <-> skills/
+//  11. no legacy orq template variables in skill markdown
 // Errors fail the run; warnings don't. Run from anywhere in the repo.
 
 import { createHash } from "node:crypto";
@@ -533,6 +534,28 @@ if (smokeText !== null) {
 }
 
 // ---------- result ----------
+// ---------- 11. legacy orq template variables ----------
+// orq renamed evaluator template variables in v4.14 (`{{log.input}}` ->
+// `{{input.user_query}}`, and so on) and kept the old names resolving. Nothing
+// breaks loudly, so a skill left on the legacy list just keeps teaching the old
+// spelling: `orq-build-evaluator` — the skill that authors judge prompts — sat on
+// it while every skill around it migrated, and only a hand grep found that.
+// Markdown under skills/ only: that is where instructions to an agent live, while
+// Python docstrings and test fixtures reference `{{log.*}}` on purpose (they
+// describe past bugs and pin backward compatibility). A line that says "legacy" is
+// a deliberate compatibility note, not an instruction, so it passes.
+const LEGACY_TEMPLATE_VAR = /\{\{\s*log\./;
+for (const f of tracked) {
+  if (!f.startsWith("skills/") || !f.endsWith(".md")) continue;
+  let text;
+  try { text = readFileSync(join(root, f), "utf8"); } catch { continue; }
+  text.split("\n").forEach((line, i) => {
+    if (LEGACY_TEMPLATE_VAR.test(line) && !/legacy/i.test(line))
+      err(`${f}:${i + 1}: legacy orq template variable — use the v4.14+ {{input.*}}/{{output.*}} name, `
+        + `or say "legacy" on the line if it is a compatibility note`);
+  });
+}
+
 if (errors > 0) {
   console.error(`\nSkill validation failed with ${errors} error(s).`);
   process.exit(1);

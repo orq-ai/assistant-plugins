@@ -28,7 +28,12 @@ from evaluatorq.common.jury import Prediction, VerdictKind, run_jury
 from evaluatorq.common.llm_call import execute_chat_completion
 from evaluatorq.common.llm_client import resolve_llm_client
 
-from lib.content import field_for_variable, stringify_messages
+from lib.content import (
+    field_for_variable,
+    stringify_messages,
+    stringify_retrievals,
+    stringify_tools_called,
+)
 from lib.orq_client import tls_verify
 
 
@@ -400,6 +405,10 @@ def make_replacements(variables: list[str], row: dict[str, Any]) -> dict[str, An
             continue
         if field == 'messages':
             repl[var] = stringify_messages(row.get('messages'))
+        elif field == 'retrievals':
+            repl[var] = stringify_retrievals(row.get('retrievals'))
+        elif field == 'tools_called':
+            repl[var] = stringify_tools_called(row.get('tools_called'))
         else:
             repl[var] = row.get(field, '') or ''
     return repl

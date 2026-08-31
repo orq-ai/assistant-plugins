@@ -59,7 +59,7 @@ def pull(run_dir: str | None = None, config: str = 'config.toml',
 
     Args:
         map: Explicit variable→source mappings for fields the automatic rules
-            cannot resolve, e.g. `--map "log.output=messages.assistant.last"`.
+            cannot resolve, e.g. `--map "output.response=messages.assistant.last"`.
             Repeatable. Sources: `inputs.<key>`, `messages.<role>.last|first`,
             `messages.all`, `expected_output`. An unknown source is an error, not
             a silent skip. The resolved mapping is written to `input_mapping.json`

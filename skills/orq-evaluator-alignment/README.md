@@ -166,7 +166,7 @@ must stay importable without it.
 Anything that maps a template variable to a field, or reads text out of a
 message, goes through it. Every past attempt to keep a private copy "in sync by
 hand" has drifted — `lib/seed.py`'s copy lost the `reference` family and silently
-skipped every row of an evaluator declaring `{{log.reference}}`, and the trace
+skipped every row of an evaluator declaring the legacy `{{log.reference}}`, and the trace
 scanner's copy dropped `{{...expected_output}}` so the retest compared against a
 blank ground truth.
 

@@ -109,7 +109,7 @@ Consult these docs as needed:
 - **Experiment tabs:** Runs (compare iterations), Review (individual responses), Compare (models side-by-side)
 - **Agents** can have executable tools in experiments — HTTP, Python, data fetching
 - **Traces** show step-by-step tool interactions: tool names, args, payloads, responses
-- **LLM evaluators** access `{{log.messages}}` (conversation history) and `{{log.retrievals}}` (KB results)
+- **LLM evaluators** access `{{input.all_messages}}` (conversation history) and `{{input.retrievals}}` (KB results)
 - **Prompts** support versioning; **Deployments** expose versions to the API
 
 ## Prerequisites

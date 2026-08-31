@@ -189,13 +189,17 @@ second deletes what they added, so it refuses when it finds rows from another so
    ```
    It matches the dataset's columns to what the judge reads, deriving `output` from
    the last assistant turn and `query` from the last user turn when the exchange
-   lives under `messages` rather than in `inputs`. If a field still can't be matched
+   lives under `messages` rather than in `inputs`. This is also the route for
+   `{{input.retrievals}}` and `{{input.system_instructions}}`: orq emits no span
+   attribute for either, so a trace only carries them when the judge prompt
+   interpolated them and the scanner recovers them from the rendered text — a
+   dataset column (or `--map`) is the reliable source. If a field still can't be matched
    it prints **one inventory** — what the judge needs, what the dataset holds, what
    each field could map to — instead of one line per row. Read that back and ask the
    user to confirm the mapping; don't guess:
    ```
    uv run scripts/dataset_inputs.py pull --run_dir <run_dir> --dataset_id <id> \
-       --map "log.output=messages.assistant.last"
+       --map "output.response=messages.assistant.last"
    ```
    **Datasets often carry ground truth** (`expected_output`). That is the single
    most valuable thing a run can have: it turns step 4 from "is the judge steady?"

@@ -351,7 +351,8 @@ def _assign_io(recovered: dict[str, str]) -> dict[str, Any]:
     mapper that knew only query/output/messages would drop the expected value on
     the floor and re-judge against a blank reference.
     """
-    fields: dict[str, Any] = {'query': '', 'output': '', 'reference': '', 'messages': None}
+    fields: dict[str, Any] = {'query': '', 'output': '', 'reference': '', 'messages': None,
+                              'retrievals': None, 'system_instructions': '', 'tools_called': None}
     for var, val in recovered.items():
         field = field_for_variable(var)
         if field is not None:
@@ -362,7 +363,8 @@ def _assign_io(recovered: dict[str, str]) -> dict[str, Any]:
 def _extract_io(
     spans: list[dict[str, Any]], eval_span: dict[str, Any], template: str
 ) -> dict[str, Any]:
-    """The row's content under evaluation: ``{query, output, reference, messages}``.
+    """The row's content under evaluation: ``{query, output, reference, messages,
+    retrievals, system_instructions, tools_called}``.
 
     THE extraction precedence, in one place so the scan loop and the tests
     exercise the same ordering (a test that re-implements it passes even when
@@ -389,6 +391,9 @@ def _extract_io(
             'output': structured['output'],
             'reference': structured['reference'],
             'messages': structured['messages'],
+            'retrievals': None,
+            'system_instructions': '',
+            'tools_called': None,
         }
 
     rendered, judge_messages = _judge_io(spans, eval_span)
@@ -403,7 +408,8 @@ def _extract_io(
                 f'⚠ could not recover template variables for span {_span_id(eval_span)}; '
                 'storing raw rendered judge input'
             )
-        io = {'query': '', 'output': rendered, 'reference': '', 'messages': judge_messages}
+        io = {'query': '', 'output': rendered, 'reference': '', 'messages': judge_messages,
+              'retrievals': None, 'system_instructions': '', 'tools_called': None}
     # The structured root is the better source for the fields the stencil can't
     # produce: a conversation is not recoverable from a rendered prompt, and
     # `reference` is ground truth the judge span never echoes back.
@@ -412,6 +418,16 @@ def _extract_io(
         'output': io['output'],
         'reference': io['reference'] or structured.get('reference', ''),
         'messages': io['messages'] or structured.get('messages'),
+        # orq emits no span attribute for any of the three, so the stencil is the
+        # only source: a judge prompt that interpolated `{{input.retrievals}}` or
+        # `{{output.tools_called}}` carries the rendered text and `_assign_io`
+        # recovers it — as an already-formatted string, which `stringify_tools_called`
+        # passes back through untouched. A structured root short-circuits above with
+        # all three empty, which is honest: those runs really do not carry them, and
+        # `seed.unresolved_variables` says so per row.
+        'retrievals': io.get('retrievals'),
+        'system_instructions': io.get('system_instructions', ''),
+        'tools_called': io.get('tools_called'),
     }
 
 
@@ -667,6 +683,9 @@ async def _fetch(
                         'output': output_val,
                         'reference': reference,
                         'messages': msgs,
+                        'retrievals': io['retrievals'],
+                        'system_instructions': io['system_instructions'],
+                        'tools_called': io['tools_called'],
                         'judge_value': ev['value'],
                         'judge_explanation': ev['explanation'],
                         'judge_model': _judge_model(full, span),

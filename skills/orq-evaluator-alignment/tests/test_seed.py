@@ -121,10 +121,18 @@ def test_every_judge_fillable_leaf_is_resolvable_by_seed():
     # property that failure violated: every leaf the judge can fill, seed accepts.
     from lib.content import _FIELD_BY_LEAF
 
-    row = {'query': 'q', 'output': 'o', 'messages': [{'role': 'user', 'content': 'hi'}], 'reference': 'r'}
-    variables = [f'log.{leaf}' for leaf in _FIELD_BY_LEAF]
+    row = {'query': 'q', 'output': 'o', 'messages': [{'role': 'user', 'content': 'hi'}], 'reference': 'r',
+           'retrievals': ['chunk'], 'system_instructions': 's',
+           'tools_called': [{'name': 'f', 'arguments': '{}', 'output': 'o'}]}
 
-    assert seed.unresolved_variables(row, variables) == []
+    # Every namespace the platform has used, not just `log.` — v4.14 renamed the
+    # prefix (`input.user_query`, `output.response`) and the leaf table is what
+    # makes that a no-op. Asserting only the `log.` spelling would have passed
+    # while every v4.14 evaluator was skipped as unmappable, which is the bug this
+    # test exists to catch, one namespace later.
+    for prefix in ('log.', 'input.', 'output.', ''):
+        variables = [f'{prefix}{leaf}' for leaf in _FIELD_BY_LEAF]
+        assert seed.unresolved_variables(row, variables) == [], prefix
     # And a leaf outside the table is still reported, not silently accepted.
     assert seed.unresolved_variables(row, ['log.rubric']) == ['log.rubric']
 

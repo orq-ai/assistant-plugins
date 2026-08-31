@@ -26,12 +26,16 @@ import json
 from typing import Any
 
 # Suffix → row field. Evaluators name their variables differently
-# (`log.input`/`log.output`, `query`/`output`, `input`/`response`, ...), so both
-# directions match on the last dotted segment rather than the full name.
+# (`log.input`/`log.output`, `input.user_query`/`output.response`, ...), so both
+# directions match on the last dotted segment rather than the full name. Do not
+# annotate entries with the orq version that introduced a spelling: matching is
+# leaf-only and version-agnostic, so such a label goes stale the next time the
+# platform renames a namespace and nothing here has to change.
 _FIELD_BY_LEAF: dict[str, str] = {
     'input': 'query',
     'query': 'query',
     'prompt': 'query',
+    'user_query': 'query',
     'output': 'output',
     'response': 'output',
     'completion': 'output',
@@ -39,9 +43,14 @@ _FIELD_BY_LEAF: dict[str, str] = {
     'messages': 'messages',
     'history': 'messages',
     'conversation': 'messages',
+    'all_messages': 'messages',
     'reference': 'reference',
     'expected': 'reference',
     'expected_output': 'reference',
+    'retrievals': 'retrievals',
+    'system_instructions': 'system_instructions',
+    'tools_called': 'tools_called',
+    'tool_calls': 'tools_called',
 }
 
 
@@ -168,23 +177,96 @@ def stringify_messages(messages: Any) -> str:
     return str(messages)
 
 
+def stringify_retrievals(retrievals: Any) -> str:
+    """Render knowledge-base retrievals for a `{{...retrievals}}` variable.
+
+    Newline-joined chunks, verbatim — that is what orq itself substitutes, checked
+    against a live evaluator invoked with three retrieval chunks (2026-08-31). The
+    local judge has to match it: this skill re-renders the judge prompt instead of
+    invoking the stored evaluator, so a different separator here would measure the
+    judge on a prompt production never showed it.
+    """
+    if not retrievals:
+        return ''
+    if isinstance(retrievals, str):
+        return retrievals
+    if isinstance(retrievals, list):
+        return '\n'.join(r if isinstance(r, str) else str(r) for r in retrievals)
+    return str(retrievals)
+
+
+def stringify_tools_called(tools: Any) -> str:
+    """Render an agent's tool calls for a `{{...tools_called}}` variable.
+
+    orq does not hand the judge the value the caller passed; it formats it, and
+    this skill re-renders judge prompts locally instead of invoking the stored
+    evaluator (see `lib.judge`), so the formatting has to be reproduced or the
+    judge is graded on a prompt production never showed it. Measured against a
+    live evaluator (2026-08-31), the format is::
+
+        1. lookup_order({"id":42})
+           Status: ✅ Success
+           Response: shipped
+
+        2. send_email({"to":"a@b.c"})
+           ...
+
+    with a blank line between calls, `({})` for absent arguments, `Response: N/A`
+    for a call with no result, `No tool calls were made.` for an empty list, and a
+    call without a `name` dropped before numbering (so the surviving calls number
+    from 1). A string passes through untouched: that is a block orq already
+    rendered, recovered from a judge prompt by the trace stencil.
+
+    **Ceiling: the status marker.** `ToolCalled.status` is
+    `'' | in_progress | completed | incomplete | failed`, but the evaluator-invoke
+    API drops it — every reachable probe rendered `✅ Success`, so that is the only
+    marker confirmed. A non-empty, non-`completed` status prints its own value
+    rather than a guessed emoji: showing the raw word is wrong in formatting where
+    inventing `❌` would be wrong about the run. Replace this branch once a real
+    agent trace shows what orq prints for a failed call.
+    """
+    if isinstance(tools, str):
+        return tools
+    if tools is None:
+        return ''
+    if not isinstance(tools, list):
+        return str(tools)
+    calls = [t for t in tools if isinstance(t, dict) and t.get('name')]
+    if not calls:
+        return 'No tool calls were made.'
+    blocks = []
+    for i, call in enumerate(calls, 1):
+        status = str(call.get('status') or '').strip().lower()
+        marker = '✅ Success' if status in ('', 'completed') else status
+        blocks.append(
+            f'{i}. {call["name"]}({call.get("arguments") or "{}"})\n'
+            f'   Status: {marker}\n'
+            f'   Response: {call.get("output") or "N/A"}'
+        )
+    return '\n\n'.join(blocks)
+
+
 def judged_input_key(row: dict[str, Any]) -> str:
     """Stable identity of one datapoint: the content the judge actually scores.
 
     Keys off the fields `lib.judge.make_replacements` feeds the judge
-    (query / output / reference / messages), NOT trace/span provenance — so the
-    same input captured on two different traces is one datapoint. Serialised to a
+    (query / output / reference / messages, plus retrievals / system_instructions /
+    tools_called when a row carries them), NOT trace/span provenance — so the same input
+    captured on two different traces is one datapoint. Serialised to a
     stable JSON string so an unhashable value (a `messages` list) still keys.
 
     Lives here rather than in `fetch_traces` because two callers now need it: the
     scanner's exact-match dedup, and `traces_fingerprint` below.
     """
-    return json.dumps(
-        [row.get('query', ''), row.get('output', ''), row.get('reference', ''), row.get('messages')],
-        sort_keys=True,
-        ensure_ascii=False,
-        default=str,
-    )
+    key: list[Any] = [row.get('query', ''), row.get('output', ''), row.get('reference', ''), row.get('messages')]
+    # Appended only when present, so a row that carries neither keys exactly as it
+    # did before these fields existed. Unconditional inclusion would change every
+    # row's identity and so every `traces_fingerprint`, making each in-flight run
+    # refuse its own stability.json for a field almost no row has.
+    extra = {f: row[f] for f in ('retrievals', 'system_instructions', 'tools_called') if row.get(f)}
+    if extra:
+        key.append(extra)
+    return json.dumps(key, sort_keys=True, ensure_ascii=False, default=str)
 
 
 def traces_fingerprint(rows: list[dict[str, Any]]) -> str:
