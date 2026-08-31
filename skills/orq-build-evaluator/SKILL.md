@@ -106,11 +106,11 @@ Python evaluators receive a single `log` dict argument. Every key is always pres
 | `log["output"]` | `str` | The model's generated response. Guard for empty anyway — a failed generation should not score Pass by default. |
 | `log["reference"]` | `str \| None` | Reference/expected answer |
 | `log["expected_output"]` | `str \| None` | Same value as `reference` |
-| `log["messages"]` | `list[dict]` | Conversation history; each entry has `role` and `content` |
+| `log["messages"]` | `list[dict]` | The conversation **before** the graded turn (it excludes that turn); each entry has `role` and `content` |
 | `log["retrievals"]` | `list[str]` | Knowledge Base retrieval chunks |
 | `log["tool_calls"]` | `list[dict]` | Tool invocations; each has `tool_name`, `tool_arguments`, `tool_id`, `tool_run_id`, `tool_type`, `response["raw_response"]` |
 
-Python evals return `bool` (for boolean output type) or a numeric value (for number). Code limit: 1 MB. Available stdlib: `re`, `json`, `math`, `string`, `collections`, `itertools`, `functools`, `difflib`. Available third-party: `numpy`, `nltk`.
+Python evals return `bool` (for boolean output type) or a numeric value (for number). Code limit: 1 MB (1,048,576 bytes); larger code returns `Code exceeds maximum size` and does not run. Third-party libraries the [docs](https://docs.orq.ai/docs/ai-studio/optimize/evaluators) name as preloaded: `numpy` (v1.26.4), and since v4.10 `requests` (HTTP calls) and `pydantic` (JSON-schema validation) — the latter two are the replacement for the retired HTTP and JSON evaluator types. Anything else is unverified; test it in the Playground before relying on it.
 
 > The last `def` in the code editor is the entry-point. You can define helper functions above it.
 
@@ -391,8 +391,8 @@ Your JSON Evaluation:
     | Output type | Compute | Gate |
     |-------------|---------|------|
     | `boolean` | TPR = true passes correctly identified / total actual passes; TNR = true fails correctly identified / total actual fails | TPR **and** TNR > 90% |
-    | `categorical` | Full N x N confusion matrix, then per-label precision and recall. Report both **per label** and as a macro average (unweighted mean across labels, so a rare label cannot be hidden by a common one). | Macro-averaged recall > 90% **and** no single label below 80% recall |
-    | `number` | Mean absolute error against human scores, plus Spearman correlation | Report both; there is no universal gate — set one before you start and record it |
+    | `categorical` | Full N x N confusion matrix, then per-label precision and recall. Report both **per label** and as a macro average (unweighted mean across labels, so a rare label cannot be hidden by a common one). | Macro-averaged recall > 90% **and** no single label below 80% recall — a starting heuristic, not a sourced standard: it mirrors the binary bar and adds a per-label floor so a rare label cannot be averaged away. Move it deliberately and record where you put it. |
+    | `number` | Mean absolute error against human scores, plus Spearman correlation | No universal gate exists — set one before you start and record it. Absent a reason to differ, start at Spearman > 0.7 and an MAE inside the tolerance the downstream decision can absorb; that default is a convention, not a measurement. |
 
     For categorical, the confusion matrix is the artifact to inspect, not the headline number: off-diagonal mass concentrated in one label pair means those two label definitions overlap and should be merged or sharpened.
 
