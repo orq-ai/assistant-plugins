@@ -28,7 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `orq-build-evaluator`: categorical output type — a verified single-request `POST /v2/evaluators` body with `categorical_labels`, plus per-label criteria in Phase 2, per-label few-shot examples in Phase 3, per-label sample-size targets in Phase 4, and a confusion-matrix / per-label precision-recall gate in Phase 5. MCP `create_llm_eval` cannot create categorical evaluators: `categorical_labels` is required at creation and the tool has no such field.
 - `orq-build-evaluator`: Python evaluator `log` dict full 7-key reference with three runnable examples
-- `orq-build-evaluator`: `POST /v3/evaluators/{id}/invoke` for rapid Phase 5 iteration, with the response shape. `POST /v2/…/invoke` returns `403 insufficient_scope` for a workspace key.
+- `orq-build-evaluator`: `POST /v3/evaluators/{id}/invoke` for rapid Phase 5 iteration, with the response shape and a payload-field-to-template-variable table. Evaluator CRUD is v2-only and invoke is v3-only — `/v3/evaluators` 404s, `POST /v2/…/invoke` returns `403 insufficient_scope` for a workspace key.
+- `orq-build-evaluator`: `orq evals create` invocation for categorical evaluators alongside the raw HTTP body, for scripts and CI
 - `orq-build-evaluator`: Phase 6 step 16 recommends running `orq-evaluator-alignment` after creating an LLM evaluator
 
 ### Changed
@@ -43,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `orq-run-experiment`, `orq-build-agent`: evaluator invoke endpoint corrected from `/v2/evaluators/<ID>/invoke` (403) to `/v3/…`
 - `orq-run-experiment`: evaluator list pagination corrected from `after=` (silently ignored, re-serves page 1) to `starting_after=`
 - `orq-build-evaluator`: dropped the unverified `string` output type row and the unverified JSON-schema/HTTP evaluator types; `function_eval` and `ragas` are documented with their real parameter shapes
+- `orq-build-evaluator`: invoke payload corrected to `query`/`reference` — `input` and `expected_output` are not accepted and are dropped silently, rendering `{{input.user_query}}` / `{{input.expected_output}}` empty with no error
 
 ## [2.5.1] - 2026-08-27
 

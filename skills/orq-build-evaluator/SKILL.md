@@ -144,6 +144,8 @@ MCP covers boolean and numeric LLM/Python evaluators. Everything below has no MC
 | List evaluators | `GET /v2/evaluators?limit=50` — paginate with `starting_after=<last _id>` while `has_more` is true. **Not** `after=` — that parameter is silently ignored and re-serves page 1 forever. |
 | Test-run one evaluator | `POST /v3/evaluators/{id}/invoke` — see below |
 
+**Evaluator CRUD is v2-only and invoke is v3-only.** This is not a typo to normalise: `GET`/`POST /v3/evaluators` returns 404, and `POST /v2/evaluators/{id}/invoke` returns `403 insufficient_scope` for a workspace API key. Use each version where it works.
+
 #### Creating a Categorical Evaluator
 
 `categorical_labels` is required at creation. `categories` is the flat mirror of the same label values; send both. `guardrail_config.values` lists the labels that count as passing.
@@ -170,15 +172,43 @@ POST /v2/evaluators
 
 The response echoes `categories` and `categorical_labels` but returns `output_type: null` — read the label fields, not `output_type`, to confirm the evaluator is categorical.
 
-#### Programmatic Invoke
+The same call via the CLI, which is the better option in a script or CI job (`orq` handles auth and workspace selection):
 
-`POST /v3/evaluators/{id}/invoke` runs one evaluator against a single input/output pair — use it for rapid Phase 5 iteration instead of a full experiment.
-
-```json
-{"input": "the original user query", "output": "the response to judge", "expected_output": ""}
+```bash
+orq evals create --json \
+  --key tone-classifier --type llm_eval --mode single --model openai/gpt-4o-mini \
+  --output-type categorical --path Default \
+  --prompt "$(cat judge-prompt.txt)" \
+  --categories professional --categories casual --categories aggressive \
+  --categorical-labels '[{"value":"professional","description":"Formal and courteous"},{"value":"casual","description":"Informal but polite"},{"value":"aggressive","description":"Hostile or rude"}]' \
+  --guardrail-config '{"type":"categorical","values":["professional","casual"],"enabled":true,"alert_on_failure":false}'
 ```
 
-Returns `{"type", "value", "evaluator_id", "status", "passed", "explanation"}` — `value` is the verdict (`true`/`false`, a number, or the chosen label). A categorical evaluator reports `type: "string"`, not `"categorical"`. Invoke is **v3 only**; `POST /v2/evaluators/{id}/invoke` returns `403 insufficient_scope` for a workspace API key.
+`--categories` is repeatable; `--categorical-labels` and `--guardrail-config` take JSON strings. See the `orq-cli` skill for auth and profile selection.
+
+#### Programmatic Invoke
+
+`POST /v3/evaluators/{id}/invoke` runs one evaluator against a single input/output pair — use it for rapid Phase 5 iteration instead of a full experiment. Or `orq evals invoke <id> --json --query ... --output ...`, which calls the same endpoint.
+
+```json
+{"query": "the original user query", "output": "the response to judge", "reference": "the expected answer"}
+```
+
+**The payload field names are not the template variable names, and unknown fields are silently ignored — no error, the variable just renders empty and the judge scores a prompt with a hole in it.** Send exactly these:
+
+| Payload field | Renders as | Notes |
+|---------------|-----------|-------|
+| `query` | `{{input.user_query}}` | **Not** `input` — `input` is dropped silently |
+| `output` | `{{output.response}}` | |
+| `reference` | `{{input.expected_output}}` | **Not** `expected_output` — also dropped silently |
+| `messages` | `{{input.all_messages}}` | `[{role, content}]`; when present it takes precedence over `query`/`output` |
+| `retrievals` | `{{input.retrievals}}` | list of strings |
+| `variables` | `{{my_custom_var}}` | map, for custom variables |
+| `context`, `model` | — | optional context object and judge-model override |
+
+Returns `{"type", "value", "evaluator_id", "status", "passed", "explanation"}` — `value` is the verdict (`true`/`false`, a number, or the chosen label). A categorical evaluator reports `type: "string"`, not `"categorical"`.
+
+> Verify a new judge sees what you think it sees: invoke it twice with the deciding fact moved in and out of one field. If the verdict does not change, that field is not reaching the prompt.
 
 ## Core Principles
 
