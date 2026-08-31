@@ -119,13 +119,11 @@ Your JSON Evaluation:
 
    **Legacy `{{log.*}}` variables** still resolve, so existing evaluators keep working — prefer the above for new ones. The mapping is not quite one-to-one:
 
-   | Legacy | Current |
-   |--------|---------|
-   | `{{log.input}}` | `{{input.user_query}}` |
-   | `{{log.output}}` | `{{output.response}}` |
-   | `{{log.retrievals}}` | `{{input.retrievals}}` |
-   | `{{log.reference}}` | `{{input.expected_output}}` |
-   | `{{log.tool_calls}}` | `{{output.tools_called}}` |
-   | `{{log.messages}}` | **Not** `{{input.all_messages}}` — `log.messages` excludes the graded turn, `input.all_messages` includes it. Swapping them changes what the judge sees. |
+   - legacy `{{log.input}}` is now `{{input.user_query}}`
+   - legacy `{{log.output}}` is now `{{output.response}}`
+   - legacy `{{log.retrievals}}` is now `{{input.retrievals}}`
+   - legacy `{{log.reference}}` is now `{{input.expected_output}}`
+   - legacy `{{log.tool_calls}}` is now `{{output.tools_called}}`
+   - legacy `{{log.messages}}` is **not** `{{input.all_messages}}` — `log.messages` excludes the graded turn, `input.all_messages` includes it. Swapping them changes what the judge sees.
 
    There is no `log.*` equivalent for `{{input.system_instructions}}`.
