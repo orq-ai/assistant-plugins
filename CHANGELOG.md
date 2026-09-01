@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `orq-cli`: the `--verbose` warning was understated. It prints to stderr, not stdout, and still dumps every stored API key in full plaintext even though `auth list-profiles` has masked them since CLI 5.0.0 — re-verified on 5.1.0.
+## [3.0.1] - 2026-09-01
+
+### Fixed
+- `orq-evaluator-alignment`: on Windows, `tls_verify()` no longer disables TLS verification. It now returns a `truststore.SSLContext` that validates against the OS trust store (SChannel) instead of loading a CA bundle from disk — the disk-load path is what triggers the `OPENSSL_Uplink(...): no OPENSSL_Applink` abort some Windows Python builds hit, not TLS verification itself. `ORQ_API_KEY` no longer rides unverified connections on any platform. `truststore` is declared `sys_platform == 'win32'`-only in the six scripts that reach `OrqClient` or `make_judge_client` (`create_eval.py`, `dataset_inputs.py`, `fetch_evaluator.py`, `fetch_traces.py`, `seed_inputs.py`, `stability.py`) and in `tests/requirements.txt`. Confirmed on Windows (RES-1387): `verify=True` reproduces the crash, this fix does not, and SChannel correctly rejects self-signed/expired/wrong-host certs.
 
 ## [3.0.0] - 2026-08-31
 

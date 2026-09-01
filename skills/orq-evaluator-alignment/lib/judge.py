@@ -602,12 +602,14 @@ def make_judge_client() -> Any:
     A dedicated ``JUDGE_OPENAI_BASE_URL`` still allows an intentional override
     (Azure/proxy) without disturbing ``OPENAI_BASE_URL`` used elsewhere.
 
-    On Windows conda Pythons the default httpx SSL context aborts the process with
-    ``OPENSSL_Uplink(...): no OPENSSL_Applink`` (project memory: the repo's
-    established workaround is an httpx client with ``verify=False``). We apply that
-    on win32 for both branches and keep TLS verification on everywhere else; the
-    client is built here because ``resolve_llm_client`` exposes no ``http_client``
-    hook. Any other env falls back to the shared resolver.
+    On some Windows Python builds the default httpx SSL context aborts the
+    process with ``OPENSSL_Uplink(...): no OPENSSL_Applink`` (RES-1387: not
+    conda-specific, and reproduces from ``ssl.create_default_context()`` alone,
+    before any network call). We build the client explicitly on win32 for both
+    branches so it can pass ``tls_verify()`` — which uses `truststore` to
+    validate via the OS trust store instead of loading a CA bundle from disk —
+    because ``resolve_llm_client`` exposes no ``http_client`` hook. Any other env
+    falls back to the shared resolver.
     """
     import os
     import sys
@@ -628,7 +630,7 @@ def make_judge_client() -> Any:
         if sys.platform == 'win32':
             import httpx
 
-            kwargs['http_client'] = httpx.AsyncClient(verify=tls_verify())  # noqa: S501
+            kwargs['http_client'] = httpx.AsyncClient(verify=tls_verify())
         return AsyncOpenAI(**kwargs)
 
     orq_api_key = os.environ.get('ORQ_API_KEY')
@@ -640,6 +642,6 @@ def make_judge_client() -> Any:
         return AsyncOpenAI(
             api_key=orq_api_key,
             base_url=f'{host}/v3/router',
-            http_client=httpx.AsyncClient(verify=tls_verify()),  # noqa: S501
+            http_client=httpx.AsyncClient(verify=tls_verify()),
         )
     return resolve_llm_client().client
