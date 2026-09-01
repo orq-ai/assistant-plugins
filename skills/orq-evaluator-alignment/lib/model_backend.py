@@ -66,6 +66,12 @@ import shutil
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+# Re-exported rather than reimplemented: this module used to carry its own copy of
+# the win32 TLS policy, which drifted out of sync with `orq_client`'s and shipped a
+# second, independently-broken `verify=False` (RES-1387). One function, one place
+# it can go stale.
+from lib.orq_client import tls_verify as _tls_verify
+
 
 _VAR_TOKEN = re.compile(r'\{\{\s*([^}]+?)\s*\}\}')
 
@@ -206,20 +212,6 @@ class OrqRouterBackend:
         return (getattr(usage, 'prompt_tokens', 0) / 1000) * pin + (
             getattr(usage, 'completion_tokens', 0) / 1000
         ) * pout
-
-
-def _tls_verify() -> bool | Any:
-    """What httpx should verify TLS certificates against. Mirrors `orq_client.tls_verify`
-    (RES-1387) — see that docstring for why win32 needs `truststore` instead of `True`.
-    """
-    import ssl
-    import sys
-
-    if sys.platform == 'win32':
-        import truststore
-
-        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    return True
 
 
 def _router_failure_reason(model: str, exc: Exception) -> str:

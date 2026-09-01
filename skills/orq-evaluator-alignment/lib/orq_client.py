@@ -86,11 +86,20 @@ def tls_verify() -> bool | ssl.SSLContext:
     CERT_REQUIRED`) that validates against the OS trust store via SChannel
     instead, avoiding the disk-load path that triggers the abort. Everywhere
     else, `True` is the plain httpx default. Single source of truth for the
-    policy — imported by the judge client in ``judge.py`` too.
+    policy — imported by `judge.py` and `model_backend.py` too, so the win32
+    path is defined exactly once.
     """
     if sys.platform == 'win32':
-        import truststore
-
+        try:
+            import truststore
+        except ImportError as exc:
+            raise ImportError(
+                'truststore is required on Windows for TLS verification (RES-1387) but is '
+                "not installed. Run this script via `uv run scripts/<name>.py` — its PEP 723 "
+                "header declares truststore for win32 — or `pip install truststore` if you're "
+                'running outside uv. Falling back to unverified TLS is not an option here: '
+                'ORQ_API_KEY rides these connections.'
+            ) from exc
         return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     return True
 

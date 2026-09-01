@@ -15,4 +15,10 @@ httpx>=0.27
 loguru>=0.7.3
 python-dotenv>=1.2.1
 tenacity>=8.0
-truststore>=0.9; sys_platform == 'win32'
+# Unmarked here (unlike the scripts' PEP 723 blocks, which stay win32-only —
+# real usage never imports truststore off Windows). CI runs ubuntu-latest only,
+# so a win32-only marker would mean the win32 tls_verify() branch has zero
+# coverage anywhere. Installing it unconditionally for tests lets
+# test_tls_verify.py monkeypatch sys.platform and exercise the real
+# truststore.SSLContext construction (RES-1387 follow-up).
+truststore>=0.9
