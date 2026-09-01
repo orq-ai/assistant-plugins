@@ -61,3 +61,14 @@ def test_model_backend_tls_verify_sslcontext_on_windows(monkeypatch: pytest.Monk
     assert isinstance(result, ssl.SSLContext)
     assert result.check_hostname is True
     assert result.verify_mode == ssl.CERT_REQUIRED
+
+
+def test_tls_verify_missing_truststore_raises_actionable_error(monkeypatch: pytest.MonkeyPatch):
+    # `sys.modules[name] = None` is the standard way to simulate an uninstalled
+    # module: the import system raises ImportError for it without touching the
+    # real installation. Must still fail loud on win32 — never fall back to
+    # verify=False just because truststore is missing.
+    monkeypatch.setattr(sys, 'platform', 'win32')
+    monkeypatch.setitem(sys.modules, 'truststore', None)
+    with pytest.raises(ImportError, match='truststore'):
+        orq_client.tls_verify()
