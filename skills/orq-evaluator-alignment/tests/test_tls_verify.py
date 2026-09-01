@@ -2,20 +2,22 @@
 
 `lib.orq_client.tls_verify()` and `lib.model_backend._tls_verify()` (a
 re-export of the same function, see model_backend.py) must never go back to
-returning `False` on win32 — that's exactly the bug this covers. CI runs
-`ubuntu-latest` only, so these tests monkeypatch `sys.platform` rather than
-requiring a real Windows runner; `truststore` dispatches on the *real*
-platform internally (not on `sys.platform`), so a `truststore.SSLContext`
-built here is backed by this machine's actual OS trust store, not a fake
-Windows one — but its type and its `check_hostname`/`verify_mode` invariants
-hold on every backend truststore supports, which is what these tests assert.
+returning `False` on win32 — that's exactly the bug this covers.
 
-Not pure stdlib: needs `truststore`, unconditionally installed for the test
-suite (see tests/requirements.txt) precisely so this file can run anywhere.
+`tests/requirements.txt` declares `truststore` win32-only, matching real
+usage (it may still end up installed elsewhere as some other dependency's
+transitive pull — this suite doesn't rely on that either way). The tests
+that construct a real `truststore.SSLContext` are guarded to skip when it
+isn't importable, so they run for real wherever it is — on `windows-latest`
+that's a real platform with a real SChannel-backed trust store, which is
+what the `skill-tests-windows` CI job exists for. The platform-independent
+tests (off-Windows behavior, the missing-dependency error path, the
+re-export identity check) always run regardless.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import ssl
 import sys
 from pathlib import Path
@@ -27,12 +29,22 @@ import pytest  # noqa: E402,F401
 
 from lib import model_backend, orq_client  # noqa: E402
 
+# truststore is win32-only in tests/requirements.txt (matching real usage), so
+# it's only actually installed on the skill-tests-windows CI job. The three
+# tests below construct a real SSLContext and need it importable; skip them
+# rather than fail where it's absent by design.
+needs_truststore = pytest.mark.skipif(
+    importlib.util.find_spec('truststore') is None,
+    reason='truststore is win32-only, see tests/requirements.txt',
+)
+
 
 def test_tls_verify_true_off_windows(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sys, 'platform', 'linux')
     assert orq_client.tls_verify() is True
 
 
+@needs_truststore
 def test_tls_verify_sslcontext_on_windows(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sys, 'platform', 'win32')
     result = orq_client.tls_verify()
@@ -41,6 +53,7 @@ def test_tls_verify_sslcontext_on_windows(monkeypatch: pytest.MonkeyPatch):
     assert result.verify_mode == ssl.CERT_REQUIRED
 
 
+@needs_truststore
 def test_tls_verify_never_returns_false_on_windows(monkeypatch: pytest.MonkeyPatch):
     # Pins the regression directly: RES-1387 was `sys.platform != 'win32'`,
     # i.e. `False` on windows. Anything falsy here is the bug back.
@@ -55,6 +68,7 @@ def test_model_backend_tls_verify_is_the_same_function():
     assert model_backend._tls_verify is orq_client.tls_verify
 
 
+@needs_truststore
 def test_model_backend_tls_verify_sslcontext_on_windows(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sys, 'platform', 'win32')
     result = model_backend._tls_verify()
