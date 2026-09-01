@@ -18,7 +18,7 @@ tenacity>=8.0
 # win32-only, matching real usage and the scripts' own PEP 723 blocks. The
 # skill-tests-windows CI job runs on windows-latest, where this installs
 # naturally and test_tls_verify.py exercises the real truststore.SSLContext
-# construction against a real Windows box (RES-1387 follow-up). The tests
-# that need it skip on other platforms rather than requiring an unconditional
-# install here.
+# construction against a real Windows box (RES-1387 follow-up). Off Windows the
+# tests that need it skip; on Windows they fail rather than skip, so that job
+# cannot pass green having asserted nothing.
 truststore>=0.9; sys_platform == 'win32'

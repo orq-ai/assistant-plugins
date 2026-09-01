@@ -29,12 +29,15 @@ import pytest  # noqa: E402,F401
 
 from lib import model_backend, orq_client  # noqa: E402
 
-# truststore is win32-only in tests/requirements.txt (matching real usage), so
-# it's only actually installed on the skill-tests-windows CI job. The three
-# tests below construct a real SSLContext and need it importable; skip them
-# rather than fail where it's absent by design.
+# The tests below construct a real SSLContext and need truststore importable.
+# On win32 that is never optional — it is the whole point of the branch, and the
+# skill-tests-windows CI job exists to assert it — so a missing truststore fails
+# there rather than skipping, which would let that job go green having checked
+# nothing. Off Windows the dependency is genuinely absent by design, so skip.
+# Evaluated at import time, so this reads the real platform, not the value the
+# tests monkeypatch below.
 needs_truststore = pytest.mark.skipif(
-    importlib.util.find_spec('truststore') is None,
+    importlib.util.find_spec('truststore') is None and sys.platform != 'win32',
     reason='truststore is win32-only, see tests/requirements.txt',
 )
 
@@ -46,19 +49,15 @@ def test_tls_verify_true_off_windows(monkeypatch: pytest.MonkeyPatch):
 
 @needs_truststore
 def test_tls_verify_sslcontext_on_windows(monkeypatch: pytest.MonkeyPatch):
+    # Pins the regression: RES-1387 was `sys.platform != 'win32'`, i.e. `False`
+    # on Windows. A real verifying SSLContext is the assertion that fails if
+    # anything falsy comes back.
     monkeypatch.setattr(sys, 'platform', 'win32')
     result = orq_client.tls_verify()
     assert isinstance(result, ssl.SSLContext)
     assert result.check_hostname is True
     assert result.verify_mode == ssl.CERT_REQUIRED
 
-
-@needs_truststore
-def test_tls_verify_never_returns_false_on_windows(monkeypatch: pytest.MonkeyPatch):
-    # Pins the regression directly: RES-1387 was `sys.platform != 'win32'`,
-    # i.e. `False` on windows. Anything falsy here is the bug back.
-    monkeypatch.setattr(sys, 'platform', 'win32')
-    assert bool(orq_client.tls_verify()) is not False
 
 
 def test_model_backend_tls_verify_is_the_same_function():

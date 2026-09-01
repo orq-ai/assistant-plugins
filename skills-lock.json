@@ -39,7 +39,7 @@
     "orq-evaluator-alignment": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "5bede8ccd8a64cd0c5e7f2bcced598663ad8c750404a6756c929cf6366d1177d"
+      "computedHash": "c0891d31dfb4b59f37f63fd1f2ac149ba1c15497fb19d0cd9a9a0e108ea67e65"
     },
     "orq-generate-synthetic-dataset": {
       "source": "orq-ai/assistant-plugins",
@@ -79,7 +79,7 @@
     "orq-shared": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "a8f3b349f8c90e80d80dfe870b015ea22258c8e58eaedeeb71bcdd32fe8fab44"
+      "computedHash": "2fbfc68d1293c0d70e058997e78752154de173b2e78382416bb634e824db8c8e"
     },
     "orq-simulate-agent": {
       "source": "orq-ai/assistant-plugins",
