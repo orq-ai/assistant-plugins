@@ -142,12 +142,12 @@ class OrqRouterBackend:
         # config/--backend_base_url -> ORQ_BASE_URL -> the hosted default.
         host = (base_url or resolve_base_url('orq_router') or 'https://my.orq.ai').rstrip('/')
         self.base_url = f'{host}/v3/router'
-        # verify=False on Windows only: the conda OpenSSL aborts the process on some
-        # cert chains. Same workaround, and same reasoning, as `judge.make_judge_client`.
+        # Verification always on — see _tls_verify() docstring for the Windows-specific
+        # trust-store path. Same policy, same reasoning, as `judge.make_judge_client`.
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=self.base_url,
-            http_client=httpx.AsyncClient(verify=_tls_verify(), timeout=timeout_s),  # noqa: S501
+            http_client=httpx.AsyncClient(verify=_tls_verify(), timeout=timeout_s),
         )
 
     async def preflight(self) -> None:
@@ -208,11 +208,18 @@ class OrqRouterBackend:
         ) * pout
 
 
-def _tls_verify() -> bool:
-    """Off on Windows only (conda OpenSSL Applink abort). Mirrors `orq_client.tls_verify`."""
+def _tls_verify() -> bool | Any:
+    """What httpx should verify TLS certificates against. Mirrors `orq_client.tls_verify`
+    (RES-1387) — see that docstring for why win32 needs `truststore` instead of `True`.
+    """
+    import ssl
     import sys
 
-    return sys.platform != 'win32'
+    if sys.platform == 'win32':
+        import truststore
+
+        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    return True
 
 
 def _router_failure_reason(model: str, exc: Exception) -> str:
@@ -244,7 +251,7 @@ async def _fetch_router_prices(model: str) -> tuple[float, float] | None:
         host = resolve_base_url('orq_deployment') or 'https://api.orq.ai'
         async with httpx.AsyncClient(
             base_url=host, headers={'Authorization': f'Bearer {api_key}'},
-            verify=_tls_verify(), timeout=30,  # noqa: S501
+            verify=_tls_verify(), timeout=30,
         ) as client:
             resp = await client.get('/v2/models', params={'limit': 1000})
             if resp.status_code >= 400:

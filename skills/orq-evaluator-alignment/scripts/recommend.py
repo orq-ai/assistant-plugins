@@ -7,6 +7,7 @@
 #     "loguru>=0.7.3",
 #     "python-dotenv>=1.2.1",
 #     "tenacity>=8.0",
+#     "truststore>=0.9; sys_platform == 'win32'",
 # ]
 # ///
 """Step 8a — type-aware human-vs-judge disagreements → rubric recommendations.
