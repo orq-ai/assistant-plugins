@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-08-31
+
+### Changed
+- `orq-cli`: document that the `--version` flag silently ignores `--json` (and that
+  `orq --version -o json` fails with `unknown command "json"`); only `orq version
+  --json` emits JSON.
+- **`orq-cli` skill re-probed against orq CLI 5.1.0** (built against orq API 4.14.3); it was previously verified against 4.13.0. Several load-bearing claims were wrong and are corrected:
+  - `--workspace` / `ORQ_WORKSPACE` are now real CLI surfaces. The skill previously stated the CLI ignored them and that they were an evaluatorq-only convention. `orq --workspace <key> <cmd>` scopes one invocation without changing the session's active workspace.
+  - `agents list` now paginates (default 10, `has_more: true`). The old text claimed it returned everything unpaginated, and built the workspace-canary guidance on that. Omitting `--limit` blocked for 4m16s and then returned `HTTP 503`, so the flag is documented as required. The 503 itself is **not** attributed to pagination: `orq agents retrieve <valid-key>` — one entity, no pagination — hung 4m14s with the same error, while a nonexistent key returned `HTTP 404` in 0.19s. The skill says so explicitly, since "add `--limit`" is useless advice for a hanging single-entity read.
+  - `orq doctor` reports `auth.status: "authenticated"`; the documented `ok` / `missing` / `invalid` vocabulary is gone. The `checks` array gained coding-agent, MCP, gateway-key-expiry and credential-permission rows, and an `info` status that is not a failure.
+  - `--example` works on `traces search`, where it previously errored.
+  - **`--server` / `ORQ_SERVER` is now the only way to set the host.** `--api-base-url` and `ORQ_API_BASE_URL` are deprecated spellings of the same value and warn on use; the default host moved to `https://my.orq.ai`. The old "two different hosts, not aliases" rule no longer holds — until 5.0.0 the six built-ins took `--api-base-url` and rejected `--server` while generated commands did the reverse, so a single run could reach two hosts. The skill now leads with the rule and marks the old flag as replace-on-sight.
+  - `orq server list` replaced its per-entry `override` field with a top-level `overridden`; `orq server current` gained `profile_server` and `server_default`.
+  - CLI versioning decoupled from the orq API version at 5.0.0 — `orq version --json` is now the way to read both.
+- `resources/command-map.md` re-derived against 5.1.0: every top-level group is now listed. The previous pass omitted twelve groups as "not covered" and named two (`activities`, `people`) that do not exist.
+
+### Added
+- `orq-cli`: **install instructions** — npm (Node ≥ 14, and the only supported route on Windows) and the `curl | sh` installer, with `https://cli.orq.ai/install.sh` as the canonical URL in place of the raw GitHub link the skill used (verified: it redirects there and is byte-identical, same SHA-256). Calls out that the installer offers to edit the shell profile and then runs `orq setup` — an interactive OAuth login that rewires the machine's coding agents — so an unattended install needs `--no-modify-path --no-setup`. Full flag/env set, `rc` channel, version pinning, checksum behaviour, pre-built binary targets, building from source, and the `# >>> orq cli >>>` profile markers moved to `resources/install.md`; flags confirmed by running the live installer's `--help`.
+- `orq-cli`: **delete commands require `--force` off a terminal** as of CLI 5.0.0 — 40 generated commands plus `orq request DELETE`. Every agent and CI invocation hits this. Promoted to a Constraint, with the verified failure recorded: exit 1, empty stdout, `Error: refusing to run "..." without --force in a non-interactive shell` on stderr, and **no request sent** — confirmed because the same id with `--force` reached the API and returned 404. Unlike most traps in this skill this one is loud, so it costs a retry rather than data. Only DELETE is gated; reads and updates need no flag.
+- `orq-cli`: **an unknown subcommand prints help to stdout and exits 0** (verified: `orq traces bogus` → exit 0, 3160 bytes on stdout). A typo is invisible to a wrapping script. Promoted to a Constraint.
+- `orq-cli`: OQL section for `orq traces query-oql` and `orq logs query` — the fixed `fetch <source>` prefix, the fact that equality is `in (…)` and that `=` / `eq` / `:` all fail with the same opaque `invalid oql: invalid filter`, the results nesting under `search` rather than at the top level, and the `-j` crash (`formatting failed Invalid type for: <nil>`) that a missing key produces there instead of a `null`.
+- `orq-cli`: coding-agent surface (`connect`, `disconnect`, `setup`, `launch`, `update`) documented, with `resources/coding-agents.md` covering the capability matrix, the `--local` scoping rule, the `orq skills` / `skills`-capability name collision, and the over-permissioned keys minted by v4.13.10.
+- `orq-cli`: credential-file permissions. Versions before 5.0.0 could leave `~/.orq/credentials.json` world-readable permanently; `orq doctor` now flags it and `orq doctor --fix` repairs it.
+- `orq-cli`: an explicit `--profile` outranks an exported `ORQ_API_KEY` and warns when it does — the escape hatch for the stray-key problem. Also documents that a stray key masks an unknown-profile error behind a misleading `HTTP 401`.
+- `orq-cli`: the npm upgrade trap — `npm update -g` never crosses 4.x → 5.x, so that hop needs `npm install -g @orq-ai/cli@latest`.
+
+### Fixed
+- `orq-cli`: the `--verbose` warning was understated. It prints to stderr, not stdout, and still dumps every stored API key in full plaintext even though `auth list-profiles` has masked them since CLI 5.0.0 — re-verified on 5.1.0.
+
 ## [3.0.0] - 2026-08-31
 
 Two shipped skills were removed and replaced under new names. Per the versioning table in `CLAUDE.md`, a removed or renamed skill is a MAJOR bump: an installer following semver would otherwise treat this as safe to auto-apply and silently lose two skills. There is no alias or redirect stub for the old names — update any script, macro or saved prompt that invokes them.

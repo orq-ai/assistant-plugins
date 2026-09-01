@@ -571,6 +571,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-simulate-agent/resources/persona-scenario-template.md`
 - `skills/orq-cli/SKILL.md`
 - `skills/orq-cli/resources/command-map.md`
+- `skills/orq-cli/resources/coding-agents.md`
+- `skills/orq-cli/resources/install.md`
 - `skills/orq-simulate-agent/resources/simulation-loop.md`
 - `skills/orq-manage-skills/SKILL.md`
 - `skills/orq-manage-skills/resources/authoring-guide.md`
