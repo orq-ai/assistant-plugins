@@ -5,6 +5,7 @@
 #     "httpx>=0.27",
 #     "loguru>=0.7.3",
 #     "python-dotenv>=1.2.1",
+#     "truststore>=0.9; sys_platform == 'win32'",
 # ]
 # ///
 """Option 3 — synthetic hard-point seeding (RES-980 §11.3).

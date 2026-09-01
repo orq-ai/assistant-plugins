@@ -80,16 +80,26 @@ with Orq(api_key=os.environ["ORQ_API_KEY"]) as orq:
 
 `curl` reports `000` with *"unable to get local issuer certificate"* or *"failed to verify the legitimacy of the server"* when TLS is being intercepted locally — a corporate proxy, or antivirus with HTTPS scanning. **The request never reached orq.ai.** It is not a missing agent, not a wrong project, and not a bad key. Never record it as a miss, and never let it trigger the "ask the user for a different key" path.
 
-Retry with verification off, the same posture this repo already takes on Windows (`httpx(verify=False)`):
+Confirm the diagnosis with `-k`, but **without the key** — `-k` disables certificate
+verification, and the paragraph above has just established that something is sitting in
+the middle of this connection. Sending `Authorization: Bearer $KEY` over it hands the key
+to whatever that is:
 
 ```bash
-curl -s -k -w '\nHTTP %{http_code}\n' "https://api.orq.ai/v2/agents/<key>" \
-  -H "Authorization: Bearer $KEY"
+curl -s -k -o /dev/null -w 'HTTP %{http_code}\n' "https://api.orq.ai/v2/agents/<key>"
 ```
 
-If `-k` turns `000` into `200`, the key and the agent were fine all along; carry on. If it still fails, the host is genuinely unreachable, and *that* is worth reporting to the user.
+A `401` or `403` is the good outcome: the host is reachable and the only problem was the
+intercepted TLS. Still `000` means the host is genuinely unreachable, and *that* is worth
+reporting to the user.
 
-**Then read the response body, not just the status code.** A 200 here returns the agent's entire config — model, `instructions`, and `settings`. `orq-improve-agent` opens by checking that config against those instructions, so parsing it now saves re-fetching it later.
+Either way, **do not proceed over the unverified connection.** Report the interception and
+ask the user to fix trust — install the proxy's CA certificate, or point
+`SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` / `NODE_EXTRA_CA_CERTS` at a bundle that contains
+it — then re-run the verified check above. The preflight is not complete until a
+verifying request succeeds.
+
+**Once the verified call succeeds, read the response body, not just the status code.** A 200 here returns the agent's entire config — model, `instructions`, and `settings`. `orq-improve-agent` opens by checking that config against those instructions, so parsing it now saves re-fetching it later.
 
 ## MCP caveat — a miss is not proof of nonexistence
 

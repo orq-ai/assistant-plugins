@@ -97,6 +97,36 @@ jobs:
             exit 1
           fi
 
+  skill-tests-windows:
+    # Real Windows execution for the win32-only branches (e.g. TLS verification
+    # in orq-evaluator-alignment) that skill-tests can only exercise on Linux by
+    # spoofing sys.platform. Scoped to skills that actually carry a win32-only
+    # dependency marker in tests/requirements.txt, so this doesn't slow down
+    # every PR for skills with nothing platform-specific to check.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Run each win32-marked skill's pytest suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          found=0
+          for req in skills/*/tests/requirements.txt; do
+            [ -e "$req" ] || continue
+            grep -q "sys_platform == 'win32'" "$req" || continue
+            skill=$(dirname "$(dirname "$req")")
+            found=1
+            echo "::group::pytest $skill (windows)"
+            (cd "$skill" && uv run --no-project --with-requirements tests/requirements.txt \
+              python -m pytest tests/ -q)
+            echo "::endgroup::"
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no skills/*/tests/requirements.txt with a win32-only marker found — the windows test job would pass vacuously"
+            exit 1
+          fi
+
   version-bump-gate:
     runs-on: ubuntu-latest
     steps:

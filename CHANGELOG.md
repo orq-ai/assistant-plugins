@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.1] - 2026-09-01
+
+### Fixed
+- `orq-evaluator-alignment`: on Windows, TLS verification is no longer disabled. Two independent copies of this policy existed — `lib/orq_client.tls_verify()` (used by `OrqClient` and `judge.make_judge_client`) and `lib/model_backend._tls_verify()` (used by the default `orq_router` backend and its router-price lookup) — both returned `False` on win32 to dodge an `OPENSSL_Uplink(...): no OPENSSL_Applink` abort some Windows Python builds hit. `orq_client.tls_verify()` now returns a `truststore.SSLContext`, which validates against the OS trust store (SChannel) instead of loading a CA bundle from disk — the disk-load path is what triggers the abort, not verification itself; the missing-dependency case now raises a clear error rather than a bare `ModuleNotFoundError`. `model_backend._tls_verify()` is no longer a second implementation — it's a re-export of the same function, so the policy can't drift out of sync again. `ORQ_API_KEY` no longer rides unverified connections on any platform. `truststore` is declared `sys_platform == 'win32'`-only in the eight scripts that reach either path (`create_eval.py`, `dataset_inputs.py`, `fetch_evaluator.py`, `fetch_traces.py`, `recommend.py`, `rewrite_eval.py`, `seed_inputs.py`, `stability.py`), and with the same marker in `tests/requirements.txt`. The win32 branch is exercised for real by the new `skill-tests-windows` CI job on `windows-latest`, not by spoofing `sys.platform` on a Linux runner. Confirmed on Windows (RES-1387): `verify=True` reproduces the crash, this fix does not, and SChannel correctly rejects self-signed/expired/wrong-host certs.
+
 ## [3.1.0] - 2026-08-31
 
 ### Changed
@@ -33,7 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `orq-cli`: the `--verbose` warning was understated. It prints to stderr, not stdout, and still dumps every stored API key in full plaintext even though `auth list-profiles` has masked them since CLI 5.0.0 — re-verified on 5.1.0.
-
 ## [3.0.0] - 2026-08-31
 
 Two shipped skills were removed and replaced under new names. Per the versioning table in `CLAUDE.md`, a removed or renamed skill is a MAJOR bump: an installer following semver would otherwise treat this as safe to auto-apply and silently lose two skills. There is no alias or redirect stub for the old names — update any script, macro or saved prompt that invokes them.

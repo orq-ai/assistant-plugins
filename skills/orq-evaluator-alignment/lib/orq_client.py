@@ -7,15 +7,18 @@ Covers four routes:
 - POST /v2/evaluators                   — create the rewritten evaluator (step 9b)
 
 Lifted and trimmed from the validated `evaluator_alignment.client.OrqEvalsClient`.
-TLS verification is disabled *only on Windows*, where the bundled OpenSSL aborts
-the process on some cert chains (project memory: OpenSSL Applink crash). On
-macOS/Linux verification stays on — the API key travels on these connections.
+TLS verification stays ON everywhere, including Windows — the API key travels on
+these connections. Windows' bundled OpenSSL aborts the process on some cert chains
+when it loads a CA bundle from disk (``OPENSSL_Uplink ... no OPENSSL_Applink``), so
+on win32 the OS-native trust store is used instead of OpenSSL's file-based one
+(RES-1387); see `tls_verify` below.
 """
 
 from __future__ import annotations
 
 import os
 import re
+import ssl
 import sys
 from dataclasses import dataclass, field
 from typing import Any
@@ -72,15 +75,33 @@ def normalise_output_type(output_type: str) -> str:
 _VAR_TOKEN = re.compile(r'\{\{\s*([^}]+?)\s*\}\}')
 
 
-def tls_verify() -> bool:
-    """Whether httpx should verify TLS certificates.
+def tls_verify() -> bool | ssl.SSLContext:
+    """What httpx should verify TLS certificates against.
 
-    Off only on Windows, whose bundled OpenSSL aborts the process on some cert
-    chains (``OPENSSL_Uplink ... no OPENSSL_Applink``). The orq API key rides
-    these connections, so verification stays ON everywhere else. Single source of
-    truth for the policy — imported by the judge client in ``judge.py`` too.
+    Verification is always on — the orq API key rides these connections. On
+    Windows, `True` would hand httpx an OpenSSL context that loads its CA bundle
+    from disk, which crashes some interpreter builds with ``OPENSSL_Uplink ...
+    no OPENSSL_Applink`` before a single request is made (RES-1387). `truststore`
+    builds a real `ssl.SSLContext` (`check_hostname=True`, `verify_mode=
+    CERT_REQUIRED`) that validates against the OS trust store via SChannel
+    instead, avoiding the disk-load path that triggers the abort. Everywhere
+    else, `True` is the plain httpx default. Single source of truth for the
+    policy — imported by `judge.py` and `model_backend.py` too, so the win32
+    path is defined exactly once.
     """
-    return sys.platform != 'win32'
+    if sys.platform == 'win32':
+        try:
+            import truststore
+        except ImportError as exc:
+            raise ImportError(
+                'truststore is required on Windows for TLS verification (RES-1387) but is '
+                "not installed. Run this script via `uv run scripts/<name>.py` — its PEP 723 "
+                "header declares truststore for win32 — or `pip install truststore` if you're "
+                'running outside uv. Falling back to unverified TLS is not an option here: '
+                'ORQ_API_KEY rides these connections.'
+            ) from exc
+        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    return True
 
 
 def _envelope_list(payload: Any, *keys: str) -> list[Any]:
@@ -337,9 +358,9 @@ class OrqClient:
         self._client = httpx.AsyncClient(
             base_url=self.base_url,
             timeout=timeout,
-            # Verification stays on everywhere except Windows (OpenSSL Applink
-            # crash — see module docstring). The API key rides these requests.
-            verify=tls_verify(),  # noqa: S501
+            # Verification always on — see tls_verify() docstring for the
+            # Windows-specific trust-store path. The API key rides these requests.
+            verify=tls_verify(),
             headers={
                 'Authorization': f'Bearer {key}',
                 'Content-Type': 'application/json',
