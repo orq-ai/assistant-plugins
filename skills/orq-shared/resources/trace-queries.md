@@ -2,6 +2,8 @@
 
 Shared reference for `orq-analyze-traces` and `orq-improve-agent`. Everything here was probed live against `orq` CLI 4.13.1 on 2026-08-26, and re-verified against **4.14.0** the same day with no behavioural drift observed.
 
+> **`--json` no longer exists on orq CLI 8.x** (verified on 8.5.2, 2026-09-14): it exits 1 with `unknown flag`, and `ORQ_JSON=1` is ignored silently. The `--json` in every command below dates from the 4.14 pass — read each as `-o json`, and check `orq version -o json` before trusting the rest.
+
 **Read this before your first `orq traces` call. The invocation details below are not optional** — three of them (`--from-file`, the required sort, the null-safe projection) fail loudly, and two (a stale field name, a mid-deploy empty result) fail *silently* by returning a confident empty answer.
 
 ---
@@ -21,7 +23,7 @@ The CLI and MCP overlap on most read operations but differ in two critical ways:
 - **Trace aggregates and search:** CLI `orq traces aggregate` / `search` with `--from-file` — the only path that supports `group_by`, `compute`, and arbitrary filters.
 - **Span tree (compact):** CLI `orq traces list-spans -j "data[].{...}"` — the projection keeps 83-span traces under 10 KB.
 - **Span detail (projected):** CLI `orq traces get-span -j 'span.summary'` for metadata, `span.attributes.*` for config knobs.
-- **Full conversation content:** `mcp__orq-workspace__get_span span_id=... mode=full` — returns structured message arrays with all turns, tool calls, tool responses, system instructions, and per-message `finish_reason`. This is also the only reliable path for `finish_reason` on agent traces when `agents get-response` is unavailable.
+- **Full conversation content:** CLI `orq traces thread <trace-id> [<span-id>]` (**7.4.0+**, re-probed on 8.5.2 on 2026-09-14) or `mcp__orq-workspace__get_span span_id=... mode=full`. `thread` normalizes Chat Completions, OpenAI Responses and OpenTelemetry GenAI payloads into one message list and renders it compactly — on one live Responses span, `get-span -o json` was 6476 bytes against `thread`'s 838. It picks the conversational span itself when given only a trace id (`--spans` shows that choice and the alternatives), and names missing content (`[content unavailable: N items]`) rather than inventing it. `--match <regexp>` and `-i/--include system,user,assistant,tool,reasoning` narrow a long conversation before it reaches context. Note this command takes **`-o json`**, never `--json`, and refuses `-o table`. MCP `mode=full` remains the path for per-message `finish_reason`, which `thread` does not carry; it is also the only reliable `finish_reason` source on agent traces when `agents get-response` is unavailable.
 - **Related entities:** CLI `orq tools retrieve`, `orq knowledge-bases retrieve`, `orq memory-stores retrieve`, `orq evals get` — resolve the IDs from the agent config into full definitions.
 
 Each consuming skill states what it is **best for** on top of this; the scope and projection rows above do not change per skill.
@@ -67,6 +69,7 @@ This document has twice described behaviour that was never run: a capability cel
 | **2. Row selection** | `orq traces search --from-file <body>.json --json -j 'data[].trace_id'` | one call, ids only | Which traces exhibit the swept condition |
 | **3. Config detail** | `orq traces get-span <trace-id> <span-id> --json -j '<projection>'` | one call/span, **projected** | Per-span knobs layers 1–2 cannot see |
 | **3a. Span order** | `orq traces list-spans <trace-id> --json -j '<projection>'` | one call/trace, **projected** | The ordered state sequence, for `where` |
+| **3b. Conversation** | `orq traces thread <trace-id> [<span-id>]` (7.4.0+) | one call/trace, normalized | What was actually said — messages, tool calls, tool results, reasoning |
 | **4. Content + terminal state** | `orq agents get-response <agent-key> <agent_execution_span_id> --json -j '<projection>'` | one call/trace, **projected** | **Agent targets only.** The real `finish_reason` and the message text, neither of which exists on any span — see §3.5 |
 
 ### Why `aggregate` and not `list-facet-values`

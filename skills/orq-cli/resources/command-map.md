@@ -6,7 +6,11 @@ generated from the orq.ai OpenAPI spec, so this drifts between releases —
 `orq <group> --help` wins over anything written here.
 
 Since 5.0.0 the CLI's version is its own and no longer tracks the API's; run
-`orq version --json` to read both. The command surface is tracked upstream in
+`orq version -o json` to read both.
+
+> **On 8.x, `--json` and `ORQ_JSON` are gone** — `--json` exits 1 with `unknown
+> flag`, `ORQ_JSON=1` is ignored without a word. Every `--json` below is from the
+> 5.1.0 pass; read each as `-o json`. The command surface is tracked upstream in
 `surface.json`, so it cannot change silently, but it can change deliberately.
 
 To re-derive the tree after a CLI upgrade, instead of editing it by hand. Run it
@@ -38,8 +42,8 @@ curl -fsSL https://raw.githubusercontent.com/orq-ai/orq-cli/main/openapi.yaml -o
 
 | Flag | Effect |
 |---|---|
-| `--json` | Alias for `-o json` |
-| `-o, --output-format` | `json`, `yaml`, or `toon` (default `toon`) |
+| `--json` | Alias for `-o json`. **Removed in 8.x** — use `-o json` |
+| `-o, --output-format` | `json`, `yaml`, or `toon` (default `toon`). `traces thread` takes its own set and refuses `table` |
 | `-j, --jmespath` | JMESPath expression applied to the response |
 | `--raw` | Emit the `--jmespath` result unquoted instead of as JSON |
 | `--profile` | Credential profile (default `default`). An explicit one outranks `ORQ_API_KEY` |
@@ -589,7 +593,18 @@ orq traces list-facet-values <field> --json \
 orq traces get <trace_id>
 orq traces list-spans <trace_id>
 orq traces get-span <trace_id> <span>
+orq traces thread <trace_id> [<span>]
 ```
+
+`thread` (7.4.0+) is the one to reach for when the question is *what was said*:
+it picks the conversational span itself, normalizes Chat Completions, OpenAI
+Responses and OpenTelemetry GenAI payloads into one message list, and renders it
+as XML-demarcated text — or as Markdown, or as the canonical structure under
+`-o json` / `-o yaml` / `-o toon`. It does **not** take the CLI-wide output
+flags: there is no `--json` on it, `ORQ_OUTPUT_FORMAT` is not read, and `-o
+table` is refused. `--spans` shows which span it selected and why. See the
+`traces thread` section of SKILL.md for the full flag set. `get-span` remains
+the path for span *config* — temperature, tool definitions, `finish_reasons`.
 
 These endpoints are served from the 4.13 platform onward. If every per-trace
 read returns HTTP 404 while `traces search` works, the deployment behind your

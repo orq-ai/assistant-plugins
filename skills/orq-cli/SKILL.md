@@ -18,7 +18,9 @@ You are an **orq.ai platform operator working from a shell**. Your job is to run
 
 The CLI is a Go binary generated from the orq.ai OpenAPI spec, so nearly every API endpoint has a matching command. That also means the command surface changes between releases — treat `--help` as the source of truth, never your memory.
 
-**Verified against `orq` 5.1.0 (built against orq API 4.14.3) on 2026-08-31.** The CLI's version is its own since 5.0.0 and no longer tracks the API line, so a `5.x` number tells you nothing about the API — `orq version --json` reports both.
+**Verified against `orq` 5.1.0 (built against orq API 4.14.3) on 2026-08-31**, except ["Reading a conversation"](#reading-a-conversation-traces-thread), which was probed against **8.5.2 (API 4.14.17) on 2026-09-14**. The rest of this document has not been re-probed since 5.1.0 — three majors back — so treat every behaviour it describes as a starting hypothesis and confirm with `--help`. The CLI's version is its own since 5.0.0 and no longer tracks the API line, so the number tells you nothing about the API — `orq version -o json` reports both.
+
+> **`--json` and `ORQ_JSON` no longer exist.** They were the global JSON alias through 7.x and are **gone on 8.5.2**: `orq traces search … --json` exits 1 with `Error: unknown flag: --json`, and `ORQ_JSON=1` is ignored silently — which is the worse half, since the command then succeeds and emits TOON that a parser will choke on. Use **`-o json`** everywhere. The examples further down this file still say `--json` because they date from the 5.1.0 probe; read each as `-o json` until the sweep lands. `orq version -o json` reports the installed version, so check it before trusting anything here.
 
 ## Constraints
 
@@ -27,7 +29,7 @@ The CLI is a Go binary generated from the orq.ai OpenAPI spec, so nearly every A
 - **NEVER** trust the exit code for auth. `orq auth whoami`, `orq workspace list`, and `orq doctor` all exit **0** when unauthenticated. Read the payload: `authenticated` from `whoami`, `auth.status` from `doctor`. Verified on 5.1.0: `orq --profile <key-only> auth whoami --json` prints `Error: you are not logged in` and exits **0**.
 - **NEVER** trust the exit code for a typo'd subcommand either. An unknown subcommand prints the help text to **stdout** and exits **0** — a script wrapping it sees success and empty data. Verified: `orq traces bogus` → exit 0, 3160 bytes on stdout, 0 on stderr. Errors that reach the API do the opposite (empty stdout, message on stderr, exit 1), so the two failures need different guards.
 - **NEVER** guess a flag or subcommand. Run `orq <group> --help` first; the help text lists every flag with its exact name and type.
-- **NEVER** parse default output. The default format is TOON, which is meant for humans. Pass `--json` (or `-o json`) on anything a script or you will parse.
+- **NEVER** parse default output. The default format is TOON, which is meant for humans. Pass **`-o json`** on anything a script or you will parse — not `--json`, which 8.x removed (see the version note above), and not `ORQ_JSON`, which it ignores.
 - **NEVER** run `orq auth login` unattended. It is an interactive OAuth device flow that needs a browser. If nobody can complete it, stop and say so — `ORQ_API_KEY` is **not** a substitute for the commands that need a session (see the auth matrix below).
 - **NEVER** assume which workspace is active. `ORQ_API_KEY` **overrides an active OAuth session**, and `.env` autoloads, so a stray key in a project file silently redirects every read to that key's workspace while `whoami` keeps reporting the one you logged into. Confirm with a count before trusting data (see "Which workspace am I really reading?").
 - **NEVER** report a count or a "complete" list from a default page. Every list command below caps by default and sets `has_more: true` with nothing in the output to signal it. Check `has_more` or pass `--limit` (see "Lists truncate silently"). Do **not** carry over the old advice that `agents list` returns everything — as of 5.1.0 it paginates like the rest, and omitting `--limit` is actively worse than truncating (see below).
@@ -479,6 +481,50 @@ orq traces list-facets --json     # facetable fields
 ```
 
 The registry **grows and renames between releases** — it went 56 → 57 fields in a single afternoon when `attr.*` became `attributes.*`, and read 66 on 5.1.0. A name that no longer resolves returns **zero rows without erroring**, which looks exactly like "no matching traces". Resolve names at call time; never hard-code one from this document.
+
+### Reading a conversation: `traces thread`
+
+`orq traces thread <trace-id> [span-id]` renders a trace's conversation instead of its span JSON. Added in 7.4.0 (RES-1507) and substantially extended by 8.5.2. **Do not reconstruct a conversation out of `get-span` attributes** — the payload shapes differ per dialect (Chat Completions, OpenAI Responses, the flattened OpenTelemetry GenAI shape orq collectors emit) and `thread` normalizes all three into one model. On one live Responses span: raw `get-span -o json` **6476 bytes**, `thread` **838**, `-o markdown` **664**, `-o json` **1526**.
+
+```sh
+orq traces thread <trace-id>                     # picks the span, names it in the output
+orq traces thread <trace-id> <span-id>           # that span, nothing else
+orq traces thread <trace-id> --spans             # which span it picks, and the alternatives
+orq traces thread <trace-id> -o markdown         # to paste into a ticket or chat
+orq traces thread <trace-id> -o json             # canonical thread, not the raw span
+orq traces thread <trace-id> --slice -1          # last message; also 2, 2:, :-1, 1:3
+orq traces thread <trace-id> --match get_weather # only turns matching a regexp
+orq traces thread <trace-id> -i user,assistant   # only these parts
+```
+
+**This command does not take the CLI-wide output flags.** There is no `--json` on it and `ORQ_OUTPUT_FORMAT` / the config file are not read — its `-o` is `[xml, markdown, json, yaml, toon]`, default `xml`, and `-o table` is refused outright (exit 1, before any request):
+
+```
+Error: --output-format: "table" is the CLI-wide default layout, and a conversation has no columns to lay out.
+This command takes [xml, markdown, json, yaml, toon]; xml is what it renders when you ask for nothing
+```
+
+Two human renders, and the difference is a security property, not taste. **`xml`** (default) frames turns as `<message index=… role=…>` elements and escapes its own tag names where they appear in recorded content, so a span body cannot forge a turn or desync the indices `--slice` refers to. **`markdown`** uses `## USER [1]` headings and fenced JSON for tool arguments — readable, pasteable, and forgeable by content. Default to `xml` for anything you will act on; reach for `markdown` when a human is reading it.
+
+In both, the `index` is the `--slice` index and the system message is `0`, so `--slice 0` is the system prompt. Missing content is named rather than invented: `[content unavailable]`, `[content unavailable: N items]`, `[truncated: N more characters]`, `[unsupported content: <type>]`, `[redacted thinking]`.
+
+Flags beyond `-o`, all verified live on 8.5.2:
+
+- `--spans` prints the span table instead of a thread: `TRY` (read order, not a ranking), `SPAN`, `TYPE`, `STARTED`, `TURNS` (messages found, blank when not read), `NAME`, `NOTE` (why a span was passed over), with `*` on the one selected. Run it when you doubt the selection — `TURNS` is what tells you the right span was picked.
+- `--match <regexp>` keeps messages whose recorded text matches, searching message text, reasoning, JSON values, and tool calls by name, id and arguments. Case-insensitive; `(?-i)` inline to respect case. Surviving messages **keep their original indices**, so a filtered render can read `0, 2, 4`.
+- `-i/--include` renders only the named parts: `system` (covers developer), `user`, `assistant`, `tool`, `reasoning`. Naming no role keeps every role, so `-i reasoning` is the thinking from all of them and `-i user,assistant` is the turns without it.
+- `--max-chars` (default **4000**) cuts each rendered block and appends `[truncated: N more characters]`; `--max-chars 0` lifts the cap. Applied last, so `--match` still searches the full text. Only text inside elements is cut, so the XML stays well-formed.
+- `--reasoning=false` drops reasoning everywhere, including `-o json`.
+
+Filters compose in a fixed order: `--slice`, then `--match`, then `--include`, then `--max-chars`.
+
+Three exit-code facts, each from a recorded call on 8.5.2:
+
+- **An empty selection is exit 0, not an error.** `--slice 99:` on a 5-message thread, and `-i reasoning` on a thread with none, both printed the `<thread …>` header with no messages and exited **0**. Bounds clamp like Python; check for messages rather than trusting the exit code.
+- **A bad slice expression exits 1** and names the grammar: `invalid slice expression "nonsense": expected an index or a range, for example 2, 2:, :-1 or 1:3`.
+- **A trace with no conversational span exits 1**: `no supported conversation found in trace "<id>"`. That is a real answer (evaluator-only traces do this), not a bug to work around — and it is distinct from a bad id, which is `HTTP 404: trace not found`.
+
+`-o json` / `-o yaml` / `-o toon` all serialize the same canonical structure — `messages[]` with `index`, `role`, `content[]`, optional `tool_calls[]` / `name` / `tool_call_id`, plus a `source` object carrying `trace_id`, `span_id`, `representation`, `model`, `tokens`, `duration_ms`. There is no per-message `finish_reason`. The global `-j` projects it (`-j 'source.model'` → `"gpt-4o-mini"`).
 
 ### OQL: a second query language, with its own rules
 

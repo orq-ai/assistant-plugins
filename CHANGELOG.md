@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.2] - 2026-09-14
+
+### Changed
+- `orq-cli`: documented `orq traces thread`, the normalized conversation view added in orq CLI 7.4.0 (RES-1507), probed live against **8.5.2** — the span it selects and `--spans` to see why, the `xml` and `markdown` renders and why the default is `xml` (recorded content cannot forge a turn), `--slice` / `--match` / `--include` / `--max-chars` / `--reasoning` and the order they apply in, the state markers, the canonical structure behind `-o json|yaml|toon`, and the exit codes (an empty selection is 0; a bad slice, and a trace with no conversational span, are 1).
+- `orq-cli`: recorded that **`--json` and `ORQ_JSON` no longer exist on 8.x** — `--json` exits 1 with `unknown flag`, `ORQ_JSON=1` is ignored silently and emits TOON a parser will choke on. `-o json` replaces both. The rest of the skill still dates from the 5.1.0 probe and is flagged as such at the top of `SKILL.md`, `resources/command-map.md`, and `orq-shared/resources/trace-queries.md`; the sweep is separate work.
+- `orq-shared`: `resources/trace-queries.md` now lists `traces thread` as the CLI path to full conversation content and as layer 3b of the layered read; MCP `get_span mode=full` is still the only source of per-message `finish_reason`.
+- `orq-analyze-traces`, `orq-improve-agent`: added `Bash(orq traces thread:*)` to `allowed-tools`.
+
 ## [3.1.1] - 2026-09-01
 
 ### Fixed
