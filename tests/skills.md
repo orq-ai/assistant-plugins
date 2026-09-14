@@ -274,6 +274,34 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify Phase 3a: leaves `{{template_variables}}` unsubstituted and does not propose removing tool definitions
 - Verify: asks which suggestions to apply before rewriting, and skips Phase 4 unless the user asks to save
 
+## `orq-recommend-evaluators`
+
+### Scenario 1: New agent, no traces
+
+- Provide: an agent with instructions containing hard rules and 0 traces
+- Ask: "Which evaluators should this agent have?"
+- Verify Phase 1: runs the run-key preflight before counting traces
+- Verify Phase 3: reports the trace count and states `config-only` mode with that reason
+- Verify Phase 4a: every recommendation quotes an instruction line or config field; no generic helpfulness/coherence
+- Verify Phase 4a: a behaviour the instructions never ask for is listed under "Not an evaluator" → `orq-improve-agent`
+- Verify Phase 5: writes `eval-recommendations-<key>-<timestamp>.md` whose front matter parses, then asks which to create (multi-select) before creating anything
+
+### Scenario 2: Existing evaluators are respected
+
+- Provide: an agent with an evaluator attached in `settings.evaluators`
+- Verify Phase 2: resolves the attached id with a projected `orq evals get`, and does not recommend it again
+- Verify: a candidate matching an evaluator already in the project is offered as `reuse`, not a new create
+- Verify: a "valid JSON" style criterion is proposed as `is_valid_json` or `python_eval`, not an LLM judge
+
+### Scenario 3: Create and attach are gated separately
+
+- Ask: approve one recommendation
+- Verify Phase 6: shows the exact create body and asks again for that one evaluator before `orq evals create`
+- Verify: the judge prompt uses `{{input.*}}` / `{{output.*}}`, never `{{log.*}}`, and the evaluator lands in the agent's `project_id`
+- Verify: runs `orq evals invoke` on a Pass-shaped and a Fail-shaped sample and reports whether the verdict flipped, calling it a smoke test, not validation
+- Verify: asks a separate question before attaching; on yes, read-modify-writes `settings` whole with `--version-increment` and `--version-description`, then re-reads to confirm `settings.tools[]` is unchanged
+- Verify: closes by labelling each created LLM judge unvalidated and recommending `orq-evaluator-alignment`
+
 ## `orq-run-experiment`
 
 - Ask: "Run an experiment using orq-skills-test-dataset with orq-skills-test-eval-length"
@@ -540,6 +568,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-shared/resources/doc-resolution.md`
 - `skills/orq-analyze-traces/SKILL.md`
 - `skills/orq-improve-agent/SKILL.md`
+- `skills/orq-recommend-evaluators/SKILL.md`
 - `skills/orq-setup-observability/SKILL.md`
 - `skills/orq-setup-observability/resources/traced-decorator-guide.md`
 - `skills/orq-setup-observability/resources/framework-integrations.md`

@@ -80,6 +80,7 @@ Agent Analysis Progress:
 **Companion skills:**
 - `orq-improve-agent` — apply a prompt or config fix from the artifact this skill writes
 - `orq-build-evaluator` — build an evaluator for a persistent failure mode that has none
+- `orq-recommend-evaluators` — turn the `fix: evaluator` modes in this artifact into a ranked, approval-gated evaluator set
 - `orq-evaluator-alignment` — realign an evaluator that already exists and disagrees with human judgement
 - `orq-build-agent` — re-architect: task decomposition, a new pipeline stage, `team_of_agents`
 - `orq-generate-synthetic-dataset` — generate test data when no production data exists
