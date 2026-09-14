@@ -64,7 +64,7 @@
     "orq-recommend-evaluators": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "f718e76f1a35072e8dcab139c75f9aa5928d0130a560533b7ef09a21666ddf89"
+      "computedHash": "1a037341519b5dfb6d7fe004e5c6c7e4375e2ec0f86dcd02be29621894422532"
     },
     "orq-red-team": {
       "source": "orq-ai/assistant-plugins",
