@@ -7,7 +7,7 @@ installer's own `--help`.
 Check before installing — it is usually already present:
 
 ```sh
-orq version --json     # {"api_version":"4.14.3","cli":"5.1.0","install_method":"npm"}
+orq version -o json     # {"api_version":"4.14.3","cli":"5.1.0","install_method":"npm"}
 ```
 
 ## Installing
@@ -78,7 +78,7 @@ after a new shell if you accepted the profile edit. **So a "failed" install is
 usually a `PATH` problem.** Check the path before concluding anything:
 
 ```sh
-~/.orq/bin/orq version --json          # works? then it installed fine
+~/.orq/bin/orq version -o json          # works? then it installed fine
 export PATH="$HOME/.orq/bin:$PATH"     # for this shell
 ```
 
@@ -89,7 +89,7 @@ If `orq` resolves to something that prints Node or oclif stack traces, `which or
 is pointing at a different tool with the same name. Use the real binary's full
 path rather than fighting `PATH`.
 
-Confirm any install with `orq version --json` and read `install_method` — it
+Confirm any install with `orq version -o json` and read `install_method` — it
 reports `npm`, `installer`, or `unknown`, which tells you which upgrade path
 applies and whether `orq update` can act on this binary at all.
 

@@ -105,7 +105,7 @@ Three distinct branches:
 
 | Mode | Config read | Prompt write | Config write |
 |---|---|---|---|
-| **orq agent** | **Primary:** `mcp__orq-workspace__get_agent key=...` (workspace-scoped, always works). **Fallback:** `orq agents retrieve <key> --json` (project-scoped, 404 cross-project). | `orq agents update` → `instructions` | `orq agents update` → `settings` / `model` |
+| **orq agent** | **Primary:** `mcp__orq-workspace__get_agent key=...` (workspace-scoped, always works). **Fallback:** `orq agents retrieve <key> -o json` (project-scoped, 404 cross-project). | `orq agents update` → `instructions` | `orq agents update` → `settings` / `model` |
 | **orq deployment** | **Primary:** `mcp__orq-workspace__get_deployment key=...`. **Fallback:** `orq deployments get-config`. | `POST /v2/prompts/<id>/versions` | **none** — recommend in prose |
 | **local / no orq entity** | ask the user | diff in the response, user applies it | diff in the response, user applies it |
 
@@ -115,7 +115,7 @@ Three distinct branches:
 
 ### Phase 1: Find the Evidence
 
-**Before any of the four: read the target's own config and test it against its own instructions.** Use `mcp__orq-workspace__get_agent key=...` (workspace-scoped, finds agents across projects) as the primary path; fall back to `orq agents retrieve <key> --json` if MCP is unavailable. Then ask the single question: *does any setting make these instructions impossible to follow?* Instructions that mandate three sequential tool steps under `max_iterations: 2`, or an 800-word minimum under `max_tokens: 800`, are a contradiction visible without a single trace query.
+**Before any of the four: read the target's own config and test it against its own instructions.** Use `mcp__orq-workspace__get_agent key=...` (workspace-scoped, finds agents across projects) as the primary path; fall back to `orq agents retrieve <key> -o json` if MCP is unavailable. Then ask the single question: *does any setting make these instructions impossible to follow?* Instructions that mandate three sequential tool steps under `max_iterations: 2`, or an 800-word minimum under `max_tokens: 800`, are a contradiction visible without a single trace query.
 
 If the agent config references tool IDs, knowledge-base IDs, memory-store IDs, or eval IDs, resolve them into full definitions before proceeding:
 - `orq tools retrieve <id>` — tool schema and description
@@ -154,7 +154,7 @@ A contradiction found here is a **`fix: config` finding already**. Take it strai
    > ```bash
    > # --raw and "| [0]" are REQUIRED; without them $AE word-splits and 404s
    > AE=$(orq traces list-spans <trace> --raw -j "data[?type=='span.agent_execution'].span_id | [0]")
-   > orq agents get-response <agent-key> "$AE" --json -j 'finish_reason'
+   > orq agents get-response <agent-key> "$AE" -o json -j 'finish_reason'
    > ```
    >
    > Use these only to corroborate it, or when `get-response` is unavailable:
@@ -229,7 +229,7 @@ Present the analysis, ask which suggestions to apply, then rewrite:
 
 ### Phase 3b: The Config Lever
 
-1. **Read the current config** — `mcp__orq-workspace__get_agent key=...` or `orq agents retrieve <key> --json` (or `mcp__orq-workspace__get_deployment` / `orq deployments get-config`, or ask, in local mode).
+1. **Read the current config** — `mcp__orq-workspace__get_agent key=...` or `orq agents retrieve <key> -o json` (or `mcp__orq-workspace__get_deployment` / `orq deployments get-config`, or ask, in local mode).
 2. **Propose a minimal diff — one knob per finding.** Never a wholesale config rewrite. On a `fix: config` mode the artifact already carries `knob` + `current` + `suggest`: build the patch from those three, without re-reading a trace.
 3. **Clamp to the real bounds** — `max_iterations` 1–100, `max_execution_time` 2–600, `temperature` 0–2, `top_p` 0–1, `retry.count` 1–5, `reasoning_effort` in `none|minimal|low|medium|high|xhigh`. Proposing outside them just earns a 400.
 
@@ -239,7 +239,7 @@ Present the analysis, ask which suggestions to apply, then rewrite:
 
 ```bash
 # 1. read
-orq agents retrieve support-bot --json > current.json
+orq agents retrieve support-bot -o json > current.json
 # 2. change ONE key inside the WHOLE nested object, write patch.json without a BOM
 # 3. write (approval gate first — Phase 4)
 orq agents update support-bot --from-file patch.json \

@@ -6,11 +6,7 @@ generated from the orq.ai OpenAPI spec, so this drifts between releases —
 `orq <group> --help` wins over anything written here.
 
 Since 5.0.0 the CLI's version is its own and no longer tracks the API's; run
-`orq version -o json` to read both.
-
-> **On 8.x, `--json` and `ORQ_JSON` are gone** — `--json` exits 1 with `unknown
-> flag`, `ORQ_JSON=1` is ignored without a word. Every `--json` below is from the
-> 5.1.0 pass; read each as `-o json`. The command surface is tracked upstream in
+`orq version -o json` to read both. The command surface is tracked upstream in
 `surface.json`, so it cannot change silently, but it can change deliberately.
 
 To re-derive the tree after a CLI upgrade, instead of editing it by hand. Run it
@@ -42,8 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/orq-ai/orq-cli/main/openapi.yaml -o
 
 | Flag | Effect |
 |---|---|
-| `--json` | Alias for `-o json`. **Removed in 8.x** — use `-o json` |
-| `-o, --output-format` | `json`, `yaml`, or `toon` (default `toon`). `traces thread` takes its own set and refuses `table` |
+| `-o, --output-format` | `json`, `yaml`, or `toon` (default `toon`). This is the only way to ask for JSON. `traces thread` takes its own set and refuses `table` |
 | `-j, --jmespath` | JMESPath expression applied to the response |
 | `--raw` | Emit the `--jmespath` result unquoted instead of as JSON |
 | `--profile` | Credential profile (default `default`). An explicit one outranks `ORQ_API_KEY` |
@@ -156,13 +151,13 @@ logged in` when a valid key is exported, and they exit **0** while doing it.
 | `orq auth whoami` | Current identity, workspaces, resolved URLs (alias: `orq whoami`) |
 | `orq auth setup` | Interactive auth configuration |
 | `orq auth add-profile apikey <name> --api-key-file <f>` | Save an API-key profile (`-` reads stdin; a positional key is visible via `ps`) |
-| `orq auth list-profiles` | List credential profiles. Keys are **masked** since 5.0.0, and it honours `--json` / `-o` |
+| `orq auth list-profiles` | List credential profiles. Keys are **masked** since 5.0.0, and it honours `-o` |
 | `orq workspace list` | List workspaces for the active identity |
 | `orq workspace use <key>` | Switch the active workspace (persisted in the session) |
 | `orq doctor` | Config, auth, permissions, agent-wiring, and reachability diagnostics |
 | `orq doctor --fix` | Chmod loose credential paths (0600 files, 0700 dirs); exits 1 if a repair fails |
 | `orq doctor --report` | Pre-filled GitHub issue URL for a bug report |
-| `orq version` | CLI version, orq API version, and install method (`--json`) |
+| `orq version` | CLI version, orq API version, and install method (`-o json`) |
 | `orq update` | Replace the binary via its original install method (`--check` to look only) |
 | `orq setup` | Authenticate, mint a gateway key, and wire detected coding agents |
 | `orq connect [agent…] [capability…]` | Wire agents. `--status` and `--dry-run` change nothing |
@@ -175,7 +170,7 @@ logged in` when a valid key is exported, and they exit **0** while doing it.
 | `orq help-input` | Request-body syntax reference |
 | `orq help-config` | Configuration reference |
 
-### `auth whoami --json` shape
+### `auth whoami -o json` shape
 
 Observed against a live session:
 
@@ -209,7 +204,7 @@ Observed against a live session:
 Workspace **ids are UUIDs**, not ULIDs — unlike agent and span ids. `name` often
 equals `key`. `display_name` may just be the email.
 
-`workspace list --json` has a **different envelope**: `active_workspace_key` at
+`workspace list -o json` has a **different envelope**: `active_workspace_key` at
 the top level, and `workspaces[]` entries carrying an extra `active` boolean.
 
 ```json
@@ -230,7 +225,7 @@ the same data: `activeWorkspaceKey`, `apiBaseUrl`, `v1BaseUrl`, `authBaseUrl`,
 `workspaceTokens`. It also holds live tokens — read it only as a fallback, and
 never print it.
 
-### `doctor --json` shape
+### `doctor -o json` shape
 
 `doctor` runs without credentials and always exits 0, so it is safe to run first
 — and its exit code tells you nothing. Two limits to know before trusting it:
@@ -300,9 +295,9 @@ Two things to read carefully:
 Quick unauthenticated triage:
 
 ```sh
-orq doctor --json -j 'auth.status' --raw            # "authenticated" with a session
-orq doctor --json -j 'auth'                         # status + source + workspace, all of it
-orq doctor --json -j "checks[?status=='warn']"      # real problems ('info' rows are not)
+orq doctor -o json -j 'auth.status' --raw            # "authenticated" with a session
+orq doctor -o json -j 'auth'                         # status + source + workspace, all of it
+orq doctor -o json -j "checks[?status=='warn']"      # real problems ('info' rows are not)
 ```
 
 ---
@@ -460,25 +455,25 @@ capture.
 
 ```sh
 # active workspace key, bare — needs an OAuth session, not an API key
-orq auth whoami --json -j active_workspace_key --raw
+orq auth whoami -o json -j active_workspace_key --raw
 
 # workspace keys and names — also session-only
-orq workspace list --json -j 'workspaces[].{key: key, name: name}'
+orq workspace list -o json -j 'workspaces[].{key: key, name: name}'
 
 # agent id + display name (agents use _id; deployments use id, projects project_id)
 # --limit is REQUIRED here: a bare `agents list` blocks for minutes, then 503s.
 # (A single `agents retrieve <valid-key>` did the same, so the 503 is upstream,
 #  not a pagination fault — see SKILL.md "Lists truncate silently".)
-orq agents list --json --limit 200 -j 'data[].{id: _id, name: display_name}'
+orq agents list -o json --limit 200 -j 'data[].{id: _id, name: display_name}'
 
 # first agent's key, bare
-orq agents list --json --limit 1 -j 'data[0].key' --raw
+orq agents list -o json --limit 1 -j 'data[0].key' --raw
 
 # models have no envelope — project the array directly
-orq models list --json -j '[].id'
+orq models list -o json -j '[].id'
 
 # OQL results nest under `search`, so the usual data[] projections miss
-orq traces query-oql --json --from ... --to ... \
+orq traces query-oql -o json --from ... --to ... \
   --oql 'fetch traces | filter status in ("error") | sort end_time desc | limit 20' \
   -j 'search.data[].trace_id'
 ```
@@ -495,13 +490,13 @@ transforms:
 
 ```sh
 # failed traces in a window
-orq traces search --json \
+orq traces search -o json \
   --from 2026-07-30T00:00:00Z --to 2026-07-31T00:00:00Z --limit 50 \
   --filters '[{"field":"status","op":"eq","values":["error"]}]' \
   | jq '.data[] | {trace: .trace_id, name, status, ms: .duration_ms, cost}'
 
 # pagination cursor
-orq traces search --json --from ... --to ... | jq -r '.next_page_token'
+orq traces search -o json --from ... --to ... | jq -r '.next_page_token'
 ```
 
 Span-level reads go through `traces list-spans` / `traces get-span` (see
@@ -515,8 +510,8 @@ delimit a *JSON* literal and `pass` is not valid JSON. Two forms that do work,
 both verified live:
 
 ```sh
-orq doctor --json -j "checks[?status!='pass']"      # raw-string literal, outer double quotes
-orq doctor --json -j 'checks[?status!=`"pass"`]'    # JSON literal, note the inner quotes
+orq doctor -o json -j "checks[?status!='pass']"      # raw-string literal, outer double quotes
+orq doctor -o json -j 'checks[?status!=`"pass"`]'    # JSON literal, note the inner quotes
 ```
 
 Prefer the first. The second needs backticks to survive the shell, which they do
@@ -571,7 +566,7 @@ resource before projecting.
 OQL string. Both require `from` and `to`.
 
 ```sh
-orq traces query-oql --json \
+orq traces query-oql -o json \
   --from 2026-07-01T00:00:00Z --to 2026-07-31T00:00:00Z --limit 100 \
   --oql '<oql expression>'
 ```
@@ -579,9 +574,9 @@ orq traces query-oql --json \
 Do not guess filter fields or operators. Ask the API:
 
 ```sh
-orq traces list-fields --json                    # supported static trace fields
-orq traces list-facets --json                    # facetable fields
-orq traces list-facet-values <field> --json \
+orq traces list-fields -o json                    # supported static trace fields
+orq traces list-facets -o json                    # facetable fields
+orq traces list-facet-values <field> -o json \
   --from 2026-07-01T00:00:00Z --to 2026-07-31T00:00:00Z   # values + counts for one facet
 ```
 
@@ -601,7 +596,7 @@ it picks the conversational span itself, normalizes Chat Completions, OpenAI
 Responses and OpenTelemetry GenAI payloads into one message list, and renders it
 as XML-demarcated text — or as Markdown, or as the canonical structure under
 `-o json` / `-o yaml` / `-o toon`. It does **not** take the CLI-wide output
-flags: there is no `--json` on it, `ORQ_OUTPUT_FORMAT` is not read, and `-o
+flags: there is no `-o json` on it, `ORQ_OUTPUT_FORMAT` is not read, and `-o
 table` is refused. `--spans` shows which span it selected and why. See the
 `traces thread` section of SKILL.md for the full flag set. `get-span` remains
 the path for span *config* — temperature, tool definitions, `finish_reasons`.
@@ -610,7 +605,7 @@ These endpoints are served from the 4.13 platform onward. If every per-trace
 read returns HTTP 404 while `traces search` works, the deployment behind your
 server is older than 4.13 — fall back to the search response itself, which
 already carries `attributes`, `usage`, `cost`, `status`, and timing per row.
-Quick probe: `orq traces get <trace_id> --json` with an id taken from a
+Quick probe: `orq traces get <trace_id> -o json` with an id taken from a
 `traces search` response seconds earlier.
 
 ### Aggregation
@@ -631,7 +626,7 @@ https://my.orq.ai/<workspace-key>/experiments/<experiment-id>
 ```
 
 ```sh
-key="$(orq auth whoami --json -j active_workspace_key --raw)"
+key="$(orq auth whoami -o json -j active_workspace_key --raw)"
 echo "https://my.orq.ai/${key}/traces?query=$(printf 'trace_id:is:%s' "$trace_id" | jq -sRr @uri)"
 ```
 
@@ -641,8 +636,8 @@ echo "https://my.orq.ai/${key}/traces?query=$(printf 'trace_id:is:%s' "$trace_id
 `ORQ_SERVER` — and it moves when you log in:
 
 ```sh
-orq server current --json                        # the resolved host
-orq doctor --json -j 'config'                    # every URL, each with its source
+orq server current -o json                        # the resolved host
+orq doctor -o json -j 'config'                    # every URL, each with its source
 ```
 
 `config.api_base_url` in doctor's output is a *response field name* and keeps
@@ -655,11 +650,11 @@ its per-entry `override` field for a top-level `overridden` boolean, so anything
 reading the old shape needs updating. Verified on 5.1.0:
 
 ```json
-// orq server current --json
+// orq server current -o json
 {"profile_server": "", "server": "https://api.orq.ai", "server_default": "",
  "server_index": 0, "server_override": "https://api.orq.ai"}
 
-// orq server list --json
+// orq server list -o json
 {"overridden": true, "selected_server": "https://api.orq.ai",
  "servers": [{"description": "", "index": 0, "selected": false, "url": "https://my.orq.ai"}]}
 ```
@@ -703,8 +698,8 @@ When an endpoint has no generated command, or a newer API surfaced after the
 installed CLI was built:
 
 ```sh
-orq request GET /v2/traces/fields --json </dev/null
-orq request POST /v2/traces/search --json < body.json
+orq request GET /v2/traces/fields -o json </dev/null
+orq request POST /v2/traces/search -o json < body.json
 ```
 
 It reuses the configured profile, auth, and server, so it respects `--profile`
@@ -713,7 +708,7 @@ and `--server` like everything else.
 **It does not return the bare response body.** `orq request` wraps everything:
 
 ```sh
-orq request GET /v2/traces/fields --json -j 'keys(@)' </dev/null
+orq request GET /v2/traces/fields -o json -j 'keys(@)' </dev/null
 # [ "body", "ok", "status", "headers" ]
 ```
 
