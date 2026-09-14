@@ -592,14 +592,12 @@ orq traces thread <trace_id> [<span>]
 ```
 
 `thread` (7.4.0+) is the one to reach for when the question is *what was said*:
-it picks the conversational span itself, normalizes Chat Completions, OpenAI
-Responses and OpenTelemetry GenAI payloads into one message list, and renders it
-as XML-demarcated text — or as Markdown, or as the canonical structure under
-`-o json` / `-o yaml` / `-o toon`. It does **not** take the CLI-wide output
-flags: there is no `-o json` on it, `ORQ_OUTPUT_FORMAT` is not read, and `-o
-table` is refused. `--spans` shows which span it selected and why. See the
-`traces thread` section of SKILL.md for the full flag set. `get-span` remains
-the path for span *config* — temperature, tool definitions, `finish_reasons`.
+it picks the conversational span itself and normalizes Chat Completions, OpenAI
+Responses and OpenTelemetry GenAI payloads into one message list. Its `-o` is
+its own — `xml` (default), `markdown`, `json`, `yaml`, `toon` — and it neither
+reads `ORQ_OUTPUT_FORMAT` nor accepts `table`. See the `traces thread` section
+of SKILL.md for span selection and the full flag set. `get-span` remains the
+path for span *config* — temperature, tool definitions, `finish_reasons`.
 
 These endpoints are served from the 4.13 platform onward. If every per-trace
 read returns HTTP 404 while `traces search` works, the deployment behind your

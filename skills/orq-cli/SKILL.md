@@ -18,7 +18,7 @@ You are an **orq.ai platform operator working from a shell**. Your job is to run
 
 The CLI is a Go binary generated from the orq.ai OpenAPI spec, so nearly every API endpoint has a matching command. That also means the command surface changes between releases — treat `--help` as the source of truth, never your memory.
 
-**Verified against `orq` 5.1.0 (built against orq API 4.14.3) on 2026-08-31**, except ["Reading a conversation"](#reading-a-conversation-traces-thread), which was probed against **8.5.2 (API 4.14.17) on 2026-09-14**. The rest of this document has not been re-probed since 5.1.0 — three majors back — so treat every behaviour it describes as a starting hypothesis and confirm with `--help`. The CLI's version is its own since 5.0.0 and no longer tracks the API line, so the number tells you nothing about the API — `orq version -o json` reports both.
+**Verified against `orq` 5.1.0 (built against orq API 4.14.3) on 2026-08-31**, except ["Reading a conversation"](#reading-a-conversation-traces-thread), the `orq --version` paragraph below, and every `-o json` spelling in this file, all of which were probed against **8.5.2 (API 4.14.17) on 2026-09-14**. The rest of this document has not been re-probed since 5.1.0 — three majors back — so treat every behaviour it describes as a starting hypothesis and confirm with `--help`. The full 8.x re-probe is tracked in [RES-1577](https://linear.app/orqai/issue/RES-1577). The CLI's version is its own since 5.0.0 and no longer tracks the API line, so the number tells you nothing about the API — `orq version -o json` reports both.
 
 ## Constraints
 
@@ -211,7 +211,7 @@ Checking state, given that all of these exit 0 either way:
 
 ```sh
 orq auth whoami -o json -j authenticated --raw    # true | (error text if no session)
-orq doctor -o json -j 'auth.status' --raw         # ok | missing | invalid
+orq doctor -o json -j 'auth.status' --raw         # read the whole auth block, not this string
 orq agents list -o json -j 'length(data)' --raw   # the only real proof a key works
 ```
 
@@ -482,7 +482,7 @@ The registry **grows and renames between releases** — it went 56 → 57 fields
 
 ### Reading a conversation: `traces thread`
 
-`orq traces thread <trace-id> [span-id]` renders a trace's conversation instead of its span JSON. Added in 7.4.0 (RES-1507) and substantially extended by 8.5.2. **Do not reconstruct a conversation out of `get-span` attributes** — the payload shapes differ per dialect (Chat Completions, OpenAI Responses, the flattened OpenTelemetry GenAI shape orq collectors emit) and `thread` normalizes all three into one model. On one live Responses span: raw `get-span -o json` **6476 bytes**, `thread` **838**, `-o markdown` **664**, `-o json` **1526**.
+`orq traces thread <trace-id> [span-id]` renders a trace's conversation instead of its span JSON. Added in 7.4.0 (RES-1507) and substantially extended by 8.5.2. **Do not reconstruct a conversation out of `get-span` attributes** — the payload shapes differ per dialect (Chat Completions, OpenAI Responses, the flattened OpenTelemetry GenAI shape orq collectors emit) and `thread` normalizes all three into one model. It is also far cheaper to read: on one live Responses span the default render was roughly an order of magnitude smaller than the raw `get-span -o json`, and `-o json` about a quarter of it.
 
 ```sh
 orq traces thread <trace-id>                     # picks the span, names it in the output
@@ -495,7 +495,7 @@ orq traces thread <trace-id> --match get_weather # only turns matching a regexp
 orq traces thread <trace-id> -i user,assistant   # only these parts
 ```
 
-**This command does not take the CLI-wide output flags.** There is no `-o json` on it and `ORQ_OUTPUT_FORMAT` / the config file are not read — its `-o` is `[xml, markdown, json, yaml, toon]`, default `xml`, and `-o table` is refused outright (exit 1, before any request):
+**Its `-o` is its own, not the CLI-wide one.** The enum is `[xml, markdown, json, yaml, toon]`, default `xml`; `ORQ_OUTPUT_FORMAT` and the config file are not read, so the workspace default never reaches this command. `-o table` is refused outright (exit 1, before any request):
 
 ```
 Error: --output-format: "table" is the CLI-wide default layout, and a conversation has no columns to lay out.
