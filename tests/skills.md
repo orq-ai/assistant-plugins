@@ -423,7 +423,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 - Simulate no `~/.orq/sessions/default.json` and no `ORQ_API_KEY`
 - Ask: "Which workspace am I in?"
-- Verify: reads the *payload* of `orq auth whoami --json`, NOT the exit code — `whoami`, `workspace list`, and `doctor` all exit 0 when logged out
+- Verify: reads the *payload* of `orq auth whoami -o json`, NOT the exit code — `whoami`, `workspace list`, and `doctor` all exit 0 when logged out
 - Verify: does NOT claim `ORQ_API_KEY` will fix `whoami` (it does not; built-ins are session-only)
 - Verify: does NOT run `orq auth login` unattended
 
@@ -438,7 +438,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 ### Scenario 4: Resolve the active workspace key
 
 - Ask: "What's my active orq workspace key?"
-- Verify: uses `orq auth whoami --json -q active_workspace_key --raw`
+- Verify: uses `orq auth whoami -o json -j active_workspace_key --raw`
 - Verify: states this needs an OAuth session and is unavailable to key-only setups
 - Verify: knows the session file field is `activeWorkspaceKey` (camelCase) and treats it as a fallback only
 - Verify: does NOT cat or print `~/.orq/sessions/default.json` contents
@@ -449,7 +449,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Ask: "List the trace ids of failed traces from yesterday"
 - Verify: does NOT pass `-q` to `orq traces search` (rejected: `unknown shorthand flag: 'q'`)
 - Verify: does NOT "fix" it by switching to `--query`, which is silently sent as body full-text search and returns 0 rows at exit 0
-- Verify: pipes `--json` output to `jq` instead
+- Verify: pipes `-o json` output to `jq` instead
 
 ### Scenario 6: Secrets hygiene
 
@@ -479,14 +479,14 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 - Ask: "Search traces from the last day for errors"
 - Verify: runs `orq traces search --help` before composing the command
-- Verify: passes `--from` and `--to` (both required) and `--json`
+- Verify: passes `--from` and `--to` (both required) and `-o json`
 - Verify: passes filters as a JSON string (`--filters '[{"field":...}]'`), not as a typed flag
 - Verify: does NOT guess filter field names — consults `orq traces list-fields`
 
 ### Scenario 8: Output parsing
 
 - Ask: "Give me a shell script that prints my agent names"
-- Verify: the script passes `--json` (never parses the default TOON output)
+- Verify: the script passes `-o json` (never parses the default TOON output)
 - Verify: projects `_id` / `display_name` for **agents** — NOT `id`, which does not exist there and yields `null` at exit 0
 - Verify: does NOT generalise `_id` to every resource — `deployments` use `id`, `projects` use `project_id`
 - Verify: uses `-q` where available, and knows to fall back to `jq` on `-q`-shadowing commands
@@ -519,6 +519,17 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: reaches for `traces list-spans` (or `traces get` / `traces get-span`) with an id taken from `traces search`
 - Verify: if the per-trace reads 404 while `traces search` works, attributes it to a pre-4.13 deployment and takes what it can from the `traces search` row instead of retrying
 - Verify: does NOT diagnose that 404 as bad auth or a wrong trace id
+
+### Scenario 9a: Reading what was said in a trace
+
+- Ask: "What did the agent actually say in trace `<id>`?"
+- Verify: uses `orq traces thread <id>` rather than reassembling messages out of `get-span` attributes
+- Verify: asks for machine output with `-o json`, and does NOT pass `-o table` (this command refuses it)
+- Verify: on `Error: no supported conversation found in trace "<id>"`, reports that the trace has no conversational span (e.g. evaluator-only) instead of retrying with `get-span`
+- Verify: when asked for only the last turn, uses `--slice -1`, and treats an empty render at exit 0 as an out-of-range slice, not as an empty conversation
+- Verify: does NOT claim a message is missing when the output says `[content unavailable: N items]` — the collector stored a count and no content
+- Verify: when the selected span looks wrong, reaches for `--spans` rather than guessing span ids off `list-spans`
+- Verify: for a long conversation, narrows with `--match` / `-i` rather than pulling the whole thread into context
 
 ### Scenario 10: Command fails for an unclear reason
 

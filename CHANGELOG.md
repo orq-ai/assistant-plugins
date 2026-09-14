@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-09-14
+
+### Added
+- `orq-cli`: documented `orq traces thread`, the normalized conversation view added in orq CLI 7.4.0 (RES-1507), probed live against **8.5.2** — the span it selects and `--spans` to see why, the `xml` and `markdown` renders and why the default is `xml` (recorded content cannot forge a turn), `--slice` / `--match` / `--include` / `--max-chars` / `--reasoning` and the order they apply in, the state markers, the canonical structure behind `-o json|yaml|toon`, and the exit codes (an empty selection is 0; a bad slice, and a trace with no conversational span, are 1).
+- `orq-shared`: `resources/trace-queries.md` now lists `traces thread` as the CLI path to full conversation content and as layer 3b of the layered read; MCP `get_span mode=full` is still the only source of per-message `finish_reason`.
+- `orq-analyze-traces`, `orq-improve-agent`: added `Bash(orq traces thread:*)` to `allowed-tools`.
+
+### Changed
+- **All skills**: every command example now asks for machine output with `-o json`. The global JSON alias flag and its environment-variable twin were removed in orq CLI 8.x — the flag exits 1 with `unknown flag`, and the variable is ignored silently, which leaves a caller parsing TOON. 146 call sites across 18 files were swept, and the places that documented the alias itself were rewritten rather than substituted: the global-flag table in `resources/command-map.md`, the `--version` paragraph and troubleshooting rows in `orq-cli/SKILL.md`, and the three sentences that contrasted the alias against `traces thread`'s own `-o` (in `orq-cli/SKILL.md`, `orq-cli/resources/command-map.md` and `orq-shared/resources/trace-queries.md`) — a substitution there reads "takes `-o json`, never `-o json`". Spot-checked live on 8.5.2: `auth whoami`, `agents list`, `traces list-fields`, `traces search`, `doctor`, `version`.
+- `orq-cli`: `orq --version` takes no format at all — `orq --version -o json` fails with `unknown command "json" for "orq"` because the value lands in subcommand position. Only `orq version -o json` serializes. Re-verified on 8.5.2.
+
 ## [3.1.1] - 2026-09-01
 
 ### Fixed
