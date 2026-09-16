@@ -69,7 +69,7 @@ Recommend Evaluators Progress:
 - At most 5 recommendations, each with a criterion, kind, output type, evidence, priority, and the consequence that clears the step 14 bar, listed in rank order; none duplicates an attached evaluator
 - Attached evaluators that error on invoke are reported as broken
 - Every `llm_eval` / `python_eval` recommendation names the existing evaluators it was checked against and why none of them fits
-- `eval-recommendations-<key>-<YYYYMMDD-HHMMSS>.md` is written
+- `eval-recommendations-<key>-<YYYYMMDD-HHMMSS>.md` is written, and next to it a `.json` that validates against [`resources/evaluations.schema.json`](resources/evaluations.schema.json)
 - Each evaluator the user approved exists on orq.ai and returned a verdict from one `orq evals invoke`; each one the user declined was not created
 - Attachments happened only where the user said yes, and a re-read shows `settings.tools[]` unchanged
 
@@ -322,6 +322,36 @@ Recommend Evaluators Progress:
     ````
 
     List `recommendations` and `optional` in rank order. Then a short table for people: rank, name, kind, priority, consequence, evidence.
+
+    Then write the same recommendations as `eval-recommendations-<key>-<YYYYMMDD-HHMMSS>.json`, same timestamp. This is the data model other tools read, defined by [`resources/evaluations.schema.json`](resources/evaluations.schema.json); use only its keys:
+
+    ```json
+    {
+      "schema_version": 1,
+      "target": { "type": "agent", "key": "support-bot", "id": "01JSP8N6..." },
+      "evaluations": [
+        {
+          "name": "declines-refund-requests",
+          "description": "The agent declines refund requests and points to the billing page.",
+          "type": "llm_eval",
+          "existing_evaluator_id": null,
+          "execute_on": "output",
+          "priority": "high",
+          "reason": "A promised refund the support team then has to honour; instructions: 'Never process refunds'."
+        }
+      ]
+    }
+    ```
+
+    Write it even when `evaluations` is empty. Every key shown is required, and no others are allowed:
+
+    - `target`: `type` is the step 1 mode (`agent` or `deployment`), `key` its key, `id` its id (`_id` in the retrieve output when `id` is null).
+    - `evaluations`: the `recommendations` in rank order, never the `optional` ones. An empty list is a valid answer.
+    - `name`: the recommendation's `name`, also for a `reuse` item. `description`: its `criterion`.
+    - `type`: `llm_eval` or `python_eval` for a new evaluator. For a `reuse` item, the existing evaluator's `type` from the inventory (`llm_eval`, `python_eval`, `function_eval`, `json_schema`, `http_eval` or `ragas`).
+    - `existing_evaluator_id`: the `reuse_id` for a `reuse` item, otherwise `null`.
+    - `execute_on` and `priority`: copied from the recommendation.
+    - `reason`: the `consequence`, then the strongest `evidence` (a failure rate with trace ids beats an instruction quote), in one sentence of at most about 40 words.
 
 17. **Present in rank order and ask** with one `AskUserQuestion` (`multiSelect: true`): which recommendations to create. Offer "none, just keep the file". Mention the `optional` list in one line; the user can promote an item, which then goes through step 15 matching first. Declined recommendations stay in the file.
 

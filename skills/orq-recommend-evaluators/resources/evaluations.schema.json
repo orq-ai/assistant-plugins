@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/orq-ai/assistant-plugins/skills/orq-recommend-evaluators/resources/evaluations.schema.json",
+  "title": "Evaluation recommendations",
+  "description": "The evaluators recommended for one agent or deployment, most important first. Written by orq-recommend-evaluators as eval-recommendations-<key>-<timestamp>.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "target", "evaluations"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "key", "id"],
+      "properties": {
+        "type": { "enum": ["agent", "deployment"] },
+        "key": { "type": "string", "minLength": 1 },
+        "id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "evaluations": {
+      "description": "In rank order. Empty when nothing is worth adding.",
+      "type": "array",
+      "maxItems": 5,
+      "items": { "$ref": "#/$defs/evaluation" }
+    }
+  },
+  "$defs": {
+    "evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "description", "type", "existing_evaluator_id", "execute_on", "priority", "reason"],
+      "properties": {
+        "name": {
+          "description": "Evaluator key for a new evaluator, or a short label for a reused one.",
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+        },
+        "description": {
+          "description": "What the evaluator checks, in one sentence.",
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "description": "The orq evaluator type. For a reused evaluator, its existing type.",
+          "enum": ["llm_eval", "python_eval", "function_eval", "json_schema", "http_eval", "ragas"]
+        },
+        "existing_evaluator_id": {
+          "description": "The id of an existing evaluator to attach as is, or null when a new one is needed.",
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "execute_on": { "enum": ["input", "output"] },
+        "priority": { "enum": ["high", "medium", "low"] },
+        "reason": {
+          "description": "Why it is worth attaching: the consequence of the rule breaking, and the evidence.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "if": { "properties": { "existing_evaluator_id": { "type": "null" } } },
+      "then": { "properties": { "type": { "enum": ["llm_eval", "python_eval"] } } }
+    }
+  }
+}

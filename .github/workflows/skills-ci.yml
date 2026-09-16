@@ -24,6 +24,15 @@ jobs:
         # depend on agent-plugins.org being up. ajv itself comes from npx, the
         # same zero-install pattern the install-sanity job below uses.
         run: npx -y ajv-cli@5 validate --spec=draft2020 -s tests/schemas/agent-plugins-1.0.0.plugin.schema.json -d plugin.json
+      - name: Validate the orq-recommend-evaluators data model against its fixtures
+        # Valid fixtures must pass and every invalid fixture must fail, so a
+        # loosened schema turns the run red instead of silently accepting more.
+        run: |
+          set -euo pipefail
+          d=skills/orq-recommend-evaluators
+          ajv() { npx -y ajv-cli@5 test --spec=draft2020 --allow-union-types -s "$d/resources/evaluations.schema.json" "$@"; }
+          ajv -d "$d/tests/fixtures/valid/*.json" --valid
+          ajv -d "$d/tests/fixtures/invalid/*.json" --invalid
       - name: Validate skills (frontmatter, lock invariants + hash freshness, version sync, content patterns)
         run: node tests/scripts/validate-skills.mjs
       - uses: astral-sh/setup-uv@v5
