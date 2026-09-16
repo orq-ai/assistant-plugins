@@ -59,7 +59,7 @@ Evaluator Build Progress:
 - `orq-improve-agent` — iterate on prompts based on evaluator results
 - `orq-evaluator-alignment` — measure cross-model stability and judge-human agreement for an evaluator you already created (step 16)
 - `orq-build-agent` — create agents that evaluators assess
-- **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `--json` output. See its "MCP tools or the CLI?" table before choosing.
+- **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `-o json` output. See its "MCP tools or the CLI?" table before choosing.
 
 
 ## When to use

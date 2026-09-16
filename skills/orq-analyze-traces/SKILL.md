@@ -9,7 +9,7 @@ description: >
   comes first. Do NOT use when the failure modes are already identified and you
   need evaluators (use orq-build-evaluator), datasets
   (use orq-generate-synthetic-dataset), or a fix applied (use orq-improve-agent).
-allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces list-facet-values:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq reporting query:*), Bash(orq agents retrieve:*), Bash(orq agents get-response:*), Bash(orq deployments get-config:*), Bash(orq tools retrieve:*), Bash(orq knowledge-bases retrieve:*), Bash(orq memory-stores retrieve:*), Bash(orq evals get:*), Bash(orq skills get:*), mcp__orq-workspace__list_traces, mcp__orq-workspace__list_spans, mcp__orq-workspace__get_span, mcp__orq-workspace__get_agent, mcp__orq-workspace__get_deployment, mcp__orq-workspace__get_analytics_overview, mcp__orq-workspace__query_analytics, mcp__orq-workspace__search_entities, mcp__orq-workspace__search_docs
+allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces list-facet-values:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq traces thread:*), Bash(orq reporting query:*), Bash(orq agents retrieve:*), Bash(orq agents get-response:*), Bash(orq deployments get-config:*), Bash(orq tools retrieve:*), Bash(orq knowledge-bases retrieve:*), Bash(orq memory-stores retrieve:*), Bash(orq evals get:*), Bash(orq skills get:*), mcp__orq-workspace__list_traces, mcp__orq-workspace__list_spans, mcp__orq-workspace__get_span, mcp__orq-workspace__get_agent, mcp__orq-workspace__get_deployment, mcp__orq-workspace__get_analytics_overview, mcp__orq-workspace__query_analytics, mcp__orq-workspace__search_entities, mcp__orq-workspace__search_docs
 ---
 
 # Analyze Traces
@@ -109,7 +109,7 @@ The target is **optional**. Three modes, and the config read degrades across the
 
 | Mode | Config read | Config write | Behaviour |
 |---|---|---|---|
-| **orq agent** (key or id given) | `mcp__orq-workspace__get_agent key=<key>` (primary, workspace-scoped) or `orq agents retrieve <key> --json` (fallback, project-scoped — 404s if agent is in another project) | `orq agents update` (in `orq-improve-agent`) | Full loop. |
+| **orq agent** (key or id given) | `mcp__orq-workspace__get_agent key=<key>` (primary, workspace-scoped) or `orq agents retrieve <key> -o json` (fallback, project-scoped — 404s if agent is in another project) | `orq agents update` (in `orq-improve-agent`) | Full loop. |
 | **orq deployment** | `mcp__orq-workspace__get_deployment key=<key>` (primary, workspace-scoped) or `orq deployments get-config` (fallback, project-scoped — 404s if the deployment is in another project) | prompt versions via HTTP only | Analysis is full; config fixes are recommended in prose. |
 | **local / no orq entity** | **ask the user** | none | Full analysis; fixes are handed back as a diff to apply by hand. |
 
@@ -160,10 +160,10 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
    - `knowledge_bases`, `memory_stores`
 
    When the agent config references entity IDs (tools, knowledge bases, memory stores, evaluators), resolve them into full definitions to understand what the agent can actually do:
-   - `orq tools retrieve <id> --json` — tool function schemas and descriptions
-   - `orq knowledge-bases retrieve <id> --json` — KB config and datasource attachments
-   - `orq memory-stores retrieve <id> --json` — memory store config
-   - `orq evals get <id> --json` — evaluator definition and scoring criteria
+   - `orq tools retrieve <id> -o json` — tool function schemas and descriptions
+   - `orq knowledge-bases retrieve <id> -o json` — KB config and datasource attachments
+   - `orq memory-stores retrieve <id> -o json` — memory store config
+   - `orq evals get <id> -o json` — evaluator definition and scoring criteria
 
 3. **Observed behaviour — what actually happened**, so declared and actual can be compared:
    - model actually served vs. declared (is a fallback firing?)
@@ -256,7 +256,7 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
     Build it from the ordered span sequence of the failed traces — **one projected `list-spans` call per failed trace**, verbatim from `trace-queries.md` §3:
 
     ```bash
-    orq traces list-spans <trace-id> --json \
+    orq traces list-spans <trace-id> -o json \
       -j "data[].{id:span_id,parent:parent_span_id,name:name,type:type,start:started_at,status:status}"
     ```
 

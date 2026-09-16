@@ -46,7 +46,7 @@ The response echoes `categories` and `categorical_labels` but returns `output_ty
 The same call via the CLI, which is the better option in a script or CI job (`orq` handles auth and workspace selection):
 
 ```bash
-orq evals create --json \
+orq evals create -o json \
   --key tone-classifier --type llm_eval --mode single --model openai/gpt-4.1 \
   --output-type categorical --path Default \
   --prompt "$(cat judge-prompt.txt)" \
@@ -59,7 +59,7 @@ orq evals create --json \
 
 ### Programmatic Invoke
 
-`POST /v3/evaluators/{id}/invoke` runs one evaluator against a single input/output pair — use it for rapid Phase 5 iteration instead of a full experiment. Or `orq evals invoke <id> --json --query ... --output ...`, which calls the same endpoint.
+`POST /v3/evaluators/{id}/invoke` runs one evaluator against a single input/output pair — use it for rapid Phase 5 iteration instead of a full experiment. Or `orq evals invoke <id> -o json --query ... --output ...`, which calls the same endpoint.
 
 Send the run under `context`. **`context` is the request envelope, not a namespace you can reference from the prompt** — there is no `{{context.…}}` variable; writing one renders empty. It is the wrapper whose contents feed the variables:
 
@@ -87,11 +87,11 @@ The CLI mirrors this. `--query`/`--output`/`--reference`/`--retrievals`/`--messa
 
 ```bash
 # --context takes the INNER object (no "context" key)
-orq evals invoke <id> --json \
+orq evals invoke <id> -o json \
   --context '{"input":{"system_instructions":"...","user_query":"..."},"output":{"response":"..."}}'
 
 # --from-file takes the FULL body (with "context")
-orq evals invoke <id> --json --from-file body.json   # {"context":{"input":{...}}}
+orq evals invoke <id> -o json --from-file body.json   # {"context":{"input":{...}}}
 ```
 
 **Unknown fields are ignored silently — no error, the variable renders empty and the judge scores a prompt with a hole in it.** `input` and `expected_output` are not flat aliases (they exist only inside `context.input`), so `{"input": …}` at the top level is dropped. When `messages` is present it is the conversation and `input.user_query` is ignored; `output.response` is appended only if the conversation has no assistant turn.
