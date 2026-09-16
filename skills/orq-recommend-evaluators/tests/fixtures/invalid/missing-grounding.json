@@ -1,6 +1,5 @@
 {
   "schema_version": 1,
   "target": { "type": "deployment", "key": "faq-deployment", "id": "deployment_0001" },
-  "grounding": { "mode": "config-only", "reason": "0 traces in the last 14 and 29 days" },
   "evaluations": []
 }

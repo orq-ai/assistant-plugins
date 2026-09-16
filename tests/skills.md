@@ -284,7 +284,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify Phase 3: reports the trace count and states `config-only` mode with that reason
 - Verify Phase 4a: every recommendation quotes an instruction line or config field; no generic helpfulness/coherence
 - Verify Phase 4a: a behaviour the instructions never ask for is listed under "Not an evaluator" → `orq-improve-agent`
-- Verify Phase 5: writes `eval-recommendations-<key>-<timestamp>.md` whose front matter parses, then asks which to create (multi-select) before creating anything
+- Verify Phase 5: writes `eval-recommendations-<key>-<timestamp>.md` whose front matter parses, and a `.json` with the same timestamp that validates against `resources/evaluations.schema.json`, with `grounding.mode` set to `config-only`
+- Verify Phase 5: asks which recommendations to act on (multi-select) before creating or attaching anything
 
 ### Scenario 2: Existing evaluators are respected
 
@@ -293,7 +294,13 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: a candidate matching an evaluator already in the project is offered as `reuse`, not a new create
 - Verify: a "valid JSON" style criterion is proposed as `is_valid_json` or `python_eval`, not an LLM judge
 
-### Scenario 3: Create and attach are gated separately
+### Scenario 3: Rank order follows the tiers
+
+- Provide: an agent whose instructions hold a money or safety rule ("never issue a refund above 50 EUR") and, listed earlier, a workflow rule ("always ask for the order number first")
+- Verify Phase 5: the money rule is tier 1 and ranks above the workflow rule (tier 3), even though the workflow rule comes first in the instructions
+- Verify: `evaluations[]` in the `.json` follows the same order as `recommendations` in the `.md`, and a reuse item is not dropped when the user selects it in step 17 (it goes to the attach question)
+
+### Scenario 4: Create and attach are gated separately
 
 - Ask: approve one recommendation
 - Verify Phase 6: shows the exact create body and asks again for that one evaluator before `orq evals create`

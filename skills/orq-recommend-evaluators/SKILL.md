@@ -113,20 +113,23 @@ Recommend Evaluators Progress:
 
 4. **In the workspace.** `orq evals all --limit 200 -o json -j '{has_more:has_more,data:data[].{id:_id,key:key,type:type,project_id:project_id,description:description,fn:function_params.type}}' > evals-inventory.json`. Leave out `--project-id` so it lists every project, and page with `--starting-after <last _id>` while `has_more` is true (a real workspace runs past 200). Tag each row `same-project` or `other-project` by its `project_id`.
 
+   **If a page errors,** retry it once. If it fails again, the inventory is **incomplete**: tell the user, and do not treat "no match found" as "nothing exists" in step 15.4. Each recommendation that would otherwise become a new evaluator gets the `caveats` entry "inventory incomplete, an existing evaluator may cover this", and the user decides whether to create it.
+
    - **Built-ins live here.** The function evaluators (`is_valid_json`, `exact_match`, `contains_none`, `contains_any`, `bleu_score`, `bert_score`, `cosine_similarity`, read from `fn`) and `ragas` evaluators exist only as workspace rows, often in one shared project. `orq evals create` accepts only `llm_eval` and `python_eval`, so a built-in is always reused, never created.
+   - **Marketplace evaluators are not listed.** Neither the CLI nor the public API exposes the marketplace, so only evaluators already added to a project appear here. When nothing in the workspace fits, say that a marketplace evaluator might, and that adding it to the project is a UI step.
    - **`--search` matches the key only**, not the description. Use it to spot-check a name; filter descriptions from the saved inventory yourself.
 
 5. **Keep the inventory for Phase 5.** Matching needs the candidates, which do not exist yet.
 
 ### Phase 3: Choose the Grounding Mode
 
-6. **An artifact exists.** Glob `./error-analysis-<key>-*.md`, newest first; on several, ask which. If its `target.version` differs from the live agent version, say so and ask whether to use it. Agents without semantic versions return `version_hash: ""` and no `version`; compare `updated` timestamps instead and record `version: null`. Mode = `error-analysis`. Read `failure_modes[]` and `passing`.
+6. **An artifact exists.** `orq-analyze-traces` writes `error-analysis-<key>-<YYYYMMDD-HHMMSS>.md` in the working directory; this skill never writes one. Glob `./error-analysis-<key>-*.md`, newest first; on several, ask which. If its `target.version` differs from the live agent version, say so and ask whether to use it. Agents without semantic versions return `version_hash: ""` and no `version`; compare `updated` timestamps instead and record `version: null`. Mode = `error-analysis`. Read `failure_modes[]` and `passing`.
 
 7. **No artifact: count traces.** Resolve whether `agent_name` or `agent_id` exists (`orq traces list-fields -o json`; each row's key is `name`, not `field`). **Filter on `agent_id` when you have it**: `agent_name` projects and filters as null on some agents, so a zero from a name filter is unconfirmed until an id filter agrees. Then one aggregate over the last 14 days, window computed at call time, body in a file:
 
    ```json
    {"from": "<now-14d>", "to": "<now>",
-    "filters": [{"field": "agent_name", "op": "eq", "values": ["<key>"]}],
+    "filters": [{"field": "agent_id", "op": "eq", "values": ["<agent id>"]}],
     "compute": [{"metric": "trace_id", "op": "count"}]}
    ```
 
@@ -138,6 +141,8 @@ Recommend Evaluators Progress:
    | **20+** | `traces` | Phase 4a **and** 4b. Offer `orq-analyze-traces` if the user wants a full taxonomy first; do not run one inline. |
 
    20 is a default, not a measured threshold: below it a sample is too small to show a failure rate. Tell the user the count and let them override.
+
+   The count only says traces exist. In `traces` mode, after step 13, record in `grounding_reason` how many traces had readable text as well as the total ("250 traces in 14 days, 72 with readable output"). If none were readable, the mode stays `traces` but say that no failure rate backs the ranking.
 
 ### Phase 4a: Candidates From the Config (every mode)
 
@@ -178,7 +183,7 @@ Recommend Evaluators Progress:
 
 12. **With an artifact:** each `failure_modes[]` entry with `fix: evaluator` becomes a candidate, carrying its `rate`, `evidence`, and `classification` (`generalization-code-checkable` → `python_eval`, `generalization-subjective` → LLM judge). Modes with `fix: prompt` / `config` go under "Not an evaluator".
 
-13. **Without an artifact:** a bounded read, not an analysis. `orq traces search` (sort `end_time desc`, ids only) for up to 20 recent traces, then `mcp__orq-workspace__get_span mode=full` on those worth reading. Without MCP, find the LLM span with `list-spans` and project its message text. Where it lives varies by agent: try `-j 'span.attributes.gen_ai.{input:input,output:output}'`, and if either holds no message text (null, or only a stub like `{"type":"text"}`), `-j 'span.attributes.openresponses.{input:input._value,output:output._value}'`. On an orq-hosted agent `openresponses.input` often returns an item count only, so user turns stay unreadable; fall back to `orq agents get-response` on the trace, and look for the agent span under either spelling (`span.agent` named `agent.response`, or `span.agent_execution`). Use single-key `-j` projections there: a multi-key projection containing a filter expression fails on CLI 8.4.1. Both hold JSON strings; for a multi-turn input only an item count may come back, so say when earlier turns could not be read. Use them only to **confirm or rank** Phase 4a candidates ("the scope rule was broken in 3 of 20") and to spot a failure the config did not predict. Cite trace ids. More than that is `orq-analyze-traces`' job.
+13. **Without an artifact:** a bounded read, not an analysis. `orq traces search` (sort `end_time desc`, ids only) for up to 20 recent traces, then read those worth reading with the CLI, which lets you project only the fields you need: find the LLM span with `list-spans` and project its message text. Where it lives varies by agent: try `-j 'span.attributes.gen_ai.{input:input,output:output}'`, and if either holds no message text (null, or only a stub like `{"type":"text"}`), `-j 'span.attributes.openresponses.{input:input._value,output:output._value}'`. On an orq-hosted agent `openresponses.input` often returns an item count only, so user turns stay unreadable; fall back to `orq agents get-response` on the trace, and look for the agent span under either spelling (`span.agent` named `agent.response`, or `span.agent_execution`). Use single-key `-j` projections there: a multi-key projection containing a filter expression fails on CLI 8.4.1. Both hold JSON strings; for a multi-turn input only an item count may come back, so say when earlier turns could not be read. Use them only to **confirm or rank** Phase 4a candidates ("the scope rule was broken in 3 of 20") and to spot a failure the config did not predict. Cite trace ids. More than that is `orq-analyze-traces`' job. Use `mcp__orq-workspace__get_span mode=full` only when the CLI projections return no text. When the Task tool is available, hand the trace reads to one subagent that returns a short summary per trace (trace id, user request, what the agent did, which candidate rules it broke), so raw spans never fill the main context.
 
 ### Phase 5: Rank, Match, Write, Present, Ask
 
@@ -219,7 +224,7 @@ Recommend Evaluators Progress:
 
    1. **Shortlist** inventory rows whose key, description or `fn` plausibly covers the criterion. Same project first, then built-ins, then other projects.
    2. **Read what each shortlisted one checks:** `orq evals get <id> -o json -j '{name:display_name,type:type,output_type:output_type,model:model,prompt:prompt,code:code,fn:function_params,guardrail:guardrail_config,needs:metadata}'`. A judge's `prompt` and a python eval's `code` are the evaluator; the description can be stale. A reference variable (current or legacy spelling: `{{reference}}`, `{{log.reference}}`, `{{expected_output}}`) usually means it cannot run on production traffic, but not always: the variable may simply render empty and leave the other requirements grading correctly. Treat it as a caveat to smoke-test, not a rejection, and record what goes vacuous without the reference. Built-in `contains_any` / `contains_none` rows carry a fixed keyword list in `function_params`, so they only fit those exact words. Also check the judge's variables against what the agent produces: a groundedness judge on `{{input.retrievals}}` does not fit an agent with no knowledge base.
-   3. **Smoke-test before deciding.** Draft the candidate's Pass and Fail `test_cases` now (step 16 records them) and invoke both against the existing id:
+   3. **Smoke-test before deciding.** With several candidates, run each candidate's shortlist and smoke tests in its own subagent when the Task tool is available, and have each return only the `checked` entries. Draft the candidate's Pass and Fail `test_cases` now (step 16 records them) and invoke both against the existing id:
 
       ```bash
       orq evals invoke <id> -o json --query "<query>" --output "<output>" -j '{value:value,explanation:explanation}'
@@ -329,6 +334,7 @@ Recommend Evaluators Progress:
     {
       "schema_version": 1,
       "target": { "type": "agent", "key": "support-bot", "id": "01JSP8N6..." },
+      "grounding": { "mode": "config-only", "reason": "0 traces in the last 14 days" },
       "evaluations": [
         {
           "name": "declines-refund-requests",
@@ -346,6 +352,7 @@ Recommend Evaluators Progress:
     Write it even when `evaluations` is empty. Every key shown is required, and no others are allowed:
 
     - `target`: `type` is the step 1 mode (`agent` or `deployment`), `key` its key, `id` its id (`_id` in the retrieve output when `id` is null).
+    - `grounding`: the front matter's `grounding` as `mode` and `grounding_reason` as `reason`, so an empty list still says what backs it.
     - `evaluations`: the `recommendations` in rank order, never the `optional` ones. An empty list is a valid answer.
     - `name`: the recommendation's `name`, also for a `reuse` item. `description`: its `criterion`.
     - `type`: `llm_eval` or `python_eval` for a new evaluator. For a `reuse` item, the existing evaluator's `type` from the inventory (`llm_eval`, `python_eval`, `function_eval`, `json_schema`, `http_eval` or `ragas`).
@@ -353,11 +360,11 @@ Recommend Evaluators Progress:
     - `execute_on` and `priority`: copied from the recommendation.
     - `reason`: the `consequence`, then the strongest `evidence` (a failure rate with trace ids beats an instruction quote), in one sentence of at most about 40 words.
 
-17. **Present in rank order and ask** with one `AskUserQuestion` (`multiSelect: true`): which recommendations to create. Offer "none, just keep the file". Mention the `optional` list in one line; the user can promote an item, which then goes through step 15 matching first. Declined recommendations stay in the file.
+17. **Present in rank order and ask** with one `AskUserQuestion` (`multiSelect: true`): which recommendations to act on. A new evaluator is created (step 19) and then offered for attaching; a `reuse` item skips creation and goes straight to the attach question (step 21). Offer "none, just keep the file". Mention the `optional` list in one line; the user can promote an item, which then goes through step 15 matching first. Declined recommendations stay in the file.
 
 ### Phase 6: Create, Smoke-Test, Offer to Attach
 
-For each evaluator the user selected, one at a time:
+For each recommendation the user selected, one at a time (a `reuse` item goes to step 21):
 
 18. **Show the exact body** and ask for approval of that one evaluator. For an LLM judge, write the prompt with `orq-build-evaluator`'s 4-part structure ([`judge-prompt-template.md`](../orq-build-evaluator/resources/judge-prompt-template.md)): criterion, Pass/Fail definitions, reasoning before the verdict, and the current variables (`{{input.user_query}}`, `{{output.response}}`, `{{input.retrievals}}`, `{{output.tools_called}}`, `{{input.system_instructions}}`). Never the legacy `{{log.*}}` spelling.
 

@@ -5,7 +5,7 @@
   "description": "The evaluators recommended for one agent or deployment, most important first. Written by orq-recommend-evaluators as eval-recommendations-<key>-<timestamp>.json.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "target", "evaluations"],
+  "required": ["schema_version", "target", "grounding", "evaluations"],
   "properties": {
     "schema_version": { "const": 1 },
     "target": {
@@ -16,6 +16,20 @@
         "type": { "enum": ["agent", "deployment"] },
         "key": { "type": "string", "minLength": 1 },
         "id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "grounding": {
+      "description": "What the recommendations rest on, so an empty list still says what backs it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "reason"],
+      "properties": {
+        "mode": { "enum": ["config-only", "traces", "error-analysis"] },
+        "reason": {
+          "description": "The trace count and how many were readable, or the error-analysis file used.",
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "evaluations": {

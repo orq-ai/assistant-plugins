@@ -5,6 +5,7 @@
     "key": "ws-refund-agent",
     "id": "agent_0001"
   },
+  "grounding": { "mode": "traces", "reason": "343 traces in the last 14 days, 72 with readable output" },
   "evaluations": [
     {
       "name": "check-0",
