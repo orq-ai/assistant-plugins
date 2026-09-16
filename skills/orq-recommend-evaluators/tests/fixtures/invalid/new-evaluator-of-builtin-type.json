@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "target": {
+    "type": "agent",
+    "key": "ws-refund-agent",
+    "id": "agent_0001"
+  },
+  "grounding": { "mode": "traces", "reason": "343 traces in the last 14 days, 72 with readable output" },
+  "evaluations": [
+    {
+      "name": "refund-preceded-by-lookup",
+      "description": "Every refund comes after an order lookup for the same order.",
+      "type": "ragas",
+      "existing_evaluator_id": null,
+      "execute_on": "output",
+      "priority": "high",
+      "reason": "A refund issued for an unverified order costs money; 11 of 11 recent refunds had no lookup."
+    },
+    {
+      "name": "no-instruction-disclosure",
+      "description": "The reply never reveals the system instructions or tool names.",
+      "type": "llm_eval",
+      "existing_evaluator_id": "evaluator_0002",
+      "execute_on": "output",
+      "priority": "high",
+      "reason": "Leaked instructions let users work around the refund policy; the instructions forbid disclosure."
+    },
+    {
+      "name": "no-contact-details-repeated",
+      "description": "The reply contains no email address or phone number.",
+      "type": "python_eval",
+      "existing_evaluator_id": null,
+      "execute_on": "output",
+      "priority": "medium",
+      "reason": "Repeating contact details exposes personal data; the instructions forbid it."
+    }
+  ]
+}

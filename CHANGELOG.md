@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-09-16
+
+### Added
+- **`orq-recommend-evaluators`** (RES-1560): recommends the evaluators an agent or deployment is missing and creates the ones the user approves. With an `error-analysis-*.md` or 20+ traces in the last 14 days it grounds candidates in trace evidence; below that it runs config-only, reading each hard rule in the instructions and each config signal (knowledge bases, `response_format`, tools) as a candidate criterion. It skips evaluators already in `settings.evaluators` / `settings.guardrails`, offers project evaluators as `reuse`, sends specification gaps to `orq-improve-agent`, and writes `eval-recommendations-<key>-<timestamp>.md`. Create and attach are separate approval gates; each created evaluator is smoke-invoked once, and LLM judges are labelled unvalidated with a pointer to `orq-evaluator-alignment`. Contract verified against orq CLI on 2026-09-14: `settings.evaluators[]` entries are `{id, execute_on, sample_rate}` and the keys are absent (not empty) when nothing is attached; `orq evals all` returns `llm_eval`, `python_eval`, `function_eval` and `ragas` types.
+- **`orq-recommend-evaluators` data model** (RES-1589): the skill also writes `eval-recommendations-<key>-<timestamp>.json`, defined by `resources/evaluations.schema.json`. It is Bauke's `{"evaluations": [{"name"}]}` shape with the fields a caller needs to create or attach each one: `description`, `type`, `existing_evaluator_id` (null for a new evaluator), `execute_on`, `priority` and `reason`, plus `schema_version` and `target`. At most 5 items, in rank order, and no other keys. CI checks two valid and nine invalid fixtures against it.
+
 ## [3.2.0] - 2026-09-14
 
 ### Added
