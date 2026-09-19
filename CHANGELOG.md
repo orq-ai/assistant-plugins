@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.1] - 2026-09-20
+
+### Changed
+- `orq-cli`, `orq-shared`, `orq-analyze-traces`, `orq-improve-agent`: `orq traces thread` is now `orq traces conversation`, short alias `conv` ([orq-cli#102](https://github.com/orq-ai/orq-cli/pull/102)). The old name was dropped outright rather than kept as a deprecated alias, so every call site here moved: the "Reading a conversation" section and its examples in `orq-cli/SKILL.md`, the per-trace read list and global `-o` row in `orq-cli/resources/command-map.md`, the full-content bullet and layer 3b of the layered read in `orq-shared/resources/trace-queries.md`, scenario 9a in `tests/skills.md`, and `Bash(orq traces thread:*)` in two `allowed-tools` lists — replaced with both spellings, since a prefix rule for `conversation` does not match `conv`. The version note says which name an installed CLI has: `thread` through 8.6.x, `conversation` after. The `xml` render's framing tag moved with the command, from `<thread …>` to `<conversation …>`.
+
 ## [3.2.0] - 2026-09-14
 
 ### Added
