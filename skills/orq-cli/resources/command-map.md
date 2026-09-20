@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/orq-ai/orq-cli/main/openapi.yaml -o
 
 | Flag | Effect |
 |---|---|
-| `-o, --output-format` | `json`, `yaml`, or `toon` (default `toon`). This is the only way to ask for JSON. `traces thread` takes its own set and refuses `table` |
+| `-o, --output-format` | `json`, `yaml`, or `toon` (default `toon`). This is the only way to ask for JSON. `traces conversation` takes its own set and refuses `table` |
 | `-j, --jmespath` | JMESPath expression applied to the response |
 | `--raw` | Emit the `--jmespath` result unquoted instead of as JSON |
 | `--profile` | Credential profile (default `default`). An explicit one outranks `ORQ_API_KEY` |
@@ -588,14 +588,15 @@ orq traces list-facet-values <field> -o json \
 orq traces get <trace_id>
 orq traces list-spans <trace_id>
 orq traces get-span <trace_id> <span>
-orq traces thread <trace_id> [<span>]
+orq traces conversation <trace_id> [<span>]   # alias: conv
 ```
 
-`thread` (7.4.0+) is the one to reach for when the question is *what was said*:
+`conversation` (7.4.0+, named `thread` through 8.6.x) is the one to reach for
+when the question is *what was said*:
 it picks the conversational span itself and normalizes Chat Completions, OpenAI
 Responses and OpenTelemetry GenAI payloads into one message list. Its `-o` is
 its own — `xml` (default), `markdown`, `json`, `yaml`, `toon` — and it neither
-reads `ORQ_OUTPUT_FORMAT` nor accepts `table`. See the `traces thread` section
+reads `ORQ_OUTPUT_FORMAT` nor accepts `table`. See the `traces conversation` section
 of SKILL.md for span selection and the full flag set. `get-span` remains the
 path for span *config* — temperature, tool definitions, `finish_reasons`.
 
