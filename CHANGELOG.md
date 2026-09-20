@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-09-21
+
+### Added
+
+- `evaluatorq` skill: `resources/inputs-and-data.md` — the four shapes `data` accepts (inline rows, awaitables, `DatasetIdInput`, `ExperimentInput`), `inference=False` experiment replay, turning production traces into datapoints via the simulation helpers, the full result object, the raw-dict job error contract, and `check_pass_failures` CI gating.
+- `evaluatorq` skill: `resources/judges-and-juries.md` — `llm_jury()` verdict modes and panel configuration, jury presets, cyclic assignment, the judge prompt template namespace, reading `raw_output["jury"]` back as `JuryResult`, `llm_jury_pairwise()` swap-and-reconcile plus `build_report()` / BT-sigma metrics, and the structured-result trade-offs.
+- `evaluatorq` skill: `resources/tuning.md` — the four distinct reasoning-effort knobs, token budgets for reasoning models, `datapoint_parallelism` vs `llm_parallelism` (with `llm_slot()`), target and pipeline timeouts/retries, `extra_kwargs` vs `extra_body`, model-catalogue registration, and the environment variable reference.
+
+### Changed
+
+- `evaluatorq` skill: `SKILL.md` gains a scorer-selection table, judge/jury and reasoning-model sections, and an input section; Phase 2 and Phase 4 renamed accordingly.
+- Cross-links between the evaluator skills: `orq-run-experiment`, `orq-build-evaluator` and `orq-evaluator-alignment` now route code-based evaluation, code-defined judge panels and platform-evaluator invocation to `evaluatorq`, and `evaluatorq` routes judge design and human-label validation back to them.
+- `orq-compare-agents/resources/evaluatorq-api.md` re-probed against Python `evaluatorq` 1.39.0, `@orq-ai/evaluatorq` 1.3.2 and `orq-ai-sdk` / `@orq-ai/node` 4.15.6: full `evaluatorq()` signature (`datapoint_parallelism`, `llm_parallelism`, `path`, `inference`, `ExperimentInput`), a Python-vs-TypeScript parity table, and `llm_jury()` in the built-in evaluator list.
+
+### Fixed
+
+- `evaluatorq` skill: `parallelism` is documented as the deprecated alias of `datapoint_parallelism` in the Python examples, and the dataset input uses `DatasetIdInput` instead of the bare dict. The TypeScript example keeps `parallelism` / `{ datasetId }`, with a note that `@orq-ai/evaluatorq` 1.3.2 has no jury, pairwise or experiment-replay support.
+- `orq.evals.invoke()` returns a **flat** `EvaluationResult` on `orq-ai-sdk` 4.15.6 — `result.value` / `result.explanation` / `result.passed`, not `result.value.value`. Corrected in `evaluatorq`, `orq-compare-agents/resources/evaluatorq-api.md` and `orq-compare-agents/resources/gotchas.md`, whose "Response structure is nested" section documented the old shape.
+- `orq-compare-agents/resources/evaluatorq-api.md`: the TypeScript framework wrappers take the agent first and the name in an options object (`wrapLangGraphAgent(agent, { name })`), not `("Name", agent)`; the TS `evals.invoke()` request key is `invokeEvaluatorRequest`, not `requestBody`; the TS `parallelism` default is `1` (sequential), not `10`.
+
 ## [3.2.3] - 2026-09-21
 
 ### Changed

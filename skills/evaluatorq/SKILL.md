@@ -2,8 +2,9 @@
 name: evaluatorq
 description: >
   Write and run evaluatorq evaluation scripts (Python or TypeScript) for a
-  single agent or deployment — custom scorers, built-in evaluators, and
-  dataset-driven evaluation. For CLI workflows, use the companion skills:
+  single agent or deployment — custom scorers, built-in evaluators, LLM
+  judges and juries, pairwise preference judging, and evaluation driven by
+  datasets, past experiments or production traces. For CLI workflows, use the companion skills:
   `orq-red-team` for `eq redteam` adversarial testing and `orq-simulate-agent` for
   `eq sim` multi-turn user simulation. Do NOT use when comparing multiple
   agents head-to-head (use orq-compare-agents) or when running
@@ -19,11 +20,13 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 
 ## Constraints
 
-- **NEVER** write inline datasets of fewer than 5 datapoints without asking the user — small datasets produce misleading scores. Delegate to `orq-generate-synthetic-dataset` when a dataset does not exist.
+- **NEVER** report a score from fewer than 5 datapoints without saying it is not a score — a 1–4 row inline run is a smoke test of the script, never a measurement. Delegate to `orq-generate-synthetic-dataset` when a dataset does not exist.
 - **NEVER** use `orq.evaluators.invoke()` — use `orq.evals.invoke_async()` inside async scorers or `orq.evals.invoke()` for synchronous calls.
 - **NEVER** invent evaluator IDs — fetch them from the user or **browse** via `search_entities` MCP tool (`type: "evaluator"`).
 - **ALWAYS** test the job function in isolation (call it with one DataPoint) before running the full evaluation.
 - **ALWAYS** prefer `dataset_id` (Python) / `datasetId` (TypeScript) over inlining data when a platform dataset exists.
+- **NEVER** build a judge panel out of `orq/*` router ids, and default to a cross-family panel — correlated judges cannot vote away a shared bias. The `"Single-Provider Trio"` preset is the one deliberate exception, for one-vendor workspaces, and buys less independence than any cross-family preset.
+- **ALWAYS** set `reasoning_effort` explicitly when a judge or target is a reasoning model, and know an unsupported value is dropped silently (400 → retry without the reasoning block), not raised.
 - **CLI only:** Check `ORQ_API_KEY` is set before running `eq redteam` or `eq sim`.
 
 **Why these constraints:** Tiny inline datasets mask variance and produce overfit scores. Wrong SDK method names cause silent failures that are hard to diagnose. Untested job functions waste evaluation budget.
@@ -31,7 +34,8 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 ## Companion Skills
 
 - `orq-generate-synthetic-dataset` — create a dataset when none exists
-- `orq-build-evaluator` — design an LLM-as-a-judge evaluator prompt
+- `orq-build-evaluator` — design an LLM-as-a-judge evaluator prompt, when the judge should be a reusable platform entity rather than an `llm_jury()` in the script
+- `orq-evaluator-alignment` — validate a judge against human labels before trusting its verdicts
 - `orq-compare-agents` — run the same evaluatorq evaluation across multiple agents
 - `orq-run-experiment` — run orq.ai-native experiments without writing code
 - `orq-analyze-traces` — diagnose agent failures from production traces
@@ -52,15 +56,17 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 - **orq.ai-native experiments only, no custom code?** → `orq-run-experiment`
 - **No dataset yet?** → `orq-generate-synthetic-dataset` first
 - **Need to diagnose what's failing in production?** → `orq-analyze-traces`
+- **Designing the judge criteria itself, or need it as a platform evaluator?** → `orq-build-evaluator`
+- **Judge disagreeing with human labels?** → `orq-evaluator-alignment`
 
 ## Workflow Checklist
 
 ```
 Evaluatorq Progress:
 - [ ] Phase 1: Identify the target (agent key, function, or CLI target)
-- [ ] Phase 2: Confirm or create dataset
+- [ ] Phase 2: Pick the input (inline rows, dataset, experiment replay, traces)
 - [ ] Phase 3: Choose evaluation mode (library script or CLI)
-- [ ] Phase 4: Write and test the evaluation
+- [ ] Phase 4: Choose scorers (deterministic, custom, judge, jury) and tune the judge
 - [ ] Phase 5: Run and view results
 ```
 
@@ -81,7 +87,7 @@ Evaluatorq Progress:
 | **CLI: `eq redteam`** | Adversarial safety testing against OWASP categories | → `orq-red-team` skill |
 | **CLI: `eq sim`** | Multi-turn conversation simulation, goal-achievement scoring | → `orq-simulate-agent` skill |
 
-Since v1.10 the library also exports **LLM-jury and pairwise judging**: `llm_jury()`, `llm_jury_pairwise()`, and `PairwiseComparator` (plurality/majority vote or numeric mean/median aggregation) — see the upstream `docs/llm-as-a-jury.md` and `docs/pairwise-judging.md` for usage.
+The library ships LLM-graded evaluators too: `llm_jury()` (one judge or a panel; boolean, labeled or numeric verdicts) and `llm_jury_pairwise()` / `PairwiseComparator` (A-vs-B preference with position-bias correction). Full usage — panel config, presets, cyclic assignment, prompt namespace, what comes back — in [resources/judges-and-juries.md](resources/judges-and-juries.md).
 
 ---
 
@@ -97,16 +103,28 @@ For orq.ai targets, use `search_entities` MCP tool to **browse** available keys 
 
 ---
 
-## Phase 2: Confirm or Create Dataset
+## Phase 2: Pick the Input
 
-Check if a suitable dataset exists on the platform:
+`data` accepts four shapes. Full detail — field-by-field, plus the result object you get back — in [resources/inputs-and-data.md](resources/inputs-and-data.md).
 
-```bash
-# Use MCP search_entities with type: "dataset"
-# or ask the user for a dataset ID
+| Input | Use it for | Needs `ORQ_API_KEY` |
+|---|---|---|
+| `list[DataPoint]` / `list[dict]` | Inline rows, smoke tests | no |
+| `list[Awaitable[DataPoint]]` | Rows streamed in from a slow source | no |
+| `DatasetIdInput(dataset_id=..., include_messages=False)` | A platform dataset. `include_messages=True` also copies the row's stored `messages` into `inputs["messages"]` | yes |
+| `ExperimentInput(experiment_id=..., run_id=None)` | Re-scoring a past experiment run's recorded outputs. Requires `inference=False` | yes |
+
+```python
+from evaluatorq import DataPoint, DatasetIdInput, ExperimentInput
+
+DataPoint(inputs={"question": "..."}, expected_output="...")   # inputs is free-form; the job and judge read it
 ```
 
-If no dataset exists, delegate to `orq-generate-synthetic-dataset`. Target 10–30 datapoints for meaningful scores; use 3–5 for a quick smoke test.
+**Production traces are not a `data` shape.** Convert them to datapoints first with the simulation helpers — `fetch_trace_conversations()`, then `datapoints_from_traces()` (one datapoint per trace) or `extend_from_traces()` (new cases matching real traffic distribution) — and pass the resulting list as `data`. From the CLI that is `eq sim from-traces … --extend N`. For the whole trace workflow use `orq-simulate-agent` / `orq-analyze-traces`.
+
+**Re-scoring without re-generating:** `inference=False` skips the jobs entirely and runs evaluators against the response already in each row. That is how you try a new judge against an old run without paying for generation twice.
+
+Check whether a dataset exists (MCP `search_entities` with `type: "dataset"`, or ask the user). If none exists, delegate to `orq-generate-synthetic-dataset`. Target 10–30 datapoints for meaningful scores. 1–4 rows are fine to prove the script runs, but report that run as a smoke test, not as a score.
 
 ---
 
@@ -132,7 +150,7 @@ Why the loop is worse, not just longer:
 - **Identical inputs.** Every job sees the same data points in the same run — the whole point of an A/B.
 - **Concurrency is lost.** Inside one call, jobs for a data point are dispatched together with `asyncio.gather`; a loop serializes whole passes over the dataset.
 
-`parallelism` (default **10**) gates two semaphores: concurrent data points, and concurrent jobs within a data point. Lower it when your provider rate-limits; set `1` for fully sequential execution.
+`datapoint_parallelism` (default **10**; the old name `parallelism` still works, deprecated) counts tasks and nests: at most N datapoints at once, and within each one a fresh budget of the same size covers its jobs and then its evaluators — ten datapoints × ten evaluators is a hundred concurrent tasks. Set `1` for fully sequential. To bound the provider instead, use `llm_parallelism`, which counts in-flight LLM **requests** for the whole run. See [resources/tuning.md](resources/tuning.md).
 
 This covers variants of one system (prompts, models, flags). For head-to-head comparison of **separate orq.ai agents**, use `orq-compare-agents` — it uses the same multi-job mechanism plus agent-specific setup.
 
@@ -141,7 +159,7 @@ This covers variants of one system (prompts, models, flags). For head-to-head co
 ```python
 import asyncio
 from typing import Any
-from evaluatorq import evaluatorq, job, DataPoint, ScorerParameter
+from evaluatorq import DatasetIdInput, DataPoint, ScorerParameter, evaluatorq, job
 
 @job("MyAgent")
 async def agent_job(data: DataPoint, _row: int = 0) -> str:
@@ -163,10 +181,10 @@ async def main():
     await evaluatorq(
         "<experiment-name>",
         {
-            "data": {"dataset_id": "<DATASET_ID>"},  # or inline DataPoint list
+            "data": DatasetIdInput(dataset_id="<DATASET_ID>"),  # or an inline DataPoint list
             "jobs": [agent_job, variant_job],  # every job runs on every data point
             "evaluators": [{"name": "quality", "scorer": quality_scorer}],
-            "parallelism": 5,
+            "datapoint_parallelism": 5,
         },
     )
 
@@ -205,6 +223,8 @@ await evaluatorq("<experiment-name>", {
 });
 ```
 
+**The TypeScript package lags the Python one.** As of `@orq-ai/evaluatorq` 1.3.2 it has `parallelism` (not `datapointParallelism` / `llmParallelism`), `{ datasetId }` as its only platform input, and **no** `llm_jury` / pairwise judging, no experiment replay, no `inference: false`. Write judge- and jury-based evaluations in Python; use TypeScript for custom scorers in a TS stack. Verify against the installed package before promising a field.
+
 ### CLI — Red Teaming
 
 > **Delegate to the `orq-red-team` skill** for the full `eq redteam` walkthrough (modes, OWASP categories, output format, dashboard).
@@ -229,9 +249,52 @@ eq sim simulate --input dp.jsonl --target agent:<AGENT_KEY>
 
 ---
 
-## Phase 4: Customize Scorers
+## Phase 4: Choose Scorers
 
-### Use an orq.ai LLM-as-a-Judge evaluator
+Four kinds, cheapest first. Do not reach for a judge when a string comparison answers the question.
+
+| Scorer | Use it for |
+|---|---|
+| `exact_match_evaluator()` / `string_contains_evaluator()` | Deterministic checks against `expected_output` |
+| A plain async scorer | Anything you can compute in Python (regex, schema validation, latency, cost) |
+| `llm_jury()` | Subjective quality — one judge, or a panel when a wrong verdict is expensive |
+| `llm_jury_pairwise()` | "Is A better than B?" when absolute grading is hard to calibrate |
+
+### LLM judge and jury
+
+```python
+from evaluatorq import llm_jury
+
+correctness = llm_jury(
+    name="correctness",
+    criteria="The answer is factually correct and directly answers the question.",
+    preset="Balanced Trio",          # or judges=[...] — 3 models from 3 provider families
+    # verdict_kind="numeric", threshold=0.7      # numeric mode
+    # labels=[...], passing_labels=[...]         # labeled mode
+    reasoning_effort="high",         # the JUDGE's thinking budget
+)
+```
+
+The verdict lands in `score.value` / `score.pass_`, a one-line panel summary is appended to `explanation`, and the per-judge breakdown (model, verdict, rationale, abstain/failure, agreement) is on `score.raw_output["jury"]` — validate it into `JuryResult` rather than indexing keys. A datapoint whose **target errored is never judged**: it returns `inconclusive` with `raw_output` still `None`.
+
+Judges see criteria, input messages, the response and the expected output by default; tool calls and the structured transcript only via a custom `prompt=`. Panel rules, presets, verdict modes, cyclic assignment, pairwise reconciliation and `build_report()` metrics: [resources/judges-and-juries.md](resources/judges-and-juries.md).
+
+To validate a judge against human labels before trusting it, use `orq-evaluator-alignment`.
+
+### Reasoning models
+
+Four separate knobs carry the name "reasoning effort", each for a different model, and setting the wrong one is silent:
+
+| Model you want to tune | Knob |
+|---|---|
+| The jury / judge in core evaluation | `reasoning_effort=` on `llm_jury()` / `llm_jury_pairwise()` |
+| The agent under test | `LLMConfig(target_reasoning_effort=...)`, `simulate(target_reasoning_effort=...)`, `--target-reasoning-effort` |
+| Red teaming's attacker or judge | `LLMCallConfig(reasoning_effort=...)` on `attacker=` / `evaluator=` |
+| Simulation's user simulator and judge | `llm_config=LLMCallConfig(reasoning_effort=...)`, or `EVALUATORQ_REASONING_EFFORT` |
+
+An unsupported value is not an error: the provider 400s, the reasoning block is dropped, and the call is retried without it — so a run can silently score at default effort. Raise `max_tokens` (judge default `8000`) alongside effort; a reasoning model that exhausts its budget while thinking returns an empty answer rather than failing. Timeouts, retries, `llm_parallelism`, `extra_kwargs` vs `extra_body`, catalogue registration: [resources/tuning.md](resources/tuning.md).
+
+### Use an orq.ai platform evaluator
 
 ```python
 from typing import Any
@@ -253,8 +316,8 @@ async def orq_eval_scorer(params: ScorerParameter) -> dict[str, Any]:
     )
 
     return {
-        "value": 1.0 if result.value.value else 0.0,
-        "explanation": result.value.explanation or "",
+        "value": 1.0 if result.value else 0.0,   # flat response: result.value, NOT result.value.value
+        "explanation": result.explanation or "",
     }
 ```
 
@@ -312,6 +375,9 @@ Environment variables:
 
 ## Resources
 
+- **Inputs and results** (datasets, experiment replay, traces, the result object, job error contract, CI gating): [resources/inputs-and-data.md](resources/inputs-and-data.md)
+- **Judges and juries** (`llm_jury`, presets, verdict modes, pairwise, prompt namespace, reading verdicts): [resources/judges-and-juries.md](resources/judges-and-juries.md)
+- **Tuning** (reasoning effort, token budgets, parallelism, timeouts, retries, env vars): [resources/tuning.md](resources/tuning.md)
 - **CLI quick reference** (common patterns, eq redteam + eq sim): [resources/cli-reference.md](resources/cli-reference.md)
 - **evaluatorq API reference** (jobs, scorers, full signatures): See `orq-compare-agents` → [orq-compare-agents/resources/evaluatorq-api.md](../orq-compare-agents/resources/evaluatorq-api.md)
 
@@ -320,5 +386,7 @@ Environment variables:
 > **Official documentation:** [Evaluatorq Tutorial](https://docs.orq.ai/docs/tutorials/evaluator-q)
 
 [Experiments](https://docs.orq.ai/docs/experiments/creating) · [Evaluators](https://docs.orq.ai/docs/evaluators/overview) · [Datasets](https://docs.orq.ai/docs/datasets/overview)
+
+**Library docs** (the authority on everything in this skill): [Evaluation reference](https://orq-ai.github.io/evaluatorq/evaluation-reference/) · [LLM as a jury](https://orq-ai.github.io/evaluatorq/llm-as-a-jury/) · [Jury presets](https://orq-ai.github.io/evaluatorq/jury-presets/) · [Pairwise judging](https://orq-ai.github.io/evaluatorq/pairwise-judging/) · [Tuning](https://orq-ai.github.io/evaluatorq/tuning/) · [Configuration](https://orq-ai.github.io/evaluatorq/configuration/)
 
 When this skill conflicts with live API responses or docs.orq.ai, trust the API.
