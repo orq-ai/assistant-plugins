@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "target": { "type": "agent", "key": "faq-rag-agent", "id": "agent_0003" },
-  "grounding": { "mode": "config-only", "reason": "4 traces in the last 14 days, 0 with readable output" },
+  "grounding": { "mode": "config-only", "reason": "4 traces in the last 14 days" },
   "evaluations": [
     {
       "name": "answer-grounded-in-retrievals",
