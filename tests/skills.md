@@ -156,6 +156,27 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Ask: "Compare my two agents against each other"
 - Verify: routes to `orq-compare-agents`, not generates a script here
 
+### Scenario 5: LLM judge and jury
+
+- Ask: "Score my agent's answers with an LLM judge"
+- Verify: uses `llm_jury(name=..., criteria=...)` from the library, not a hand-rolled prompt loop
+- Verify: a panel is cross-family (or a `preset=`), never several `orq/*` routers, and odd-sized
+- Verify: names the verdict mode explicitly (`verdict_kind` with `labels` / `threshold`), not inferred from `labels`
+- Verify: reads the per-judge breakdown from `raw_output["jury"]` validated into `JuryResult`, not by indexing raw keys
+
+### Scenario 6: Re-scoring existing responses
+
+- Ask: "Re-run my evaluators over last week's experiment without calling the agent again"
+- Verify: uses `ExperimentInput(experiment_id=...)` with `inference=False`, not a new generation run
+- Verify: mentions traces are not a `data` shape — they go through `datapoints_from_traces()` / `extend_from_traces()` first
+
+### Scenario 7: Reasoning-model budget
+
+- Ask: "My judge is a reasoning model — give it a bigger thinking budget"
+- Verify: sets `reasoning_effort=` on `llm_jury()`, not `target_reasoning_effort` or `EVALUATORQ_REASONING_EFFORT`
+- Verify: mentions an unsupported effort is dropped silently (400 → retry without the reasoning block)
+- Verify: raises `max_tokens` alongside it
+
 ---
 
 ## `orq-compare-agents`
@@ -559,6 +580,11 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-invoke-deployment/resources/api-reference.md`
 - `skills/evaluatorq/SKILL.md`
 - `skills/evaluatorq/resources/cli-reference.md`
+- `skills/evaluatorq/resources/inputs-and-data.md`
+- `skills/evaluatorq/resources/judges-and-juries.md`
+- `skills/evaluatorq/resources/tuning.md`
+- `skills/evaluatorq/tests/test_documented_api.py` — Python contract suite; a red run means upstream moved and the markdown is stale
+- `skills/orq-compare-agents/tests/ts/contract.ts` — the same for the TypeScript claims, checked with `tsc --noEmit`
 - `skills/orq-compare-agents/SKILL.md`
 - `skills/orq-compare-agents/resources/job-patterns.md`
 - `skills/orq-compare-agents/resources/evaluatorq-api.md`

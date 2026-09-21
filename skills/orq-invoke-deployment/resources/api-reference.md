@@ -273,7 +273,7 @@ curl -s https://api.orq.ai/v2/agents/<agent-key> \
 | `tools` | Function definitions for tool calling |
 | `tool_choice` | `"none"`, `"auto"`, `"required"`, or `{type: "function", function: {name}}` |
 | `thinking` | Extended thinking: `{type: "enabled", budget_tokens: 1024}` or `{type: "adaptive"}` |
-| `reasoning_effort` | For reasoning models: `"none"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` |
+| `reasoning_effort` | For reasoning models. The accepted ladder is the model's and changes per release — read it per model from `GET /v2/models`. `"none"` omits the parameter |
 | `guardrails` | Content safety: `[{id: "orq_pii_detection", execute_on: "input"}]` |
 | `fallbacks` | Fallback models: `[{model: "anthropic/claude-sonnet-4-5"}]` |
 | `retry` | `{count: 3, on_codes: [429, 500, 502, 503, 504]}` |
