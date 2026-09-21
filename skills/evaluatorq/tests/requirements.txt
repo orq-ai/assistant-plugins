@@ -1,0 +1,12 @@
+# Test-run dependencies for this skill's contract suite.
+#
+# skills-ci discovers this file (skills/*/tests/requirements.txt) to decide
+# which skills have a runnable suite. The suite imports the real packages and
+# asserts the API shapes SKILL.md and resources/ teach, so an upstream rename
+# turns this PR red instead of shipping a stale signature into generated code.
+#
+# Unpinned on purpose: the point is to fail when the latest release moves out
+# from under the docs. A failure here is a re-probe task, not a flake.
+pytest>=8.0
+evaluatorq>=1.39.0
+orq-ai-sdk>=4.15.6

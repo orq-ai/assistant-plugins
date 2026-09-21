@@ -29,3 +29,7 @@ context
 Thumbs.db
 desktop.ini
 
+
+# Running a skill's own pytest suite must not change its skills-lock.json hash.
+__pycache__/
+.pytest_cache/

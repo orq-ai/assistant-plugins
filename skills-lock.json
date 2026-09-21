@@ -4,12 +4,12 @@
     "create-skill": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "ccd0759214f708b6c01b9b6b9cc17ee9e1329c24d9421753026295bdf15651c2"
+      "computedHash": "09af5a219835d9fa466d84e0985f2341d04c0b2a9da45cf16ab8bc5ee34b0000"
     },
     "evaluatorq": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "390b9df6eeee82f50cc22c5da832a7e2b7f9f75a189cb60d8cbbaad999822251"
+      "computedHash": "9effab5aa400b0bbee98a4031693e0a4669c107e85219aa0d3926c4f40a10fde"
     },
     "orq-analyze-traces": {
       "source": "orq-ai/assistant-plugins",

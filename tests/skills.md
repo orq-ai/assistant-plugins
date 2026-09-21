@@ -583,6 +583,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/evaluatorq/resources/inputs-and-data.md`
 - `skills/evaluatorq/resources/judges-and-juries.md`
 - `skills/evaluatorq/resources/tuning.md`
+- `skills/evaluatorq/tests/test_documented_api.py` — contract suite; a red run means upstream moved and the markdown is stale
 - `skills/orq-compare-agents/SKILL.md`
 - `skills/orq-compare-agents/resources/job-patterns.md`
 - `skills/orq-compare-agents/resources/evaluatorq-api.md`

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2026-09-21
+
+### Added
+
+- `evaluatorq` skill: `tests/test_documented_api.py` — a contract suite asserting every symbol, signature, default and response field the skill teaches, against unpinned `evaluatorq` / `orq-ai-sdk`. The existing `skill-tests` CI job discovers it via `tests/requirements.txt`, so an upstream rename fails a PR instead of shipping a stale signature into generated code.
+- `create-skill` skill: Phase 4b — when to pin a skill's API claims in an executable suite, when not to, and the rules that keep one useful (leave the documented packages unpinned, assert only what the markdown claims, make no network call).
+
+### Changed
+
+- `evaluatorq` skill: reasoning-effort guidance lives in `resources/tuning.md` only; `SKILL.md` carries a pointer instead of a second copy of the knob table.
+- `evaluatorq` skill: no effort value is named anywhere in the skill — the accepted ladder is per model and changes per release, so the examples read it from the catalogue (`get_model_info`) and pre-validate with `validate_reasoning_effort()`. The contract suite enforces this against the markdown.
+
 ## [3.3.0] - 2026-09-21
 
 ### Added

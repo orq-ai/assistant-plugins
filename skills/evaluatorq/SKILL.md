@@ -26,7 +26,7 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 - **ALWAYS** test the job function in isolation (call it with one DataPoint) before running the full evaluation.
 - **ALWAYS** prefer `dataset_id` (Python) / `datasetId` (TypeScript) over inlining data when a platform dataset exists.
 - **NEVER** build a judge panel out of `orq/*` router ids, and default to a cross-family panel — correlated judges cannot vote away a shared bias. The `"Single-Provider Trio"` preset is the one deliberate exception, for one-vendor workspaces, and buys less independence than any cross-family preset.
-- **ALWAYS** set `reasoning_effort` explicitly when a judge or target is a reasoning model, and know an unsupported value is dropped silently (400 → retry without the reasoning block), not raised.
+- **ALWAYS** read the accepted `reasoning_effort` values for that model out of the catalogue (`GET /v2/models`) rather than assuming a scale — the ladder differs per model and changes per release, and an unsupported value is dropped silently (400 → retry without the reasoning block), not raised.
 - **CLI only:** Check `ORQ_API_KEY` is set before running `eq redteam` or `eq sim`.
 
 **Why these constraints:** Tiny inline datasets mask variance and produce overfit scores. Wrong SDK method names cause silent failures that are hard to diagnose. Untested job functions waste evaluation budget.
@@ -271,7 +271,7 @@ correctness = llm_jury(
     preset="Balanced Trio",          # or judges=[...] — 3 models from 3 provider families
     # verdict_kind="numeric", threshold=0.7      # numeric mode
     # labels=[...], passing_labels=[...]         # labeled mode
-    reasoning_effort="high",         # the JUDGE's thinking budget
+    reasoning_effort=...,            # the JUDGE's budget — accepted values are per model, see resources/tuning.md
 )
 ```
 
@@ -283,16 +283,7 @@ To validate a judge against human labels before trusting it, use `orq-evaluator-
 
 ### Reasoning models
 
-Four separate knobs carry the name "reasoning effort", each for a different model, and setting the wrong one is silent:
-
-| Model you want to tune | Knob |
-|---|---|
-| The jury / judge in core evaluation | `reasoning_effort=` on `llm_jury()` / `llm_jury_pairwise()` |
-| The agent under test | `LLMConfig(target_reasoning_effort=...)`, `simulate(target_reasoning_effort=...)`, `--target-reasoning-effort` |
-| Red teaming's attacker or judge | `LLMCallConfig(reasoning_effort=...)` on `attacker=` / `evaluator=` |
-| Simulation's user simulator and judge | `llm_config=LLMCallConfig(reasoning_effort=...)`, or `EVALUATORQ_REASONING_EFFORT` |
-
-An unsupported value is not an error: the provider 400s, the reasoning block is dropped, and the call is retried without it — so a run can silently score at default effort. Raise `max_tokens` (judge default `8000`) alongside effort; a reasoning model that exhausts its budget while thinking returns an empty answer rather than failing. Timeouts, retries, `llm_parallelism`, `extra_kwargs` vs `extra_body`, catalogue registration: [resources/tuning.md](resources/tuning.md).
+Several separate knobs carry the name "reasoning effort", each reaching a different model, and setting the wrong one is silent. Which knob reaches which model, and everything else tunable (token budgets, timeouts, retries, `llm_parallelism`, `extra_kwargs` vs `extra_body`, catalogue registration): **[resources/tuning.md](resources/tuning.md)** — that file is the single source, do not restate it here.
 
 ### Use an orq.ai platform evaluator
 

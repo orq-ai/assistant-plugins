@@ -16,6 +16,19 @@ The knobs split three ways, and confusing them is the usual reason a setting "do
 
 Four settings carry the words "reasoning effort" and apply to four different models. Setting the wrong one is **silent** — the call just runs at the default.
 
+**Never hardcode an effort value from memory.** The accepted ladder is the model's, not evaluatorq's, and it changes per model and per release. Read it from the catalogue before setting one:
+
+```python
+from evaluatorq.common.model_catalogue import get_model_info, validate_reasoning_effort
+
+info = await get_model_info("<model-id>")
+print(info and info.reasoning_efforts)        # None = catalogue does not say, never "none allowed"
+
+await validate_reasoning_effort(EFFORT, "<model-id>")   # raises only when the catalogue contradicts you
+```
+
+`validate_reasoning_effort()` fails the run before generation is paid for, but only when the catalogue actually lists the values — an unlisted model (every `agent/<key>` id) logs a warning and leaves the provider as the authority.
+
 | You want to change | Use | Applies to |
 |---|---|---|
 | The **jury / judge** in core evaluation | `reasoning_effort=` on `llm_jury()`, `llm_jury_pairwise()`, `PairwiseComparator` | The verdict calls under `evaluatorq()` |
@@ -29,8 +42,8 @@ from evaluatorq import llm_jury
 jury = llm_jury(
     name="helpfulness",
     criteria="Is the answer helpful and correct?",
-    judges=["openai/gpt-5.6-luna", "anthropic/claude-sonnet-5"],
-    reasoning_effort="high",
+    judges=["<model-a>", "<model-b>"],
+    reasoning_effort=EFFORT,          # from the catalogue — see above
 )
 ```
 
@@ -41,9 +54,9 @@ from evaluatorq.redteam import EvaluatorConfig, LLMConfig, red_team
 await red_team(
     target="agent:my-agent",
     llm_config=LLMConfig(
-        attacker=LLMCallConfig(model="openai/gpt-5.6-luna", reasoning_effort="high"),
-        evaluator=EvaluatorConfig(model="openai/gpt-5.6-luna", reasoning_effort="low"),
-        target_reasoning_effort="medium",
+        attacker=LLMCallConfig(model="<model-id>", reasoning_effort=ATTACKER_EFFORT),
+        evaluator=EvaluatorConfig(model="<model-id>", reasoning_effort=EVALUATOR_EFFORT),
+        target_reasoning_effort=TARGET_EFFORT,
     ),
 )
 ```
@@ -56,7 +69,7 @@ Because jury judges send to the `responses` endpoint, effort renders as a `reaso
 
 `EVALUATORQ_REASONING_EFFORT` is **unset by default, and unset means the parameter is not sent at all** — the model applies its own default. There is deliberately no global effort: sending one costs a rejected request plus a retry on every model that does not accept it, and overrides the tuned default on every model that does. It is read at call time (so setting it after import works) and is only a fallback — an explicit `LLMCallConfig.reasoning_effort` wins, including an explicit `None`, which opts that role out on purpose. Set it to `""`, `none`, or `off` to omit the parameter.
 
-**Pre-validate against the catalogue.** orq's `GET /v2/models` publishes accepted reasoning-effort values, Responses support and prices per model, fetched once per process. A model the catalogue does not list (self-hosted, or newer than your workspace catalogue) degrades silently three ways: unpriced calls, Chat Completions instead of Responses, and no pre-validation of effort. Fix it with `register_model()`:
+**A model the catalogue does not list** (self-hosted, or newer than your workspace catalogue) degrades silently three ways: unpriced calls, Chat Completions instead of Responses, and no pre-validation of effort. The catalogue is orq's `GET /v2/models`, fetched once per process. Fix a missing entry with `register_model()`:
 
 ```python
 from evaluatorq.common.model_catalogue import ModelInfo, register_model
