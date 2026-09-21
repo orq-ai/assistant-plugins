@@ -258,7 +258,7 @@ the top level, and `workspaces[]` entries carrying an extra `active` boolean.
 
 Neither command returns a `data[]` envelope — project `workspaces[]`.
 
-The underlying session file `~/.orq/sessions/<profile>.json` uses camelCase for
+The underlying session file `~/.orq/sessions/<host>.json` uses camelCase for
 the same data: `activeWorkspaceKey`, `apiBaseUrl`, `v1BaseUrl`, `authBaseUrl`,
 `profileBaseUrl`, `workspaces`, `refreshToken`, `bootstrapToken`,
 `workspaceTokens`. It also holds live tokens — read it only as a fallback, and
@@ -651,7 +651,7 @@ resource before projecting.
 ## Trace querying
 
 `traces search` takes a structured filter contract; `traces query-oql` takes an
-OQL string. Both require `from` and `to`.
+OQL string. `query-oql` requires `from` and `to`; `traces search` does not (both are optional there).
 
 ```sh
 orq traces query-oql -o json \

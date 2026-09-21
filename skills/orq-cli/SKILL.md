@@ -217,7 +217,7 @@ orq doctor -o json -j 'auth.status' --raw         # configured, not proven: read
 orq agents list -o json -j 'length(data)' --raw   # the only real proof a key works
 ```
 
-`orq whoami` is an alias for `orq auth whoami`.
+On 8.6.9 `orq whoami` is an alias for `orq status` (its help reads "Show the active user, workspace, project and credential"), not a spelling of `orq auth whoami`. With `-o json` all three printed the same top-level keys.
 
 Sessions live in `~/.orq/sessions/<host>.json` (on 8.6.9, `my.orq.ai.json`; earlier releases keyed them by profile, `default.json`) and API keys in `~/.orq/credentials.json` / `~/.orq/config.json`. `orq doctor -o json -j 'config.session_file'` names the one in use. After `auth login`, the host you authenticated against is stored in the session and reused, so self-hosted users do not need `--server` on every call *(5.1.0, not re-probed)*.
 
@@ -233,7 +233,7 @@ orq --project <id|key|name> ...                   # same idea, one project; also
 ORQ_WORKSPACE=<key> orq projects list -o json     # same, via the environment
 ```
 
-**`--workspace` is a global flag as of 5.x, and it is usually what you want.** It overrides the session's active workspace for one invocation without persisting anything, so a script can read another workspace without disturbing the user's shell. Verified on 8.6.9 with a session and `ORQ_API_KEY` unset: `orq --workspace capgemini projects list` returned 13 projects where the default workspace (`orq-research`, via the key) returned 25, so the flag does switch what is read. *(5.1.0: it also left `auth whoami`'s `active_workspace_key` unchanged; not re-run on 8.6.9.)* On 8.6.9 `orq --help` lists `--workspace` as a global flag with `[env: ORQ_WORKSPACE]`, and the API-key warning below was reproduced.
+**`--workspace` is a global flag as of 5.x, and it is usually what you want.** It overrides the session's active workspace for one invocation without persisting anything, so a script can read another workspace without disturbing the user's shell. Verified on 8.6.9 with a session and `ORQ_API_KEY` unset: `orq --workspace <other-key> projects list` returned a different project list from the default workspace's (13 projects against 25), so the flag does switch what is read. *(5.1.0: it also left `auth whoami`'s `active_workspace_key` unchanged; not re-run on 8.6.9.)* On 8.6.9 `orq --help` lists `--workspace` as a global flag with `[env: ORQ_WORKSPACE]`, and the API-key warning below was reproduced.
 
 This reverses earlier guidance. `ORQ_WORKSPACE` used to be an evaluatorq-only convention that the CLI ignored; it is now a documented CLI variable (`[env: ORQ_WORKSPACE]` in `orq --help`). Reserve `orq workspace use` for genuinely changing the user's default, and use `--workspace` for everything scoped to one command or one script.
 
@@ -289,7 +289,7 @@ orq auth whoami -o json -j active_workspace_key --raw
 Fall back to the session file only when the CLI is unavailable. Same value, under a camelCase name:
 
 ```sh
-jq -r .activeWorkspaceKey ~/.orq/sessions/default.json
+jq -r .activeWorkspaceKey ~/.orq/sessions/my.orq.ai.json
 ```
 
 A snippet for scripts that need the key (for example to build `https://my.orq.ai/<key>/traces?query=…` deep-links). It has to tolerate the command succeeding while producing nothing, which is why the guard is not optional:
