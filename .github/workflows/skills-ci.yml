@@ -97,6 +97,35 @@ jobs:
             exit 1
           fi
 
+  ts-contract-tests:
+    # The TypeScript claims in orq-compare-agents/resources/evaluatorq-api.md have
+    # no runtime test — `tsc` is the right oracle for them, because the risk is a
+    # rename (`invokeEvaluatorRequest` was already renamed once under the docs).
+    # The fixture installs the packages unpinned: a red run here means upstream
+    # moved and the markdown is stale, which is exactly what it exists to catch.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Type-check each skill's TS contract fixture
+        run: |
+          set -euo pipefail
+          found=0
+          for pkg in skills/*/tests/ts/package.json; do
+            [ -e "$pkg" ] || continue
+            dir=$(dirname "$pkg")
+            found=1
+            echo "::group::tsc $dir"
+            (cd "$dir" && npm install --no-audit --no-fund && npx tsc --noEmit)
+            echo "::endgroup::"
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no skills/*/tests/ts/package.json found — the TS contract job would pass vacuously"
+            exit 1
+          fi
+
   skill-tests-windows:
     # Real Windows execution for the win32-only branches (e.g. TLS verification
     # in orq-evaluator-alignment) that skill-tests can only exercise on Linux by

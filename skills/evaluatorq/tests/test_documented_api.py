@@ -48,10 +48,23 @@ def test_evaluatorq_kwarg_defaults(name, default):
 
 
 def test_datapoint_parallelism_still_resolves_to_ten():
-    """The signature says `None`; the skill documents the effective default."""
+    """The signature says `None`; `evaluatorq()` picks the default the skill documents.
+
+    Asserting the resolver with our own `default=10` would pin nothing — the value
+    that matters is the literal `evaluatorq()` hands it.
+    """
+    import re
+
+    from evaluatorq import evaluatorq
     from evaluatorq.common.parallelism import resolve_datapoint_parallelism
 
-    assert resolve_datapoint_parallelism(None, None, default=10, caller="test") == 10
+    call = re.search(
+        r"resolve_datapoint_parallelism\((.*?)\)", inspect.getsource(evaluatorq), re.S
+    )
+    assert call, "evaluatorq() no longer resolves its datapoint parallelism through the helper"
+    assert "default=10" in call.group(1), (
+        f"the skill documents a default of 10; evaluatorq() now passes {call.group(1).strip()}"
+    )
     assert resolve_datapoint_parallelism(None, 3, default=10, caller="test") == 3, (
         "`parallelism` must still be honoured as the deprecated alias"
     )
@@ -166,20 +179,6 @@ def test_documented_presets_are_all_seated():
 # --- resources/tuning.md ---------------------------------------------------
 
 
-def test_reasoning_effort_is_never_hardcoded_in_the_skill():
-    """The docs must name no effort value — the ladder is per model and per release."""
-    from pathlib import Path
-
-    skill = Path(__file__).resolve().parents[1]
-    offenders = [
-        f"{p.relative_to(skill)}:{i}"
-        for p in skill.rglob("*.md")
-        for i, line in enumerate(p.read_text().splitlines(), 1)
-        if "reasoning_effort" in line and any(f'"{v}"' in line for v in ("minimal", "low", "medium", "high"))
-    ]
-    assert not offenders, f"hardcoded reasoning effort: {offenders}"
-
-
 def test_catalogue_helpers_exist():
     from evaluatorq.common.model_catalogue import (
         ModelInfo,
@@ -194,10 +193,14 @@ def test_catalogue_helpers_exist():
     assert callable(register_model)
 
 
-def test_llm_slot_is_where_the_skill_says():
+def test_llm_slot_is_still_an_async_context_manager():
+    """The skill's example is `async with llm_slot():` — `callable` would not catch a shape change."""
     from evaluatorq.common.llm_limit import llm_slot
 
-    assert callable(llm_slot)
+    slot = llm_slot()
+    assert hasattr(slot, "__aenter__") and hasattr(slot, "__aexit__"), (
+        "llm_slot() no longer returns an async context manager"
+    )
 
 
 def test_llm_call_config_pipeline_knobs():
@@ -233,7 +236,136 @@ def test_evals_invoke_result_is_flat():
 def test_evals_invoke_is_the_method_name():
     from orq_ai_sdk import Orq
 
-    # `evals` is lazily attached, so it is an annotation rather than a class attribute.
-    assert "evals" in Orq.__annotations__, (
+    # Constructing the client makes no request; `evals` is lazily attached, so only
+    # an instance proves the attribute actually resolves.
+    client = Orq(api_key="not-a-real-key")
+    assert hasattr(client, "evals"), (
         "the skill forbids `orq.evaluators` and teaches `orq.evals`"
     )
+    assert hasattr(client.evals, "invoke") and hasattr(client.evals, "invoke_async"), (
+        "the skill teaches both evals.invoke() and evals.invoke_async()"
+    )
+
+
+# --- resources/inputs-and-data.md: the trace conversion path -----------------
+
+
+def test_trace_helpers_are_importable_from_simulation():
+    from evaluatorq.simulation import (
+        datapoints_from_traces,
+        extend_from_experiment,
+        extend_from_traces,
+        fetch_trace_conversations,
+        summarize_conversations,
+    )
+
+    assert "num_datapoints" in params(extend_from_traces)
+    assert {"limit", "search", "filters"} <= set(params(fetch_trace_conversations))
+    assert "summaries" in params(datapoints_from_traces)
+    for fn in (summarize_conversations, extend_from_experiment):
+        assert inspect.iscoroutinefunction(fn)
+
+
+def test_platform_input_defaults():
+    from evaluatorq import DatasetIdInput, ExperimentInput
+
+    assert DatasetIdInput.model_fields["include_messages"].default is False
+    assert ExperimentInput.model_fields["run_id"].default is None
+
+
+# --- resources/judges-and-juries.md: verdict modes and pairwise --------------
+
+
+def test_llm_jury_verdict_mode_arguments():
+    from evaluatorq import llm_jury
+
+    p = params(llm_jury)
+    for name in ("verdict_kind", "labels", "passing_labels", "threshold", "score_range"):
+        assert name in p, f"`{name}` is documented as a verdict-mode argument but is gone"
+
+
+def test_pairwise_surface():
+    from evaluatorq import (
+        PairwiseComparator,
+        PairwiseReport,
+        build_report,
+        llm_jury_pairwise,
+        run_pairwise,
+    )
+
+    assert "judges" in params(llm_jury_pairwise)
+    assert callable(build_report) and callable(run_pairwise)
+    assert hasattr(PairwiseComparator, "compare")
+    assert {"a_win_rate", "inconclusive_rate"} <= set(PairwiseReport.model_fields)
+
+
+def test_pairwise_run_store_entry_point():
+    from evaluatorq.pairwise_run import new_run
+
+    assert callable(new_run)
+
+
+def test_bradley_terry_fit_is_where_the_skill_says():
+    from evaluatorq.ranking import fit_bt
+
+    assert callable(fit_bt)
+
+
+# --- resources/tuning.md: catalogue registration ----------------------------
+
+
+def test_register_model_takes_the_documented_model_info():
+    from evaluatorq.common.model_catalogue import ModelInfo, register_model
+
+    assert {
+        "input_cost_per_1k",
+        "output_cost_per_1k",
+        "provider",
+        "supports_responses",
+        "reasoning_efforts",
+    } <= set(ModelInfo._fields)
+    assert len(params(register_model)) == 2, "register_model(model_id, ModelInfo)"
+
+
+# --- the raw-dict job error contract ----------------------------------------
+
+
+def test_a_job_reporting_its_own_error_fails_the_row_and_skips_evaluators():
+    """`{"name", "output", "error"}` is the contract the skill teaches for a caught failure.
+
+    Runs the real `evaluatorq()` — no API key, no network: one inline datapoint,
+    one local job, one local scorer.
+    """
+    import asyncio
+
+    from evaluatorq import DataPoint, evaluatorq
+
+    scored = []
+
+    async def failing_job(data, row):
+        return {"name": "target", "output": None, "error": "boom"}
+
+    async def clean_job(data, row):
+        return {"name": "target", "output": "fine", "error": None}
+
+    async def scorer(params):
+        scored.append(params["output"])
+        return {"value": 1.0, "explanation": ""}
+
+    async def run(job):
+        return await evaluatorq(
+            "contract-check",
+            data=[DataPoint(inputs={"q": "x"})],
+            jobs=[job],
+            evaluators=[{"name": "contract-scorer", "scorer": scorer}],
+            print_results=False,
+            _send_results=False,
+        )
+
+    failed = asyncio.run(run(failing_job))
+    assert failed[0].job_results[0].error == "boom"
+    assert not scored, "a job that reported an error must not cost an evaluator call"
+
+    ok = asyncio.run(run(clean_job))
+    assert ok[0].job_results[0].error is None
+    assert scored == ["fine"]

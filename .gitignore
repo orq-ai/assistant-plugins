@@ -33,3 +33,7 @@ desktop.ini
 # Running a skill's own pytest suite must not change its skills-lock.json hash.
 __pycache__/
 .pytest_cache/
+
+# TS contract fixture installs unpinned deps on purpose; a lockfile would pin them.
+node_modules/
+skills/*/tests/ts/package-lock.json

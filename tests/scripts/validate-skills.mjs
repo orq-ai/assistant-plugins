@@ -11,6 +11,7 @@
 //   9. README.md skills table <-> skills/
 //  10. tests/skills.md <-> skills/
 //  11. no legacy orq template variables in skill markdown
+//  12. no hardcoded reasoning-effort value in skill markdown
 // Errors fail the run; warnings don't. Run from anywhere in the repo.
 
 import { createHash } from "node:crypto";
@@ -553,6 +554,31 @@ for (const f of tracked) {
     if (LEGACY_TEMPLATE_VAR.test(line) && !/legacy/i.test(line))
       err(`${f}:${i + 1}: legacy orq template variable — use the v4.14+ {{input.*}}/{{output.*}} name, `
         + `or say "legacy" on the line if it is a compatibility note`);
+  });
+}
+
+// ---------- 12. hardcoded reasoning-effort values ----------
+// The accepted effort ladder belongs to the model, not to us: it differs per model
+// and changes per release, so a skill that names one teaches a value that silently
+// stops applying. An unsupported effort is not an error either — the provider 400s,
+// the reasoning block is dropped and the call is retried without it, so the run
+// scores at default effort while the generated script still looks correct. Skills
+// must send the reader to the catalogue (`GET /v2/models`) instead of naming a rung.
+// Scoped to a line that also mentions reasoning, so ordinary prose using the word
+// "high" is untouched. A line saying "example" or "illustrative" is opting out on
+// purpose and passes.
+const EFFORT_CONTEXT = /reasoning[ _-]?effort/i;
+// `none` / `off` are excluded: they are the documented spelling for "send no
+// reasoning parameter at all", a sentinel that does not rot, not a rung.
+const EFFORT_VALUE = /["'`](minimal|low|medium|high|xhigh)["'`]/i;
+for (const f of tracked) {
+  if (!f.startsWith("skills/") || !f.endsWith(".md")) continue;
+  let text;
+  try { text = readFileSync(join(root, f), "utf8"); } catch { continue; }
+  text.split("\n").forEach((line, i) => {
+    if (EFFORT_CONTEXT.test(line) && EFFORT_VALUE.test(line) && !/example|illustrative/i.test(line))
+      err(`${f}:${i + 1}: hardcoded reasoning-effort value — the accepted ladder is per model and `
+        + `changes per release; point the reader at the catalogue (GET /v2/models) instead`);
   });
 }
 

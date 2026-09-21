@@ -150,13 +150,16 @@ Phase 4 proves the contract **today**. A skill that names package symbols, signa
 
 **Write one when** the skill teaches a versioned artefact an agent will paste: a library import path, a function signature or default, a model/response field name, a CLI subcommand. **Skip it when** the surface is a remote API you cannot call without credentials or writes, a workflow rather than a contract, or prose judgement ("prefer a cross-family panel").
 
-CI already runs it — a skill opts in by shipping `tests/requirements.txt`, and the `skill-tests` job discovers every `skills/*/tests/` from that file alone:
+CI already runs it — a skill opts in by shipping one of two files, and the job discovers every skill from that file alone:
 
 ```
 skills/<name>/tests/
-  requirements.txt        # pytest + the packages the skill documents
+  requirements.txt        # pytest + the packages the skill documents  -> `skill-tests` job
   test_documented_api.py
+  ts/package.json         # unpinned deps + tsconfig + contract.ts     -> `ts-contract-tests` job
 ```
+
+**For a TypeScript surface the compiler is the oracle, not a runtime test.** A type-only `contract.ts` that imports the documented types and calls the documented methods fails `tsc --noEmit` on exactly the risk that matters — a rename. Nothing in it executes, so it needs no credentials.
 
 Rules that make the suite worth its keep:
 
@@ -165,6 +168,7 @@ Rules that make the suite worth its keep:
 - **Make no network call.** Import, inspect signatures, read `model_fields`. A suite that needs an API key does not run in CI and therefore does not run.
 - **Name the consequence in the failure message**, not the assertion: `"the skill forbids orq.evaluators and teaches orq.evals"` tells the next maintainer what to edit.
 - A failure here is a **re-probe task** (Phase 4 again for that operation), never a pin bump to make it green.
+- **A rule about the markdown itself** — "never name a value that rots", "always stamp the version" — does not belong in a per-skill suite: it only covers the one skill, in the one language that skill's suite is written in. Put it in the repo's own skill validator, where it covers every skill and needs no environment.
 
 Claims the suite cannot reach — a rule you wrote into the markdown — can still be asserted against the markdown itself: `skills/evaluatorq/tests/test_documented_api.py` greps its own skill for hardcoded reasoning-effort values, because the rule is "never name one".
 

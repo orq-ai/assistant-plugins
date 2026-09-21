@@ -9,13 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `orq-compare-agents` skill: a gotcha for the TypeScript install — `@orq-ai/evaluatorq` 1.3.2 declares an optional peer on `@orq-ai/node` `^3.9.26`, so installing both resolves the node SDK to 3.x, where `evals.invoke()` does not exist. Found by the new type-check fixture on its first run.
+- `orq-compare-agents` skill: `tests/ts/contract.ts` — a type-only fixture pinning the TypeScript claims in `resources/evaluatorq-api.md` (the `evaluatorq()` signature and return type, the `{ datasetId }` input, the `invokeEvaluatorRequest` key, the flat response). A new `ts-contract-tests` CI job type-checks it with `tsc --noEmit` against unpinned packages; the compiler is the right oracle because the risk is a rename.
+- `tests/scripts/validate-skills.mjs` check 12: no skill markdown may name a hardcoded reasoning-effort value. The ladder is the model's and changes per release, and an unsupported value is dropped silently rather than raised. `none` / `off` pass — they are the spelling for sending no reasoning parameter at all. Negative tests in `validate-skills.test.sh` cover all three cases.
 - `evaluatorq` skill: `tests/test_documented_api.py` — a contract suite asserting every symbol, signature, default and response field the skill teaches, against unpinned `evaluatorq` / `orq-ai-sdk`. The existing `skill-tests` CI job discovers it via `tests/requirements.txt`, so an upstream rename fails a PR instead of shipping a stale signature into generated code.
 - `create-skill` skill: Phase 4b — when to pin a skill's API claims in an executable suite, when not to, and the rules that keep one useful (leave the documented packages unpinned, assert only what the markdown claims, make no network call).
 
 ### Changed
 
 - `evaluatorq` skill: reasoning-effort guidance lives in `resources/tuning.md` only; `SKILL.md` carries a pointer instead of a second copy of the knob table.
-- `evaluatorq` skill: no effort value is named anywhere in the skill — the accepted ladder is per model and changes per release, so the examples read it from the catalogue (`get_model_info`) and pre-validate with `validate_reasoning_effort()`. The contract suite enforces this against the markdown.
+- `evaluatorq` skill: no effort value is named anywhere in the skill — the accepted ladder is per model and changes per release, so the examples read it from the catalogue (`get_model_info`) and pre-validate with `validate_reasoning_effort()`. `validate-skills.mjs` check 12 enforces this across every skill.
+- `orq-invoke-deployment`: `resources/api-reference.md` no longer lists the `reasoning_effort` rungs; it points at `GET /v2/models` instead.
+- The three new `evaluatorq` resource files carry a `Probed against` version stamp, matching the convention in `orq-cli` and `evaluatorq-api.md`.
+- `evaluatorq` skill: the judge-template namespace note now warns about names shared with the orq platform that resolve with **different contents**, not only the names unique to evaluatorq — the shared ones are the silent failure.
 
 ## [3.3.0] - 2026-09-21
 

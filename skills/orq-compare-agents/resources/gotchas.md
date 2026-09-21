@@ -82,6 +82,18 @@ result.type         # verdict shape discriminator; a categorical evaluator repor
 
 Also available: `categories`, `confidence`, `evaluator_id`, `trace_id`, `span_id`. In TypeScript the same call is `orq.evals.invoke({ id, invokeEvaluatorRequest: {...} })` — the request key is `invokeEvaluatorRequest`, not `requestBody` — and returns the same flat shape.
 
+### Installing both TypeScript packages downgrades the node SDK
+
+`@orq-ai/evaluatorq` 1.3.2 declares an **optional peer** on `@orq-ai/node` `^3.9.26`, so `npm install @orq-ai/evaluatorq @orq-ai/node` resolves the node SDK to 3.x — and `evals.invoke()` does not exist there. A scorer calling a platform evaluator then fails to compile with `Property 'invoke' does not exist on type 'Evals'`, even though the docs are right about 4.x.
+
+Force the newer SDK (this is what `skills/orq-compare-agents/tests/ts/package.json` does, and how that fixture type-checks at all):
+
+```json
+{ "overrides": { "@orq-ai/node": "latest" } }
+```
+
+Verified 2026-09-21 against `@orq-ai/evaluatorq` 1.3.2 and `@orq-ai/node` 4.15.9.
+
 ### `parallelism` was renamed in Python
 
 Python evaluatorq takes `datapoint_parallelism` (default `10`); `parallelism` is a still-accepted deprecated alias. TypeScript kept `parallelism`, and its default is `1` — sequential. See `evaluatorq-api.md`.

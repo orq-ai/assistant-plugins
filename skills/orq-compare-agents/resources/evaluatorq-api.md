@@ -105,7 +105,7 @@ async def orq_eval_scorer(params):
     )
 
     return EvaluationResult(
-        value=1.0 if result.value else 0.0,      # flat: result.value, NOT result.value.value
+        value=1.0 if result.value else 0.0,      # flat response: result.value, NOT result.value.value
         explanation=result.explanation or "",
     )
 ```

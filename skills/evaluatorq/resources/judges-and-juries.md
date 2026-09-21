@@ -1,6 +1,6 @@
 # Judges and juries
 
-Upstream reference (re-probe against it when evaluatorq releases): [llm-as-a-jury](https://orq-ai.github.io/evaluatorq/llm-as-a-jury/), [jury-presets](https://orq-ai.github.io/evaluatorq/jury-presets/), [pairwise-judging](https://orq-ai.github.io/evaluatorq/pairwise-judging/).
+Probed against Python `evaluatorq` 1.39.0, 2026-09-20. Upstream reference (re-probe against it when evaluatorq releases): [llm-as-a-jury](https://orq-ai.github.io/evaluatorq/llm-as-a-jury/), [jury-presets](https://orq-ai.github.io/evaluatorq/jury-presets/), [pairwise-judging](https://orq-ai.github.io/evaluatorq/pairwise-judging/).
 
 Two LLM-graded evaluators ship with the library, both built on the same panel machinery:
 
@@ -98,7 +98,7 @@ The default prompt renders criteria, input, output and expected output. Override
 | `{{output.tools_called}}` | Tool calls made producing the output (name / arguments / result / id) as JSON |
 | `{{output.error}}` | The target's error, or `""` |
 
-**This is evaluatorq's namespace, not the orq platform's.** A platform evaluator's prompt editor renders a different, shorter set — `skills/orq-build-evaluator/resources/judge-prompt-template.md` §6 is canonical there. `{{criteria}}`, `{{output.messages}}` and `{{output.error}}` exist only here; reusing them in a platform prompt renders as literal text.
+**This is evaluatorq's namespace, not the orq platform's.** A platform evaluator's prompt editor renders a different, shorter set — `skills/orq-build-evaluator/resources/judge-prompt-template.md` §6 is canonical there. `{{criteria}}`, `{{output.messages}}` and `{{output.error}}` exist only here and render as literal text in a platform prompt. The names the two namespaces share are the worse trap: they resolve on both sides with **different contents** (`{{input.all_messages}}` includes the graded turn on the platform and excludes it here), so a prompt moved between them fails silently rather than visibly. Re-read §6 before reusing any name, including one you have seen work.
 
 `{{log.*}}` aliases of the same values also resolve, but they are the legacy spelling — use `input.*` / `output.*`. Bare `{{input}}` / `{{output}}` no longer substitute anything: they reach the judge as literal text, with a warning logged.
 

@@ -1,6 +1,6 @@
 # Inputs: what `data` accepts
 
-Upstream reference (re-probe against it when evaluatorq releases): [evaluation-reference](https://orq-ai.github.io/evaluatorq/evaluation-reference/).
+Probed against Python `evaluatorq` 1.39.0, 2026-09-20. Upstream reference (re-probe against it when evaluatorq releases): [evaluation-reference](https://orq-ai.github.io/evaluatorq/evaluation-reference/).
 
 `evaluatorq(name, data=..., jobs=..., evaluators=...)` takes one of four input shapes. Everything else — traces, production logs, a CSV — is converted into one of them first.
 

@@ -1,6 +1,6 @@
 # Tuning: reasoning effort, token budgets, parallelism, timeouts
 
-Upstream reference (re-probe against it when evaluatorq releases): [tuning](https://orq-ai.github.io/evaluatorq/tuning/).
+Probed against Python `evaluatorq` 1.39.0, 2026-09-20. Upstream reference (re-probe against it when evaluatorq releases): [tuning](https://orq-ai.github.io/evaluatorq/tuning/).
 
 Every knob here has a working default. Reach for one when a run is slow, flaky, truncated, or spending more than you want.
 
