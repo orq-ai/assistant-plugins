@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.2] - 2026-09-21
+
+### Changed
+- `orq-cli` re-probed against orq CLI **8.6.9** (API 4.14.20), RES-1577. The first pass ran without a session; a second pass on a live session covered `auth whoami`, `workspace list` / `use`, `doctor`, `default-format`, `update --check`, `auth profile list` and `traces thread` on a real conversation. Every section of `SKILL.md` and `resources/command-map.md` now opens with its own `Probed against` line, and the top-of-file banner points at those lines instead of naming one version, so it cannot drift again. Claims that need a live OAuth session, which was not available, stay stamped 5.1.0 and are marked "not re-probed".
+- `--verbose` no longer leaks the API key: it prints `**HIDDEN**`. It still writes the whole profile config to stderr, so the rule against using it in shared output stays.
+- `auth whoami` exits 1 when there is no usable session. `doctor` still exits 0 whatever it finds, and its `auth.status` now reads as "configured, not proven". The `doctor` output shape in `command-map.md` was rewritten from real 8.6.9 output.
+- Default output is `table` per `--help`, but piped it renders TOON. The global `-o` flag is validated client side (`json|yaml|toon|table`), and `ORQ_OUTPUT_FORMAT=json` works.
+- `agents list` is unpaginated again. The 30-day retention 400 on trace queries no longer reproduces, and a `.env` file is no longer autoloaded. Trace queries: 168 fields with aliases, an unknown field is a 400, `from`/`to` are optional, and only `end_time` sorts.
+- New surface documented: `auth login --api-key`, `auth profile`, `auth sessions`, `status`, `switch`, `projects use`, `workspace list use`, `models list-preview`, `insights-service-*`, and `orq request` returning `ok,status,headers,body_text,body`.
+- `traces conversation` is still `traces thread` on 8.6.9, and there is no `conv` alias there.
+
 ## [3.2.1] - 2026-09-20
 
 ### Changed
