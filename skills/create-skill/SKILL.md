@@ -146,7 +146,7 @@ Gotcha 1: <command> with <flag> silently returns empty instead of erroring
 
 ### Phase 4b: Pin the claims that rot
 
-Phase 4 proves the contract **today**. A skill that names package symbols, signatures, defaults or response fields is wrong the moment upstream renames one, and nothing tells you — the markdown stays green forever. Pin those claims in an executable suite so the next release fails a PR instead of shipping a stale signature into generated code.
+Phase 4 proves the contract **today**. A skill that names package symbols, signatures, defaults or response fields is wrong the moment upstream renames one, and no check anywhere notices: the markdown parses the same whether the symbol still exists or not. Pin those claims in an executable suite so the next release fails a PR instead of shipping a stale signature into generated code.
 
 **Write one when** the skill teaches a versioned artefact an agent will paste: a library import path, a function signature or default, a model/response field name, a CLI subcommand. **Skip it when** the surface is a remote API you cannot call without credentials or writes, a workflow rather than a contract, or prose judgement ("prefer a cross-family panel").
 
@@ -165,7 +165,7 @@ Rules that make the suite worth its keep:
 
 - **Leave the documented packages unpinned** (`evaluatorq>=1.39.0`). The job of this suite is to break when the newest release moves out from under the docs; a pin turns that alarm off.
 - **Assert only what the markdown claims** — the symbol exists, the parameter is named that, the default is that value, the field is on that model. Not upstream's behaviour; that is upstream's own test suite.
-- **Make no network call.** Import, inspect signatures, read `model_fields`. A suite that needs an API key does not run in CI and therefore does not run.
+- **Make no network call.** Import the module, inspect signatures, read `model_fields`. A suite that needs an API key gets skipped in CI, which leaves the claims unchecked while the job still reports green.
 - **Name the consequence in the failure message**, not the assertion: `"the skill forbids orq.evaluators and teaches orq.evals"` tells the next maintainer what to edit.
 - A failure here is a **re-probe task** (Phase 4 again for that operation), never a pin bump to make it green.
 - **A rule about the markdown itself** — "never name a value that rots", "always stamp the version" — does not belong in a per-skill suite: it only covers the one skill, in the one language that skill's suite is written in. Put it in the repo's own skill validator, where it covers every skill and needs no environment.
