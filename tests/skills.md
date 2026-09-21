@@ -558,13 +558,13 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 ### Scenario 9a: Reading what was said in a trace
 
 - Ask: "What did the agent actually say in trace `<id>`?"
-- Verify: uses `orq traces thread <id>` rather than reassembling messages out of `get-span` attributes
+- Verify: uses `orq traces conversation <id>` (or `conv`) rather than reassembling messages out of `get-span` attributes
 - Verify: asks for machine output with `-o json`, and does NOT pass `-o table` (this command refuses it)
 - Verify: on `Error: no supported conversation found in trace "<id>"`, reports that the trace has no conversational span (e.g. evaluator-only) instead of retrying with `get-span`
 - Verify: when asked for only the last turn, uses `--slice -1`, and treats an empty render at exit 0 as an out-of-range slice, not as an empty conversation
 - Verify: does NOT claim a message is missing when the output says `[content unavailable: N items]` — the collector stored a count and no content
 - Verify: when the selected span looks wrong, reaches for `--spans` rather than guessing span ids off `list-spans`
-- Verify: for a long conversation, narrows with `--match` / `-i` rather than pulling the whole thread into context
+- Verify: for a long conversation, narrows with `--match` / `-i` rather than pulling the whole conversation into context
 
 ### Scenario 10: Command fails for an unclear reason
 

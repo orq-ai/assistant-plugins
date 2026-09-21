@@ -26,7 +26,7 @@
       "properties": {
         "mode": { "enum": ["config-only", "traces", "error-analysis"] },
         "reason": {
-          "description": "The trace count and how many were readable, or the error-analysis file used.",
+          "description": "For traces: the total count, how many were read and how many of those had readable text. For error-analysis: the file used. For config-only: the trace count that ruled out traces.",
           "type": "string",
           "minLength": 1
         }
@@ -43,7 +43,7 @@
     "evaluation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "description", "type", "existing_evaluator_id", "execute_on", "priority", "reason"],
+      "required": ["name", "description", "type", "existing_evaluator_id", "execute_on", "priority", "reason", "caveats"],
       "properties": {
         "name": {
           "description": "Evaluator key for a new evaluator, or a short label for a reused one.",
@@ -70,6 +70,11 @@
           "description": "Why it is worth attaching: the consequence of the rule breaking, and the evidence.",
           "type": "string",
           "minLength": 1
+        },
+        "caveats": {
+          "description": "What could make this recommendation wrong, such as an incomplete evaluator inventory. Empty when there are none.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
         }
       },
       "if": { "properties": { "existing_evaluator_id": { "type": "null" } } },

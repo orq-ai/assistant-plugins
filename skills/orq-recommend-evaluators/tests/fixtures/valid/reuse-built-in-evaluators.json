@@ -10,7 +10,8 @@
       "existing_evaluator_id": "evaluator_0005",
       "execute_on": "output",
       "priority": "high",
-      "reason": "Customers act on answers the knowledge base does not support; the instructions say to answer only from it."
+      "reason": "Customers act on answers the knowledge base does not support; the instructions say to answer only from it.",
+      "caveats": []
     },
     {
       "name": "reply-is-valid-json",
@@ -19,7 +20,8 @@
       "existing_evaluator_id": "evaluator_0006",
       "execute_on": "output",
       "priority": "medium",
-      "reason": "The calling service parses every reply and fails on anything else; the instructions say to always reply in JSON."
+      "reason": "The calling service parses every reply and fails on anything else; the instructions say to always reply in JSON.",
+      "caveats": []
     }
   ]
 }
