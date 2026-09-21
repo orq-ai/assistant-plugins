@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.3] - 2026-09-21
+
+### Changed
+- `orq-cli`, `orq-shared`, `orq-analyze-traces`, `orq-improve-agent`, tests: reverted the `orq traces thread` → `orq traces conversation` rename from 3.2.1. The 8.6.9 re-probe confirmed the shipped command is still `traces thread`, with no `conv` alias (`orq traces conv` prints the `traces` group help at exit 0), so every call site goes back to `thread`: the "Reading a conversation" section and its examples in `orq-cli/SKILL.md`, the command tree and per-trace read list in `orq-cli/resources/command-map.md`, the full-content bullet and layer 3b in `orq-shared/resources/trace-queries.md`, scenario 9a in `tests/skills.md`, and the `allowed-tools` entries, which are one `Bash(orq traces thread:*)` rule again. The version note about which release carries which name is gone with it.
+
 ## [3.2.2] - 2026-09-21
 
 ### Changed
