@@ -293,6 +293,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify Phase 2: resolves the attached id with a projected `orq evals get`, and does not recommend it again
 - Verify: a candidate matching an evaluator already in the project is offered as `reuse`, not a new create
 - Verify: a "valid JSON" style criterion is proposed as `is_valid_json` or `python_eval`, not an LLM judge
+- Verify Phase 5: other projects' evaluators are read and smoke-tested only for a generic criterion (valid JSON, PII, groundedness); an agent-specific rule is matched within the agent's project and carries the caveat that other projects were not checked
 
 ### Scenario 3: Rank order follows the tiers
 
