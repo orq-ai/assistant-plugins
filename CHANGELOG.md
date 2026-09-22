@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-09-22
+
+### Added
+
+- `orq-query-telemetry` skill: compute usage, cost, latency, evaluator, and guardrail metrics and trace aggregations from the CLI. Covers `orq reporting query` (the 18-metric enum, `--from`/`--to`/`--grain`/`--mode`/`--group-by`/`--filters`/`--sort`/`--time-zone`/`--include-totals`/`--limit`, timeseries vs scalar/top-list) and `orq traces aggregate` (`compute`/`filters`/`filter_operator`/`group_by` behind the structured `field`/`op`/`values` trace filter contract), for CI, cron, and scripts. Notes `POST /v3/telemetry/query` as the forthcoming unified envelope that supersedes both.
+
 ## [3.4.0] - 2026-09-21
 
 ### Added

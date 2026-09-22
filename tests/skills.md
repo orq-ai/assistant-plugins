@@ -369,6 +369,47 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ---
 
+## `orq-query-telemetry`
+
+### Scenario 1: Total cost over a window (scalar)
+
+- Ask: "What did we spend on genai in the last 7 days?"
+- Verify: uses `orq reporting query` with `--metric genai.cost`, `--from 7d`, `--to now`, `--mode scalar`, `--json`
+- Verify: reads the number back with `jq` — does NOT parse the default human output
+- Verify: does NOT reach for a non-existent `orq telemetry` command
+
+### Scenario 2: Top-list breakdown
+
+- Ask: "Show me the top 10 models by cost yesterday"
+- Verify: `--mode scalar` with `--group-by model`, `--sort desc`, `--limit 10`
+- Verify: explains scalar + group_by is a top-list; timeseries is for trends over time
+
+### Scenario 3: Latency percentile for one deployment
+
+- Ask: "p95 latency for the checkout-agent deployment, hourly, last 24h"
+- Verify: `--metric genai.latency.p95`, `--mode timeseries`, `--grain hour`
+- Verify: filter passed as one JSON string in the `field`/`op`/`values` dialect with `values` as an array — not as loose flags
+
+### Scenario 4: Invalid metric
+
+- Ask: "Give me the genai.tokens_per_second metric"
+- Verify: recognizes the metric enum is closed (the 18 named metrics) and that this name is not in it
+- Verify: does NOT invent the metric; points at `orq reporting query help-input`
+
+### Scenario 5: Trace aggregation
+
+- Ask: "Average duration of error traces grouped by model, last week"
+- Verify: uses `orq traces aggregate` with `compute` `{metric, op}`, `filters` in the `field`/`op`/`values` dialect, `filter_operator`, `group_by`, `from`/`to`
+- Verify: checks `orq traces list-fields` (via orq-cli) for field names rather than guessing
+
+### Scenario 6: Evaluator and guardrail metrics
+
+- Ask: "What's the guardrail block rate this week and the evaluator pass rate?"
+- Verify: uses `genai.guardrail.block_rate` and `genai.evaluator.pass_rate` — the real metric names
+- Verify: pipes to `jq` with `pipefail` set, knowing a rejected request emits nothing at exit 0
+
+---
+
 ## `orq-red-team`
 
 ### Scenario 1: Run dynamic red team
@@ -602,6 +643,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-evaluator-alignment/scripts/retest.py`
 - `skills/orq-generate-synthetic-dataset/SKILL.md`
 - `skills/orq-run-experiment/SKILL.md`
+- `skills/orq-query-telemetry/SKILL.md`
 - `skills/orq-red-team/SKILL.md`
 - `skills/orq-red-team/resources/python-sdk.md`
 - `skills/orq-simulate-agent/SKILL.md`

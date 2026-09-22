@@ -61,6 +61,11 @@
       "sourceType": "github",
       "computedHash": "b0304d5a59799a02b8ee70f10d211f4e00e271874f187a9e5afe296c60b98c6c"
     },
+    "orq-query-telemetry": {
+      "source": "orq-ai/assistant-plugins",
+      "sourceType": "github",
+      "computedHash": "bac987465c10d0458ebcdef23d5320b381792d32af53ab30edbe002f5ee16b94"
+    },
     "orq-red-team": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
