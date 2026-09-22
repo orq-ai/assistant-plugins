@@ -29,7 +29,7 @@
     "orq-cli": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "170853a8ab24c99dd878b05db26a02a898c0b35ceace2fdd2062836a76dc82d9"
+      "computedHash": "63190332c3275211358bc4af515ca91090c050ad3dc39987849f3087e519048a"
     },
     "orq-compare-agents": {
       "source": "orq-ai/assistant-plugins",
@@ -79,7 +79,7 @@
     "orq-shared": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "836fb1e7fd72b2f5269837e31c68264644dc9c2c228a911977c8dbe6c42f7647"
+      "computedHash": "35173d3c12bb84b6e70adcadf93dfb61cc9f58d424dd5042189fe088a9fd05fb"
     },
     "orq-simulate-agent": {
       "source": "orq-ai/assistant-plugins",
