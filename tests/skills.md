@@ -369,47 +369,6 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ---
 
-## `orq-query-telemetry`
-
-### Scenario 1: Total cost over a window (scalar)
-
-- Ask: "What did we spend on genai in the last 7 days?"
-- Verify: uses `orq reporting query` with `--metric genai.cost`, `--from 7d`, `--to now`, `--mode scalar`, `--json`
-- Verify: reads the number back with `jq` — does NOT parse the default human output
-- Verify: does NOT reach for a non-existent `orq telemetry` command
-
-### Scenario 2: Top-list breakdown
-
-- Ask: "Show me the top 10 models by cost yesterday"
-- Verify: `--mode scalar` with `--group-by model`, `--sort desc`, `--limit 10`
-- Verify: explains scalar + group_by is a top-list; timeseries is for trends over time
-
-### Scenario 3: Latency percentile for one deployment
-
-- Ask: "p95 latency for the checkout-agent deployment, hourly, last 24h"
-- Verify: `--metric genai.latency.p95`, `--mode timeseries`, `--grain hour`
-- Verify: filter passed as one JSON string in the `field`/`op`/`values` dialect with `values` as an array — not as loose flags
-
-### Scenario 4: Invalid metric
-
-- Ask: "Give me the genai.tokens_per_second metric"
-- Verify: recognizes the metric enum is closed (the 18 named metrics) and that this name is not in it
-- Verify: does NOT invent the metric; points at `orq reporting query help-input`
-
-### Scenario 5: Trace aggregation
-
-- Ask: "Average duration of error traces grouped by model, last week"
-- Verify: uses `orq traces aggregate` with `compute` `{metric, op}`, `filters` in the `field`/`op`/`values` dialect, `filter_operator`, `group_by`, `from`/`to`
-- Verify: checks `orq traces list-fields` (via orq-cli) for field names rather than guessing
-
-### Scenario 6: Evaluator and guardrail metrics
-
-- Ask: "What's the guardrail block rate this week and the evaluator pass rate?"
-- Verify: uses `genai.guardrail.block_rate` and `genai.evaluator.pass_rate` — the real metric names
-- Verify: pipes to `jq` with `pipefail` set, knowing a rejected request emits nothing at exit 0
-
----
-
 ## `orq-red-team`
 
 ### Scenario 1: Run dynamic red team
@@ -537,6 +496,23 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: pipes to `jq` rather than passing `-q` to `traces search`
 - Verify: if it does hit `invalid filter: "status" expects exactly one value`, it wraps the value in an array rather than removing the array
 
+### Scenario 6c: A metrics question routes to the reporting contract
+
+- Ask: "What did we spend on genai in the last 7 days, and what's the p95 latency?"
+- Verify: reaches `orq-shared/resources/trace-queries.md` §5 rather than guessing the flag surface
+- Verify: uses `orq reporting query --metric genai.cost --from 7d --to now --mode scalar -o json`
+- Verify: reads the value at `.metrics["genai.cost"]` — there is no `.value` field on the row
+- Verify: sets `pipefail` before piping into `jq`, knowing a rejected request emits nothing at exit 0
+- Verify: does NOT pass `--json` (not a flag) and does NOT reach for `orq telemetry` (rc-only, not in the stable binary)
+- Verify: does NOT invent a metric name outside the 18-value enum
+
+### Scenario 6d: Relative window in a body file
+
+- Ask: "Aggregate error traces by model for the last week using a body file"
+- Verify: keeps `from`/`to` on `--from` / `--to` flags, or writes RFC3339 into the body — does NOT put `"from": "7d"` in the body
+- Verify: explains that a `--from-file` or stdin body is sent as written and is not normalized
+- Verify: does NOT copy a reporting `filters[].field` into a trace filter — the two share the shape, not the vocabulary
+
 ### Scenario 7: Unknown flag
 
 - Ask: "Search traces from the last day for errors"
@@ -643,7 +619,6 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-evaluator-alignment/scripts/retest.py`
 - `skills/orq-generate-synthetic-dataset/SKILL.md`
 - `skills/orq-run-experiment/SKILL.md`
-- `skills/orq-query-telemetry/SKILL.md`
 - `skills/orq-red-team/SKILL.md`
 - `skills/orq-red-team/resources/python-sdk.md`
 - `skills/orq-simulate-agent/SKILL.md`

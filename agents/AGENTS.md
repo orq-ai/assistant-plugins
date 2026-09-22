@@ -20,7 +20,6 @@ These skills are:
  - orq-improve-agent -> "skills/orq-improve-agent/SKILL.md"
  - orq-invoke-deployment -> "skills/orq-invoke-deployment/SKILL.md"
  - orq-manage-skills -> "skills/orq-manage-skills/SKILL.md"
- - orq-query-telemetry -> "skills/orq-query-telemetry/SKILL.md"
  - orq-red-team -> "skills/orq-red-team/SKILL.md"
  - orq-run-experiment -> "skills/orq-run-experiment/SKILL.md"
  - orq-setup-observability -> "skills/orq-setup-observability/SKILL.md"
@@ -53,7 +52,6 @@ orq-compare-agents: `Run cross-framework agent comparisons using evaluatorq — 
 
 orq-setup-observability: `Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment. Use when setting up tracing, adding the AI Router proxy, integrating OpenTelemetry, auditing existing instrumentation, or enriching traces with metadata. Do NOT use when traces already exist and you need to debug failures (use orq-analyze-traces).`
 
-orq-query-telemetry: `Compute usage, cost, latency, evaluator, and guardrail metrics and trace aggregations from the orq CLI — time-series, scalar top-lists, and grouped breakdowns via orq reporting query, plus structured trace aggregations via orq traces aggregate. Use when a script, CI job, or cron needs numbers out of orq.ai (requests, tokens, cost, error rate, latency percentiles, TTFT, evaluator pass rate, guardrail block rate) without an agent present. Do NOT use to read individual traces or build a failure taxonomy (use orq-analyze-traces), or to run the CLI in general (use orq-cli).`
 
 orq-red-team: `Run adversarial red teaming against deployed orq agents or static datasets using the orq red teaming library — adaptive attacks, OWASP Agentic/LLM category coverage, ASR reporting. Use when asked to run a red team, test an agent for vulnerabilities, or check OWASP coverage. Do NOT use when you only need evaluators (use orq-build-evaluator) or trace analysis (use orq-analyze-traces).`
 

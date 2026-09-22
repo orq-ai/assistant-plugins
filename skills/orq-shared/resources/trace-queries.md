@@ -110,7 +110,7 @@ The same applies to `orq reporting query`: inline `--filters` JSON from PowerShe
 
 **Delete `body.json` when the run is done.**
 
-**`--from` / `--to` are required, RFC3339, and bounded by 30-day retention** (`skills/orq-cli/SKILL.md`, "Traces expire after 30 days"). **NEVER hard-code a `--from`** — it ages past the boundary and starts erroring. Compute the window at call time.
+**`--from` / `--to` are required and bounded by 30-day retention** (`skills/orq-cli/SKILL.md`, "Traces expire after 30 days"). **NEVER hard-code a `--from`** — it ages past the boundary and starts erroring. Compute the window at call time, or use the relative form. **In a body file it must be RFC3339**; only the *flag* form accepts `7d` / `now-24h` / `now`, because the CLI sends a `--from-file` body as written (§5.1).
 
 **`filters[].values` must be an array of STRINGS, even for a numeric field.** `values: [0]` is rejected with `HTTP 400: invalid value for string field values: 0`; `values: ["0"]` is accepted. A field's declared `type: "number"` in `list-fields` does not change this.
 
@@ -264,6 +264,68 @@ A catalogue API over analytics rollups. It carries three signals the trace regis
 - `from` / `to` are both required; the 30-day retention bound applies as in §2.
 
 **TTFT lives here, and an all-zero result is not "fast".** A live `genai.ttft.p50` scalar query returned 20 model groups with **every value `0`** and a window total of `0` — consistent with the metric being populated only for streaming requests. Treat an all-zero TTFT result as **`unobservable: [ttft]`**, never as a measurement.
+
+### 5.1 The flag surface
+
+The body fields above are also flags, so a metrics question needs no body file at all. Read from the generated command surface at CLI 10.3.0 (`cli/generated/reporting_commands.go`); `orq reporting query --help` prints the same list.
+
+| Flag | Body field | Meaning |
+|---|---|---|
+| `--metric` | `metric` | **required**, exactly one of the 18 above |
+| `--from` / `--to` | `from` / `to` | **required**. Both accept RFC3339, a bare date, **and relative values** — `7d`, `24h`, `now-24h`, `now` |
+| `--grain` | `grain` | bucket size: omit for `auto` (server picks from the range), or `minute` / `hour` / `day` |
+| `--mode` | `mode` | `timeseries` (default) or `scalar` |
+| `--group-by` | `group_by` | **repeatable** (`--group-by model --group-by provider`) |
+| `--filters` | `filters` | one JSON string, array of `{field, op, values}` |
+| `--sort` | `sort` | `desc` or `asc` |
+| `--time-zone` | `time_zone` | IANA zone for bucketing |
+| `--include-totals` | `include_totals` | add a window-wide totals row |
+| `--limit` | `limit` | **maximum bucket rows returned — defaults to 1000, capped at 5000.** It bounds rows in both modes, not only top-N groups; pass 10000 and you silently get 5000 |
+| `-o json` | — | machine output. **There is no `--json` flag** — `orq --json …` exits non-zero with `unknown flag: --json` (`cli/custom/register_test.go`, `TestJSONFlagIsGone`) |
+
+**Relative `from` / `to` work in the flag form only.** The CLI normalizes `7d` / `now` to RFC3339 for a generated flag and for shorthand args, but **a body read from `--from-file` or stdin is sent as written** — `bartolo/cli/input.go`, `normalizeShorthandDateTimes`: *"a body from --from-file or stdin is machine-written, so it is sent as given rather than silently rewritten."* `from`/`to` are `format: date-time`, so `"from": "7d"` inside a body file is rejected by the server. Since §2 requires the body in a file, **put the window on `--from` / `--to` flags and leave it out of the body.** This is also why "never hard-code a `--from`" costs nothing here: `--from 7d` is already relative.
+
+**`filters[].field` is a closed enum here, and it is not the trace vocabulary.** The reporting `Filter.field` enum holds 35 reporting dimensions (`project`, `identity`, `provider`, `model`, `product`, `api_key`, `status_code`, `http_status_code`, `credential_type`, `billing_billable`, `dimension`, `dimension_type`, `tag`, `agent`, `tool`, `deployment`, `evaluator`, `dataset`, `prompt`, `policy`, `conversation`, `thread`, `memory_store`, `knowledge`, `sheet`, `guardrail_origin`, `evaluator_name`, `evaluator_type`, `evaluator_version`, `result_type`, `evaluation_stage`, `guardrail_stage`, `evaluator_stage`, `guardrail_action`, `result_label`), and `op` is limited to `eq` / `neq` / `in` / `not_in`. `TraceFilter.field` (§1) is a free-form name resolved from `orq traces list-fields`. **The two share the JSON shape, not the vocabulary** — a filter copied from one to the other matches zero rows and raises no error. Do not assume a cross-mapping; resolve each side at runtime (§0).
+
+### 5.2 `timeseries` vs `scalar`
+
+- `timeseries` (default) buckets the metric by time at `grain` — a series to trend or plot.
+- `scalar` collapses the window to one row per group, ordered by value. With `group_by` that is a top-list; with no `group_by` it is a single number. `--limit` caps the top-N.
+
+### 5.3 Worked examples
+
+**Guard every `jq` pipeline with `pipefail`.** A rejected request writes to stderr and leaves stdout empty at exit 0, so without it a 400 becomes an empty string and the script carries on.
+
+```bash
+set -o pipefail
+
+# total genai cost, last 7 days — one number
+orq reporting query --metric genai.cost --from 7d --to now --mode scalar -o json \
+  | jq -r '.data[0].metrics["genai.cost"]'
+
+# cost per model, top 10, last 24h
+orq reporting query --metric genai.cost --from now-24h --to now \
+  --mode scalar --group-by model --sort desc --limit 10 -o json
+
+# requests per day over the window, with a total
+orq reporting query --metric genai.requests --from 30d --to now \
+  --mode timeseries --grain day --include-totals -o json
+
+# p95 latency for one deployment, hourly
+orq reporting query --metric genai.latency.p95 --from now-24h --to now \
+  --mode timeseries --grain hour \
+  --filters '[{"field":"deployment","op":"eq","values":["checkout-agent"]}]' -o json
+```
+
+The row shape is `{dimensions:{…}, metrics:{…}, timestamp:null}` (§5), so the value is always under `.metrics["<metric name>"]` — there is no `.value`.
+
+> From PowerShell, `--filters` inline JSON is mangled before it reaches the CLI (§2). Put the whole body in a file there and pass `--from-file`, keeping `--from` / `--to` as flags for the reason above.
+
+### 5.4 Not the same thing as `orq telemetry`
+
+`POST /v3/telemetry/query` is a neutral multi-signal envelope meant to supersede this surface. **It is rc-only.** As of CLI `10.3.0` on `main`, the stable tree registers no `telemetry` command and the stable `openapi.yaml` carries no `/v3/telemetry/*` path; `packages/orq-rc` has `/v3/telemetry/query`, `/capabilities`, `/facet-values` and registers `orq telemetry query|list-capabilities|list-facet-values`. npm dist-tags at that commit: `latest: 10.2.0`, `rc: 10.3.0-rc.1`. Until it lands on the stable channel, `orq reporting query` is the surface — do not reach for `orq telemetry` against a released binary.
+
+> `help-input` is registered on the **root** command, not per subcommand. `orq help-input` prints the body-and-shorthand syntax; `orq reporting query help-input` does not — `reporting query` takes trailing args as a shorthand body fragment, so it is parsed as input, not as a subcommand. Use `orq reporting query --help` for that command's own flags.
 
 ---
 
