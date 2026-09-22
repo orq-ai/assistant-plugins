@@ -37,7 +37,7 @@ You are an **orq.ai telemetry operator working from a shell**. Your job is to tu
 
 - **NEVER** invent a metric name. The `metric` flag is a closed enum of exactly the 18 names listed below — anything else is rejected. Read them from `orq reporting query help-input` if unsure.
 - **NEVER** guess a `group_by` dimension. Valid dimensions depend on the metric; when a breakdown errors, drop the group and read the single aggregated row first.
-- **NEVER** parse the default human output. Always pass `--json` (or `-o json`) and read the numbers with `jq`.
+- **NEVER** parse the default human output, and **NEVER** use `--json` (it is not a flag; `orq --json ...` errors with `unknown flag: --json`). Always pass `-o json` and read the numbers with `jq`.
 - **NEVER** pass filters as loose flags. Filters are an array of objects in the `field` / `op` / `values` dialect — the same contract traces, logs, and unified telemetry queries share — passed as one JSON string.
 - **ALWAYS** supply both `--from` and `--to`. They are required. Bare dates and relative values (`24h`, `7d`, `now-24h`) are accepted, not just timestamps.
 - **ALWAYS** pick `mode` deliberately: `timeseries` for a trend over time, `scalar` for a single number or a top-list.
@@ -76,7 +76,7 @@ Time-series, scalar, and top-list analytics for AI usage, cost, latency, evaluat
 | `--time-zone` | `time_zone` | IANA zone string for bucketing |
 | `--include-totals` | `include_totals` | add a totals row across the window |
 | `--limit` | `limit` | cap the number of returned groups (top-N) |
-| `--json` | — | machine output for scripting |
+| `-o json` | — | machine output for scripting (there is no `--json` flag) |
 
 ### `orq traces aggregate`
 
@@ -108,26 +108,26 @@ Pass it as one JSON string to `--filters`. This is the same `field` / `op` / `va
 
 ## Examples
 
-Every example uses `--json` and reads back with `jq`. Confirm the window with the user first when the result gates anything.
+Every example uses `-o json` and reads back with `jq`. Confirm the window with the user first when the result gates anything.
 
 **Total genai cost over the last 7 days (single number):**
 
 ```bash
-orq reporting query --metric genai.cost --from 7d --to now --mode scalar --json
+orq reporting query --metric genai.cost --from 7d --to now --mode scalar -o json
 ```
 
 **Cost per model, top 10, last 24h (top-list):**
 
 ```bash
 orq reporting query --metric genai.cost --from now-24h --to now \
-  --mode scalar --group-by model --sort desc --limit 10 --json
+  --mode scalar --group-by model --sort desc --limit 10 -o json
 ```
 
 **Requests per day this month, as a series:**
 
 ```bash
 orq reporting query --metric genai.requests --from 2026-09-01 --to now \
-  --mode timeseries --grain day --include-totals --json
+  --mode timeseries --grain day --include-totals -o json
 ```
 
 **p95 latency for one deployment, hourly, last 24h:**
@@ -135,56 +135,56 @@ orq reporting query --metric genai.requests --from 2026-09-01 --to now \
 ```bash
 orq reporting query --metric genai.latency.p95 --from now-24h --to now \
   --mode timeseries --grain hour \
-  --filters '[{"field":"deployment","op":"eq","values":["checkout-agent"]}]' --json
+  --filters '[{"field":"deployment","op":"eq","values":["checkout-agent"]}]' -o json
 ```
 
 **Error rate broken down by model (top offenders):**
 
 ```bash
 orq reporting query --metric genai.error_rate --from 7d --to now \
-  --mode scalar --group-by model --sort desc --json
+  --mode scalar --group-by model --sort desc -o json
 ```
 
 **Evaluator pass rate over the last week:**
 
 ```bash
 orq reporting query --metric genai.evaluator.pass_rate --from 7d --to now \
-  --mode scalar --json
+  --mode scalar -o json
 ```
 
 **Guardrail block rate per day:**
 
 ```bash
 orq reporting query --metric genai.guardrail.block_rate --from 7d --to now \
-  --mode timeseries --grain day --json
+  --mode timeseries --grain day -o json
 ```
 
 **Read a single scalar value in a script:**
 
 ```bash
-cost=$(orq reporting query --metric genai.cost --from 7d --to now --mode scalar --json \
-  | jq -r '.data[0].value')
+cost=$(orq reporting query --metric genai.cost --from 7d --to now --mode scalar -o json \
+  | jq -r '.data[0].metrics["genai.cost"]')
 ```
 
 **Trace aggregation behind the structured filter contract** — the command reads the body from stdin:
 
 ```bash
 echo '{
-  "compute": [{"metric": "duration", "op": "avg"}],
+  "compute": [{"metric": "<a field from: orq traces list-fields>", "op": "avg"}],
   "filters": [{"field": "status", "op": "eq", "values": ["error"]}],
   "filter_operator": "and",
   "group_by": ["model"],
   "from": "7d",
   "to": "now",
   "limit": 10
-}' | orq traces aggregate --json
+}' | orq traces aggregate -o json
 ```
 
 > `compute` field/metric names and `group_by` dimensions for `orq traces aggregate` come from the trace schema — check `orq traces list-fields` (via `orq-cli`) rather than guessing them.
 
 ## Auth and scripting
 
-The CLI resolves `ORQ_API_KEY` or a logged-in session, so both commands run unattended — this is why they fit CI, cron, and scripts where the orq MCP tools (which need an agent in the loop) do not. Set `ORQ_API_KEY` in the job environment, pass `--json`, and pipe to `jq`. Guard `jq` pipelines with `pipefail` — the CLI writes errors to stderr and leaves stdout empty, so a rejected request emits nothing at exit 0 rather than an error you can see.
+The CLI resolves `ORQ_API_KEY` or a logged-in session, so both commands run unattended — this is why they fit CI, cron, and scripts where the orq MCP tools (which need an agent in the loop) do not. Set `ORQ_API_KEY` in the job environment, pass `-o json`, and pipe to `jq`. Guard `jq` pipelines with `pipefail` — the CLI writes errors to stderr and leaves stdout empty, so a rejected request emits nothing at exit 0 rather than an error you can see.
 
 ## Companion Skills
 

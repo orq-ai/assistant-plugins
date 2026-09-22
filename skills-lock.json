@@ -64,7 +64,7 @@
     "orq-query-telemetry": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "bac987465c10d0458ebcdef23d5320b381792d32af53ab30edbe002f5ee16b94"
+      "computedHash": "533c12ec6143e951af4defdee48f05adc17717bb145f4e16ef31f22d91895813"
     },
     "orq-red-team": {
       "source": "orq-ai/assistant-plugins",
