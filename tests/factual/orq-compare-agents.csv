@@ -3,7 +3,15 @@ mcp_tool_exists,search_entities,,search_entities listed on MCP server
 mcp_tool_exists,create_dataset,,create_dataset listed on MCP server
 mcp_tool_exists,create_datapoints,,create_datapoints listed on MCP server
 mcp_tool_exists,create_llm_eval,,create_llm_eval listed on MCP server
+mcp_tool_param,search_entities,type,search_entities takes type
+sdk_import,evaluatorq.job,,job importable from evaluatorq
+sdk_import,evaluatorq.DataPoint,,DataPoint importable from evaluatorq
+sdk_import,evaluatorq.EvaluationResult,,EvaluationResult importable from evaluatorq
 sdk_import,orq_ai_sdk.Orq,,Orq importable from orq_ai_sdk
+sdk_import,evaluatorq.evaluatorq,,evaluatorq importable from evaluatorq
+sdk_import,evaluatorq.exact_match_evaluator,,exact_match_evaluator importable from evaluatorq
+sdk_import,evaluatorq.llm_jury,,llm_jury importable from evaluatorq
+sdk_import,evaluatorq.string_contains_evaluator,,string_contains_evaluator importable from evaluatorq
 sdk_method,orq_ai_sdk.Orq,evals,Orq client has .evals
 sdk_method,orq_ai_sdk.Orq,agents,Orq client has .agents
 doc_url,https://github.com/orq-ai/evaluatorq,,evaluatorq page reachable
@@ -17,3 +25,5 @@ github_repo,orq-ai/evaluatorq,,orq-ai/evaluatorq exists
 github_repo,orq-ai/orqkit,,orq-ai/orqkit exists
 pypi_package,evaluatorq,,evaluatorq on PyPI
 pypi_package,orq-ai-sdk,,orq-ai-sdk on PyPI
+pypi_extra,evaluatorq,redteam,evaluatorq has extra [redteam]
+npm_package,@orq-ai/evaluatorq,,@orq-ai/evaluatorq on npm

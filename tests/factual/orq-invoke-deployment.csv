@@ -2,6 +2,7 @@ test_type,target,assertion,description
 mcp_tool_exists,search_entities,,search_entities listed on MCP server
 mcp_tool_exists,list_models,,list_models listed on MCP server
 mcp_tool_exists,list_traces,,list_traces listed on MCP server
+mcp_tool_param,search_entities,type,search_entities takes type
 sdk_import,orq_ai_sdk.Orq,,Orq importable from orq_ai_sdk
 sdk_method,orq_ai_sdk.Orq,deployments,Orq client has .deployments
 sdk_method,orq_ai_sdk.Orq,agents,Orq client has .agents

@@ -1,6 +1,22 @@
 test_type,target,assertion,description
 mcp_tool_exists,search_entities,,search_entities listed on MCP server
 mcp_tool_exists,get_agent,,get_agent listed on MCP server
+sdk_import,evaluatorq.redteam.red_team,,red_team importable from evaluatorq.redteam
+sdk_import,evaluatorq.redteam.OpenAIModelTarget,,OpenAIModelTarget importable from evaluatorq.redteam
+sdk_import,evaluatorq.contracts.AgentTarget,,AgentTarget importable from evaluatorq.contracts
+sdk_import,evaluatorq.openresponses.target.OrqResponsesTarget,,OrqResponsesTarget importable from evaluatorq.openresponses.target
+sdk_import,evaluatorq.contracts.LLMCallConfig,,LLMCallConfig importable from evaluatorq.contracts
+sdk_import,evaluatorq.integrations.langgraph_integration.LangGraphTarget,,LangGraphTarget importable from evaluatorq.integrations.langgraph_integration
+sdk_import,evaluatorq.integrations.openai_agents_integration.OpenAIAgentTarget,,OpenAIAgentTarget importable from evaluatorq.integrations.openai_agents_integration
+sdk_import,evaluatorq.integrations.callable_integration.CallableTarget,,CallableTarget importable from evaluatorq.integrations.callable_integration
+sdk_import,evaluatorq.redteam.contracts.LLMConfig,,LLMConfig importable from evaluatorq.redteam.contracts
+sdk_import,evaluatorq.redteam.contracts.LLMCallConfig,,LLMCallConfig importable from evaluatorq.redteam.contracts
 doc_url,https://github.com/orq-ai/evaluatorq,,evaluatorq page reachable
 github_repo,orq-ai/evaluatorq,,orq-ai/evaluatorq exists
 pypi_package,evaluatorq,,evaluatorq on PyPI
+pypi_extra,evaluatorq,redteam,evaluatorq has extra [redteam]
+pypi_extra,evaluatorq,langgraph,evaluatorq has extra [langgraph]
+pypi_extra,evaluatorq,openai-agents,evaluatorq has extra [openai-agents]
+pypi_extra,evaluatorq,langchain,evaluatorq has extra [langchain]
+pypi_extra,evaluatorq,crewai,evaluatorq has extra [crewai]
+pypi_extra,evaluatorq,pydantic-ai,evaluatorq has extra [pydantic-ai]

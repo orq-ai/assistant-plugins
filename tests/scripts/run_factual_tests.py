@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["orq-ai-sdk"]
+# dependencies = ["orq-ai-sdk", "evaluatorq"]
 # ///
 """Factual test runner for orq skills.
 
@@ -19,8 +19,10 @@ Phase 1 test types (auth-free):
   doc_url            curl returns 2xx/3xx (non-gating: reported, never fails the run)
   github_repo        `gh repo view` exits 0
   pypi_package       PyPI JSON API returns 200
+  pypi_extra         PyPI metadata lists the extra (target package, assertion extra)
+  npm_package        npm registry returns 200
 
-Usage (uv installs the latest orq-ai-sdk, so SDK checks run against the
+Usage (uv installs the latest orq-ai-sdk and evaluatorq, so SDK checks run against the
 current release rather than whatever the caller's environment holds):
     uv run tests/scripts/run_factual_tests.py                    # all skills
     uv run tests/scripts/run_factual_tests.py --skill orq-cli    # one skill
@@ -34,6 +36,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -57,6 +60,8 @@ PHASE1_TYPES = frozenset(
         "doc_url",
         "github_repo",
         "pypi_package",
+        "pypi_extra",
+        "npm_package",
     }
 )
 
@@ -193,6 +198,41 @@ class MCPClient:
 # ---------------------------------------------------------------------------
 
 
+def _usage_token_accepts(usage_tok: str, word: str, first: bool) -> bool:
+    """Does one Usage-line token accept the word the skill wrote in that position?
+
+    Exact name; a fixed choice (`[json|yaml|table]`); or, past the first word, a
+    positional placeholder (`trace-id`, `<id>`) that takes a literal value. The
+    placeholders `[command]` and `[flags]` mean the CLI did not resolve the word.
+    """
+    if usage_tok == word:
+        return True
+    if "|" in usage_tok:
+        return word in usage_tok.strip("[]<>").split("|")
+    return not first and usage_tok not in ("[command]", "[flags]") and not usage_tok.startswith("[")
+
+
+# argv: module, name. Exits 0 if the module's source defines or imports the name at
+# top level, without executing the module.
+_STATIC_NAME_CHECK = """
+import ast, importlib.util, sys
+module, name = sys.argv[1:3]
+spec = importlib.util.find_spec(module)
+if spec is None or not spec.origin or not spec.origin.endswith(".py"):
+    sys.exit(f"module {module} not found")
+tree = ast.parse(open(spec.origin, encoding="utf-8").read())
+names = set()
+for node in tree.body:
+    if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        names.add(node.name)
+    elif isinstance(node, (ast.Import, ast.ImportFrom)):
+        names.update(a.asname or a.name.split(".")[0] for a in node.names)
+    elif isinstance(node, ast.Assign):
+        names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+sys.exit(0 if name in names else f"{name} not defined in {module}")
+"""
+
+
 def _which(name: str) -> str | None:
     """Resolve a command name to its full path (handles .cmd/.bat on Windows)."""
     return shutil.which(name)
@@ -302,6 +342,13 @@ class FactualTestRunner:
         if result.returncode == 0:
             return True, None
         last_line = result.stderr.strip().split("\n")[-1] if result.stderr else "unknown error"
+        if len(parts) == 2 and ("ModuleNotFoundError" in last_line or "ImportError" in last_line):
+            # An integration module behind an extra (`evaluatorq[langgraph]`) imports a
+            # framework we do not install; read its source instead of importing it.
+            static = subprocess.run([sys.executable, "-c", _STATIC_NAME_CHECK, *parts], capture_output=True, timeout=30, text=True)
+            if static.returncode == 0:
+                return True, None
+            return False, f"{last_line} (static check: {static.stderr.strip().splitlines()[-1] if static.stderr else 'failed'})"
         return False, last_line
 
     def _check_sdk_method(self, target: str, assertion: str) -> tuple[bool, str | None]:
@@ -345,9 +392,9 @@ class FactualTestRunner:
         if not usage:
             return None, "no Usage line in help output"
         resolved = usage[1 : 1 + len(words)]
-        # `[json|yaml|toon|table]` is a fixed-choice argument, so `default-format json` is valid.
-        choices = lambda tok: tok.strip("[]<>").split("|") if "|" in tok else []  # noqa: E731
-        if len(resolved) == len(words) and all(u == w or w in choices(u) for u, w in zip(resolved, words)):
+        if len(resolved) == len(words) and all(
+            _usage_token_accepts(u, w, first=i == 0) for i, (u, w) in enumerate(zip(resolved, words))
+        ):
             return result.stdout, None
         aliases = next(
             (lines[i + 1].replace(",", " ").split() for i, line in enumerate(lines[:-1]) if line.strip() == "Aliases:"),
@@ -365,8 +412,7 @@ class FactualTestRunner:
         help_text, error = self._orq_help(target)
         if help_text is None:
             return False, error
-        flag = assertion.lstrip("-")
-        if f"--{flag}" in help_text or f"-{flag}" in help_text:
+        if re.search(rf"(?<![\w-]){re.escape(assertion)}(?![\w-])", help_text):
             return True, None
         return False, f"'{assertion}' not in help output"
 
@@ -375,7 +421,7 @@ class FactualTestRunner:
         if os.environ.get("SSL_VERIFY", "1") == "0":
             cmd.insert(1, "-k")
         try:
-            result = subprocess.run(cmd, capture_output=True, timeout=15, text=True)
+            result = subprocess.run(cmd, capture_output=True, timeout=45, text=True)
             if result.returncode != 0:
                 return False, f"curl exit {result.returncode}: {result.stderr.strip()[:200]}"
             code = int(result.stdout.strip())
@@ -401,13 +447,39 @@ class FactualTestRunner:
             return True, None
         return False, result.stderr.strip()[:200]
 
+    def _check_pypi_extra(self, target: str, assertion: str) -> tuple[bool, str | None]:
+        cmd = ["curl", "-s", "--retry", str(NETWORK_RETRIES), "--max-time", "10", f"https://pypi.org/pypi/{target}/json"]
+        if os.environ.get("SSL_VERIFY", "1") == "0":
+            cmd.insert(1, "-k")
+        result = subprocess.run(cmd, capture_output=True, timeout=45, text=True, encoding="utf-8")
+        if result.returncode != 0:
+            return False, f"curl exit {result.returncode}"
+        try:
+            extras = json.loads(result.stdout)["info"].get("provides_extra") or []
+        except (ValueError, KeyError):
+            return False, f"'{target}' not on PyPI"
+        if assertion in extras:
+            return True, None
+        return False, f"extra '{assertion}' not in {target} (have: {', '.join(extras)})"
+
+    def _check_npm_package(self, target: str, _assertion: str) -> tuple[bool, str | None]:
+        cmd = ["curl", "-s", "--retry", str(NETWORK_RETRIES), "--max-time", "10", "-o", os.devnull, "-w", "%{http_code}",
+               f"https://registry.npmjs.org/{target}"]
+        if os.environ.get("SSL_VERIFY", "1") == "0":
+            cmd.insert(1, "-k")
+        result = subprocess.run(cmd, capture_output=True, timeout=45, text=True)
+        if result.returncode != 0:
+            return False, f"curl exit {result.returncode}"
+        code = result.stdout.strip()
+        return (True, None) if code == "200" else (False, f"HTTP {code}")
+
     def _check_pypi_package(self, target: str, _assertion: str) -> tuple[bool, str | None]:
         url = f"https://pypi.org/pypi/{target}/json"
         cmd = ["curl", "-s", "--retry", str(NETWORK_RETRIES), "--max-time", "10", "-o", os.devnull, "-w", "%{http_code}", url]
         if os.environ.get("SSL_VERIFY", "1") == "0":
             cmd.insert(1, "-k")
         try:
-            result = subprocess.run(cmd, capture_output=True, timeout=15, text=True)
+            result = subprocess.run(cmd, capture_output=True, timeout=45, text=True)
             if result.returncode != 0:
                 return False, f"curl exit {result.returncode}"
             code = int(result.stdout.strip())

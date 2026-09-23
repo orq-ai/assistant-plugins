@@ -1,3 +1,16 @@
 test_type,target,assertion,description
 mcp_tool_exists,search_entities,,search_entities listed on MCP server
-sdk_method,orq_ai_sdk.Orq,redteam,Orq client has .redteam
+mcp_tool_param,search_entities,type,search_entities takes type
+sdk_import,evaluatorq.simulation.simulate,,simulate importable from evaluatorq.simulation
+sdk_import,evaluatorq.simulation.wrap_simulation_agent,,wrap_simulation_agent importable from evaluatorq.simulation
+sdk_import,evaluatorq.simulation.Persona,,Persona importable from evaluatorq.simulation
+sdk_import,evaluatorq.simulation.CommunicationStyle,,CommunicationStyle importable from evaluatorq.simulation
+sdk_import,evaluatorq.common.sanitize.delimit,,delimit importable from evaluatorq.common.sanitize
+sdk_import,evaluatorq.simulation.from_orq_deployment,,from_orq_deployment importable from evaluatorq.simulation
+sdk_import,evaluatorq.simulation.from_chat_completions,,from_chat_completions importable from evaluatorq.simulation
+sdk_import,evaluatorq.evaluatorq,,evaluatorq importable from evaluatorq
+sdk_import,evaluatorq.DataPoint,,DataPoint importable from evaluatorq
+sdk_import,evaluatorq.simulation.generate_and_simulate,,generate_and_simulate importable from evaluatorq.simulation
+sdk_import,evaluatorq.simulation.SimulationResult,,SimulationResult importable from evaluatorq.simulation
+sdk_import,evaluatorq.simulation.TerminatedBy,,TerminatedBy importable from evaluatorq.simulation
+sdk_import,evaluatorq.simulation.evaluators.SIMULATION_EVALUATORS,,SIMULATION_EVALUATORS importable from evaluatorq.simulation.evaluators
