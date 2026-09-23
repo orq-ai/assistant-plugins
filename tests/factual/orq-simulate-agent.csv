@@ -1,0 +1,3 @@
+test_type,target,assertion,description
+mcp_tool_exists,search_entities,,search_entities listed on MCP server
+sdk_method,orq_ai_sdk.Orq,redteam,Orq client has .redteam

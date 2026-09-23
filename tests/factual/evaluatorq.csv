@@ -1,0 +1,11 @@
+test_type,target,assertion,description
+mcp_tool_exists,search_entities,,search_entities listed on MCP server
+sdk_import,orq_ai_sdk.Orq,,Orq importable from orq_ai_sdk
+doc_url,https://github.com/orq-ai/evaluatorq,,evaluatorq page reachable
+doc_url,https://docs.orq.ai/docs/tutorials/evaluator-q,,evaluator-q page reachable
+doc_url,https://docs.orq.ai/docs/experiments/creating,,creating page reachable
+doc_url,https://docs.orq.ai/docs/evaluators/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/datasets/overview,,overview page reachable
+github_repo,orq-ai/evaluatorq,,orq-ai/evaluatorq exists
+pypi_package,evaluatorq,,evaluatorq on PyPI
+pypi_package,orq-ai-sdk,,orq-ai-sdk on PyPI

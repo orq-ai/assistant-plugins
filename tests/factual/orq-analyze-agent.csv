@@ -1,0 +1,30 @@
+test_type,target,assertion,description
+mcp_tool_exists,list_traces,,list_traces listed on MCP server
+mcp_tool_exists,list_spans,,list_spans listed on MCP server
+mcp_tool_exists,get_span,,get_span listed on MCP server
+mcp_tool_exists,get_agent,,get_agent listed on MCP server
+mcp_tool_exists,get_analytics_overview,,get_analytics_overview listed on MCP server
+mcp_tool_exists,query_analytics,,query_analytics listed on MCP server
+mcp_tool_exists,search_entities,,search_entities listed on MCP server
+mcp_tool_exists,search_docs,,search_docs listed on MCP server
+cli_subcommand,traces,,orq traces exists
+cli_subcommand,reporting query,,orq reporting query exists
+cli_subcommand,agents retrieve,,orq agents retrieve exists
+cli_subcommand,agents get-response,,orq agents get-response exists
+cli_subcommand,deployments get-config,,orq deployments get-config exists
+cli_subcommand,tools retrieve,,orq tools retrieve exists
+cli_subcommand,knowledge-bases retrieve,,orq knowledge-bases retrieve exists
+cli_subcommand,memory-stores retrieve,,orq memory-stores retrieve exists
+cli_subcommand,evals get,,orq evals get exists
+cli_subcommand,skills get,,orq skills get exists
+cli_subcommand,agents update,,orq agents update exists
+cli_subcommand,traces aggregate,,orq traces aggregate exists
+cli_subcommand,traces search,,orq traces search exists
+cli_subcommand,traces list-spans,,orq traces list-spans exists
+doc_url,https://docs.orq.ai,,docs.orq.ai page reachable
+doc_url,https://docs.orq.ai/docs/observability/traces,,traces page reachable
+doc_url,https://docs.orq.ai/docs/observability/logs,,logs page reachable
+doc_url,https://docs.orq.ai/docs/observability/trace-automation,,trace-automation page reachable
+doc_url,https://docs.orq.ai/docs/administer/annotation-queue,,annotation-queue page reachable
+doc_url,https://docs.orq.ai/docs/evaluators/human-review,,human-review page reachable
+doc_url,https://docs.orq.ai/docs/observability/threads,,threads page reachable

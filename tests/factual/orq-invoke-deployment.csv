@@ -1,0 +1,18 @@
+test_type,target,assertion,description
+mcp_tool_exists,search_entities,,search_entities listed on MCP server
+mcp_tool_exists,list_models,,list_models listed on MCP server
+mcp_tool_exists,list_traces,,list_traces listed on MCP server
+sdk_import,orq_ai_sdk.Orq,,Orq importable from orq_ai_sdk
+sdk_method,orq_ai_sdk.Orq,deployments,Orq client has .deployments
+sdk_method,orq_ai_sdk.Orq,agents,Orq client has .agents
+doc_url,https://docs.orq.ai/docs/deployments/overview,,overview page reachable
+doc_url,https://docs.orq.ai/reference/deployments/orq-invoke-deployment,,orq-invoke-deployment page reachable
+doc_url,https://docs.orq.ai/reference/deployments/stream-deployment,,stream-deployment page reachable
+doc_url,https://docs.orq.ai/reference/deployments/get-config,,get-config page reachable
+doc_url,https://docs.orq.ai/docs/agents/agent-api,,agent-api page reachable
+doc_url,https://docs.orq.ai/reference/agents/create-response,,create-response page reachable
+doc_url,https://docs.orq.ai/docs/router/getting-started,,getting-started page reachable
+doc_url,https://docs.orq.ai/docs/proxy/openai-compatible-api,,openai-compatible-api page reachable
+doc_url,https://docs.orq.ai/docs/proxy/supported-models,,supported-models page reachable
+doc_url,https://docs.orq.ai/docs/sdk/python,,python page reachable
+doc_url,https://docs.orq.ai/docs/sdk/node,,node page reachable

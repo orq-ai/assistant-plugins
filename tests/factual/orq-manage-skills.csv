@@ -1,0 +1,9 @@
+test_type,target,assertion,description
+mcp_tool_exists,list_skills,,list_skills listed on MCP server
+mcp_tool_exists,get_skill,,get_skill listed on MCP server
+mcp_tool_exists,search_entities,,search_entities listed on MCP server
+mcp_tool_exists,get_deployment,,get_deployment listed on MCP server
+mcp_tool_exists,get_agent,,get_agent listed on MCP server
+doc_url,https://docs.orq.ai/docs/integrations/code-assistants/skills,,skills page reachable
+doc_url,https://docs.orq.ai/docs/prompt-snippets/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/agents/agent-studio,,agent-studio page reachable

@@ -1,0 +1,6 @@
+test_type,target,assertion,description
+mcp_tool_exists,search_entities,,search_entities listed on MCP server
+mcp_tool_exists,get_agent,,get_agent listed on MCP server
+doc_url,https://github.com/orq-ai/evaluatorq,,evaluatorq page reachable
+github_repo,orq-ai/evaluatorq,,orq-ai/evaluatorq exists
+pypi_package,evaluatorq,,evaluatorq on PyPI

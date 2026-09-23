@@ -1,0 +1,14 @@
+test_type,target,assertion,description
+mcp_tool_exists,get_llm_eval,,get_llm_eval listed on MCP server
+mcp_tool_exists,get_python_eval,,get_python_eval listed on MCP server
+mcp_tool_exists,search_entities,,search_entities listed on MCP server
+mcp_tool_exists,search_docs,,search_docs listed on MCP server
+doc_url,https://docs.orq.ai/docs/evaluators/api-usage,,api-usage page reachable
+doc_url,https://docs.orq.ai/docs/evaluators/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/evaluators/creating,,creating page reachable
+doc_url,https://docs.orq.ai/docs/evaluators/library,,library page reachable
+doc_url,https://docs.orq.ai/docs/evaluators/human-review,,human-review page reachable
+doc_url,https://docs.orq.ai/docs/datasets/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/observability/traces,,traces page reachable
+doc_url,https://docs.orq.ai/docs/administer/annotation-queue,,annotation-queue page reachable
+doc_url,https://docs.orq.ai,,docs.orq.ai page reachable

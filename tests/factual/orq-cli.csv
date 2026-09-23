@@ -1,0 +1,46 @@
+test_type,target,assertion,description
+mcp_tool_exists,search_docs,,search_docs listed on MCP server
+mcp_tool_exists,search_entities,,search_entities listed on MCP server
+cli_subcommand,auth whoami,,orq auth whoami exists
+cli_subcommand,doctor,,orq doctor exists
+cli_subcommand,auth login,,orq auth login exists
+cli_subcommand,skills,,orq skills exists
+cli_subcommand,agents list,,orq agents list exists
+cli_subcommand,whoami,,orq whoami exists
+cli_subcommand,projects list,,orq projects list exists
+cli_subcommand,help-input,,orq help-input exists
+cli_subcommand,server current,,orq server current exists
+cli_subcommand,workspace list,,orq workspace list exists
+cli_subcommand,auth logout,,orq auth logout exists
+cli_subcommand,auth setup,,orq auth setup exists
+cli_subcommand,auth list-profiles,,orq auth list-profiles exists
+cli_subcommand,help-config,,orq help-config exists
+cli_subcommand,evals all,,orq evals all exists
+cli_subcommand,traces create,,orq traces create exists
+cli_subcommand,traces delete,,orq traces delete exists
+cli_subcommand,reporting query,,orq reporting query exists
+cli_subcommand,server set,,orq server set exists
+cli_subcommand,request,,orq request exists
+cli_subcommand,auth add-profile,,orq auth add-profile exists
+cli_subcommand,workspace use,,orq workspace use exists
+cli_subcommand,traces,,orq traces exists
+cli_subcommand,traces search,,orq traces search exists
+cli_subcommand,deployments list,,orq deployments list exists
+cli_subcommand,traces list-fields,,orq traces list-fields exists
+cli_subcommand,traces list-facets,,orq traces list-facets exists
+cli_subcommand,default-format json,,orq default-format json exists
+cli_subcommand,models list,,orq models list exists
+cli_subcommand,traces query-oql,,orq traces query-oql exists
+cli_subcommand,traces list-facet-values,,orq traces list-facet-values exists
+cli_subcommand,traces get,,orq traces get exists
+cli_subcommand,traces list-spans,,orq traces list-spans exists
+cli_subcommand,traces get-span,,orq traces get-span exists
+doc_url,https://raw.githubusercontent.com/orq-ai/orq-cli/main/install.sh,,install.sh page reachable
+doc_url,https://github.com/orq-ai/orq-cli,,orq-cli page reachable
+doc_url,https://github.com/orq-ai/orq-cli/releases,,releases page reachable
+doc_url,https://docs.orq.ai/reference,,reference page reachable
+doc_url,https://docs.orq.ai/reference/agents,,agents page reachable
+doc_url,https://github.com/orq-ai/bartolo/tree/main/shorthand,,shorthand page reachable
+doc_url,https://raw.githubusercontent.com/orq-ai/orq-cli/main/openapi.yaml,,openapi.yaml page reachable
+github_repo,orq-ai/orq-cli,,orq-ai/orq-cli exists
+github_repo,orq-ai/bartolo,,orq-ai/bartolo exists

@@ -1,0 +1,14 @@
+test_type,target,assertion,description
+mcp_tool_exists,search_entities,,search_entities listed on MCP server
+mcp_tool_exists,list_models,,list_models listed on MCP server
+mcp_tool_exists,list_datapoints,,list_datapoints listed on MCP server
+mcp_tool_exists,get_llm_eval,,get_llm_eval listed on MCP server
+mcp_tool_exists,get_python_eval,,get_python_eval listed on MCP server
+mcp_tool_exists,create_dataset,,create_dataset listed on MCP server
+mcp_tool_exists,create_datapoints,,create_datapoints listed on MCP server
+mcp_tool_exists,update_datapoint,,update_datapoint listed on MCP server
+doc_url,https://docs.orq.ai/docs/datasets/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/datasets/creating,,creating page reachable
+doc_url,https://docs.orq.ai/docs/datasets/api-usage,,api-usage page reachable
+doc_url,https://docs.orq.ai/docs/experiments/creating,,creating page reachable
+doc_url,https://docs.orq.ai,,docs.orq.ai page reachable

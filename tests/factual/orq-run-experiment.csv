@@ -1,0 +1,28 @@
+test_type,target,assertion,description
+mcp_tool_exists,list_experiment_runs,,list_experiment_runs listed on MCP server
+mcp_tool_exists,get_experiment_run,,get_experiment_run listed on MCP server
+mcp_tool_exists,search_entities,,search_entities listed on MCP server
+mcp_tool_exists,list_datapoints,,list_datapoints listed on MCP server
+mcp_tool_exists,search_docs,,search_docs listed on MCP server
+doc_url,https://docs.orq.ai/docs/datasets/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/experiments/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/evaluators/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/evaluators/library,,library page reachable
+doc_url,https://docs.orq.ai/docs/observability/traces,,traces page reachable
+doc_url,https://docs.orq.ai/docs/deployments/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/prompts/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/feedback/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/analytics/dashboards,,dashboards page reachable
+doc_url,https://docs.orq.ai/docs/administer/annotation-queue,,annotation-queue page reachable
+doc_url,https://docs.orq.ai/docs/agents/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/agents/agent-studio,,agent-studio page reachable
+doc_url,https://docs.orq.ai/docs/tools/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/proxy/tool-calling,,tool-calling page reachable
+doc_url,https://docs.orq.ai/docs/conversations/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/proxy/thread-management,,thread-management page reachable
+doc_url,https://docs.orq.ai/docs/memory-stores/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/knowledge/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/knowledge/using-in-prompt,,using-in-prompt page reachable
+doc_url,https://docs.orq.ai/docs/knowledge/api,,api page reachable
+doc_url,https://docs.orq.ai,,docs.orq.ai page reachable
+doc_url,https://docs.orq.ai/docs/experiments/api,,api page reachable

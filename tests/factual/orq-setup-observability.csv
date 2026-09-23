@@ -1,0 +1,36 @@
+test_type,target,assertion,description
+sdk_import,orq_ai_sdk.Orq,,Orq importable from orq_ai_sdk
+sdk_import,orq_ai_sdk.traced.traced,,traced importable from orq_ai_sdk.traced
+doc_url,https://docs.orq.ai/docs/observability/traces,,traces page reachable
+doc_url,https://docs.orq.ai/docs/observability/trace-automation,,trace-automation page reachable
+doc_url,https://docs.orq.ai/docs/observability/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/openai,,openai page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/langchain,,langchain page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/crewai,,crewai page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/vercel-ai,,vercel-ai page reachable
+doc_url,https://docs.orq.ai/docs/router/getting-started,,getting-started page reachable
+doc_url,https://docs.orq.ai/docs/router/api-keys,,api-keys page reachable
+doc_url,https://docs.orq.ai/docs/proxy/openai-compatible-api,,openai-compatible-api page reachable
+doc_url,https://docs.orq.ai/docs/proxy/supported-models,,supported-models page reachable
+doc_url,https://docs.orq.ai/docs/integrations/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/agno,,agno page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/autogen,,autogen page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/aws-strands,,aws-strands page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/azure-ai-agents,,azure-ai-agents page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/beeai,,beeai page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/dspy,,dspy page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/google-ai,,google-ai page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/haystack,,haystack page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/instructor,,instructor page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/langgraph,,langgraph page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/litellm,,litellm page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/livekit,,livekit page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/llamaindex,,llamaindex page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/llamaindex-agents,,llamaindex-agents page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/mastra,,mastra page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/openai-agents,,openai-agents page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/openclaw,,openclaw page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/pydantic-ai,,pydantic-ai page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/semantic-kernel,,semantic-kernel page reachable
+doc_url,https://docs.orq.ai/docs/proxy/frameworks/smolagents,,smolagents page reachable
