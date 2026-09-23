@@ -12,6 +12,7 @@
 //  10. tests/skills.md <-> skills/
 //  11. no legacy orq template variables in skill markdown
 //  12. no hardcoded reasoning-effort value in skill markdown
+//  13. tests/factual/<skill>.csv <-> skills/ (warning only, RES-1076)
 // Errors fail the run; warnings don't. Run from anywhere in the repo.
 
 import { createHash } from "node:crypto";
@@ -533,6 +534,20 @@ if (smokeText !== null) {
     allMatches(/^##\s+`([^`\n]+)`/gm, smokeText).map((m) => m[1]));
   diffAgainstSkills("tests/skills.md", smokeNames, " — nothing smoke-tests it");
 }
+
+// ---------- 13. tests/factual/<skill>.csv <-> skills/ ----------
+// Every skill ships the factual drift checks for the tools, commands and URLs it
+// names (bootstrap with tests/scripts/bootstrap_factual_tests.py --skill <name>,
+// then review). A header-only CSV records "reviewed, nothing to check". A warning
+// until the team agrees to make it blocking (RES-1076).
+const factualDir = join(root, "tests", "factual");
+const factualCsvs = existsSync(factualDir) ? readdirSync(factualDir).filter((f) => f.endsWith(".csv")) : [];
+for (const name of skillDirs)
+  if (!factualCsvs.includes(`${name}.csv`))
+    warn(`skills/${name} has no tests/factual/${name}.csv — its drift is unchecked`);
+for (const f of factualCsvs)
+  if (!skillDirs.includes(f.slice(0, -4)))
+    warn(`tests/factual/${f} names no skill in skills/`);
 
 // ---------- result ----------
 // ---------- 11. legacy orq template variables ----------

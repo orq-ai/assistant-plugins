@@ -1,0 +1,3 @@
+test_type,target,assertion,description
+cli_subcommand,models list,,orq models list exists
+cli_subcommand,auth whoami,,orq auth whoami exists

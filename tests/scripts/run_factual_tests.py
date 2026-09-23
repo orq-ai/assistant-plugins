@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["orq-ai-sdk"]
+# ///
 """Factual test runner for orq skills.
 
 Reads CSV test fixtures from tests/factual/<skill>.csv and executes
@@ -10,17 +14,18 @@ Phase 1 test types (auth-free):
   mcp_tool_param     MCP tool schema includes the named parameter
   sdk_import         Python import succeeds
   sdk_method         Python object has the named attribute
-  cli_subcommand     `orq <subcommand> --help` exits 0
+  cli_subcommand     `orq <subcommand> --help` resolves to that subcommand
   cli_flag           `orq <subcommand> --help` output mentions the flag
-  doc_url            curl returns 2xx/3xx
+  doc_url            curl returns 2xx/3xx (non-gating: reported, never fails the run)
   github_repo        `gh repo view` exits 0
   pypi_package       PyPI JSON API returns 200
 
-Usage:
-    python tests/scripts/run_factual_tests.py                    # all skills
-    python tests/scripts/run_factual_tests.py --skill orq-cli    # one skill
-    python tests/scripts/run_factual_tests.py --type sdk_import  # one type
-    python tests/scripts/run_factual_tests.py --json             # CI output
+Usage (uv installs the latest orq-ai-sdk, so SDK checks run against the
+current release rather than whatever the caller's environment holds):
+    uv run tests/scripts/run_factual_tests.py                    # all skills
+    uv run tests/scripts/run_factual_tests.py --skill orq-cli    # one skill
+    uv run tests/scripts/run_factual_tests.py --type sdk_import  # one type
+    uv run tests/scripts/run_factual_tests.py --json             # CI output
 """
 
 from __future__ import annotations
@@ -54,6 +59,16 @@ PHASE1_TYPES = frozenset(
         "pypi_package",
     }
 )
+
+# Network checks against third-party hosts flake for reasons unrelated to
+# drift, so their failures are reported but never fail the run.
+NON_GATING_TYPES = frozenset({"doc_url"})
+NETWORK_RETRIES = 2
+REQUIRED_COLUMNS = ("test_type", "target", "assertion", "description")
+
+
+class SkipCheck(Exception):
+    """A prerequisite is absent by design (no ORQ_API_KEY on a fork PR), not drift."""
 
 
 @dataclass
@@ -131,13 +146,23 @@ class MCPClient:
         if not body_text:
             return None
 
+        status_parts = headers_block.split("\n", 1)[0].split()
+        status = status_parts[1] if len(status_parts) > 1 else "?"
+        if not status.startswith("2"):
+            raise RuntimeError(f"MCP HTTP {status}: {body_text[:200]}")
+
         if "text/event-stream" in headers_block.lower():
+            payload = None
             for line in reversed(body_text.split("\n")):
                 if line.startswith("data:"):
-                    return json.loads(line[5:].strip())
-            return None
+                    payload = json.loads(line[5:].strip())
+                    break
+        else:
+            payload = json.loads(body_text)
 
-        return json.loads(body_text)
+        if isinstance(payload, dict) and payload.get("error"):
+            raise RuntimeError(f"MCP error: {payload['error']}")
+        return payload
 
     def list_tools(self) -> dict[str, dict]:
         if self._tools is not None:
@@ -207,7 +232,11 @@ class FactualTestRunner:
         for csv_path in sorted(FACTUAL_DIR.glob(pattern)):
             skill_name = csv_path.stem
             with open(csv_path, newline="", encoding="utf-8") as f:
-                for row in csv.DictReader(f):
+                reader = csv.DictReader(f)
+                missing = [c for c in REQUIRED_COLUMNS if c not in (reader.fieldnames or [])]
+                if missing:
+                    raise ValueError(f"{csv_path.name}: missing column(s) {', '.join(missing)}")
+                for row in reader:
                     if row["test_type"] not in PHASE1_TYPES:
                         continue
                     tests.append(
@@ -231,6 +260,8 @@ class FactualTestRunner:
         try:
             passed, error = handler(tc.target, tc.assertion)
             status = "passed" if passed else "failed"
+        except SkipCheck as e:
+            status, error = "skipped", str(e)
         except Exception as e:
             status, error = "error", str(e)
         duration = (time.monotonic() - start) * 1000
@@ -241,6 +272,8 @@ class FactualTestRunner:
     def _check_mcp_tool_exists(self, target: str, _assertion: str) -> tuple[bool, str | None]:
         client = self.mcp
         if client is None:
+            if not os.environ.get("ORQ_API_KEY"):
+                raise SkipCheck("ORQ_API_KEY not set")
             raise RuntimeError(f"MCP unavailable: {self._mcp_err}")
         tools = client.list_tools()
         if target in tools:
@@ -251,6 +284,8 @@ class FactualTestRunner:
     def _check_mcp_tool_param(self, target: str, assertion: str) -> tuple[bool, str | None]:
         client = self.mcp
         if client is None:
+            if not os.environ.get("ORQ_API_KEY"):
+                raise SkipCheck("ORQ_API_KEY not set")
             raise RuntimeError(f"MCP unavailable: {self._mcp_err}")
         tools = client.list_tools()
         if target not in tools:
@@ -289,31 +324,54 @@ class FactualTestRunner:
             self._tool_cache[name] = _which(name)
         return self._tool_cache[name]
 
-    def _check_cli_subcommand(self, target: str, _assertion: str) -> tuple[bool, str | None]:
+    def _orq_help(self, target: str) -> tuple[str | None, str | None]:
+        """Return (help text, None) if `orq <target>` resolves, else (None, error).
+
+        The CLI prints the parent's help and exits 0 for an unknown child
+        (`orq traces bogus --help`), so the exit code proves nothing. The
+        Usage line (`orq traces get trace-id [flags]`) starts with the path
+        that actually resolved, under its canonical name; the target may use
+        an alias listed under `Aliases:` for its last word.
+        """
         orq = self._resolve("orq")
         if orq is None:
-            return False, "orq CLI not on PATH"
-        cmd = [orq, *target.split(), "--help"]
-        result = subprocess.run(cmd, capture_output=True, timeout=30, text=True)
-        if result.returncode == 0:
-            return True, None
-        return False, f"exit {result.returncode}: {result.stderr.strip()[:200]}"
+            return None, "orq CLI not on PATH"
+        words = target.split()
+        result = subprocess.run([orq, *words, "--help"], capture_output=True, timeout=30, text=True)
+        if result.returncode != 0:
+            return None, f"exit {result.returncode}: {result.stderr.strip()[:200]}"
+        lines = result.stdout.splitlines()
+        usage = next((lines[i + 1].split() for i, line in enumerate(lines[:-1]) if line.strip() == "Usage:"), None)
+        if not usage:
+            return None, "no Usage line in help output"
+        resolved = usage[1 : 1 + len(words)]
+        # `[json|yaml|toon|table]` is a fixed-choice argument, so `default-format json` is valid.
+        choices = lambda tok: tok.strip("[]<>").split("|") if "|" in tok else []  # noqa: E731
+        if len(resolved) == len(words) and all(u == w or w in choices(u) for u, w in zip(resolved, words)):
+            return result.stdout, None
+        aliases = next(
+            (lines[i + 1].replace(",", " ").split() for i, line in enumerate(lines[:-1]) if line.strip() == "Aliases:"),
+            [],
+        )
+        if resolved[:-1] == words[:-1] and words[-1] in aliases:
+            return result.stdout, None
+        return None, f"not a subcommand, CLI resolved `{' '.join(usage[1:])}`"
+
+    def _check_cli_subcommand(self, target: str, _assertion: str) -> tuple[bool, str | None]:
+        help_text, error = self._orq_help(target)
+        return help_text is not None, error
 
     def _check_cli_flag(self, target: str, assertion: str) -> tuple[bool, str | None]:
-        orq = self._resolve("orq")
-        if orq is None:
-            return False, "orq CLI not on PATH"
-        cmd = [orq, *target.split(), "--help"]
-        result = subprocess.run(cmd, capture_output=True, timeout=30, text=True)
-        if result.returncode != 0:
-            return False, f"subcommand exit {result.returncode}"
+        help_text, error = self._orq_help(target)
+        if help_text is None:
+            return False, error
         flag = assertion.lstrip("-")
-        if f"--{flag}" in result.stdout or f"-{flag}" in result.stdout:
+        if f"--{flag}" in help_text or f"-{flag}" in help_text:
             return True, None
         return False, f"'{assertion}' not in help output"
 
     def _check_doc_url(self, target: str, _assertion: str) -> tuple[bool, str | None]:
-        cmd = ["curl", "-sL", "-o", os.devnull, "-w", "%{http_code}", target]
+        cmd = ["curl", "-sL", "--retry", str(NETWORK_RETRIES), "--max-time", "10", "-o", os.devnull, "-w", "%{http_code}", target]
         if os.environ.get("SSL_VERIFY", "1") == "0":
             cmd.insert(1, "-k")
         try:
@@ -345,7 +403,7 @@ class FactualTestRunner:
 
     def _check_pypi_package(self, target: str, _assertion: str) -> tuple[bool, str | None]:
         url = f"https://pypi.org/pypi/{target}/json"
-        cmd = ["curl", "-s", "-o", os.devnull, "-w", "%{http_code}", url]
+        cmd = ["curl", "-s", "--retry", str(NETWORK_RETRIES), "--max-time", "10", "-o", os.devnull, "-w", "%{http_code}", url]
         if os.environ.get("SSL_VERIFY", "1") == "0":
             cmd.insert(1, "-k")
         try:
@@ -385,6 +443,10 @@ def main() -> None:
     if not tests:
         print("No tests found.", file=sys.stderr)
         sys.exit(1)
+    # Connect once before fanning out, so worker threads share one client
+    # instead of racing to create it.
+    if any(t.test_type.startswith("mcp_") for t in tests):
+        _ = runner.mcp
 
     results: list[TestResult] = []
     with ThreadPoolExecutor(max_workers=args.parallel) as pool:
@@ -394,12 +456,16 @@ def main() -> None:
 
     results.sort(key=lambda r: (r.skill, r.test_type, r.target))
 
+    gating = [r for r in results if r.test_type not in NON_GATING_TYPES]
     summary = {
         "total": len(results),
         "passed": sum(1 for r in results if r.status == "passed"),
-        "failed": sum(1 for r in results if r.status == "failed"),
+        "failed": sum(1 for r in gating if r.status == "failed"),
+        "errors": sum(1 for r in gating if r.status == "error"),
+        "non_gating_failed": sum(
+            1 for r in results if r.test_type in NON_GATING_TYPES and r.status in ("failed", "error")
+        ),
         "skipped": sum(1 for r in results if r.status == "skipped"),
-        "errors": sum(1 for r in results if r.status == "error"),
     }
 
     if args.json_output:
@@ -411,7 +477,7 @@ def main() -> None:
                 cur_skill = r.skill
                 print(f"\n{cur_skill}")
             icon = {"passed": "+", "failed": "x", "skipped": "o", "error": "!"}[r.status]
-            label = r.description if r.description != r.target else r.description
+            label = r.description
             if r.target and r.target not in label:
                 label = f"{label} [{r.target}]"
             print(f"  [{icon}] {r.test_type}: {label} ({r.duration_ms:.0f}ms)")
@@ -424,6 +490,8 @@ def main() -> None:
             print(f", {summary['skipped']} skipped", end="")
         if summary["errors"]:
             print(f", {summary['errors']} errors", end="")
+        if summary["non_gating_failed"]:
+            print(f", {summary['non_gating_failed']} non-gating ({', '.join(sorted(NON_GATING_TYPES))})", end="")
         print()
 
     sys.exit(1 if summary["failed"] or summary["errors"] else 0)

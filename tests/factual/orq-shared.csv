@@ -1,0 +1,23 @@
+test_type,target,assertion,description
+sdk_import,orq_ai_sdk.Orq,,Orq importable from orq_ai_sdk
+sdk_method,orq_ai_sdk.Orq,agents,Orq client has .agents
+cli_subcommand,agents update,,orq agents update exists
+cli_subcommand,traces,,orq traces exists
+cli_subcommand,traces aggregate,,orq traces aggregate exists
+cli_subcommand,tools retrieve,,orq tools retrieve exists
+cli_subcommand,knowledge-bases retrieve,,orq knowledge-bases retrieve exists
+cli_subcommand,memory-stores retrieve,,orq memory-stores retrieve exists
+cli_subcommand,evals get,,orq evals get exists
+cli_subcommand,reporting query,,orq reporting query exists
+cli_subcommand,traces list-spans,,orq traces list-spans exists
+cli_subcommand,traces list-fields,,orq traces list-fields exists
+cli_subcommand,traces query-oql,,orq traces query-oql exists
+cli_subcommand,deployments update,,orq deployments update exists
+cli_subcommand,deployments,,orq deployments exists
+cli_subcommand,traces list-facets,,orq traces list-facets exists
+cli_subcommand,traces get-span,,orq traces get-span exists
+cli_subcommand,agents get-response,,orq agents get-response exists
+cli_subcommand,traces search,,orq traces search exists
+cli_subcommand,agents retrieve,,orq agents retrieve exists
+doc_url,https://docs.orq.ai,,docs.orq.ai page reachable
+doc_url,https://docs.orq.ai/reference/deployments/get-config,,get-config page reachable
