@@ -46,3 +46,6 @@ cli_flag,agents update,--version-increment,orq agents update accepts --version-i
 cli_flag,agents update,--version-description,orq agents update accepts --version-description
 doc_url,https://docs.orq.ai,,docs.orq.ai page reachable
 doc_url,https://docs.orq.ai/reference/deployments/get-config,,get-config page reachable
+mcp_tool_exists,get_analytics_overview,,get_analytics_overview listed on MCP server
+mcp_tool_exists,get_span,,get_span listed on MCP server
+mcp_tool_exists,update_agent,,update_agent listed on MCP server

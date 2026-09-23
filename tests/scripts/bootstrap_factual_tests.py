@@ -11,6 +11,10 @@ deleted row, a false negative is drift nobody checks. Review the output, prune
 false positives, then commit. Existing CSVs hold that review, so they are only
 overwritten with --force; check `git diff tests/factual` afterwards.
 
+Bare MCP tool names are confirmed against the live server, so set ORQ_API_KEY.
+Names the server does not list are printed, not written: add one by hand only
+when the skill really means an orq MCP tool (that is drift).
+
 Usage:
     uv run --no-project python tests/scripts/bootstrap_factual_tests.py --skill X          # new skill
     uv run --no-project python tests/scripts/bootstrap_factual_tests.py --dry-run          # preview all
@@ -21,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import re
 import sys
 from pathlib import Path
@@ -149,22 +154,41 @@ def _negated(body: str, pos: int) -> bool:
     return any(kw in context for kw in NEGATIVE_CONTEXT)
 
 
-def extract_mcp(frontmatter: dict[str, str], body: str, rows: Rows) -> None:
-    for m in MCP_TOOL_RE.finditer(frontmatter.get("allowed-tools", "")):
-        rows.add("mcp_tool_exists", m.group(1), "", f"{m.group(1)} listed on MCP server")
-    for pat in (MCP_TOOL_RE, MCP_BACKTICK_RE):
-        for m in pat.finditer(body):
-            if not _negated(body, m.start()):
-                rows.add("mcp_tool_exists", m.group(1), "", f"{m.group(1)} listed on MCP server")
+def live_mcp_tools() -> set[str] | None:
+    """Tool names the orq MCP server lists now, or None without ORQ_API_KEY."""
+    api_key = os.environ.get("ORQ_API_KEY")
+    if not api_key:
+        return None
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from run_factual_tests import MCP_URL, MCPClient
+
+    return set(MCPClient(MCP_URL, api_key).list_tools())
+
+
+def extract_mcp(frontmatter: dict[str, str], body: str, rows: Rows, live: set[str] | None, unknown: set[str]) -> None:
+    """A `mcp__server__tool` name is a claim and always becomes a row. A bare
+    `verb_noun` name is only a candidate: agent built-in tools, framework
+    functions and REST calls share the shape, so it becomes a row only when the
+    live server lists it, and lands in `unknown` for review otherwise."""
+    for text in (frontmatter.get("allowed-tools", ""), body):
+        for m in MCP_TOOL_RE.finditer(text):
+            rows.add("mcp_tool_exists", m.group(1), "", f"{m.group(1)} listed on MCP server")
+
+    def candidate(tool: str) -> bool:
+        if live is not None and tool in live:
+            rows.add("mcp_tool_exists", tool, "", f"{tool} listed on MCP server")
+            return True
+        unknown.add(tool)
+        return False
+
+    for m in MCP_BACKTICK_RE.finditer(body):
+        candidate(m.group(1))
     for m in MCP_CALL_RE.finditer(body):
-        if _negated(body, m.start()):
-            continue
-        tool, args = m.group(1), m.group(2)
-        rows.add("mcp_tool_exists", tool, "", f"{tool} listed on MCP server")
-        for kw in KWARG_RE.finditer(args):
-            rows.add("mcp_tool_param", tool, kw.group(1), f"{tool} takes {kw.group(1)}")
+        if candidate(m.group(1)):
+            for kw in KWARG_RE.finditer(m.group(2)):
+                rows.add("mcp_tool_param", m.group(1), kw.group(1), f"{m.group(1)} takes {kw.group(1)}")
     for m in MCP_BACKTICK_PARAM_RE.finditer(body):
-        if not _negated(body, m.start()):
+        if candidate(m.group(1)):
             rows.add("mcp_tool_param", m.group(1), m.group(2), f"{m.group(1)} takes {m.group(2)}")
 
 
@@ -230,7 +254,7 @@ def extract_doc_urls(body: str, rows: Rows) -> None:
         url = m.group(0).rstrip(".),;'\"")
         if any(skip in url for skip in URL_SKIP):
             continue
-        if url.endswith("/package/") or url.endswith("/package"):
+        if url.endswith(("/package/", "/package")):
             continue
         path = urlparse(url).path.rstrip("/")
         slug = path.rsplit("/", 1)[-1] if path else urlparse(url).netloc
@@ -261,7 +285,7 @@ def extract_packages(body: str, rows: Rows) -> None:
         rows.add("npm_package", pkg, "", f"{pkg} on npm")
 
 
-def process_skill(skill_dir: Path) -> list[TestRow]:
+def process_skill(skill_dir: Path, live: set[str] | None, unknown: set[str]) -> list[TestRow]:
     skill_md = skill_dir / "SKILL.md"
     if not skill_md.exists():
         return []
@@ -275,7 +299,7 @@ def process_skill(skill_dir: Path) -> list[TestRow]:
             body += "\n" + f.read_text(encoding="utf-8")
 
     rows = Rows()
-    extract_mcp(frontmatter, body, rows)
+    extract_mcp(frontmatter, body, rows, live, unknown)
     extract_sdk_imports(body, rows)
     extract_sdk_methods(body, rows)
     extract_cli(body, rows)
@@ -294,6 +318,10 @@ def main() -> None:
 
     FACTUAL_DIR.mkdir(parents=True, exist_ok=True)
 
+    live = live_mcp_tools()
+    if live is None:
+        print("ORQ_API_KEY not set: bare MCP tool names cannot be confirmed and are all listed for review", file=sys.stderr)
+
     total = 0
     skills_written = 0
     kept: list[str] = []
@@ -303,8 +331,11 @@ def main() -> None:
         if not skill_dir.is_dir():
             continue
 
-        rows = process_skill(skill_dir)
+        unknown: set[str] = set()
+        rows = process_skill(skill_dir, live, unknown)
         name = skill_dir.name
+        if unknown:
+            print(f"{name}: not on the MCP server, add by hand only if it is drift: {', '.join(sorted(unknown))}", file=sys.stderr)
         csv_path = FACTUAL_DIR / f"{name}.csv"
 
         if args.dry_run:
