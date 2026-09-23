@@ -19,12 +19,9 @@ cli_flag,auth login,--api-key,orq auth login accepts --api-key
 cli_subcommand,auth profile add,,orq auth profile add exists
 cli_flag,auth profile add,--api-key-file,orq auth profile add accepts --api-key-file
 cli_subcommand,auth profile list,,orq auth profile list exists
-cli_subcommand,auth add-profile apikey,,orq auth add-profile apikey exists
-cli_subcommand,auth list-profiles,,orq auth list-profiles exists
 cli_subcommand,auth sessions,,orq auth sessions exists
 cli_subcommand,status,,orq status exists
 cli_subcommand,whoami,,orq whoami exists
-cli_subcommand,auth add-profile,,orq auth add-profile exists
 cli_flag,doctor,--fix,orq doctor accepts --fix
 cli_flag,auth whoami,-j,orq auth whoami accepts -j
 cli_flag,auth whoami,--raw,orq auth whoami accepts --raw
