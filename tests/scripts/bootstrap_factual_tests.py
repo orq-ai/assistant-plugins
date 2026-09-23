@@ -327,6 +327,8 @@ def main() -> None:
     kept: list[str] = []
 
     dirs = sorted(SKILLS_DIR.iterdir()) if not args.skill else [SKILLS_DIR / args.skill]
+    if args.skill and not dirs[0].is_dir():
+        sys.exit(f"No skills/{args.skill} directory.")
     for skill_dir in dirs:
         if not skill_dir.is_dir():
             continue

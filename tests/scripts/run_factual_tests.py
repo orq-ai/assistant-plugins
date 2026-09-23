@@ -106,7 +106,7 @@ class MCPClient:
     """List tools from an MCP server over Streamable HTTP.
 
     Uses curl subprocess to avoid OpenSSL DLL conflicts on some Windows
-    environments. Falls back to urllib if curl is unavailable.
+    environments.
     """
 
     def __init__(self, url: str, api_key: str) -> None:
@@ -121,7 +121,8 @@ class MCPClient:
             "curl", "-s", "-X", "POST", self.url,
             "-H", "Content-Type: application/json",
             "-H", "Accept: application/json, text/event-stream",
-            "-H", f"Authorization: Bearer {self.api_key}",
+            # The key goes in a config read from stdin, so it never shows in the process list.
+            "-K", "-",
             "-D", "-",
             "-d", data,
         ]
@@ -130,7 +131,8 @@ class MCPClient:
         if os.environ.get("SSL_VERIFY", "1") == "0":
             cmd.append("-k")
 
-        result = subprocess.run(cmd, capture_output=True, timeout=30, text=True)
+        config = f'header = "Authorization: Bearer {self.api_key}"\n'
+        result = subprocess.run(cmd, input=config, capture_output=True, timeout=30, text=True)
         if result.returncode != 0:
             raise RuntimeError(f"curl failed: {result.stderr.strip()[:200]}")
 
@@ -187,8 +189,17 @@ class MCPClient:
         )
         self._post({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
-        resp = self._post({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
-        tools = (resp or {}).get("result", {}).get("tools", [])
+        # Follow nextCursor: a tool past the first page is not drift.
+        tools: list[dict] = []
+        params: dict = {}
+        for request_id in range(2, 102):
+            resp = self._post({"jsonrpc": "2.0", "id": request_id, "method": "tools/list", "params": params})
+            result = (resp or {}).get("result", {})
+            tools.extend(result.get("tools", []))
+            cursor = result.get("nextCursor")
+            if not cursor:
+                break
+            params = {"cursor": cursor}
         self._tools = {t["name"]: t for t in tools}
         return self._tools
 
@@ -239,8 +250,7 @@ def _which(name: str) -> str | None:
 
 
 class FactualTestRunner:
-    def __init__(self, verbose: bool = False) -> None:
-        self.verbose = verbose
+    def __init__(self) -> None:
         self._mcp: MCPClient | None = None
         self._mcp_err: str | None = None
         self._tool_cache: dict[str, str | None] = {}
@@ -277,8 +287,6 @@ class FactualTestRunner:
                 if missing:
                     raise ValueError(f"{csv_path.name}: missing column(s) {', '.join(missing)}")
                 for row in reader:
-                    if row["test_type"] not in PHASE1_TYPES:
-                        continue
                     tests.append(
                         TestCase(
                             skill=skill_name,
@@ -294,9 +302,10 @@ class FactualTestRunner:
 
     def run_test(self, tc: TestCase) -> TestResult:
         start = time.monotonic()
-        handler = getattr(self, f"_check_{tc.test_type}", None)
-        if handler is None:
-            return TestResult(**vars(tc), status="skipped", error=f"unknown type: {tc.test_type}")
+        # A mistyped test_type is a broken reviewed row: report it rather than drop it.
+        if tc.test_type not in PHASE1_TYPES:
+            return TestResult(**vars(tc), status="error", error=f"unknown test_type '{tc.test_type}'")
+        handler = getattr(self, f"_check_{tc.test_type}")
         try:
             passed, error = handler(tc.target, tc.assertion)
             status = "passed" if passed else "failed"
@@ -358,7 +367,8 @@ class FactualTestRunner:
         module, cls = parts
         stmt = (
             f"from {module} import {cls}; "
-            f"assert hasattr({cls}, '{assertion}') or '{assertion}' in getattr({cls}, '__annotations__', {{}})"
+            f"assert hasattr({cls}, '{assertion}') or any("
+            f"'{assertion}' in vars(c).get('__annotations__', {{}}) for c in {cls}.__mro__)"
         )
         result = subprocess.run([sys.executable, "-c", stmt], capture_output=True, timeout=30, text=True)
         if result.returncode == 0:
@@ -504,17 +514,18 @@ def main() -> None:
     parser.add_argument("--skill", help="Test one skill only")
     parser.add_argument("--type", dest="test_type", help="Run one test type only")
     parser.add_argument("--json", dest="json_output", action="store_true", help="JSON output")
-    parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--parallel", type=int, default=4, help="Max parallel workers")
     args = parser.parse_args()
 
-    runner = FactualTestRunner(verbose=args.verbose)
+    runner = FactualTestRunner()
+    # A header-only CSV is a reviewed "nothing to check" and passes; only a
+    # skill with no CSV at all (or a typo in --skill) is an error.
+    if args.skill and not (FACTUAL_DIR / f"{args.skill}.csv").exists():
+        print(f"No tests/factual/{args.skill}.csv.", file=sys.stderr)
+        sys.exit(1)
     tests = runner.load_tests(skill=args.skill)
     if args.test_type:
         tests = [t for t in tests if t.test_type == args.test_type]
-    if not tests:
-        print("No tests found.", file=sys.stderr)
-        sys.exit(1)
     # Connect once before fanning out, so worker threads share one client
     # instead of racing to create it.
     if any(t.test_type.startswith("mcp_") for t in tests):

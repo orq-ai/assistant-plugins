@@ -12,6 +12,8 @@ on:
       - "skills/**"
       - "tests/factual/**"
       - "tests/scripts/run_factual_tests.py"
+      - "tests/scripts/bootstrap_factual_tests.py"
+      - ".github/workflows/skills-factual.yml"
 
 permissions:
   contents: read
@@ -38,6 +40,11 @@ jobs:
       - name: Summary
         if: always()
         run: |
+          # A runner crash leaves an empty file; say so instead of failing jq on top of it.
+          if ! jq -e .summary factual-results.json > /dev/null 2>&1; then
+            echo "Factual runner produced no results, see the Run factual tests log." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           jq -r '"\(.summary.passed)/\(.summary.total) passed, \(.summary.failed) failed, \(.summary.errors) errors, \(.summary.non_gating_failed) non-gating, \(.summary.skipped) skipped"' factual-results.json >> "$GITHUB_STEP_SUMMARY"
           jq -r '.results[] | select(.status != "passed") | "- `\(.skill)` \(.test_type) `\(.target)`: \(.status) \(.error // "")"' factual-results.json >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
