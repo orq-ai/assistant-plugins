@@ -467,10 +467,13 @@ class FactualTestRunner:
             return False, error
         raise SkipCheck(error)
 
-    def _registry_get(self, url: str) -> tuple[int, str]:
+    def _registry_get(self, url: str, read_body: bool = False) -> tuple[int, str]:
         """GET a registry URL: (status, body). Anything but 200 or 404 is not an
-        answer about the package, so it skips the row instead of failing it."""
+        answer about the package, so it skips the row instead of failing it.
+        The body is discarded (empty string) unless read_body is set."""
         cmd = ["curl", "-s", "--retry", str(NETWORK_RETRIES), "--max-time", "10", "-w", "\n%{http_code}", url]
+        if not read_body:
+            cmd[1:1] = ["-o", os.devnull]
         if os.environ.get("SSL_VERIFY", "1") == "0":
             cmd.insert(1, "-k")
         try:
@@ -485,10 +488,13 @@ class FactualTestRunner:
         return int(code), body
 
     def _check_pypi_extra(self, target: str, assertion: str) -> tuple[bool, str | None]:
-        code, body = self._registry_get(f"https://pypi.org/pypi/{target}/json")
+        code, body = self._registry_get(f"https://pypi.org/pypi/{target}/json", read_body=True)
         if code == 404:
             return False, f"'{target}' not on PyPI"
-        extras = json.loads(body)["info"].get("provides_extra") or []
+        try:
+            extras = json.loads(body)["info"].get("provides_extra") or []
+        except (ValueError, KeyError) as e:
+            raise SkipCheck(f"unreadable PyPI metadata for {target}: {e!r}") from None
         if assertion in extras:
             return True, None
         return False, f"extra '{assertion}' not in {target} (have: {', '.join(extras)})"
@@ -510,7 +516,7 @@ class FactualTestRunner:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run factual tests for orq skills")
     parser.add_argument("--skill", help="Test one skill only")
-    parser.add_argument("--type", dest="test_type", help="Run one test type only")
+    parser.add_argument("--type", dest="test_type", choices=sorted(PHASE1_TYPES), help="Run one test type only")
     parser.add_argument("--json", dest="json_output", action="store_true", help="JSON output")
     parser.add_argument("--parallel", type=int, default=4, help="Max parallel workers")
     args = parser.parse_args()
