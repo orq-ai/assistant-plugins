@@ -24,6 +24,37 @@ jobs:
         # depend on agent-plugins.org being up. ajv itself comes from npx, the
         # same zero-install pattern the install-sanity job below uses.
         run: npx -y ajv-cli@5 validate --spec=draft2020 -s tests/schemas/agent-plugins-1.0.0.plugin.schema.json -d plugin.json
+      - name: Validate every shipped data model against its fixtures
+        # A skill opts in by shipping resources/<name>.schema.json next to
+        # tests/fixtures/{valid,invalid}. Valid fixtures must pass and every
+        # invalid one must fail, so a loosened schema turns the run red
+        # instead of silently accepting more. Each file is checked on its own:
+        # a glob that matched nothing would otherwise make the step green.
+        run: |
+          set -euo pipefail
+          found=0
+          for schema in skills/*/resources/*.schema.json; do
+            [ -e "$schema" ] || continue
+            d="${schema%/resources/*}"
+            [ -d "$d/tests/fixtures/valid" ] || continue
+            found=1
+            for state in valid invalid; do
+              n=$(find "$d/tests/fixtures/$state" -name '*.json' | wc -l)
+              if [ "$n" -eq 0 ]; then
+                echo "::error::$d/tests/fixtures/$state holds no fixtures"
+                exit 1
+              fi
+              for f in "$d/tests/fixtures/$state"/*.json; do
+                npx -y ajv-cli@5 test --spec=draft2020 --allow-union-types \
+                  -s "$schema" -d "$f" "--$state"
+              done
+            done
+            echo "$d: fixtures checked against $(basename "$schema")"
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no skill schema found; the discovery loop is broken"
+            exit 1
+          fi
       - name: Validate skills (frontmatter, lock invariants + hash freshness, version sync, content patterns)
         run: node tests/scripts/validate-skills.mjs
       - uses: astral-sh/setup-uv@v5

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "target": { "type": "deployment", "key": "billing-router", "id": null },
+  "grounding": { "mode": "config-only", "reason": "0 traces in the last 14 days; deployment id not returned by retrieve" },
+  "evaluations": [
+    {
+      "name": "BLEU Score",
+      "description": "Output overlaps the reference answer the deployment is expected to reproduce.",
+      "type": "function_eval",
+      "existing_evaluator_id": "eval_0007",
+      "execute_on": "output",
+      "priority": "low",
+      "reason": "A drifting template answer goes unnoticed; the built-in already exists in the workspace.",
+      "caveats": ["other projects not checked; criterion is specific to this agent"]
+    }
+  ]
+}

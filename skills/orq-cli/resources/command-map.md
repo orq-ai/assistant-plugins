@@ -464,6 +464,18 @@ Note `orq evals all` (not `list`) is the evaluator listing command, and
 `orq traces create` / `orq traces delete` add and remove **span annotations**,
 not traces.
 
+**`evals` details, probed 2026-09-24 on 10.3.1 (API 4.14.20):**
+
+| Claim | Detail |
+|-------|--------|
+| `orq evals all` is the listing command | `list` does not exist. Pages with `has_more` + `--starting-after <last _id>`; `--limit` is 1 to 200 |
+| `--project-id` is unusable | Every project id, including ones holding evaluators, returns `HTTP 404 {"code":5,"message":"Project not found"}`. Filter by `project_id` client side |
+| `--search` matches the key only | Not the description |
+| `evals get` has no `key` field | The key created with comes back as `display_name`; `evals all` returns it as `key` |
+| `evals create` under-reports | The create response has `output_type: null` even for a boolean evaluator; `evals get <id>` shows the stored value |
+| `models list` takes no `--limit` | Unprojected it returns hundreds of entries (709 on 2026-09-24). Project it: `-j "[?refId=='openai/gpt-4.1'].refId"` |
+| `evals invoke` verdicts | Read `value`. `passed` is the guardrail's decision when there is one, so it reads `passed` on a `false` value otherwise |
+
 ---
 
 ## Request bodies

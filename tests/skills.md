@@ -295,6 +295,56 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify Phase 3a: leaves `{{template_variables}}` unsubstituted and does not propose removing tool definitions
 - Verify: asks which suggestions to apply before rewriting, and skips Phase 4 unless the user asks to save
 
+## `orq-recommend-evaluators`
+
+### Scenario 1: New agent, no traces
+
+- Provide: an agent with instructions containing hard rules and 0 traces
+- Ask: "Which evaluators should this agent have?"
+- Verify Phase 1: runs the run-key preflight before counting traces
+- Verify Phase 3: reports the trace count and states `config-only` mode with that reason
+- Verify Phase 4a: every recommendation quotes an instruction line or config field; no generic helpfulness/coherence
+- Verify Phase 4a: a behaviour the instructions never ask for is listed under "Not an evaluator" → `orq-improve-agent`
+- Verify Phase 5: writes `eval-recommendations-<key>-<timestamp>.md` whose front matter parses, and a `.json` with the same timestamp that validates against `resources/evaluations.schema.json`, with `grounding.mode` set to `config-only`
+- Verify Phase 5: asks which recommendations to act on (multi-select) before creating or attaching anything
+
+### Scenario 2: Existing evaluators are respected
+
+- Provide: an agent with an evaluator attached in `settings.evaluators`
+- Verify Phase 2: resolves the attached id with a projected `orq evals get`, and does not recommend it again
+- Verify: a candidate matching an evaluator already in the project is offered as `reuse`, not a new create
+- Verify: a "valid JSON" style criterion is proposed as `is_valid_json` or `python_eval`, not an LLM judge
+- Verify Phase 5: other projects' evaluators are read and smoke-tested only for a generic criterion (valid JSON, PII, groundedness); an agent-specific rule is matched within the agent's project and carries the caveat that other projects were not checked
+
+### Scenario 3: The written JSON is validated, not assumed
+
+- Ask: "Which evaluators should this agent have?" on any agent
+- Verify Phase 5: after writing `eval-recommendations-<key>-<timestamp>.json`, runs `ajv-cli test ... --valid` on that file against `resources/evaluations.schema.json` and shows the result
+- Verify: a validation failure is fixed and the file rewritten, never presented as is, and never fixed by dropping a recommendation
+- Verify: with `npx` unavailable, says the file could not be machine-checked instead of claiming it validates
+- Verify: promoting an `optional` item in Phase 5 rewrites and re-validates both the `.md` and the `.json`, and a sixth item does not make the file invalid
+
+### Scenario 4: A created evaluator that cannot run
+
+- Provide: a judge model that returns HTTP 500 on invoke
+- Verify Phase 6: the smoke invoke failure is reported, not skipped
+- Verify: offers to repair the evaluator it just created with `orq evals update` on a routable model, and does not offer to attach it while it errors
+
+### Scenario 5: Rank order follows the tiers
+
+- Provide: an agent whose instructions hold a money or safety rule ("never issue a refund above 50 EUR") and, listed earlier, a workflow rule ("always ask for the order number first")
+- Verify Phase 5: the money rule is tier 1 and ranks above the workflow rule (tier 3), even though the workflow rule comes first in the instructions
+- Verify: `evaluations[]` in the `.json` follows the same order as `recommendations` in the `.md`, and a reuse item is not dropped when the user selects it in step 17 (it goes to the attach question)
+
+### Scenario 6: Create and attach are gated separately
+
+- Ask: approve one recommendation
+- Verify Phase 6: shows the exact create body and asks again for that one evaluator before `orq evals create`
+- Verify: the judge prompt uses `{{input.*}}` / `{{output.*}}`, never `{{log.*}}`, and the evaluator lands in the agent's `project_id`
+- Verify: runs `orq evals invoke` on a Pass-shaped and a Fail-shaped sample and reports whether the verdict flipped, calling it a smoke test, not validation
+- Verify: asks a separate question before attaching; on yes, read-modify-writes `settings` whole with `--version-increment` and `--version-description`, then re-reads to confirm `settings.tools[]` is unchanged
+- Verify: closes by labelling each created LLM judge unvalidated and recommending `orq-evaluator-alignment`
+
 ## `orq-run-experiment`
 
 - Ask: "Run an experiment using orq-skills-test-dataset with orq-skills-test-eval-length"
@@ -572,6 +622,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-shared/resources/doc-resolution.md`
 - `skills/orq-analyze-traces/SKILL.md`
 - `skills/orq-improve-agent/SKILL.md`
+- `skills/orq-recommend-evaluators/SKILL.md`
+- `skills/orq-recommend-evaluators/resources/evaluations.schema.json`
 - `skills/orq-setup-observability/SKILL.md`
 - `skills/orq-setup-observability/resources/traced-decorator-guide.md`
 - `skills/orq-setup-observability/resources/framework-integrations.md`

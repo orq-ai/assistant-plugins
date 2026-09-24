@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "target": { "type": "agent", "key": "faq-rag-agent", "id": "agent_0003" },
+  "grounding": { "mode": "config-only", "reason": "4 traces in the last 14 days" },
+  "evaluations": [
+    {
+      "name": "answer-grounded-in-retrievals",
+      "description": "Every claim in the reply is supported by the retrieved context.",
+      "type": "ragas",
+      "existing_evaluator_id": "evaluator_0005",
+      "execute_on": "output",
+      "priority": "high",
+      "reason": "Customers act on answers the knowledge base does not support; the instructions say to answer only from it.",
+      "caveats": []
+    },
+    {
+      "name": "reply-is-valid-json",
+      "description": "The reply parses as JSON.",
+      "type": "function_eval",
+      "existing_evaluator_id": "evaluator_0006",
+      "execute_on": "output",
+      "priority": "medium",
+      "reason": "The calling service parses every reply and fails on anything else; the instructions say to always reply in JSON.",
+      "caveats": []
+    }
+  ]
+}
