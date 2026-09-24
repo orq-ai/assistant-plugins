@@ -13,6 +13,7 @@
 //  11. no legacy orq template variables in skill markdown
 //  12. no hardcoded reasoning-effort value in skill markdown
 //  13. tests/factual/<skill>.csv <-> skills/ (warning only, RES-1076)
+//  14. tests/evals/<skill>/ <-> skills/ (warning only, RES-1076)
 // Errors fail the run; warnings don't. Run from anywhere in the repo.
 
 import { createHash } from "node:crypto";
@@ -388,9 +389,18 @@ for (const file of lintTargets) {
 
 // ---------- 5. no stray tracked skills ----------
 // Tracked SKILL.md outside skills/ ships to every consumer via skill installers.
+// .claude/skills/ holds maintainer-only skills (the skill-tests runner). `npx skills
+// add` does scan it, so each one must set `metadata: internal: true` (a YAML boolean)
+// to stay out of installs; install-sanity in CI fails if one leaks.
 for (const f of tracked) {
   if (!f.endsWith("/SKILL.md")) continue;
-  if (!f.startsWith("skills/"))
+  if (f.startsWith(".claude/skills/")) {
+    let text = "";
+    try { text = readFileSync(join(root, f), "utf8"); } catch { /* reported as missing by section 6 */ }
+    const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+    if (!/^metadata:[ \t]*\r?\n(?:[ \t]+.*\r?\n)*?[ \t]+internal:[ \t]*true[ \t]*$/m.test(fm))
+      err(`${f} lacks \`metadata: internal: true\` — installers will ship this maintainer-only skill`);
+  } else if (!f.startsWith("skills/"))
     err(`stray tracked skill outside skills/: ${f} — installers will ship it`);
 }
 
@@ -596,6 +606,21 @@ for (const name of skillDirs)
 for (const f of factualCsvs)
   if (!skillDirs.includes(f.slice(0, -4)))
     warn(`tests/factual/${f} names no skill in skills/`);
+
+// ---------- 14. tests/evals/<skill>/ <-> skills/ ----------
+// Invocation and behavioural cases per skill, run by tests/scripts/run_evals.py.
+// Folders starting with _ hold cross-skill cases (_no-skill, _general). A warning
+// until every skill has cases (RES-1076).
+const evalsDir = join(root, "tests", "evals");
+const evalDirs = existsSync(evalsDir)
+  ? readdirSync(evalsDir, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith("_")).map((d) => d.name)
+  : [];
+for (const name of skillDirs)
+  if (!evalDirs.includes(name))
+    warn(`skills/${name} has no tests/evals/${name}/ — nothing checks that it fires or what it does first`);
+for (const d of evalDirs)
+  if (!skillDirs.includes(d))
+    warn(`tests/evals/${d}/ names no skill in skills/`);
 
 if (errors > 0) {
   console.error(`\nSkill validation failed with ${errors} error(s).`);

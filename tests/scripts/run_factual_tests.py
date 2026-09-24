@@ -181,10 +181,9 @@ class MCPClient:
             raise RuntimeError(f"MCP error: {payload['error']}")
         return payload
 
-    def list_tools(self) -> dict[str, dict]:
-        if self._tools is not None:
-            return self._tools
-
+    def _initialize(self) -> None:
+        if self.session_id is not None:
+            return
         self._post(
             {
                 "jsonrpc": "2.0",
@@ -198,6 +197,19 @@ class MCPClient:
             }
         )
         self._post({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    def call_tool(self, name: str, arguments: dict) -> dict:
+        """The `result` of one tools/call (content blocks plus isError)."""
+        self._initialize()
+        resp = self._post(
+            {"jsonrpc": "2.0", "id": 1000, "method": "tools/call", "params": {"name": name, "arguments": arguments}}
+        )
+        return (resp or {}).get("result", {})
+
+    def list_tools(self) -> dict[str, dict]:
+        if self._tools is not None:
+            return self._tools
+        self._initialize()
 
         # Follow nextCursor: a tool past the first page is not drift.
         tools: list[dict] = []
