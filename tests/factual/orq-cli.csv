@@ -1,0 +1,137 @@
+test_type,target,assertion,description
+mcp_tool_exists,search_docs,,search_docs listed on MCP server
+mcp_tool_exists,search_entities,,search_entities listed on MCP server
+cli_subcommand,version,,orq version exists
+cli_flag,version,-o,orq version accepts -o
+cli_subcommand,request,,orq request exists
+cli_subcommand,doctor,,orq doctor exists
+cli_subcommand,auth whoami,,orq auth whoami exists
+cli_subcommand,auth login,,orq auth login exists
+cli_subcommand,skills,,orq skills exists
+cli_subcommand,connect,,orq connect exists
+cli_flag,auth whoami,-o,orq auth whoami accepts -o
+cli_subcommand,setup,,orq setup exists
+cli_subcommand,update,,orq update exists
+cli_flag,update,--check,orq update accepts --check
+cli_flag,update,-o,orq update accepts -o
+cli_subcommand,workspace list,,orq workspace list exists
+cli_flag,auth login,--api-key,orq auth login accepts --api-key
+cli_subcommand,auth profile add,,orq auth profile add exists
+cli_flag,auth profile add,--api-key-file,orq auth profile add accepts --api-key-file
+cli_subcommand,auth profile list,,orq auth profile list exists
+cli_subcommand,auth sessions,,orq auth sessions exists
+cli_subcommand,status,,orq status exists
+cli_subcommand,whoami,,orq whoami exists
+cli_flag,doctor,--fix,orq doctor accepts --fix
+cli_flag,auth whoami,-j,orq auth whoami accepts -j
+cli_flag,auth whoami,--raw,orq auth whoami accepts --raw
+cli_flag,doctor,-o,orq doctor accepts -o
+cli_flag,doctor,-j,orq doctor accepts -j
+cli_flag,doctor,--raw,orq doctor accepts --raw
+cli_subcommand,agents list,,orq agents list exists
+cli_flag,agents list,-o,orq agents list accepts -o
+cli_flag,agents list,-j,orq agents list accepts -j
+cli_flag,agents list,--raw,orq agents list accepts --raw
+cli_flag,workspace list,-o,orq workspace list accepts -o
+cli_subcommand,workspace use,,orq workspace use exists
+cli_subcommand,switch,,orq switch exists
+cli_subcommand,projects list,,orq projects list exists
+cli_flag,projects list,-o,orq projects list accepts -o
+cli_flag,projects list,--limit,orq projects list accepts --limit
+cli_flag,projects list,-j,orq projects list accepts -j
+cli_flag,projects list,--raw,orq projects list accepts --raw
+cli_subcommand,traces,,orq traces exists
+cli_flag,traces,--help,orq traces accepts --help
+cli_subcommand,traces search,,orq traces search exists
+cli_flag,traces search,--help,orq traces search accepts --help
+cli_subcommand,help-input,,orq help-input exists
+cli_subcommand,help-config,,orq help-config exists
+cli_subcommand,deployments list,,orq deployments list exists
+cli_flag,deployments list,-o,orq deployments list accepts -o
+cli_flag,deployments list,-j,orq deployments list accepts -j
+cli_flag,deployments list,--raw,orq deployments list accepts --raw
+cli_flag,deployments list,--limit,orq deployments list accepts --limit
+cli_flag,agents list,--help,orq agents list accepts --help
+cli_flag,traces search,--query,orq traces search accepts --query
+cli_flag,traces search,-o,orq traces search accepts -o
+cli_flag,traces search,--from,orq traces search accepts --from
+cli_flag,traces search,--to,orq traces search accepts --to
+cli_subcommand,traces list-fields,,orq traces list-fields exists
+cli_flag,traces list-fields,-o,orq traces list-fields accepts -o
+cli_subcommand,traces list-facets,,orq traces list-facets exists
+cli_flag,traces list-facets,-o,orq traces list-facets accepts -o
+cli_subcommand,traces thread,,orq traces thread exists
+cli_flag,traces thread,--spans,orq traces thread accepts --spans
+cli_flag,traces thread,-o,orq traces thread accepts -o
+cli_flag,traces thread,--slice,orq traces thread accepts --slice
+cli_flag,traces thread,--match,orq traces thread accepts --match
+cli_flag,traces thread,-i,orq traces thread accepts -i
+cli_subcommand,traces query-oql,,orq traces query-oql exists
+cli_subcommand,logs query,,orq logs query exists
+cli_flag,logs query,-j,orq logs query accepts -j
+cli_flag,traces query-oql,-o,orq traces query-oql accepts -o
+cli_flag,traces query-oql,--from,orq traces query-oql accepts --from
+cli_flag,traces query-oql,--to,orq traces query-oql accepts --to
+cli_flag,traces query-oql,--oql,orq traces query-oql accepts --oql
+cli_flag,traces search,--limit,orq traces search accepts --limit
+cli_flag,traces search,--from-file,orq traces search accepts --from-file
+cli_subcommand,default-format json,,orq default-format json exists
+cli_subcommand,default-format,,orq default-format exists
+cli_flag,default-format,--help,orq default-format accepts --help
+cli_subcommand,agents delete,,orq agents delete exists
+cli_flag,agents delete,--force,orq agents delete accepts --force
+cli_flag,request,--force,orq request accepts --force
+cli_subcommand,agents retrieve,,orq agents retrieve exists
+cli_subcommand,datasets retrieve,,orq datasets retrieve exists
+cli_flag,connect,--status,orq connect accepts --status
+cli_subcommand,launch,,orq launch exists
+cli_subcommand,server current,,orq server current exists
+cli_flag,doctor,--report,orq doctor accepts --report
+cli_flag,auth login,--server,orq auth login accepts --server
+cli_flag,doctor,--server,orq doctor accepts --server
+cli_flag,auth login,--profile,orq auth login accepts --profile
+cli_flag,connect,--dry-run,orq connect accepts --dry-run
+cli_subcommand,disconnect,,orq disconnect exists
+cli_subcommand,prompts list,,orq prompts list exists
+cli_subcommand,auth logout,,orq auth logout exists
+cli_subcommand,api-keys delete,,orq api-keys delete exists
+cli_subcommand,auth setup,,orq auth setup exists
+cli_subcommand,projects use,,orq projects use exists
+cli_subcommand,orqi,,orq orqi exists
+cli_subcommand,server list,,orq server list exists
+cli_subcommand,default-format table,,orq default-format table exists
+cli_subcommand,completion,,orq completion exists
+cli_subcommand,evals all,,orq evals all exists
+cli_subcommand,traces create,,orq traces create exists
+cli_subcommand,traces delete,,orq traces delete exists
+cli_flag,traces search,--stdin,orq traces search accepts --stdin
+cli_flag,traces search,--example,orq traces search accepts --example
+cli_flag,workspace list,-j,orq workspace list accepts -j
+cli_flag,agents list,--limit,orq agents list accepts --limit
+cli_subcommand,models list,,orq models list exists
+cli_flag,models list,-o,orq models list accepts -o
+cli_flag,models list,-j,orq models list accepts -j
+cli_subcommand,traces list-facet-values,,orq traces list-facet-values exists
+cli_flag,traces list-facet-values,-o,orq traces list-facet-values accepts -o
+cli_subcommand,traces get,,orq traces get exists
+cli_subcommand,traces list-spans,,orq traces list-spans exists
+cli_subcommand,traces get-span,,orq traces get-span exists
+cli_flag,traces get,-o,orq traces get accepts -o
+cli_subcommand,reporting query,,orq reporting query exists
+cli_flag,reporting query,--help,orq reporting query accepts --help
+cli_flag,server current,-o,orq server current accepts -o
+cli_subcommand,server set,,orq server set exists
+cli_flag,request,-o,orq request accepts -o
+cli_flag,request,-j,orq request accepts -j
+doc_url,https://cli.orq.ai/install.sh,,install.sh page reachable
+doc_url,https://github.com/orq-ai/orq-cli,,orq-cli page reachable
+doc_url,https://github.com/orq-ai/orq-cli/releases,,releases page reachable
+doc_url,https://github.com/orq-ai/orq-cli/blob/main/CHANGELOG.md,,CHANGELOG.md page reachable
+doc_url,https://docs.orq.ai/reference,,reference page reachable
+doc_url,https://docs.orq.ai/reference/agents,,agents page reachable
+doc_url,https://github.com/orq-ai/bartolo/tree/main/shorthand,,shorthand page reachable
+doc_url,https://raw.githubusercontent.com/orq-ai/orq-cli/main/openapi.yaml,,openapi.yaml page reachable
+doc_url,https://github.com/orq-ai/orq-cli.git,,orq-cli.git page reachable
+github_repo,orq-ai/orq-cli,,orq-ai/orq-cli exists
+github_repo,orq-ai/bartolo,,orq-ai/bartolo exists
+npm_package,@orq-ai/cli,,@orq-ai/cli on npm

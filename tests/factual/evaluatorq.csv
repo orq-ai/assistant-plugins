@@ -1,0 +1,48 @@
+test_type,target,assertion,description
+mcp_tool_exists,search_entities,,search_entities listed on MCP server
+mcp_tool_param,search_entities,type,search_entities takes type
+sdk_import,evaluatorq.DataPoint,,DataPoint importable from evaluatorq
+sdk_import,evaluatorq.DatasetIdInput,,DatasetIdInput importable from evaluatorq
+sdk_import,evaluatorq.ExperimentInput,,ExperimentInput importable from evaluatorq
+sdk_import,evaluatorq.ScorerParameter,,ScorerParameter importable from evaluatorq
+sdk_import,evaluatorq.evaluatorq,,evaluatorq importable from evaluatorq
+sdk_import,evaluatorq.job,,job importable from evaluatorq
+sdk_import,evaluatorq.llm_jury,,llm_jury importable from evaluatorq
+sdk_import,orq_ai_sdk.Orq,,Orq importable from orq_ai_sdk
+sdk_import,evaluatorq.string_contains_evaluator,,string_contains_evaluator importable from evaluatorq
+sdk_import,evaluatorq.exact_match_evaluator,,exact_match_evaluator importable from evaluatorq
+sdk_import,evaluatorq.evaluatorq.check_pass_failures,,check_pass_failures importable from evaluatorq.evaluatorq
+sdk_import,evaluatorq.PRESETS,,PRESETS importable from evaluatorq
+sdk_import,evaluatorq.get_preset,,get_preset importable from evaluatorq
+sdk_import,evaluatorq.contracts.JURY_RAW_OUTPUT_KEY,,JURY_RAW_OUTPUT_KEY importable from evaluatorq.contracts
+sdk_import,evaluatorq.contracts.JuryResult,,JuryResult importable from evaluatorq.contracts
+sdk_import,evaluatorq.build_report,,build_report importable from evaluatorq
+sdk_import,evaluatorq.llm_jury_pairwise,,llm_jury_pairwise importable from evaluatorq
+sdk_import,evaluatorq.pairwise_run.new_run,,new_run importable from evaluatorq.pairwise_run
+sdk_import,evaluatorq.EvaluationResult,,EvaluationResult importable from evaluatorq
+sdk_import,evaluatorq.EvaluationResultCell,,EvaluationResultCell importable from evaluatorq
+sdk_import,evaluatorq.common.model_catalogue.get_model_info,,get_model_info importable from evaluatorq.common.model_catalogue
+sdk_import,evaluatorq.common.model_catalogue.validate_reasoning_effort,,validate_reasoning_effort importable from evaluatorq.common.model_catalogue
+sdk_import,evaluatorq.contracts.LLMCallConfig,,LLMCallConfig importable from evaluatorq.contracts
+sdk_import,evaluatorq.redteam.EvaluatorConfig,,EvaluatorConfig importable from evaluatorq.redteam
+sdk_import,evaluatorq.redteam.LLMConfig,,LLMConfig importable from evaluatorq.redteam
+sdk_import,evaluatorq.redteam.red_team,,red_team importable from evaluatorq.redteam
+sdk_import,evaluatorq.common.model_catalogue.ModelInfo,,ModelInfo importable from evaluatorq.common.model_catalogue
+sdk_import,evaluatorq.common.model_catalogue.register_model,,register_model importable from evaluatorq.common.model_catalogue
+sdk_import,evaluatorq.common.llm_limit.llm_slot,,llm_slot importable from evaluatorq.common.llm_limit
+doc_url,https://github.com/orq-ai/evaluatorq,,evaluatorq page reachable
+doc_url,https://docs.orq.ai/docs/tutorials/evaluator-q,,evaluator-q page reachable
+doc_url,https://docs.orq.ai/docs/experiments/creating,,creating page reachable
+doc_url,https://docs.orq.ai/docs/evaluators/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/datasets/overview,,overview page reachable
+doc_url,https://orq-ai.github.io/evaluatorq/evaluation-reference/,,evaluation-reference page reachable
+doc_url,https://orq-ai.github.io/evaluatorq/llm-as-a-jury/,,llm-as-a-jury page reachable
+doc_url,https://orq-ai.github.io/evaluatorq/jury-presets/,,jury-presets page reachable
+doc_url,https://orq-ai.github.io/evaluatorq/pairwise-judging/,,pairwise-judging page reachable
+doc_url,https://orq-ai.github.io/evaluatorq/tuning/,,tuning page reachable
+doc_url,https://orq-ai.github.io/evaluatorq/configuration/,,configuration page reachable
+github_repo,orq-ai/evaluatorq,,orq-ai/evaluatorq exists
+pypi_package,evaluatorq,,evaluatorq on PyPI
+pypi_extra,evaluatorq,redteam,evaluatorq has extra [redteam]
+pypi_package,orq-ai-sdk,,orq-ai-sdk on PyPI
+npm_package,@orq-ai/evaluatorq,,@orq-ai/evaluatorq on npm

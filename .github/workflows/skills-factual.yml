@@ -1,0 +1,61 @@
+name: skills-factual
+# Drift checks: do the MCP tools, CLI commands, SDK calls, packages and URLs the
+# skills name still exist? Drift comes from orq releases, not from this repo, so
+# it runs nightly as well as on PRs that touch a skill. Not a required check
+# until the team agrees (RES-1076). doc_url failures are reported, never gating.
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "skills/**"
+      - "tests/factual/**"
+      - "tests/scripts/run_factual_tests.py"
+      - "tests/scripts/bootstrap_factual_tests.py"
+      - ".github/workflows/skills-factual.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  factual:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: astral-sh/setup-uv@v5
+      - name: Install the latest orq CLI
+        run: npm install -g @orq-ai/cli@latest && orq version
+      - name: Run factual tests
+        env:
+          # Absent on fork PRs: the MCP checks then report as skipped, not failed.
+          ORQ_API_KEY: ${{ secrets.ORQ_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          uv run tests/scripts/run_factual_tests.py --json | tee factual-results.json > /dev/null
+      - name: Summary
+        if: always()
+        run: |
+          # A runner crash leaves an empty file; say so instead of failing jq on top of it.
+          if ! jq -e .summary factual-results.json > /dev/null 2>&1; then
+            echo "Factual runner produced no results, see the Run factual tests log." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # Skipped rows measured nothing; surface them as an annotation, not just a count.
+          skipped=$(jq -r .summary.skipped factual-results.json)
+          if [ "$skipped" -gt 0 ]; then
+            reasons=$(jq -r '[.results[] | select(.status == "skipped") | .error] | group_by(.) | map("\(length)x \(.[0])") | join("; ")' factual-results.json)
+            echo "::warning title=Factual rows skipped::$skipped rows were not checked: $reasons"
+            echo "> **Warning:** $skipped rows skipped, not checked: $reasons" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          jq -r '"\(.summary.passed)/\(.summary.total) passed, \(.summary.failed) failed, \(.summary.errors) errors, \(.summary.non_gating_failed) non-gating, \(.summary.skipped) skipped"' factual-results.json >> "$GITHUB_STEP_SUMMARY"
+          jq -r '.results[] | select(.status != "passed") | "- `\(.skill)` \(.test_type) `\(.target)`: \(.status) \(.error // "")"' factual-results.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: factual-results
+          path: factual-results.json

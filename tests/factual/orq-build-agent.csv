@@ -1,0 +1,30 @@
+test_type,target,assertion,description
+mcp_tool_exists,get_agent,,get_agent listed on MCP server
+mcp_tool_exists,list_models,,list_models listed on MCP server
+mcp_tool_exists,search_entities,,search_entities listed on MCP server
+mcp_tool_exists,search_docs,,search_docs listed on MCP server
+mcp_tool_exists,create_agent,,create_agent listed on MCP server
+mcp_tool_exists,search_directories,,search_directories listed on MCP server
+mcp_tool_exists,update_agent,,update_agent listed on MCP server
+mcp_tool_exists,create_llm_eval,,create_llm_eval listed on MCP server
+mcp_tool_exists,get_llm_eval,,get_llm_eval listed on MCP server
+mcp_tool_exists,get_python_eval,,get_python_eval listed on MCP server
+mcp_tool_exists,list_traces,,list_traces listed on MCP server
+mcp_tool_param,search_entities,type,search_entities takes type
+doc_url,https://docs.orq.ai/docs/agents/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/agents/agent-studio,,agent-studio page reachable
+doc_url,https://docs.orq.ai/docs/agents/agent-api,,agent-api page reachable
+doc_url,https://docs.orq.ai/docs/tools/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/proxy/tool-calling,,tool-calling page reachable
+doc_url,https://docs.orq.ai/docs/knowledge/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/knowledge/creating,,creating page reachable
+doc_url,https://docs.orq.ai/docs/knowledge/using-in-prompt,,using-in-prompt page reachable
+doc_url,https://docs.orq.ai/docs/knowledge/api,,api page reachable
+doc_url,https://docs.orq.ai/docs/agents/memory,,memory page reachable
+doc_url,https://docs.orq.ai/docs/model-garden/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/proxy/supported-models,,supported-models page reachable
+doc_url,https://docs.orq.ai/docs/proxy/reasoning,,reasoning page reachable
+doc_url,https://docs.orq.ai/docs/proxy/fallbacks,,fallbacks page reachable
+doc_url,https://docs.orq.ai/docs/proxy/cache,,cache page reachable
+doc_url,https://docs.orq.ai/reference/agents/create-agent,,create-agent page reachable
+doc_url,https://docs.orq.ai/reference/agents/create-response,,create-response page reachable

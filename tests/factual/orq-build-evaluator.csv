@@ -1,0 +1,25 @@
+test_type,target,assertion,description
+mcp_tool_exists,get_llm_eval,,get_llm_eval listed on MCP server
+mcp_tool_exists,get_python_eval,,get_python_eval listed on MCP server
+mcp_tool_exists,search_entities,,search_entities listed on MCP server
+mcp_tool_exists,search_docs,,search_docs listed on MCP server
+mcp_tool_exists,create_llm_eval,,create_llm_eval listed on MCP server
+mcp_tool_exists,create_python_eval,,create_python_eval listed on MCP server
+mcp_tool_exists,list_models,,list_models listed on MCP server
+sdk_method,orq_ai_sdk.Orq,evals,Orq client has .evals
+cli_subcommand,evals create,,orq evals create exists
+cli_flag,evals create,-o,orq evals create accepts -o
+cli_subcommand,evals invoke,,orq evals invoke exists
+cli_flag,evals invoke,-o,orq evals invoke accepts -o
+cli_flag,evals invoke,--query,orq evals invoke accepts --query
+cli_flag,evals invoke,--output,orq evals invoke accepts --output
+cli_flag,evals invoke,--from-file,orq evals invoke accepts --from-file
+doc_url,https://docs.orq.ai/docs/evaluators/api-usage,,api-usage page reachable
+doc_url,https://docs.orq.ai/docs/evaluators/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/evaluators/creating,,creating page reachable
+doc_url,https://docs.orq.ai/docs/evaluators/library,,library page reachable
+doc_url,https://docs.orq.ai/docs/evaluators/human-review,,human-review page reachable
+doc_url,https://docs.orq.ai/docs/datasets/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/observability/traces,,traces page reachable
+doc_url,https://docs.orq.ai/docs/ai-studio/optimize/evaluators,,evaluators page reachable
+doc_url,https://docs.orq.ai/docs/administer/annotation-queue,,annotation-queue page reachable

@@ -1,0 +1,51 @@
+test_type,target,assertion,description
+mcp_tool_exists,search_entities,,search_entities listed on MCP server
+mcp_tool_exists,get_agent,,get_agent listed on MCP server
+mcp_tool_exists,list_spans,,list_spans listed on MCP server
+mcp_tool_exists,query_analytics,,query_analytics listed on MCP server
+sdk_import,orq_ai_sdk.Orq,,Orq importable from orq_ai_sdk
+sdk_method,orq_ai_sdk.Orq,agents,Orq client has .agents
+cli_subcommand,agents update,,orq agents update exists
+cli_subcommand,traces,,orq traces exists
+cli_subcommand,traces aggregate,,orq traces aggregate exists
+cli_subcommand,traces list-spans,,orq traces list-spans exists
+cli_flag,traces list-spans,-j,orq traces list-spans accepts -j
+cli_subcommand,traces get-span,,orq traces get-span exists
+cli_flag,traces get-span,-j,orq traces get-span accepts -j
+cli_subcommand,traces thread,,orq traces thread exists
+cli_subcommand,tools retrieve,,orq tools retrieve exists
+cli_subcommand,knowledge-bases retrieve,,orq knowledge-bases retrieve exists
+cli_subcommand,memory-stores retrieve,,orq memory-stores retrieve exists
+cli_subcommand,evals get,,orq evals get exists
+cli_subcommand,traces list-fields,,orq traces list-fields exists
+cli_flag,traces list-fields,-o,orq traces list-fields accepts -o
+cli_subcommand,traces list-facets,,orq traces list-facets exists
+cli_flag,traces list-facets,-o,orq traces list-facets accepts -o
+cli_flag,traces aggregate,--from-file,orq traces aggregate accepts --from-file
+cli_flag,traces aggregate,-o,orq traces aggregate accepts -o
+cli_subcommand,traces search,,orq traces search exists
+cli_flag,traces search,--from-file,orq traces search accepts --from-file
+cli_flag,traces search,-o,orq traces search accepts -o
+cli_flag,traces search,-j,orq traces search accepts -j
+cli_flag,traces get-span,-o,orq traces get-span accepts -o
+cli_flag,traces list-spans,-o,orq traces list-spans accepts -o
+cli_subcommand,agents get-response,,orq agents get-response exists
+cli_flag,agents get-response,-o,orq agents get-response accepts -o
+cli_flag,agents get-response,-j,orq agents get-response accepts -j
+cli_subcommand,reporting query,,orq reporting query exists
+cli_flag,traces list-spans,--raw,orq traces list-spans accepts --raw
+cli_subcommand,traces query-oql,,orq traces query-oql exists
+cli_subcommand,deployments,,orq deployments exists
+cli_flag,agents update,--help,orq agents update accepts --help
+cli_flag,reporting query,--from-file,orq reporting query accepts --from-file
+cli_flag,reporting query,-o,orq reporting query accepts -o
+cli_subcommand,agents retrieve,,orq agents retrieve exists
+cli_flag,agents retrieve,-o,orq agents retrieve accepts -o
+cli_flag,agents update,--from-file,orq agents update accepts --from-file
+cli_flag,agents update,--version-increment,orq agents update accepts --version-increment
+cli_flag,agents update,--version-description,orq agents update accepts --version-description
+doc_url,https://docs.orq.ai,,docs.orq.ai page reachable
+doc_url,https://docs.orq.ai/reference/deployments/get-config,,get-config page reachable
+mcp_tool_exists,get_analytics_overview,,get_analytics_overview listed on MCP server
+mcp_tool_exists,get_span,,get_span listed on MCP server
+mcp_tool_exists,update_agent,,update_agent listed on MCP server

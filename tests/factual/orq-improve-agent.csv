@@ -1,0 +1,30 @@
+test_type,target,assertion,description
+mcp_tool_exists,search_entities,,search_entities listed on MCP server
+mcp_tool_exists,get_agent,,get_agent listed on MCP server
+mcp_tool_exists,get_span,,get_span listed on MCP server
+mcp_tool_exists,get_deployment,,get_deployment listed on MCP server
+mcp_tool_exists,list_traces,,list_traces listed on MCP server
+mcp_tool_exists,search_docs,,search_docs listed on MCP server
+cli_subcommand,agents update,,orq agents update exists
+cli_subcommand,traces,,orq traces exists
+cli_subcommand,reporting query,,orq reporting query exists
+cli_subcommand,agents retrieve,,orq agents retrieve exists
+cli_subcommand,agents get-response,,orq agents get-response exists
+cli_subcommand,deployments get-config,,orq deployments get-config exists
+cli_subcommand,traces list-fields,,orq traces list-fields exists
+cli_flag,agents retrieve,-o,orq agents retrieve accepts -o
+cli_subcommand,deployments,,orq deployments exists
+cli_subcommand,tools retrieve,,orq tools retrieve exists
+cli_subcommand,knowledge-bases retrieve,,orq knowledge-bases retrieve exists
+cli_subcommand,memory-stores retrieve,,orq memory-stores retrieve exists
+cli_subcommand,evals get,,orq evals get exists
+cli_subcommand,traces aggregate,,orq traces aggregate exists
+cli_subcommand,traces search,,orq traces search exists
+cli_subcommand,traces list-spans,,orq traces list-spans exists
+cli_flag,traces list-spans,--raw,orq traces list-spans accepts --raw
+cli_flag,traces list-spans,-j,orq traces list-spans accepts -j
+cli_subcommand,agents retrieve support-bot,,orq agents retrieve support-bot exists
+cli_flag,agents retrieve support-bot,-o,orq agents retrieve support-bot accepts -o
+cli_subcommand,agents update support-bot,,orq agents update support-bot exists
+cli_flag,agents update support-bot,--from-file,orq agents update support-bot accepts --from-file
+cli_subcommand,datasets create,,orq datasets create exists
