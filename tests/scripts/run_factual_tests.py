@@ -9,7 +9,7 @@ Reads CSV test fixtures from tests/factual/<skill>.csv and executes
 deterministic checks against the live environment. Outputs structured
 JSON for CI integration.
 
-Phase 1 test types (auth-free):
+Phase 1 test types (the two mcp_* types need ORQ_API_KEY and skip without it):
   mcp_tool_exists    MCP server lists the named tool
   mcp_tool_param     MCP tool schema includes the named parameter
   sdk_import         Python import succeeds
@@ -17,10 +17,13 @@ Phase 1 test types (auth-free):
   cli_subcommand     `orq <subcommand> --help` resolves to that subcommand
   cli_flag           `orq <subcommand> --help` output mentions the flag
   doc_url            curl returns 2xx/3xx (non-gating: reported, never fails the run)
-  github_repo        `gh repo view` exits 0
+  github_repo        `gh repo view` finds the repo
   pypi_package       PyPI JSON API returns 200
   pypi_extra         PyPI metadata lists the extra (target package, assertion extra)
   npm_package        npm registry returns 200
+
+For github_repo and the package types only "not found" is drift and fails the
+run; an outage, rate limit or auth error skips the row with its reason.
 
 Usage (uv installs the latest orq-ai-sdk and evaluatorq, so SDK checks run against the
 current release rather than whatever the caller's environment holds):
@@ -65,15 +68,17 @@ PHASE1_TYPES = frozenset(
     }
 )
 
-# Network checks against third-party hosts flake for reasons unrelated to
-# drift, so their failures are reported but never fail the run.
+# Docs pages move and rate-limit too often for any failure to count as drift.
+# The other third-party checks gate on "not found" only (see SkipCheck).
 NON_GATING_TYPES = frozenset({"doc_url"})
+# Types whose check reads the assertion; a blank one would pass vacuously.
+ASSERTION_TYPES = frozenset({"cli_flag", "mcp_tool_param", "pypi_extra", "sdk_method"})
 NETWORK_RETRIES = 2
 REQUIRED_COLUMNS = ("test_type", "target", "assertion", "description")
 
 
 class SkipCheck(Exception):
-    """A prerequisite is absent by design (no ORQ_API_KEY on a fork PR), not drift."""
+    """The check could not run (no ORQ_API_KEY on a fork PR, a host outage), not drift."""
 
 
 @dataclass
@@ -305,6 +310,8 @@ class FactualTestRunner:
         # A mistyped test_type is a broken reviewed row: report it rather than drop it.
         if tc.test_type not in PHASE1_TYPES:
             return TestResult(**vars(tc), status="error", error=f"unknown test_type '{tc.test_type}'")
+        if tc.test_type in ASSERTION_TYPES and not tc.assertion.strip():
+            return TestResult(**vars(tc), status="error", error=f"{tc.test_type} row has an empty assertion")
         handler = getattr(self, f"_check_{tc.test_type}")
         try:
             passed, error = handler(tc.target, tc.assertion)
@@ -446,7 +453,7 @@ class FactualTestRunner:
     def _check_github_repo(self, target: str, _assertion: str) -> tuple[bool, str | None]:
         gh = self._resolve("gh")
         if gh is None:
-            return False, "gh CLI not on PATH"
+            raise SkipCheck("gh CLI not on PATH")
         result = subprocess.run(
             [gh, "repo", "view", target, "--json", "name"],
             capture_output=True,
@@ -455,53 +462,44 @@ class FactualTestRunner:
         )
         if result.returncode == 0:
             return True, None
-        return False, result.stderr.strip()[:200]
+        error = result.stderr.strip()[:200]
+        if "Could not resolve to a Repository" in error:
+            return False, error
+        raise SkipCheck(error)
 
-    def _check_pypi_extra(self, target: str, assertion: str) -> tuple[bool, str | None]:
-        cmd = ["curl", "-s", "--retry", str(NETWORK_RETRIES), "--max-time", "10", f"https://pypi.org/pypi/{target}/json"]
+    def _registry_get(self, url: str) -> tuple[int, str]:
+        """GET a registry URL: (status, body). Anything but 200 or 404 is not an
+        answer about the package, so it skips the row instead of failing it."""
+        cmd = ["curl", "-s", "--retry", str(NETWORK_RETRIES), "--max-time", "10", "-w", "\n%{http_code}", url]
         if os.environ.get("SSL_VERIFY", "1") == "0":
             cmd.insert(1, "-k")
-        result = subprocess.run(cmd, capture_output=True, timeout=45, text=True, encoding="utf-8")
-        if result.returncode != 0:
-            return False, f"curl exit {result.returncode}"
         try:
-            extras = json.loads(result.stdout)["info"].get("provides_extra") or []
-        except (ValueError, KeyError):
+            result = subprocess.run(cmd, capture_output=True, timeout=45, text=True, encoding="utf-8")
+        except FileNotFoundError:
+            raise SkipCheck("curl not on PATH") from None
+        if result.returncode != 0:
+            raise SkipCheck(f"curl exit {result.returncode}: {result.stderr.strip()[:200]}")
+        body, _, code = result.stdout.rpartition("\n")
+        if code not in ("200", "404"):
+            raise SkipCheck(f"{url}: HTTP {code}")
+        return int(code), body
+
+    def _check_pypi_extra(self, target: str, assertion: str) -> tuple[bool, str | None]:
+        code, body = self._registry_get(f"https://pypi.org/pypi/{target}/json")
+        if code == 404:
             return False, f"'{target}' not on PyPI"
+        extras = json.loads(body)["info"].get("provides_extra") or []
         if assertion in extras:
             return True, None
         return False, f"extra '{assertion}' not in {target} (have: {', '.join(extras)})"
 
     def _check_npm_package(self, target: str, _assertion: str) -> tuple[bool, str | None]:
-        cmd = ["curl", "-s", "--retry", str(NETWORK_RETRIES), "--max-time", "10", "-o", os.devnull, "-w", "%{http_code}",
-               f"https://registry.npmjs.org/{target}"]
-        if os.environ.get("SSL_VERIFY", "1") == "0":
-            cmd.insert(1, "-k")
-        result = subprocess.run(cmd, capture_output=True, timeout=45, text=True)
-        if result.returncode != 0:
-            return False, f"curl exit {result.returncode}"
-        code = result.stdout.strip()
-        return (True, None) if code == "200" else (False, f"HTTP {code}")
+        code, _ = self._registry_get(f"https://registry.npmjs.org/{target}")
+        return (True, None) if code == 200 else (False, f"'{target}' not on npm")
 
     def _check_pypi_package(self, target: str, _assertion: str) -> tuple[bool, str | None]:
-        url = f"https://pypi.org/pypi/{target}/json"
-        cmd = ["curl", "-s", "--retry", str(NETWORK_RETRIES), "--max-time", "10", "-o", os.devnull, "-w", "%{http_code}", url]
-        if os.environ.get("SSL_VERIFY", "1") == "0":
-            cmd.insert(1, "-k")
-        try:
-            result = subprocess.run(cmd, capture_output=True, timeout=45, text=True)
-            if result.returncode != 0:
-                return False, f"curl exit {result.returncode}"
-            code = int(result.stdout.strip())
-            if code == 200:
-                return True, None
-            if code == 404:
-                return False, f"'{target}' not on PyPI"
-            return False, f"HTTP {code}"
-        except FileNotFoundError:
-            return False, "curl not on PATH"
-        except ValueError:
-            return False, f"unexpected curl output: {result.stdout.strip()[:50]}"
+        code, _ = self._registry_get(f"https://pypi.org/pypi/{target}/json")
+        return (True, None) if code == 200 else (False, f"'{target}' not on PyPI")
 
 
 # ---------------------------------------------------------------------------
@@ -577,6 +575,21 @@ def main() -> None:
             print(f", {summary['non_gating_failed']} non-gating ({', '.join(sorted(NON_GATING_TYPES))})", end="")
         print()
 
+    # Skipped rows measured nothing: say so loudly, so a missing secret or a
+    # host outage does not hide behind a green run.
+    if summary["skipped"]:
+        reasons: dict[str, int] = {}
+        for r in results:
+            if r.status == "skipped":
+                reasons[r.error or "?"] = reasons.get(r.error or "?", 0) + 1
+        print(f"warning: {summary['skipped']} of {summary['total']} rows skipped, not checked:", file=sys.stderr)
+        for reason, n in sorted(reasons.items(), key=lambda kv: -kv[1]):
+            print(f"  {n:4d}  {reason}", file=sys.stderr)
+
+    # A full run that loads nothing means tests/factual/ is gone or unreadable.
+    if not results and not args.skill and not args.test_type:
+        print("error: no factual rows loaded from tests/factual/", file=sys.stderr)
+        sys.exit(1)
     sys.exit(1 if summary["failed"] or summary["errors"] else 0)
 
 

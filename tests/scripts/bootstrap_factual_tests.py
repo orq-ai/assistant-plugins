@@ -31,6 +31,14 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from run_factual_tests import (
+    MCP_URL,
+    PHASE1_TYPES,
+    REQUIRED_COLUMNS,
+    MCPClient,
+)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SKILLS_DIR = REPO_ROOT / "skills"
 FACTUAL_DIR = REPO_ROOT / "tests" / "factual"
@@ -137,6 +145,8 @@ class Rows:
         self._rows: dict[tuple[str, str, str], str] = {}
 
     def add(self, test_type: str, target: str, assertion: str, description: str) -> None:
+        if test_type not in PHASE1_TYPES:
+            raise ValueError(f"unknown test_type '{test_type}'")
         self._rows.setdefault((test_type, target, assertion), description)
 
     def as_list(self) -> list[TestRow]:
@@ -159,9 +169,6 @@ def live_mcp_tools() -> set[str] | None:
     api_key = os.environ.get("ORQ_API_KEY")
     if not api_key:
         return None
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from run_factual_tests import MCP_URL, MCPClient
-
     return set(MCPClient(MCP_URL, api_key).list_tools())
 
 
@@ -354,7 +361,7 @@ def main() -> None:
 
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f, lineterminator="\n")
-            w.writerow(["test_type", "target", "assertion", "description"])
+            w.writerow(REQUIRED_COLUMNS)
             w.writerows(rows)
         print(f"  {name}: {len(rows)} tests -> {csv_path.relative_to(REPO_ROOT)}")
         total += len(rows)

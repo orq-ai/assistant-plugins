@@ -45,6 +45,13 @@ jobs:
             echo "Factual runner produced no results, see the Run factual tests log." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+          # Skipped rows measured nothing; surface them as an annotation, not just a count.
+          skipped=$(jq -r .summary.skipped factual-results.json)
+          if [ "$skipped" -gt 0 ]; then
+            reasons=$(jq -r '[.results[] | select(.status == "skipped") | .error] | group_by(.) | map("\(length)x \(.[0])") | join("; ")' factual-results.json)
+            echo "::warning title=Factual rows skipped::$skipped rows were not checked: $reasons"
+            echo "> **Warning:** $skipped rows skipped, not checked: $reasons" >> "$GITHUB_STEP_SUMMARY"
+          fi
           jq -r '"\(.summary.passed)/\(.summary.total) passed, \(.summary.failed) failed, \(.summary.errors) errors, \(.summary.non_gating_failed) non-gating, \(.summary.skipped) skipped"' factual-results.json >> "$GITHUB_STEP_SUMMARY"
           jq -r '.results[] | select(.status != "passed") | "- `\(.skill)` \(.test_type) `\(.target)`: \(.status) \(.error // "")"' factual-results.json >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
