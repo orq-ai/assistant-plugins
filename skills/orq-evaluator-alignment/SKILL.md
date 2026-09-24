@@ -772,4 +772,6 @@ labels rather than pairing them against a file that moved.
 
 ## Companion Skills
 
+- `orq-build-evaluator` — build the judge in the first place; come back here when it disagrees with humans.
+- `evaluatorq` — run a judge from code. A code-defined `llm_jury()` panel is the other answer to an unstable judge: instead of rewriting one judge's prompt, poll several and read `raw_agreement` / Krippendorff's alpha. Alignment against human labels is still this skill's job — a panel that agrees with itself can be uniformly wrong.
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `-o json` output. See its "MCP tools or the CLI?" table before choosing.

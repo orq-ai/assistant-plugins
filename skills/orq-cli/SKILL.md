@@ -472,21 +472,21 @@ orq traces list-facets -o json     # facetable fields
 
 The registry **grows and renames between releases**: 56 → 57 fields in one afternoon when `attr.*` became `attributes.*`, 66 on 5.1.0, **168 on 8.6.9** (and 50 facets). Each entry now carries `name`, `type`, `operators`, `sortable`, `facet`, `groupable`, `scope` and an `aliases` list, and 108 of the 168 have aliases (for example `operation` is also `attributes.gen_ai.operation.name`), so a renamed field can stay reachable under its old spelling. A name that resolves to nothing now **fails loudly**: `HTTP 400: invalid filter: unknown field "attr.nonexistent_zzz"`. On 5.1.0 it returned zero rows without erroring, which looked exactly like "no matching traces", so a script written for 5.1.0 may carry a workaround it no longer needs. Resolve names at call time; never hard-code one from this document.
 
-### Reading a conversation: `traces conversation`
+### Reading a conversation: `traces thread`
 
-> **Probed against 8.6.9 (API 4.14.20), 2026-09-21,** on a live trace with a 3-message conversation (first probed on 8.5.2, RES-1507): `--spans` (marks the chosen span, `NOTE` says why others were skipped), the default `xml` and `markdown` renders, `--slice`, `--max-chars`, `-o json` (keys `messages`, `source`), and the exits below all behaved as documented. `--include` and `--reasoning` were not re-run. **On 8.6.9 the command is `traces thread` and it has no `conv` alias** (`orq traces conv` prints the `traces` group help at exit 0), so the `conv` spellings below apply to the release that renamed it.
+> **Probed against 8.6.9 (API 4.14.20), 2026-09-21,** on a live trace with a 3-message conversation (first probed on 8.5.2, RES-1507): `--spans` (marks the chosen span, `NOTE` says why others were skipped), the default `xml` and `markdown` renders, `--slice`, `--max-chars`, `-o json` (keys `messages`, `source`), and the exits below all behaved as documented. `--include` and `--reasoning` were not re-run.
 
-`orq traces conversation <trace-id> [span-id]` renders a trace's conversation instead of its span JSON. `conv` is the short spelling. Added in 7.4.0 (RES-1507) as `traces thread`, substantially extended by 8.5.2, and renamed to `conversation` in the next major after 8.6.9 — the old name was dropped outright, so on an 8.x CLI it is still `traces thread`. `orq traces --help` says which one you have. **Do not reconstruct a conversation out of `get-span` attributes** — the payload shapes differ per dialect (Chat Completions, OpenAI Responses, the flattened OpenTelemetry GenAI shape orq collectors emit) and `conversation` normalizes all three into one model. It is also far cheaper to read: on one live Responses span the default render was roughly an order of magnitude smaller than the raw `get-span -o json`, and `-o json` about a quarter of it.
+`orq traces thread <trace-id> [span-id]` renders a trace's conversation instead of its span JSON. Added in 7.4.0 (RES-1507) and substantially extended by 8.5.2. **Do not reconstruct a conversation out of `get-span` attributes** — the payload shapes differ per dialect (Chat Completions, OpenAI Responses, the flattened OpenTelemetry GenAI shape orq collectors emit) and `thread` normalizes all three into one model. It is also far cheaper to read: on one live Responses span the default render was roughly an order of magnitude smaller than the raw `get-span -o json`, and `-o json` about a quarter of it.
 
 ```sh
-orq traces conv <trace-id>                     # picks the span, names it in the output
-orq traces conv <trace-id> <span-id>           # that span, nothing else
-orq traces conv <trace-id> --spans             # which span it picks, and the alternatives
-orq traces conv <trace-id> -o markdown         # to paste into a ticket or chat
-orq traces conv <trace-id> -o json             # the canonical conversation, not the raw span
-orq traces conv <trace-id> --slice -1          # last message; also 2, 2:, :-1, 1:3
-orq traces conv <trace-id> --match get_weather # only turns matching a regexp
-orq traces conv <trace-id> -i user,assistant   # only these parts
+orq traces thread <trace-id>                     # picks the span, names it in the output
+orq traces thread <trace-id> <span-id>           # that span, nothing else
+orq traces thread <trace-id> --spans             # which span it picks, and the alternatives
+orq traces thread <trace-id> -o markdown         # to paste into a ticket or chat
+orq traces thread <trace-id> -o json             # canonical thread, not the raw span
+orq traces thread <trace-id> --slice -1          # last message; also 2, 2:, :-1, 1:3
+orq traces thread <trace-id> --match get_weather # only turns matching a regexp
+orq traces thread <trace-id> -i user,assistant   # only these parts
 ```
 
 **Its `-o` is its own, not the CLI-wide one.** The enum is `[xml, markdown, json, yaml, toon]`, default `xml`; `ORQ_OUTPUT_FORMAT` and the config file are not read, so the workspace default never reaches this command. `-o table` is refused outright (exit 1, before any request):
@@ -502,7 +502,7 @@ In both, the `index` is the `--slice` index and the system message is `0`, so `-
 
 Flags beyond `-o`, all verified live on 8.5.2:
 
-- `--spans` prints the span table instead of a conversation: `TRY` (read order, not a ranking), `SPAN`, `TYPE`, `STARTED`, `TURNS` (messages found, blank when not read), `NAME`, `NOTE` (why a span was passed over), with `*` on the one selected. Run it when you doubt the selection — `TURNS` is what tells you the right span was picked.
+- `--spans` prints the span table instead of a thread: `TRY` (read order, not a ranking), `SPAN`, `TYPE`, `STARTED`, `TURNS` (messages found, blank when not read), `NAME`, `NOTE` (why a span was passed over), with `*` on the one selected. Run it when you doubt the selection — `TURNS` is what tells you the right span was picked.
 - `--match <regexp>` keeps messages whose recorded text matches, searching message text, reasoning, JSON values, and tool calls by name, id and arguments. Case-insensitive; `(?-i)` inline to respect case. Surviving messages **keep their original indices**, so a filtered render can read `0, 2, 4`.
 - `-i/--include` renders only the named parts: `system` (covers developer), `user`, `assistant`, `tool`, `reasoning`. Naming no role keeps every role, so `-i reasoning` is the thinking from all of them and `-i user,assistant` is the turns without it.
 - `--max-chars` (default **4000**) cuts each rendered block and appends `[truncated: N more characters]`; `--max-chars 0` lifts the cap. Applied last, so `--match` still searches the full text. Only text inside elements is cut, so the XML stays well-formed.
@@ -512,7 +512,7 @@ Filters compose in a fixed order: `--slice`, then `--match`, then `--include`, t
 
 Three exit-code facts, each from a recorded call on 8.5.2:
 
-- **An empty selection is exit 0, not an error.** `--slice 99:` on a 5-message conversation, and `-i reasoning` on one with none, both printed the `<conversation …>` header with no messages and exited **0**. Bounds clamp like Python; check for messages rather than trusting the exit code.
+- **An empty selection is exit 0, not an error.** `--slice 99:` on a 5-message thread, and `-i reasoning` on a thread with none, both printed the `<thread …>` header with no messages and exited **0**. Bounds clamp like Python; check for messages rather than trusting the exit code.
 - **A bad slice expression exits 1** and names the grammar: `invalid slice expression "nonsense": expected an index or a range, for example 2, 2:, :-1 or 1:3`.
 - **A trace with no conversational span exits 1**: `no supported conversation found in trace "<id>"`. That is a real answer (evaluator-only traces do this), not a bug to work around — and it is distinct from a bad id, which is `HTTP 404: trace not found`.
 

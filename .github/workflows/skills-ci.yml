@@ -24,15 +24,37 @@ jobs:
         # depend on agent-plugins.org being up. ajv itself comes from npx, the
         # same zero-install pattern the install-sanity job below uses.
         run: npx -y ajv-cli@5 validate --spec=draft2020 -s tests/schemas/agent-plugins-1.0.0.plugin.schema.json -d plugin.json
-      - name: Validate the orq-recommend-evaluators data model against its fixtures
-        # Valid fixtures must pass and every invalid fixture must fail, so a
-        # loosened schema turns the run red instead of silently accepting more.
+      - name: Validate every shipped data model against its fixtures
+        # A skill opts in by shipping resources/<name>.schema.json next to
+        # tests/fixtures/{valid,invalid}. Valid fixtures must pass and every
+        # invalid one must fail, so a loosened schema turns the run red
+        # instead of silently accepting more. Each file is checked on its own:
+        # a glob that matched nothing would otherwise make the step green.
         run: |
           set -euo pipefail
-          d=skills/orq-recommend-evaluators
-          ajv() { npx -y ajv-cli@5 test --spec=draft2020 --allow-union-types -s "$d/resources/evaluations.schema.json" "$@"; }
-          ajv -d "$d/tests/fixtures/valid/*.json" --valid
-          ajv -d "$d/tests/fixtures/invalid/*.json" --invalid
+          found=0
+          for schema in skills/*/resources/*.schema.json; do
+            [ -e "$schema" ] || continue
+            d="${schema%/resources/*}"
+            [ -d "$d/tests/fixtures/valid" ] || continue
+            found=1
+            for state in valid invalid; do
+              n=$(find "$d/tests/fixtures/$state" -name '*.json' | wc -l)
+              if [ "$n" -eq 0 ]; then
+                echo "::error::$d/tests/fixtures/$state holds no fixtures"
+                exit 1
+              fi
+              for f in "$d/tests/fixtures/$state"/*.json; do
+                npx -y ajv-cli@5 test --spec=draft2020 --allow-union-types \
+                  -s "$schema" -d "$f" "--$state"
+              done
+            done
+            echo "$d: fixtures checked against $(basename "$schema")"
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no skill schema found; the discovery loop is broken"
+            exit 1
+          fi
       - name: Validate skills (frontmatter, lock invariants + hash freshness, version sync, content patterns)
         run: node tests/scripts/validate-skills.mjs
       - uses: astral-sh/setup-uv@v5
@@ -103,6 +125,35 @@ jobs:
           done
           if [ "$found" -eq 0 ]; then
             echo "::error::no skills/*/tests/requirements.txt found — the test job would pass vacuously"
+            exit 1
+          fi
+
+  ts-contract-tests:
+    # The TypeScript claims in orq-compare-agents/resources/evaluatorq-api.md have
+    # no runtime test — `tsc` is the right oracle for them, because the risk is a
+    # rename (`invokeEvaluatorRequest` was already renamed once under the docs).
+    # The fixture installs the packages unpinned: a red run here means upstream
+    # moved and the markdown is stale, which is exactly what it exists to catch.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Type-check each skill's TS contract fixture
+        run: |
+          set -euo pipefail
+          found=0
+          for pkg in skills/*/tests/ts/package.json; do
+            [ -e "$pkg" ] || continue
+            dir=$(dirname "$pkg")
+            found=1
+            echo "::group::tsc $dir"
+            (cd "$dir" && npm install --no-audit --no-fund && npx tsc --noEmit)
+            echo "::endgroup::"
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no skills/*/tests/ts/package.json found — the TS contract job would pass vacuously"
             exit 1
           fi
 

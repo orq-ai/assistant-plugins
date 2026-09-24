@@ -9,12 +9,12 @@ description: >
   production traffic yet. Do NOT use to build and validate one specific judge in
   depth (use orq-build-evaluator), to realign a judge that already exists (use
   orq-evaluator-alignment), or to build a failure taxonomy (use orq-analyze-traces).
-allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq traces conversation:*), Bash(orq traces conv:*), Bash(orq traces thread:*), Bash(orq agents retrieve:*), Bash(orq agents get-response:*), Bash(orq agents list:*), Bash(orq deployments get-config:*), Bash(orq tools retrieve:*), Bash(orq knowledge-bases retrieve:*), Bash(orq memory-stores retrieve:*), Bash(orq evals get:*), Bash(orq evals all:*), Bash(orq evals invoke:*), Bash(orq models list:*), Bash(orq evals create:*), Bash(orq agents update:*), mcp__orq-workspace__search_entities, mcp__orq-workspace__get_agent, mcp__orq-workspace__get_deployment, mcp__orq-workspace__get_span, mcp__orq-workspace__get_llm_eval, mcp__orq-workspace__get_python_eval, mcp__orq-workspace__search_docs
+allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq traces thread:*), Bash(orq agents retrieve:*), Bash(orq agents get-response:*), Bash(orq agents list:*), Bash(orq deployments get-config:*), Bash(orq tools retrieve:*), Bash(orq knowledge-bases retrieve:*), Bash(orq memory-stores retrieve:*), Bash(orq evals get:*), Bash(orq evals all:*), Bash(orq evals invoke:*), Bash(orq models list:*), Bash(orq evals create:*), Bash(orq evals update:*), Bash(orq agents update:*), Bash(npx:*), mcp__orq-workspace__search_entities, mcp__orq-workspace__get_agent, mcp__orq-workspace__get_deployment, mcp__orq-workspace__get_span, mcp__orq-workspace__get_llm_eval, mcp__orq-workspace__get_python_eval, mcp__orq-workspace__search_docs
 ---
 
 # Recommend Evaluators
 
-> `allowed-tools` is a read/search allowlist plus **two enumerated write verbs**: `orq evals create` and `orq agents update` (attaching an evaluator). `orq evals invoke` runs a created evaluator once on a sample so the user can see it work; it writes nothing. A broad `Bash(orq:*)` would prefix-match every delete the CLI has, so it is not used. `create_*`/`update_*`/`delete_*` MCP tools still prompt. **Pre-approval is not permission to write:** this skill is a suggester. Every create and every attach sits behind its own `AskUserQuestion` gate, whatever `allowed-tools` permits.
+> `allowed-tools` is a read/search allowlist plus **three enumerated write verbs**: `orq evals create`, `orq evals update` (only to repair an evaluator this run created, step 20) and `orq agents update` (attaching an evaluator). `Bash(npx:*)` is there for one thing: validating the JSON this skill writes against its schema (step 16). `orq evals invoke` runs a created evaluator once on a sample so the user can see it work; it writes nothing. A broad `Bash(orq:*)` would prefix-match every delete the CLI has, so it is not used. `create_*`/`update_*`/`delete_*` MCP tools still prompt. **Pre-approval is not permission to write:** this skill is a suggester. Every create and every attach sits behind its own `AskUserQuestion` gate, whatever `allowed-tools` permits.
 
 You are an **orq.ai evaluation advisor**. Given one agent or deployment, you work out which evaluators it is missing, explain each one in terms of that agent's own instructions or traces, and create the ones the user picks.
 
@@ -69,8 +69,8 @@ Recommend Evaluators Progress:
 - At most 5 recommendations, each with a criterion, kind, output type, evidence, priority, and the consequence that clears the step 14 bar, listed in rank order; none duplicates an attached evaluator
 - Attached evaluators that error on invoke are reported as broken
 - Every `llm_eval` / `python_eval` recommendation names the existing evaluators it was checked against and why none of them fits
-- `eval-recommendations-<key>-<YYYYMMDD-HHMMSS>.md` is written, and next to it a `.json` that validates against [`resources/evaluations.schema.json`](resources/evaluations.schema.json)
-- Each evaluator the user approved exists on orq.ai and returned a verdict from one `orq evals invoke`; each one the user declined was not created
+- `eval-recommendations-<key>-<YYYYMMDD-HHMMSS>.md` is written, and next to it a `.json` that was **checked** against [`resources/evaluations.schema.json`](resources/evaluations.schema.json) in step 16, not merely written to look like it
+- Each evaluator the user approved exists on orq.ai and returned a verdict on both smoke cases (step 20); each one the user declined was not created
 - Attachments happened only where the user said yes, and a re-read shows `settings.tools[]` unchanged
 
 **Companion skills:**
@@ -107,11 +107,11 @@ Recommend Evaluators Progress:
 
 ### Phase 2: Inventory Existing Evaluators
 
-3. **Attached.** Each entry is `{id, execute_on, sample_rate}`, where `execute_on` is `input` or `output`. Resolve each with `orq evals get <id> -o json -j '{name:display_name,type:type,description:description,output_type:output_type}'`. `evals get` has **no `key` field**: the key you created with comes back as `display_name`, while `evals all` returns it as `key`. Never pull the full body unprojected; judge prompts run to several KB.
+3. **Attached.** Each entry is `{id, execute_on, sample_rate}`, where `execute_on` is `input` or `output`. Resolve each with `orq evals get <id> -o json -j '{name:display_name,type:type,description:description,output_type:output_type}'`. `evals get` has **no `key` field**: the key comes back as `display_name` (`evals all` returns it as `key`). Never pull the full body unprojected; judge prompts run to several KB.
 
    Invoke each attached evaluator once on a plausible input and output (step 15.3 syntax). Judge models reach end of life and return HTTP 500, and a judge on a variable the agent never fills scores empty input. Report either as **broken** in `existing[].status`; the user may be relying on a check that never runs.
 
-4. **In the workspace.** `orq evals all --limit 200 -o json -j '{has_more:has_more,data:data[].{id:_id,key:key,type:type,project_id:project_id,description:description,fn:function_params.type}}' > evals-inventory.json`, paging with `--starting-after <last _id>` while `has_more` is true (a real workspace runs past 200). Do not pass `--project-id`: the evaluators endpoint answers `404 Project not found` for every project id, including ones that hold evaluators (verified 2026-09-21), so filter client side. Tag each row `same-project` or `other-project` by its `project_id`. The listing is cheap; reading and smoke-testing evaluators is what costs, and step 15.1 limits that to the agent's project unless a criterion is generic.
+4. **In the workspace.** `orq evals all --limit 200 -o json -j '{has_more:has_more,data:data[].{id:_id,key:key,type:type,project_id:project_id,description:description,fn:function_params.type}}' > evals-inventory.json`, paging with `--starting-after <last _id>` while `has_more` is true (a real workspace runs past 200). Do not pass `--project-id`: it answers `404 Project not found` for every project (see the `evals` table in [`orq-cli`'s command map](../orq-cli/resources/command-map.md)), so filter client side. Tag each row `same-project` or `other-project` by its `project_id`. The listing is cheap; reading and smoke-testing evaluators is what costs, and step 15.1 limits that to the agent's project unless a criterion is generic.
 
    **If a page errors,** retry it once. If it fails again, the inventory is **incomplete**: tell the user, and do not treat "no match found" as "nothing exists" in step 15.4. Each recommendation that would otherwise become a new evaluator gets the `caveats` entry "inventory incomplete, an existing evaluator may cover this", and the user decides whether to create it.
 
@@ -183,7 +183,7 @@ Recommend Evaluators Progress:
 
 12. **With an artifact:** each `failure_modes[]` entry with `fix: evaluator` becomes a candidate, carrying its `rate`, `evidence`, and `classification` (`generalization-code-checkable` → `python_eval`, `generalization-subjective` → LLM judge). Modes with `fix: prompt` / `config` go under "Not an evaluator".
 
-13. **Without an artifact:** a bounded read, not an analysis. `orq traces search` (sort `end_time desc`, ids only) for up to 20 recent traces, then read those worth reading with the CLI, which lets you project only the fields you need: find the LLM span with `list-spans` and project its message text. Where it lives varies by agent: try `-j 'span.attributes.gen_ai.{input:input,output:output}'`, and if either holds no message text (null, or only a stub like `{"type":"text"}`), `-j 'span.attributes.openresponses.{input:input._value,output:output._value}'`. On an orq-hosted agent `openresponses.input` often returns an item count only, so user turns stay unreadable; fall back to `orq agents get-response` on the trace, and look for the agent span under either spelling (`span.agent` named `agent.response`, or `span.agent_execution`). If the projections return nothing readable, `orq traces conversation <trace_id> -o json` (named `traces thread`, with no `conv` alias, through CLI 8.6.9; `orq traces --help` says which you have) returns the normalized conversation. Use single-key `-j` projections there: a multi-key projection containing a filter expression fails on CLI 8.4.1. Both hold JSON strings; for a multi-turn input only an item count may come back, so say when earlier turns could not be read. Use them only to **confirm or rank** Phase 4a candidates ("the scope rule was broken in 3 of 20") and to spot a failure the config did not predict. Cite trace ids. More than that is `orq-analyze-traces`' job. Use `mcp__orq-workspace__get_span mode=full` only when the CLI projections return no text. When the Task tool is available, hand the trace reads to one subagent that returns a short summary per trace (trace id, user request, what the agent did, which candidate rules it broke), so raw spans never fill the main context.
+13. **Without an artifact:** a bounded read, not an analysis. `orq traces search` (sort `end_time desc`, ids only) for up to 20 recent traces, then read those worth reading with the CLI, which lets you project only the fields you need: find the LLM span with `list-spans` and project its message text. Where it lives varies by agent: try `-j 'span.attributes.gen_ai.{input:input,output:output}'`, and if either holds no message text (null, or only a stub like `{"type":"text"}`), `-j 'span.attributes.openresponses.{input:input._value,output:output._value}'`. On an orq-hosted agent `openresponses.input` often returns an item count only, so user turns stay unreadable; fall back to `orq agents get-response` on the trace, and look for the agent span under either spelling (`span.agent` named `agent.response`, or `span.agent_execution`). If the projections return nothing readable, `orq traces thread <trace_id> -o json` returns the normalized conversation. The subcommand is `thread` on the shipped CLI (10.3.1); `orq traces conversation` and `orq traces conv` print the `traces` group help and **exit 0**, so a wrong spelling reads as an empty conversation rather than an error. `orq traces --help` is the check. Use single-key `-j` projections there; a multi-key projection containing a filter expression has failed on older CLIs. Both hold JSON strings; for a multi-turn input only an item count may come back, so say when earlier turns could not be read. Use them only to **confirm or rank** Phase 4a candidates ("the scope rule was broken in 3 of 20") and to spot a failure the config did not predict. Cite trace ids. More than that is `orq-analyze-traces`' job. Use `mcp__orq-workspace__get_span mode=full` only when the CLI projections return no text. When the Task tool is available, hand the trace reads to one subagent that returns a short summary per trace (trace id, user request, what the agent did, which candidate rules it broke), so raw spans never fill the main context.
 
 ### Phase 5: Rank, Match, Write, Present, Ask
 
@@ -231,7 +231,7 @@ Recommend Evaluators Progress:
       ```
 
       - **Criteria grounded in the agent's instructions** (no invented facts, follows the procedure) need the instructions in view: pass `--messages` with a system turn, via `--from-file` for anything long. With only `--query`/`--output` such a judge fails correct answers.
-      - **Trajectory criteria:** `--context '{"input":{"user_query":"…"},"output":{"response":"…","tools_called":[{"tool_name":"…","arguments":"{\"order_id\":\"…\"}"}]}}'`. `arguments` is a JSON **string**; an object returns HTTP 400.
+      - **Trajectory criteria and anything beyond query and output:** take the body shape from [`api-reference.md` "Programmatic Invoke"](../orq-build-evaluator/resources/api-reference.md), which documents `--context` against `--from-file`, the flat aliases and what each variable is called. `tools_called` entries there are `{name, arguments, output}`, and `arguments` is a JSON **string**; an object returns HTTP 400. Do not confuse it with a `python_eval`'s `log["tool_calls"]`, whose entries name the tool under `tool_name` (step 18).
       - **Retrievals and tool results:** pass them as a `retrievals` array in a flat `--from-file` body rather than on the command line. A judge that checks figures against a tool's output reads the tool result from there.
       - **A transient HTTP 520:** retry once.
 
@@ -353,17 +353,30 @@ Recommend Evaluators Progress:
 
     Write it even when `evaluations` is empty. Every key shown is required, and no others are allowed:
 
-    - `target`: `type` is the step 1 mode (`agent` or `deployment`), `key` its key, `id` its id (`_id` in the retrieve output when `id` is null).
+    - `target`: `type` is the step 1 mode (`agent` or `deployment`), `key` its key, `id` its id (`_id` in the retrieve output when `id` is null; write `null` only when neither is returned).
+    - `description`: the recommendation's `criterion`.
     - `grounding`: the front matter's `grounding` as `mode` and `grounding_reason` as `reason`, so an empty list still says what backs it.
     - `evaluations`: the `recommendations` in rank order, never the `optional` ones. An empty list is a valid answer.
-    - `name`: the recommendation's `name`, also for a `reuse` item. `description`: its `criterion`.
+    - `name`: the recommendation's `name` for a new evaluator (kebab-case), and for a `reuse` item the **existing evaluator's key** as the inventory spells it, spaces and capitals included (`BLEU Score`), so a consumer can join it against the workspace.
     - `type`: `llm_eval` or `python_eval` for a new evaluator. For a `reuse` item, the existing evaluator's `type` from the inventory (`llm_eval`, `python_eval`, `function_eval`, `json_schema`, `http_eval` or `ragas`).
     - `existing_evaluator_id`: the `reuse_id` for a `reuse` item, otherwise `null`.
     - `execute_on` and `priority`: copied from the recommendation.
     - `reason`: the `consequence`, then the strongest `evidence` (a failure rate with trace ids beats an instruction quote), in one sentence of at most about 40 words.
     - `caveats`: copied from the recommendation, `[]` when it has none. The incomplete-inventory and other-projects-not-checked caveats from steps 4 and 15.1 must reach this list, because a tool reading the `.json` sees nothing else.
 
-17. **Present in rank order and ask** with one `AskUserQuestion` (`multiSelect: true`): which recommendations to act on. A new evaluator is created (step 19) and then offered for attaching; a `reuse` item skips creation and goes straight to the attach question (step 21). Offer "none, just keep the file". Mention the `optional` list in one line; the user can promote an item, which then goes through step 15 matching first. Declined recommendations stay in the file.
+    The cap of 5 is this skill's rule, not the schema's: the schema accepts a longer list so a promotion in step 17 cannot make the file invalid.
+
+    **Then validate the file you just wrote,** before showing anything:
+
+    ```bash
+    npx -y ajv-cli@5 test --spec=draft2020 --allow-union-types \
+      -s <this skill>/resources/evaluations.schema.json \
+      -d eval-recommendations-<key>-<timestamp>.json --valid
+    ```
+
+    Fix what it reports and rewrite the file until it passes. If `npx` is unavailable, say so and check the keys above by hand instead. Never present a file that failed validation, and never silently drop a recommendation to make it pass.
+
+17. **Present in rank order and ask** with one `AskUserQuestion` (`multiSelect: true`): which recommendations to act on. A new evaluator is created (step 19) and then offered for attaching; a `reuse` item skips creation and goes straight to the attach question (step 21). Offer "none, just keep the file". Mention the `optional` list in one line; the user can promote an item, which then goes through step 15 matching first, moves from `optional` to `recommendations` in the `.md`, and is appended to `evaluations` in the `.json` at its rank. **Rewrite and re-validate both files** (step 16) after any promotion, so what is on disk is what the user approved. Declined recommendations stay in the file.
 
 ### Phase 6: Create, Smoke-Test, Offer to Attach
 
@@ -379,7 +392,7 @@ For each recommendation the user selected, one at a time (a `reuse` item goes to
      "prompt": "<judge prompt>"}
     ```
 
-    A `python_eval` body carries `code` instead of `prompt`/`model`/`mode`. The code defines `evaluate(log)` returning a boolean or number (the API rejects `string`); `log` has `input`, `output`, `reference`, `expected_output`, `retrievals`, `messages`, `tool_calls`. Each `log["tool_calls"]` entry names its tool under **`tool_name`**, not `name` or `function.name`: both of those read as `None`, so a check built on them silently passes every case. The list keeps call order. A tool-order check, verified live against all four orderings:
+    A `python_eval` body carries `code` instead of `prompt`/`model`/`mode`. The `evaluate(log)` contract and the `log` keys are in [`orq-build-evaluator`](../orq-build-evaluator/SKILL.md) ("Python evaluators"); do not restate them here. One trap is worth repeating because it fails silently: each `log["tool_calls"]` entry names its tool under **`tool_name`**, not `name` or `function.name`, both of which read as `None`, so a check built on them passes every case. The list keeps call order. A tool-order check, verified live against all four orderings:
 
     ```python
     def evaluate(log):
@@ -389,17 +402,19 @@ For each recommendation the user selected, one at a time (a `reuse` item goes to
         return "lookup_order" in names[: names.index("issue_refund")]
     ```
 
-    `key` must match `^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$`. Put it in the **agent's** project (`project_id`, not `path`; the two are mutually exclusive). Use `openai/gpt-4.1` as the judge model. Only when the create or the step 20 smoke invoke rejects it, pick another from `orq models list -o json` (it takes no `--limit`): use the routable **`refId`**, not `model_id` (`gpt-4.1`, which several providers share), on an entry with `has_functions: true`.
+    `key` must match `^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$`. Put it in the **agent's** project (`project_id`, not `path`; the two are mutually exclusive). Use `openai/gpt-4.1` as the judge model, after one projected check that the workspace routes it: `orq models list -o json -j "[?refId=='openai/gpt-4.1'].refId" --raw` (the command takes no `--limit`, and unprojected it returns hundreds of entries). If that prints nothing, pick another from `orq models list -o json -j 'data[?has_functions].refId'`: use the routable **`refId`**, not `model_id` (`gpt-4.1`, which several providers share).
 
-19. **Create** after approval: `orq evals create --from-file eval.json -o json -j '_id' --raw`. The create response reports `output_type: null` even for a boolean evaluator; `orq evals get <id>` shows the stored value. A `reuse` recommendation skips this step.
+19. **Create** after approval: `orq evals create --from-file eval.json -o json -j '_id' --raw`. The create response reports `output_type: null` even for a boolean evaluator; `orq evals get <id>` shows the stored value (with the other `evals` quirks in [`orq-cli`'s command map](../orq-cli/resources/command-map.md)). A `reuse` recommendation skips this step.
 
-20. **Smoke-invoke the recommendation's `test_cases`** so the user sees it work, with the invoke shapes from step 15.3. Swap in a real trace when there is one. **Read `value`, never `passed` or `status`:** on an evaluator with no guardrail, both report `passed` even when `value` is `false` (verified live). If `value` does not flip between the Pass and Fail case, say so plainly: the evaluator is not seeing the field it needs. **This is a smoke test, not validation.** Two cases say nothing about accuracy; a real test set comes from `orq-generate-synthetic-dataset` and `orq-evaluator-alignment`.
+20. **Smoke-invoke the recommendation's `test_cases`** so the user sees it work, with the invoke shapes from step 15.3. Swap in a real trace when there is one. **Read `value`, never `passed` or `status`:** on an evaluator with no guardrail, both report `passed` even when `value` is `false` (verified live). If `value` does not flip between the Pass and Fail case, say so plainly: the evaluator is not seeing the field it needs. **This is a smoke test, not validation.** Two cases say nothing about accuracy; a real test set comes from `orq-generate-synthetic-dataset` and `orq-evaluator-alignment`. It is also not evidence that an *existing* evaluator is right for this agent: a step 15 flip makes it worth reusing, not proven.
+
+    **Never leave a broken evaluator behind.** If the invoke fails on the model (HTTP 500 from an end-of-life or unrouted model, 403), that is the defect this skill reports in other people's evaluators. Ask, then repair it with `orq evals update <id> --from-file eval.json` on a model that does route, and invoke again. If the user declines the repair, say plainly that `<key>` exists but does not run, and do not offer to attach it.
 
 21. **Offer to attach**, as a separate question. Attaching changes a live agent, so it gets its own yes. On yes, read-modify-write `settings` whole, appending `{"id": "<id>", "execute_on": "output", "sample_rate": 100}` to `settings.evaluators` (or `settings.guardrails` for an input guardrail). Follow [`trace-queries.md` §7](../orq-shared/resources/trace-queries.md#7-write-path--orq-agents-update) exactly: `settings.tools[]` does not round-trip and must be translated, never dropped. Always pass `--version-increment patch` and `--version-description "attach <key>: <one-line reason>"`. Re-read the agent: the evaluator is listed and `settings.tools[]` is unchanged.
 
     An evaluator from **another project** attaches and runs by id, with no copy needed. This was verified live: a built-in `Valid JSON` from a shared project fired on an agent in a different project. To confirm an attached evaluator fires, list the next trace's spans with `orq traces list-spans <trace_id> -o json -j 'data[].{id:span_id,type:type,name:name}'` and look for a `span.evaluator` named after it. `orq traces get-span <trace_id> <span_id> -o json -j 'span.attributes.orq.evaluator'` then shows `passed` and `score.value`. To detach, send `settings` whole with `"evaluators": []`.
 
-22. **Close.** List what was created, reused, attached, and declined. For each LLM judge: *unvalidated, run `orq-evaluator-alignment` before trusting its scores*. Recommend `orq-run-experiment` to measure the agent with its new evaluators. Delete `eval.json`, `patch.json` and `body.json`.
+22. **Close.** List what was created, reused, attached, and declined. For each LLM judge: *unvalidated, run `orq-evaluator-alignment` before trusting its scores*. Recommend `orq-run-experiment` to measure the agent with its new evaluators. Name the scratch files this run wrote in the working directory (`evals-inventory.json`, and any `eval.json`, `patch.json` or `body.json`) so the user can remove them; this skill has no delete tool.
 
 ## Anti-Patterns
 

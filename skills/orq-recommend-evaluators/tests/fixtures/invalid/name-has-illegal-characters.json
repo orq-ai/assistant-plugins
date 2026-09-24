@@ -8,7 +8,7 @@
   "grounding": { "mode": "traces", "reason": "343 traces in the last 14 days; 20 read, 12 with readable text" },
   "evaluations": [
     {
-      "name": "Refund Preceded By Lookup",
+      "name": "refund/preceded-by-lookup",
       "description": "Every refund comes after an order lookup for the same order.",
       "type": "llm_eval",
       "existing_evaluator_id": null,

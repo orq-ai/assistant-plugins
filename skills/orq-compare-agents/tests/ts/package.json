@@ -1,0 +1,13 @@
+{
+  "name": "orq-compare-agents-ts-contract",
+  "private": true,
+  "description": "Type-only fixture pinning the TypeScript claims in resources/evaluatorq-api.md. Deps unpinned on purpose: a red run means upstream moved and the markdown is stale. The override is not cosmetic \u2014 @orq-ai/evaluatorq 1.3.2 declares an optional peer on @orq-ai/node ^3.9.26, and 3.x has no evals.invoke, so a plain install of both resolves to a node SDK the docs' scorer example cannot call.",
+  "devDependencies": {
+    "@orq-ai/evaluatorq": "latest",
+    "@orq-ai/node": "latest",
+    "typescript": "^5"
+  },
+  "overrides": {
+    "@orq-ai/node": "latest"
+  }
+}

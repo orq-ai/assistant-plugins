@@ -443,9 +443,8 @@ knowing by heart.
   workspace-settings get update
 ```
 
-New since 5.1.0: `models list-preview`, `projects use`, `traces thread` (named
-`conversation` after 8.6.9, see below) and the `workspace` built-in now shown in
-the tree. The top-level `status`, `switch` and `orqi` are in the built-ins table.
+New since 5.1.0: `models list-preview`, `projects use`, `traces thread` and the
+`workspace` built-in now shown in the tree. The top-level `status`, `switch` and `orqi` are in the built-ins table.
 
 There is no `experiments` group — experiments are MCP/evaluatorq-only.
 `annotation-queues` is the CLI surface for the eval-corrections /
@@ -464,6 +463,18 @@ do not exist as groups at all — do not filter them out when re-deriving the tr
 Note `orq evals all` (not `list`) is the evaluator listing command, and
 `orq traces create` / `orq traces delete` add and remove **span annotations**,
 not traces.
+
+**`evals` details, probed 2026-09-24 on 10.3.1 (API 4.14.20):**
+
+| Claim | Detail |
+|-------|--------|
+| `orq evals all` is the listing command | `list` does not exist. Pages with `has_more` + `--starting-after <last _id>`; `--limit` is 1 to 200 |
+| `--project-id` is unusable | Every project id, including ones holding evaluators, returns `HTTP 404 {"code":5,"message":"Project not found"}`. Filter by `project_id` client side |
+| `--search` matches the key only | Not the description |
+| `evals get` has no `key` field | The key created with comes back as `display_name`; `evals all` returns it as `key` |
+| `evals create` under-reports | The create response has `output_type: null` even for a boolean evaluator; `evals get <id>` shows the stored value |
+| `models list` takes no `--limit` | Unprojected it returns hundreds of entries (709 on 2026-09-24). Project it: `-j "[?refId=='openai/gpt-4.1'].refId"` |
+| `evals invoke` verdicts | Read `value`. `passed` is the guardrail's decision when there is one, so it reads `passed` on a `false` value otherwise |
 
 ---
 
@@ -679,16 +690,14 @@ orq traces list-facet-values <field> -o json \
 orq traces get <trace_id>
 orq traces list-spans <trace_id>
 orq traces get-span <trace_id> <span>
-orq traces thread <trace_id> [<span>]         # `conversation` (alias `conv`) after 8.6.9
+orq traces thread <trace_id> [<span>]
 ```
 
-`thread` (7.4.0+, renamed `conversation` in the next major after 8.6.9; there is
-no `conv` alias on 8.6.9) is the one to reach for
-when the question is *what was said*:
+`thread` (7.4.0+) is the one to reach for when the question is *what was said*:
 it picks the conversational span itself and normalizes Chat Completions, OpenAI
 Responses and OpenTelemetry GenAI payloads into one message list. Its `-o` is
 its own — `xml` (default), `markdown`, `json`, `yaml`, `toon` — and it neither
-reads `ORQ_OUTPUT_FORMAT` nor accepts `table`. See the `traces conversation` section
+reads `ORQ_OUTPUT_FORMAT` nor accepts `table`. See the `traces thread` section
 of SKILL.md for span selection and the full flag set. `get-span` remains the
 path for span *config* — temperature, tool definitions, `finish_reasons`.
 

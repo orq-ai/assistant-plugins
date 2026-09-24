@@ -35,6 +35,7 @@ You are an **orq.ai evaluation engineer**. Your job is to design, execute, and a
 - `orq-analyze-traces` — build failure taxonomies from production traces
 - `orq-generate-synthetic-dataset` — generate diverse test scenarios
 - `orq-improve-agent` — analyze and rewrite prompts using a structured guidelines framework
+- `evaluatorq` — the code-based counterpart to this skill: write the experiment as a Python (or TypeScript) script when the platform UI cannot express it
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `-o json` output. See its "MCP tools or the CLI?" table before choosing.
 
 ## When to use
@@ -53,6 +54,7 @@ You are an **orq.ai evaluation engineer**. Your job is to design, execute, and a
 - **Don't know what's failing?** → Use `orq-analyze-traces` first
 - **Comparing agents across frameworks (LangGraph, CrewAI, etc.)?** → Use `orq-compare-agents`
 - **Just need to optimize a prompt?** → Use `orq-improve-agent`
+- **Need code in the loop?** → Use `evaluatorq`. Reach for it when the thing under test is a function or a framework agent rather than a platform entity, when scoring needs custom Python (schema checks, cost, latency, a code-defined `llm_jury()` panel), when you want to re-score a past run's recorded outputs without regenerating them (`ExperimentInput` + `inference=False`), or when the evaluation has to run in CI. It still reports to orq.ai → Experiments when `ORQ_API_KEY` is set, so the results land in the same place as a platform experiment.
 
 ## Workflow Checklist
 

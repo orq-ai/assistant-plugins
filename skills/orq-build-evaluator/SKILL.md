@@ -76,6 +76,9 @@ Evaluator Build Progress:
 - Need to identify failure modes first? → `orq-analyze-traces`
 - Need to optimize a prompt? → `orq-improve-agent`
 - Need to generate test data? → `orq-generate-synthetic-dataset`
+- Need the judge to live in code rather than on the platform, or to score with a **panel** of judges? → `evaluatorq`. Its `llm_jury()` defines a judge (or a 3–5 model jury with agreement stats) in the evaluation script itself — no evaluator entity, no ID. Use this skill when the judge must be a reusable platform entity that guardrails, experiments and the UI can reference; use `evaluatorq` when it only has to score one evaluation run.
+- Already have a platform evaluator and want to call it from a Python scorer? → `evaluatorq`, `orq.evals.invoke_async(id=...)` inside the scorer.
+- Judge already built but disagreeing with humans? → `orq-evaluator-alignment`
 
 ## orq.ai Documentation
 

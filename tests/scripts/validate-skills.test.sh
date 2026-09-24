@@ -643,6 +643,32 @@ node "$validator" "$d" --fix >/dev/null 2>&1
 git -C "$d" add -A
 expect_pass "legacy variable in a python file is not linted" "$d"
 
+# --- 12. hardcoded reasoning-effort values ---
+d=$(build_fixture hardcoded-effort)
+printf '\n- Set `reasoning_effort="high"` on the judge.\n' \
+  >> "$d/skills/example-skill/SKILL.md"
+git -C "$d" add -A
+expect_fail "hardcoded reasoning-effort value in skill markdown" "$d" "hardcoded reasoning-effort value"
+
+# `none` / `off` are the documented way to send no reasoning parameter at all.
+# That spelling is a sentinel, not a rung, so it does not rot and must pass.
+d=$(build_fixture effort-sentinel)
+printf '\n- Set `EVALUATORQ_REASONING_EFFORT` to `"none"` to omit the parameter.\n' \
+  >> "$d/skills/example-skill/SKILL.md"
+git -C "$d" add -A
+node "$validator" "$d" --fix >/dev/null 2>&1
+git -C "$d" add -A
+expect_pass "the none/off opt-out spelling is allowed" "$d"
+
+# The word alone is not the finding — only a quoted rung on a reasoning line is.
+d=$(build_fixture effort-prose)
+printf '\n- A `"high"` cardinality field is fine; so is high reasoning in prose.\n' \
+  >> "$d/skills/example-skill/SKILL.md"
+git -C "$d" add -A
+node "$validator" "$d" --fix >/dev/null 2>&1
+git -C "$d" add -A
+expect_pass "a quoted value on a line that is not about reasoning effort is allowed" "$d"
+
 # --- git-failure paths ---
 d=$(build_fixture no-git)
 rm -rf "$d/.git"

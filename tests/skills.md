@@ -156,6 +156,27 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Ask: "Compare my two agents against each other"
 - Verify: routes to `orq-compare-agents`, not generates a script here
 
+### Scenario 5: LLM judge and jury
+
+- Ask: "Score my agent's answers with an LLM judge"
+- Verify: uses `llm_jury(name=..., criteria=...)` from the library, not a hand-rolled prompt loop
+- Verify: a panel is cross-family (or a `preset=`), never several `orq/*` routers, and odd-sized
+- Verify: names the verdict mode explicitly (`verdict_kind` with `labels` / `threshold`), not inferred from `labels`
+- Verify: reads the per-judge breakdown from `raw_output["jury"]` validated into `JuryResult`, not by indexing raw keys
+
+### Scenario 6: Re-scoring existing responses
+
+- Ask: "Re-run my evaluators over last week's experiment without calling the agent again"
+- Verify: uses `ExperimentInput(experiment_id=...)` with `inference=False`, not a new generation run
+- Verify: mentions traces are not a `data` shape — they go through `datapoints_from_traces()` / `extend_from_traces()` first
+
+### Scenario 7: Reasoning-model budget
+
+- Ask: "My judge is a reasoning model — give it a bigger thinking budget"
+- Verify: sets `reasoning_effort=` on `llm_jury()`, not `target_reasoning_effort` or `EVALUATORQ_REASONING_EFFORT`
+- Verify: mentions an unsupported effort is dropped silently (400 → retry without the reasoning block)
+- Verify: raises `max_tokens` alongside it
+
 ---
 
 ## `orq-compare-agents`
@@ -295,13 +316,27 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: a "valid JSON" style criterion is proposed as `is_valid_json` or `python_eval`, not an LLM judge
 - Verify Phase 5: other projects' evaluators are read and smoke-tested only for a generic criterion (valid JSON, PII, groundedness); an agent-specific rule is matched within the agent's project and carries the caveat that other projects were not checked
 
-### Scenario 3: Rank order follows the tiers
+### Scenario 3: The written JSON is validated, not assumed
+
+- Ask: "Which evaluators should this agent have?" on any agent
+- Verify Phase 5: after writing `eval-recommendations-<key>-<timestamp>.json`, runs `ajv-cli test ... --valid` on that file against `resources/evaluations.schema.json` and shows the result
+- Verify: a validation failure is fixed and the file rewritten, never presented as is, and never fixed by dropping a recommendation
+- Verify: with `npx` unavailable, says the file could not be machine-checked instead of claiming it validates
+- Verify: promoting an `optional` item in Phase 5 rewrites and re-validates both the `.md` and the `.json`, and a sixth item does not make the file invalid
+
+### Scenario 4: A created evaluator that cannot run
+
+- Provide: a judge model that returns HTTP 500 on invoke
+- Verify Phase 6: the smoke invoke failure is reported, not skipped
+- Verify: offers to repair the evaluator it just created with `orq evals update` on a routable model, and does not offer to attach it while it errors
+
+### Scenario 5: Rank order follows the tiers
 
 - Provide: an agent whose instructions hold a money or safety rule ("never issue a refund above 50 EUR") and, listed earlier, a workflow rule ("always ask for the order number first")
 - Verify Phase 5: the money rule is tier 1 and ranks above the workflow rule (tier 3), even though the workflow rule comes first in the instructions
 - Verify: `evaluations[]` in the `.json` follows the same order as `recommendations` in the `.md`, and a reuse item is not dropped when the user selects it in step 17 (it goes to the attach question)
 
-### Scenario 4: Create and attach are gated separately
+### Scenario 6: Create and attach are gated separately
 
 - Ask: approve one recommendation
 - Verify Phase 6: shows the exact create body and asks again for that one evaluator before `orq evals create`
@@ -559,7 +594,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 ### Scenario 9a: Reading what was said in a trace
 
 - Ask: "What did the agent actually say in trace `<id>`?"
-- Verify: uses `orq traces conversation <id>` (or `conv`) rather than reassembling messages out of `get-span` attributes
+- Verify: uses `orq traces thread <id>` rather than reassembling messages out of `get-span` attributes
 - Verify: asks for machine output with `-o json`, and does NOT pass `-o table` (this command refuses it)
 - Verify: on `Error: no supported conversation found in trace "<id>"`, reports that the trace has no conversational span (e.g. evaluator-only) instead of retrying with `get-span`
 - Verify: when asked for only the last turn, uses `--slice -1`, and treats an empty render at exit 0 as an out-of-range slice, not as an empty conversation
@@ -588,6 +623,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-analyze-traces/SKILL.md`
 - `skills/orq-improve-agent/SKILL.md`
 - `skills/orq-recommend-evaluators/SKILL.md`
+- `skills/orq-recommend-evaluators/resources/evaluations.schema.json`
 - `skills/orq-setup-observability/SKILL.md`
 - `skills/orq-setup-observability/resources/traced-decorator-guide.md`
 - `skills/orq-setup-observability/resources/framework-integrations.md`
@@ -596,6 +632,11 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-invoke-deployment/resources/api-reference.md`
 - `skills/evaluatorq/SKILL.md`
 - `skills/evaluatorq/resources/cli-reference.md`
+- `skills/evaluatorq/resources/inputs-and-data.md`
+- `skills/evaluatorq/resources/judges-and-juries.md`
+- `skills/evaluatorq/resources/tuning.md`
+- `skills/evaluatorq/tests/test_documented_api.py` — Python contract suite; a red run means upstream moved and the markdown is stale
+- `skills/orq-compare-agents/tests/ts/contract.ts` — the same for the TypeScript claims, checked with `tsc --noEmit`
 - `skills/orq-compare-agents/SKILL.md`
 - `skills/orq-compare-agents/resources/job-patterns.md`
 - `skills/orq-compare-agents/resources/evaluatorq-api.md`

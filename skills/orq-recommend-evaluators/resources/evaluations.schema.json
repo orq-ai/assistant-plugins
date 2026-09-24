@@ -15,7 +15,7 @@
       "properties": {
         "type": { "enum": ["agent", "deployment"] },
         "key": { "type": "string", "minLength": 1 },
-        "id": { "type": "string", "minLength": 1 }
+        "id": { "type": ["string", "null"], "minLength": 1 }
       }
     },
     "grounding": {
@@ -33,9 +33,8 @@
       }
     },
     "evaluations": {
-      "description": "In rank order. Empty when nothing is worth adding.",
+      "description": "In rank order, most important first. Empty when nothing is worth adding. The producing skill caps its own list; the data model does not.",
       "type": "array",
-      "maxItems": 5,
       "items": { "$ref": "#/$defs/evaluation" }
     }
   },
@@ -46,9 +45,9 @@
       "required": ["name", "description", "type", "existing_evaluator_id", "execute_on", "priority", "reason", "caveats"],
       "properties": {
         "name": {
-          "description": "Evaluator key for a new evaluator, or a short label for a reused one.",
+          "description": "Evaluator key for a new evaluator (kebab-case is the convention), or the existing key for a reused one, which may be spaced Title Case such as \"BLEU Score\". Any orq evaluator key is accepted.",
           "type": "string",
-          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+          "pattern": "^[A-Za-z0-9]([A-Za-z0-9 ._-]*[A-Za-z0-9])?$"
         },
         "description": {
           "description": "What the evaluator checks, in one sentence.",

@@ -5,11 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.3.0] - 2026-09-16
+## [3.5.0] - 2026-09-24
 
 ### Added
-- **`orq-recommend-evaluators`** (RES-1560): recommends the evaluators an agent or deployment is missing and creates the ones the user approves. With an `error-analysis-*.md` or 20+ traces in the last 14 days it grounds candidates in trace evidence; below that it runs config-only, reading each hard rule in the instructions and each config signal (knowledge bases, `response_format`, tools) as a candidate criterion. It skips evaluators already in `settings.evaluators` / `settings.guardrails`, offers project evaluators as `reuse`, sends specification gaps to `orq-improve-agent`, and writes `eval-recommendations-<key>-<timestamp>.md`. Create and attach are separate approval gates; each created evaluator is smoke-invoked once, and LLM judges are labelled unvalidated with a pointer to `orq-evaluator-alignment`. Contract verified against orq CLI on 2026-09-14: `settings.evaluators[]` entries are `{id, execute_on, sample_rate}` and the keys are absent (not empty) when nothing is attached; `orq evals all` returns `llm_eval`, `python_eval`, `function_eval` and `ragas` types.
-- **`orq-recommend-evaluators` data model** (RES-1589): the skill also writes `eval-recommendations-<key>-<timestamp>.json`, defined by `resources/evaluations.schema.json`. It is Bauke's `{"evaluations": [{"name"}]}` shape with the fields a caller needs to create or attach each one: `description`, `type`, `existing_evaluator_id` (null for a new evaluator), `execute_on`, `priority`, `reason` and `caveats`, plus `schema_version`, `target` and `grounding` (what the list rests on: `config-only`, `traces` or `error-analysis`, with a reason). At most 5 items, in rank order, and no other keys. CI checks four valid and fourteen invalid fixtures against it.
+- **`orq-recommend-evaluators`** (RES-1560): recommends the evaluators an agent or deployment is missing and creates the ones the user approves. With an `error-analysis-*.md` or 20+ traces in the last 14 days it grounds candidates in trace evidence; below that it runs config-only, reading each hard rule in the instructions and each config signal (knowledge bases, `response_format`, tools) as a candidate criterion. It skips evaluators already in `settings.evaluators` / `settings.guardrails`, offers project evaluators as `reuse`, sends specification gaps to `orq-improve-agent`, and writes `eval-recommendations-<key>-<timestamp>.md`. Create and attach are separate approval gates; each created evaluator is smoke-invoked once, and LLM judges are labelled unvalidated with a pointer to `orq-evaluator-alignment`. Contract verified against orq CLI on 2026-09-14: `settings.evaluators[]` entries are `{id, execute_on, sample_rate}` and the keys are absent (not empty) when nothing is attached; `orq evals all` returns `llm_eval`, `python_eval`, `function_eval` and `ragas` types. Re-probed on CLI 10.3.1 on 2026-09-24: `evals all --project-id` answers 404 for every project (so project scoping is client side), and the conversation subcommand is `traces thread`; the `evals` quirks now live in `orq-cli`'s command map.
+- **`orq-recommend-evaluators` data model** (RES-1589): the skill also writes `eval-recommendations-<key>-<timestamp>.json`, defined by `resources/evaluations.schema.json`. It is Bauke's `{"evaluations": [{"name"}]}` shape with the fields a caller needs to create or attach each one: `description`, `type`, `existing_evaluator_id` (null for a new evaluator), `execute_on`, `priority`, `reason` and `caveats`, plus `schema_version`, `target` and `grounding` (what the list rests on: `config-only`, `traces` or `error-analysis`, with a reason). At most 5 items is the skill's own cap, so a promoted recommendation cannot invalidate the file; the schema takes any length, in rank order, with no other keys. The skill validates the file it writes with ajv before presenting it, and CI checks six valid and fifteen invalid fixtures against the schema, each file on its own so an empty fixture directory fails the run.
+
+## [3.4.0] - 2026-09-21
+
+### Added
+
+- `orq-compare-agents` skill: a gotcha for the TypeScript install — `@orq-ai/evaluatorq` 1.3.2 declares an optional peer on `@orq-ai/node` `^3.9.26`, so installing both resolves the node SDK to 3.x, where `evals.invoke()` does not exist. Found by the new type-check fixture on its first run.
+- `orq-compare-agents` skill: `tests/ts/contract.ts` — a type-only fixture pinning the TypeScript claims in `resources/evaluatorq-api.md` (the `evaluatorq()` signature and return type, the `{ datasetId }` input, the `invokeEvaluatorRequest` key, the flat response). A new `ts-contract-tests` CI job type-checks it with `tsc --noEmit` against unpinned packages; the compiler is the right oracle because the risk is a rename.
+- `tests/scripts/validate-skills.mjs` check 12: no skill markdown may name a hardcoded reasoning-effort value. The ladder is the model's and changes per release, and an unsupported value is dropped silently rather than raised. `none` / `off` pass — they are the spelling for sending no reasoning parameter at all. Negative tests in `validate-skills.test.sh` cover all three cases.
+- `evaluatorq` skill: `tests/test_documented_api.py` — a contract suite asserting every symbol, signature, default and response field the skill teaches, against unpinned `evaluatorq` / `orq-ai-sdk`. The existing `skill-tests` CI job discovers it via `tests/requirements.txt`, so an upstream rename fails a PR instead of shipping a stale signature into generated code.
+- `create-skill` skill: Phase 4b — when to pin a skill's API claims in an executable suite, when not to, and the rules that keep one useful (leave the documented packages unpinned, assert only what the markdown claims, make no network call).
+
+### Changed
+
+- `evaluatorq` skill: reasoning-effort guidance lives in `resources/tuning.md` only; `SKILL.md` carries a pointer instead of a second copy of the knob table.
+- `evaluatorq` skill: no effort value is named anywhere in the skill — the accepted ladder is per model and changes per release, so the examples read it from the catalogue (`get_model_info`) and pre-validate with `validate_reasoning_effort()`. `validate-skills.mjs` check 12 enforces this across every skill.
+- `orq-invoke-deployment`: `resources/api-reference.md` no longer lists the `reasoning_effort` rungs; it points at `GET /v2/models` instead.
+- The three new `evaluatorq` resource files carry a `Probed against` version stamp, matching the convention in `orq-cli` and `evaluatorq-api.md`.
+- `evaluatorq` skill: the judge-template namespace note now warns about names shared with the orq platform that resolve with **different contents**, not only the names unique to evaluatorq — the shared ones are the silent failure.
+
+## [3.3.0] - 2026-09-21
+
+### Added
+
+- `evaluatorq` skill: `resources/inputs-and-data.md` — the four shapes `data` accepts (inline rows, awaitables, `DatasetIdInput`, `ExperimentInput`), `inference=False` experiment replay, turning production traces into datapoints via the simulation helpers, the full result object, the raw-dict job error contract, and `check_pass_failures` CI gating.
+- `evaluatorq` skill: `resources/judges-and-juries.md` — `llm_jury()` verdict modes and panel configuration, jury presets, cyclic assignment, the judge prompt template namespace, reading `raw_output["jury"]` back as `JuryResult`, `llm_jury_pairwise()` swap-and-reconcile plus `build_report()` / BT-sigma metrics, and the structured-result trade-offs.
+- `evaluatorq` skill: `resources/tuning.md` — the four distinct reasoning-effort knobs, token budgets for reasoning models, `datapoint_parallelism` vs `llm_parallelism` (with `llm_slot()`), target and pipeline timeouts/retries, `extra_kwargs` vs `extra_body`, model-catalogue registration, and the environment variable reference.
+
+### Changed
+
+- `evaluatorq` skill: `SKILL.md` gains a scorer-selection table, judge/jury and reasoning-model sections, and an input section; Phase 2 and Phase 4 renamed accordingly.
+- Cross-links between the evaluator skills: `orq-run-experiment`, `orq-build-evaluator` and `orq-evaluator-alignment` now route code-based evaluation, code-defined judge panels and platform-evaluator invocation to `evaluatorq`, and `evaluatorq` routes judge design and human-label validation back to them.
+- `orq-compare-agents/resources/evaluatorq-api.md` re-probed against Python `evaluatorq` 1.39.0, `@orq-ai/evaluatorq` 1.3.2 and `orq-ai-sdk` / `@orq-ai/node` 4.15.6: full `evaluatorq()` signature (`datapoint_parallelism`, `llm_parallelism`, `path`, `inference`, `ExperimentInput`), a Python-vs-TypeScript parity table, and `llm_jury()` in the built-in evaluator list.
+
+### Fixed
+
+- `evaluatorq` skill: `parallelism` is documented as the deprecated alias of `datapoint_parallelism` in the Python examples, and the dataset input uses `DatasetIdInput` instead of the bare dict. The TypeScript example keeps `parallelism` / `{ datasetId }`, with a note that `@orq-ai/evaluatorq` 1.3.2 has no jury, pairwise or experiment-replay support.
+- `orq.evals.invoke()` returns a **flat** `EvaluationResult` on `orq-ai-sdk` 4.15.6 — `result.value` / `result.explanation` / `result.passed`, not `result.value.value`. Corrected in `evaluatorq`, `orq-compare-agents/resources/evaluatorq-api.md` and `orq-compare-agents/resources/gotchas.md`, whose "Response structure is nested" section documented the old shape.
+- `orq-compare-agents/resources/evaluatorq-api.md`: the TypeScript framework wrappers take the agent first and the name in an options object (`wrapLangGraphAgent(agent, { name })`), not `("Name", agent)`; the TS `evals.invoke()` request key is `invokeEvaluatorRequest`, not `requestBody`; the TS `parallelism` default is `1` (sequential), not `10`.
+
+## [3.2.3] - 2026-09-21
+
+### Changed
+- `orq-cli`, `orq-shared`, `orq-analyze-traces`, `orq-improve-agent`, tests: reverted the `orq traces thread` → `orq traces conversation` rename from 3.2.1. The 8.6.9 re-probe confirmed the shipped command is still `traces thread`, with no `conv` alias (`orq traces conv` prints the `traces` group help at exit 0), so every call site goes back to `thread`: the "Reading a conversation" section and its examples in `orq-cli/SKILL.md`, the command tree and per-trace read list in `orq-cli/resources/command-map.md`, the full-content bullet and layer 3b in `orq-shared/resources/trace-queries.md`, scenario 9a in `tests/skills.md`, and the `allowed-tools` entries, which are one `Bash(orq traces thread:*)` rule again. The version note about which release carries which name is gone with it.
 
 ## [3.2.2] - 2026-09-21
 
