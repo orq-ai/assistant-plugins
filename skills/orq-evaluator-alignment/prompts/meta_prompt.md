@@ -26,6 +26,7 @@ The <input_instructions> summarize where the judge disagreed with human labels a
 - There should be clear and emphasized role assignment with specific domain expertise aligned to the judging task.
 - There should be a clear task definition and a stressing of the importance of the task.
 - Break the rubric into clear guidelines: criteria definitions, behavioral constraints, and scope boundaries. Prefer higher-level rubric clarifications over narrow if-then rules — the change must generalize beyond any single datapoint.
+- Write every check the verdict depends on as an obligation ("Compare each figure in the response against the tool results"), never as a permission ("You may compare..."). Judges skip optional checks: a rule phrased as "may" is one some models will never apply.
 - Keep a specified, stressed output format. If the original judge returns the explanation BEFORE the value, keep that ordering.
 - If the judging task benefits from reasoning, instruct for it, and require the reasoning BEFORE the derived verdict.
 - Remove only genuinely unnecessary text (contradictions, dead markdown). Do NOT remove any statement of the verdict space, the label set, or the numeric scale.

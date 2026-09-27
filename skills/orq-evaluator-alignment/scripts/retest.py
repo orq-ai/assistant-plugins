@@ -1125,6 +1125,7 @@ def main(
             ),
             regression_wide=regression_wide, n_pairs=len(pairs),
             before_after_scope=before_after_scope_info,
+            agreement=agreement_scores,
         ),
     }
     runner.write_json(out_dir / 'retest_metrics.json', payload)
@@ -1177,6 +1178,7 @@ def _caveats(
     regression_before_after: tuple[Any, Any] | None = None,
     regression_wide: dict[str, Any] | None = None, n_pairs: int = 0,
     before_after_scope: tuple[int, int, int] | None = None,
+    agreement: dict[str, Any] | None = None,
 ) -> list[str]:
     """The limits of the two gates, in the words the conductor should use.
 
@@ -1184,6 +1186,14 @@ def _caveats(
     is only valid under conditions nobody mentions gets quoted without them.
     """
     out: list[str] = []
+    kappa = (agreement or {}).get('cohen_kappa')
+    accuracy = (agreement or {}).get('accuracy')
+    if kappa is not None and accuracy is not None and accuracy >= 0.8 and kappa < 0.2:
+        out.append(
+            f'Accuracy is {accuracy:.0%} but Cohen\'s kappa is {kappa:.2f}: the labels are skewed and '
+            'the judge is barely better than always giving the common answer. Quote how many of '
+            'the rare label it caught, not the accuracy.'
+        )
     if regression_before_after is not None:
         before_v, after_v = regression_before_after
         out.append(

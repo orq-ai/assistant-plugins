@@ -383,3 +383,22 @@ def test_main_wires_evaluator_variables_into_correctness(tmp_path):
     assert mx['correctness']['n_labelled'] == 0
     assert 'reference-family variable' in mx['correctness']['reason_omitted']
     assert 'not measured' in mx['report']  # MINOR 9: the omission reaches the report too
+
+
+def test_skewed_labels_report_kappa_and_flag_flattering_accuracy():
+    # 9 passes and 1 fail, judged pass every time: 90% accurate, kappa 0.
+    rows = _rows(*[(i, 'true', True) for i in range(9)], (9, 'false', True))
+    per_row = _per_row(*[(i, 'stable') for i in range(10)])
+    c = metrics._correctness(rows, per_row, 'boolean', 0.5, **_NEUTRAL)
+    assert c['accuracy'] == pytest.approx(0.9)
+    assert c['balanced_accuracy'] == pytest.approx(0.5)
+    assert c['cohen_kappa'] == pytest.approx(0.0)
+    assert any('skewed labels' in line for line in metrics._correctness_lines(c))
+
+
+def test_numeric_correctness_has_no_kappa():
+    c = metrics._correctness(
+        _rows((0, '3', 3.0), (1, '5', 1.0)), _per_row((0, 'stable'), (1, 'stable')),
+        'number', 0.5, **_NEUTRAL,
+    )
+    assert 'cohen_kappa' not in c
