@@ -53,6 +53,7 @@ Usage:
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -509,6 +510,66 @@ def _verdicts_by_index(stability: dict[str, Any], index_map: dict[int, int] | No
     return out
 
 
+def _panel_agreement(
+    stability: dict[str, Any], labels: dict[str, Any], output_type: str, tol: float,
+    scope: set[int], index_map: dict[int, int] | None = None,
+) -> dict[str, dict[str, Any]] | None:
+    """Each jury model's agreement with the human labels (RES-1638), or None without a panel.
+
+    Reads the per-model votes stability.py already recorded, so it costs no calls.
+    It is the check the panel aggregate hides: a model that catches the failures the
+    others pass is outvoted, and only its own score shows it.
+    """
+    from lib import panel as panel_lib
+    from metrics import _clean_verdicts
+
+    by_model: dict[str, dict[int, Any]] = {}
+    n_repeats = int(stability.get('metadata', {}).get('n_repeats') or 1)
+    floor = max(1, math.ceil(n_repeats / 2))
+    for row in stability.get('rows', []):
+        idx = row.get('source_index')
+        if index_map is not None:
+            idx = index_map.get(idx, idx)
+        if idx not in scope:
+            continue
+        for vote in row.get('panel') or []:
+            if (vote.get('success') and vote.get('value') is not None
+                    and len(_clean_verdicts(vote.get('repetitions') or [], output_type)) >= floor):
+                by_model.setdefault(vote['model'], {})[idx] = vote['value']
+    if not by_model:
+        return None
+    human: dict[int, Any] = {}
+    for key, ann in labels.items():
+        if isinstance(ann, dict) and ann.get('value') is not None:
+            try:
+                human[int(key)] = ann['value']
+            except (TypeError, ValueError):
+                continue
+    scored = panel_lib.per_model_agreement(output_type, human, by_model, tol=tol)
+    for model, result in scored.items():
+        result['source_indices'] = sorted(set(human) & set(by_model[model]))
+    return scored or None
+
+
+def _better_panel_model(
+    panel: dict[str, dict[str, Any]] | None, judge_model: str | None, output_type: str,
+) -> tuple[str, float, float, str] | None:
+    """A better model on the same labels, with the metric used for comparison."""
+    if not panel or judge_model not in panel:
+        return None
+    key = 'balanced_accuracy' if output_type not in ('number', 'numeric') else _primary_metric(output_type)
+    judge_score = panel[judge_model].get(key)
+    judge_rows = panel[judge_model].get('source_indices')
+    eligible = [m for m in panel if panel[m].get('source_indices') == judge_rows]
+    if not eligible:
+        return None
+    best = max(eligible, key=lambda m: panel[m].get(key) if panel[m].get(key) is not None else -1.0)
+    best_score = panel[best].get(key)
+    if best == judge_model or judge_score is None or best_score is None or best_score <= judge_score:
+        return None
+    return best, best_score, judge_score, key
+
+
 def _pair_with_labels(
     labels: dict[str, Any], judge_by_idx: dict[int, Any]
 ) -> tuple[list[tuple[Any, Any]], list[float | None], list[int]]:
@@ -890,6 +951,7 @@ def main(
         config=config,
         n_repeats=resolved_n,
         temperature=resolved_temp,
+        panel_models=[m for m in original_meta.get('panel_models', []) if m != retest_evaluator_config['judge_model']],
         metrics=True,  # stability.main chains metrics.main when metrics=True
     )
     retest_metrics = runner.read_json(retest_dir / 'metrics.json')
@@ -906,7 +968,7 @@ def main(
         logger.info('  Re-running the ORIGINAL judge over the same rows (--baseline_rerun).')
         stability_main(
             run_dir=str(baseline_dir), config=config, n_repeats=resolved_n,
-            temperature=resolved_temp, metrics=True,
+            temperature=resolved_temp, panel_models=[], metrics=True,
         )
         baseline_inst = _instability_by_index(
             runner.read_json(baseline_dir / 'metrics.json'), baseline_map
@@ -986,6 +1048,11 @@ def main(
     # --with_low_flip retest) pairs a 1-row "after" against a 200-row "before" and
     # reports a comparison that never happened on either side.
     old_scoped = {i: v for i, v in old_by_idx.items() if i in scope}
+    panel_before = (
+        _panel_agreement(runner.read_json(original_stability_path), labels, output_type, resolved_tol, scope)
+        if original_stability_path.exists() else None
+    )
+    panel_after = _panel_agreement(retest_stability, labels, output_type, resolved_tol, scope, index_map)
 
     agreement_scores, agreement_passed = _evaluate_agreement(
         pairs, output_type, resolved_tol, *bars, tols=pair_tols
@@ -1103,6 +1170,9 @@ def main(
             'before': agreement_before,
             'after_on_shared_rows': agreement_after_shared,
             'regressed_vs_before': regressed_vs_before,
+            # Per jury model, old prompt and new, when the runs had a panel (RES-1638).
+            'panel_before': panel_before,
+            'panel_after': panel_after,
         },
         'regression_on_stable_rows': regression,
         # How wide the regression check actually looked, so a clean result cannot be
@@ -1126,6 +1196,10 @@ def main(
             regression_wide=regression_wide, n_pairs=len(pairs),
             before_after_scope=before_after_scope_info,
             agreement=agreement_scores,
+            better_model=(
+                _better_panel_model(panel_after, retest_evaluator_config['judge_model'], output_type)
+                if panel_after else _better_panel_model(panel_before, source_eval.get('judge_model'), output_type)
+            ),
         ),
     }
     runner.write_json(out_dir / 'retest_metrics.json', payload)
@@ -1179,6 +1253,7 @@ def _caveats(
     regression_wide: dict[str, Any] | None = None, n_pairs: int = 0,
     before_after_scope: tuple[int, int, int] | None = None,
     agreement: dict[str, Any] | None = None,
+    better_model: tuple[str, float, float, str] | None = None,
 ) -> list[str]:
     """The limits of the two gates, in the words the conductor should use.
 
@@ -1193,6 +1268,14 @@ def _caveats(
             f'Accuracy is {accuracy:.0%} but Cohen\'s kappa is {kappa:.2f}: the labels are skewed and '
             'the judge is barely better than always giving the common answer. Quote how many of '
             'the rare label it caught, not the accuracy.'
+        )
+    if better_model is not None:
+        model, model_score, judge_score, metric = better_model
+        out.append(
+            f'One panel model ({model}) scored {model_score:.2f} {metric} '
+            f'on the same labelled rows, versus {judge_score:.2f} for the '
+            'aligned judge. Inspect its rare-label recall before another prompt rewrite; '
+            'the judge model may be the limiting factor.'
         )
     if regression_before_after is not None:
         before_v, after_v = regression_before_after

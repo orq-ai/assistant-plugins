@@ -27,6 +27,7 @@ from loguru import logger
 import _bootstrap  # noqa: F401
 from lib import runner
 from lib.cost import format_projection, project_stability_cost
+from lib.panel import resolve_panel
 
 
 def main(
@@ -34,6 +35,7 @@ def main(
     config: str = 'config.toml',
     n_repeats: int | None = None,
     num_samples: int | None = None,
+    panel_models: str | list[str] | None = None,
 ) -> str:
     """Print a ballpark cost for the stability run over a run directory."""
     cfg = runner.load_config(config)
@@ -43,11 +45,13 @@ def main(
 
     evaluator = runner.read_json(out_dir / 'evaluator.json')
     rows = runner.read_jsonl(out_dir / 'traces.jsonl')
+    panel = [m for m in resolve_panel(panel_models, cfg) if m != evaluator['judge_model']]
     proj = project_stability_cost(
         judge_model=evaluator['judge_model'],
         rows=rows,
-        n_repeats=int(n_repeats or cfg.get('n_repeats', 5)),
+        n_repeats=int(n_repeats or (cfg.get('panel_repeats', 3) if panel else cfg.get('n_repeats', 5))),
         num_samples=num_samples if num_samples is not None else cfg.get('num_samples', -1),
+        panel_models=panel,
     )
     logger.info(format_projection(proj))
     print(format_projection(proj))

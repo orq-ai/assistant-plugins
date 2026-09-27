@@ -38,6 +38,7 @@ def project_stability_cost(
     rows: list[dict[str, Any]],
     n_repeats: int,
     num_samples: int | None,
+    panel_models: list[str] | None = None,
 ) -> dict[str, Any]:
     """Project the workload of the stability run from a sample of trace rows.
 
@@ -55,10 +56,12 @@ def project_stability_cost(
     avg_in = sum(len(r.get('query', '') or '') + len(r.get('output', '') or '') for r in sample) / n
     in_per_call = _tokens(JUDGE_OVERHEAD_CHARS + avg_in)
     out_per_call = _tokens(EXPLANATION_CHARS)
-    total_calls = n * n_repeats
+    n_models = 1 + len(panel_models or [])
+    total_calls = n * n_repeats * n_models
 
     return {
         'judge_model': judge_model,
+        'panel_models': list(panel_models or []),
         'num_datapoints': n,
         'n_repeats': n_repeats,
         'total_calls': total_calls,
@@ -78,8 +81,11 @@ def format_projection(proj: dict[str, Any]) -> str:
     total_tokens = proj['total_input_tokens'] + proj['total_output_tokens']
     return (
         f'Stability run: ~{_fmt(proj["total_calls"])} judge calls '
-        f'({proj["num_datapoints"]} datapoints × {proj["n_repeats"]} repeats), '
-        f'judge={proj["judge_model"]}.\n'
+        f'({proj["num_datapoints"]} datapoints × {proj["n_repeats"]} repeats'
+        + (f' × {1 + len(proj["panel_models"])} models' if proj.get('panel_models') else '')
+        + f'), judge={proj["judge_model"]}'
+        + (f', panel={", ".join(proj["panel_models"])}' if proj.get('panel_models') else '')
+        + '.\n'
         f'  Tokens (approx, ~{CHARS_PER_TOKEN:.0f} chars/token): '
         f'~{_fmt(proj["total_input_tokens"])} input + '
         f'~{_fmt(proj["total_output_tokens"])} output '

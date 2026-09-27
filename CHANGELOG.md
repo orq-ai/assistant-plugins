@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] - 2026-09-27
+
+### Added
+
+- `orq-evaluator-alignment` jury mode (RES-1638): the audited judge and any extra `panel_models` score the same rows with independent repetitions. A three-model panel defaults to three repetitions per model; one-model runs retain their existing repeat count. The cost estimate includes every model call.
+- `metrics.json` records per-model wobble, cross-model disagreement, ties, failed or unmeasurable votes, and per-model correctness where dataset labels are valid. The review queue ranks ties, disagreement with wobble, disagreement, then wobble, with stable controls held separately.
+- `retest_metrics.json` reports each panel model's agreement with human labels on its scored rows, allowing rare-label recall and balanced accuracy to expose a useful model hidden by majority voting.
+
+### Changed
+
+- The alignment workflow asks for panel models before the cost gate and diagnoses model capability from the panel before another prompt rewrite. Failed judge calls are excluded from annotation priority.
+
 ## [3.5.0] - 2026-09-27
 
 Learnings from the PyData 2026 evaluation-flywheel run (RES-1565) folded into `orq-evaluator-alignment`.

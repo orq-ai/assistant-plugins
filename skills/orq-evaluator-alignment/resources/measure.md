@@ -3,8 +3,13 @@
 ## 2. Agree what we're about to run, and what it costs  ⟵ GATE
 The next step asks the judge the same question several times over to see whether it
 answers the same way. Explain it that way, then settle three things with the user:
-**how many times to repeat each example** (default 8), **how many examples**, and the
-**temperature**.
+**how many times to repeat each example** (8 for the judge alone; 3 per model in a
+panel), **how many examples**, and the **temperature**. Ask whether to include other
+models. A panel of the audited judge plus two distinct provider-qualified models is
+the recommended 3 × 3 starting point; the judge alone remains a valid one-model
+run. Name every model before the cost gate. Put the two extra models in
+`config.toml`'s `panel_models` or pass the same `--panel_models` list to both
+`estimate_cost.py` and `stability.py`. `--n_repeats` overrides either default.
 
 **Also confirm which model will judge.** We resolve the model name but *not* the
 provider, and the router needs both. `evaluator.json["judge_model"]` often holds a
@@ -18,17 +23,20 @@ final slug and check it's the provider they meant.
 
 Then show the size of the job and **wait for an explicit yes**:
 ```
-uv run scripts/estimate_cost.py --run_dir <run_dir>
+uv run scripts/estimate_cost.py --run_dir <run_dir> --panel_models <model-b>,<model-c>
 ```
-It reports how many judge calls that is and the token totals. There's no dollar
+The panel flag is optional. It reports rows × repetitions × models and token totals.
+There's no dollar
 figure — multiply by the model's per-Mtoken rate if they want one.
 
 ## 3. Run it
 ```
-uv run scripts/stability.py --run_dir <run_dir>
+uv run scripts/stability.py --run_dir <run_dir> --panel_models <model-b>,<model-c>
 ```
-(Try `--num_samples 2` first as a smoke check.) Writes `stability.json` and runs the
-metrics automatically.
+(Omit the panel flag for a one-model run; try `--num_samples 2` first as a smoke
+check.) Writes `stability.json` and runs the metrics automatically. Every panel
+model sees the same prompt and examples. A failed provider call is recorded as an
+error and excluded from model disagreement, never promoted into the review queue.
 
 ## 4. Tell them how consistent the judge is
 `metrics.py` wrote `metrics.json`. Report it **as behaviour, not as statistics**:
@@ -43,6 +51,13 @@ Say plainly what this does **not** tell them: consistency is not correctness. A 
 that is wrong the same way every time scores perfectly here. That caveat belongs in
 this message, not only in the final summary.
 
+**With a panel, report two different observations.** `metrics.json`'s `panel` block
+counts rows where models disagreed and rows where any model wobbled across its own
+repetitions. Name both, then read `mean_instability_by_model` and, where dataset
+labels are valid, `correctness_by_model`. A majority can hide the one model that
+catches the rare failure; compare each model's rare-label recall before interpreting
+the panel aggregate. `n_panel_unmeasurable` is missing evidence, not agreement.
+
 **Unless `metrics.json`'s `correctness` block has `n_labelled > 0`** — then it *does*
 tell them, for the rows it covers, and burying that would waste the most valuable
 number in the run. The block itself is present whenever the examples carried ground
@@ -50,7 +65,8 @@ truth, but a present block isn't the same as a populated one: when the evaluator
 declares a reference-family variable (`reference` was judge input, not ground truth),
 or it's numeric with no derivable scale, it comes back with
 `n_labelled: 0` and a `reason_omitted` naming which — read that out, don't report an
-accuracy number. When it *is* populated, lead with the accuracy and, specifically, the
+accuracy number. When it *is* populated, lead with rare-label recall if labels are
+skewed, then accuracy and, specifically, the
 accuracy on rows the judge was **stable** on — but check `by_band.stable`'s coverage
 first: only once it covers at least 10 rows and at least 90% of that band does the
 line earn *"the consistently-wrong blind spot, measured"*, and only then say *"and on
@@ -77,14 +93,16 @@ different version of the rubric. Never auto-approve a rewrite on dataset labels 
 (For yes/no judges the heavier agreement stats — 1-Flip Consistency, Gwet AC1,
 Fleiss κ — are computed too. Offer them; don't lead with them.)
 
-**If the judge was consistent on everything, go back to step 1a** — there is nothing
-to review, and the second-model option is the one that fits.
+**If the judge was consistent on everything**, a panel can still surface a boundary
+where other models disagree. If there is no disagreement either, go back to step 1a
+for better examples; there is nothing informative to review yet. Existing one-model
+runs can still use the `cross_model.py` two-model probe described there.
 
 ## 5. Ask how many examples to go through together  ⟵ GATE
-*After* they've seen the step-4 report, ask how many of the examples the judge
-changed its mind on they want to look at with you:
+*After* they've seen the step-4 report, ask how many examples where the judge
+wobbled or the models disagreed they want to look at with you:
 
-> *"How many of the ones it kept changing its mind on should we go through together?
+> *"How many disputed examples should we go through together?
 > Give me a number, or 'all' — if it's more than fits in one pass I'll tell you which
 > ones made the cut."*
 
@@ -102,6 +120,12 @@ from step 6 — so "3" means three examples in the discussion, not eight.
 `build_queue` also projects what step 6 will cost in context ("~95k tokens of 60k;
 the top 48 will enter"). If it reports a drop, say so **now** — this is the moment
 they chose coverage, so correct it here rather than re-asking later.
+
+With a panel, queue priority is unresolved ties → model disagreement plus wobble →
+model disagreement → wobble, followed by stable controls. Rows with failed judge
+calls do not enter the question queue. The queue carries each model's aggregate
+verdict for later diagnosis; the human should label from the evidence before seeing
+those votes in an annotation UI.
 
 ---
 

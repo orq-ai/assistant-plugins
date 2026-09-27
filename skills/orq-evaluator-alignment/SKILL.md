@@ -6,8 +6,9 @@ description: >-
   the user wants to "align my evaluator", "improve my eval", "my judge keeps
   changing its mind", "find ambiguous cases", or "annotate an evaluator" — i.e.
   they have an LLM judge that disagrees with human labels or is inconsistent.
-  Measures judge self-consistency as one 0..1 instability score via repeated runs,
-  groups the least reliable examples by what makes them hard and asks a few
+  Measures judge self-consistency and, when several judge models are selected,
+  cross-model disagreement with repeated votes per model. Groups the least reliable
+  examples by what makes them hard and asks a few
   questions instead of making the user label every row, rewrites the judge prompt
   from those answers, and creates the new evaluator only after the human approves.
   If the evaluator ID isn't given, ask for it after triggering. Do NOT use to
@@ -98,10 +99,10 @@ all up front; load the next one when you get to it.
 | 0 | Does a judge exist in orq? Route to `orq-build-evaluator` if not | ⟵ GATE | [resources/judge-and-examples.md](resources/judge-and-examples.md) |
 | 1 | `fetch_evaluator.py` — confirm the judge, its variables and model | | same file |
 | 1a | Where do the examples come from: traces, dataset, their own, generated | ⟵ GATE | same file |
-| 2 | Agree repeats, examples, temperature, judge slug; `estimate_cost.py` | ⟵ GATE | [resources/measure.md](resources/measure.md) |
-| 3 | `stability.py` — repeat the judge, write `stability.json` + `metrics.json` | | same file |
-| 4 | Report consistency as behaviour; correctness if labels exist | | same file |
-| 5 | How many unstable examples to review; `build_queue.py` | ⟵ GATE | same file |
+| 2 | Agree models, repeats, examples, temperature, judge slug; `estimate_cost.py` | ⟵ GATE | [resources/measure.md](resources/measure.md) |
+| 3 | `stability.py` — repeat each model, write `stability.json` + `metrics.json` | | same file |
+| 4 | Report wobble and model disagreement separately; correctness if labels exist | | same file |
+| 5 | How many disputed examples to review; `build_queue.py` | ⟵ GATE | same file |
 | 6 | Group the hard examples, ask 1–5 rule questions, write the policy | ⟵ GATE | [resources/grey-zone.md](resources/grey-zone.md) |
 | 7 | `rewrite_eval.py`, show the diff, `create_eval.py --approve` only on yes | ⟵ GATE | [resources/rewrite-and-create.md](resources/rewrite-and-create.md) |
 | 8 | Optional `retest.py`: steadier **and** agreeing with the user? | ⟵ GATE | [resources/retest.md](resources/retest.md) |
@@ -120,9 +121,12 @@ Tell them, in plain terms:
 - **how it does on the rare answer.** If one label is scarce (usually fail), say how many
   of those it catches before any overall accuracy — 90% accurate can mean it never
   says fail at all. Quote `cohen_kappa` when it tells a different story than accuracy;
-- **what this did not check.** Everything here was measured on examples the judge was
-  *unsure* about. A judge that is confidently wrong never wobbles, so it never showed
-  up. Say this even when the numbers are good — especially then. Say what the stable
+- **what the panel found, when used.** Report model disagreement separately from
+  within-model wobble, and call out a model that catches rare failures the audited
+  judge misses on the same labelled rows;
+- **what this did not check.** The review focused on examples where a model wobbled
+  or the panel disagreed. All models can still be confidently wrong together, so
+  state what dataset labels or independent human labels actually checked. Say what the stable
   spot-check examples showed (step 6.6, [grey-zone.md](resources/grey-zone.md)) and whether the retest re-judged them, and
   suggest re-running periodically.
 - **why the improvement number is an upper bound.** The same examples produced the
@@ -138,5 +142,7 @@ Tell them, in plain terms:
 ## Companion Skills
 
 - `orq-build-evaluator` — build the judge in the first place; come back here when it disagrees with humans.
-- `evaluatorq` — run a judge from code. A code-defined `llm_jury()` panel is the other answer to an unstable judge: instead of rewriting one judge's prompt, poll several and read `raw_agreement` / Krippendorff's alpha. Alignment against human labels is still this skill's job — a panel that agrees with itself can be uniformly wrong.
+- `evaluatorq` — run a judge or production panel from code. This skill uses a panel
+  to find boundary cases and compare models against human labels while aligning one
+  orq evaluator. A panel that agrees with itself can still be uniformly wrong.
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `-o json` output. See its "MCP tools or the CLI?" table before choosing.

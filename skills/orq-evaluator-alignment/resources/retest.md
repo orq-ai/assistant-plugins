@@ -42,6 +42,13 @@ the arithmetic: a new score of 0.78 that clears the 0.7 bar still forces
 `success: false` if the old judge was at 0.85, so the pass/fail flag on its own is no
 longer blind to a regression the way it used to be.
 
+**For a panel run, inspect every model's agreement.** The retest reuses the original
+panel models and repetition count. `agreement.panel_before` and
+`agreement.panel_after` score each model against the human labels, with failed votes
+omitted and `source_indices` showing each model's scoring set. Compare models only
+on the same rows. Lead with balanced accuracy and rare-label recall when the labels
+are skewed; overall accuracy can let two weak models outvote one useful one.
+
 **Say what the numbers can't be.** `retest_metrics.json` carries a `caveats` list;
 read it out rather than summarising it away. They all point the same way — the result
 is softer than it looks:
@@ -93,7 +100,8 @@ failure of this whole process, and this is the only place it surfaces.
 agreement can score, so re-running the rest would cost money for verdicts nothing
 reads. The before/after instability comparison is recomputed over that same subset,
 so the drop isn't an artifact of which rows were picked. Quote the cost accordingly:
-**labelled examples × repeats**, not the whole dataset. (`--all_rows` re-judges
+**labelled examples × repeats × models** for a panel run, not the whole dataset.
+(`--all_rows` re-judges
 everything, if they want a run-wide re-measure.)
 
 Repeats and temperature **default to whatever the step-3 run actually used**, read
@@ -117,8 +125,9 @@ scale (`fetch_evaluator.py --scale_min/--scale_max`) and re-run — see [configu
 comparison, so the before/after stays over the same rows.)
 
 **Quote the cost before running it**, there's no estimator for this step: it's
-`labelled rows × repeats` judge calls, doubled with `--baseline_rerun`, plus
-`low_flip_sample_size × repeats` with `--with_low_flip`.
+`labelled rows × repeats × models` judge calls for the new evaluator, plus
+`labelled rows × repeats` for `--baseline_rerun` (the old judge only). Include
+`low_flip_sample_size × repeats × models` with `--with_low_flip`.
 
 ## What to do with the result  ⟵ GATE
 
@@ -127,10 +136,12 @@ Two outcomes need a different next move than "rewrite again".
 **Steadier, still wrong on the same rows: test the model, not the prompt.** If gate
 (a) passed but gate (b) failed, and the rows the judge still gets wrong are ones it is
 *steady* on — same wrong answer every repetition — the rule is already in the prompt
-and the model isn't applying it. Another rewrite rarely fixes that, and each round
-spends the user's labels on a question they already answered. Before offering one,
-re-run the same retest with a stronger judge model on a **copy** of the run, so the
-real result stays put:
+and the model isn't applying it. If a panel was run, check `agreement.panel_after`
+first: a model that catches the rare failures on the **same labelled rows** is the
+candidate to use for the aligned evaluator. Another rewrite rarely fixes that, and each round
+spends the user's labels on a question they already answered. If no panel model
+shows the difference, confirm the model and cost, then re-run the same retest with a
+stronger judge model on a **copy** of the run so the real result stays put:
 
 ```
 cp -R <run_dir> <run_dir>_modelcheck

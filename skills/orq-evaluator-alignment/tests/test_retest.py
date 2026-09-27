@@ -849,7 +849,7 @@ FAKE_CONFIG = str(Path(__file__).resolve().parents[1] / 'tests' / 'config_fake.t
 def _stub_stability_main(monkeypatch, verdict_fn, output_type: str = 'boolean') -> None:
     import stability
 
-    def fake_main(*, run_dir, config, n_repeats=None, temperature=None, metrics=True):
+    def fake_main(*, run_dir, config, n_repeats=None, temperature=None, panel_models=None, metrics=True):
         rd = Path(run_dir)
         rows = retest.runner.read_jsonl(rd / 'traces.jsonl')
         stab_rows, per_row = [], []
@@ -913,6 +913,55 @@ def test_agreement_before_is_scoped_to_the_retested_rows(tmp_path, monkeypatch):
 
     rm = json.loads((tmp_path / 'retest_metrics.json').read_text(encoding='utf-8'))
     assert rm['agreement']['before']['n_pairs'] == 1
+
+
+def test_retest_reuses_the_original_panel_and_scores_each_model(tmp_path, monkeypatch):
+    import stability
+
+    _seed_full_run(tmp_path, n=2, output_type='boolean')
+    _write(tmp_path / 'annotations.json', {'0': {'value': False}, '1': {'value': True}})
+    original_metrics = retest.runner.read_json(tmp_path / 'metrics.json')
+    original_metrics['metadata'].update({'panel_models': ['m', 'peer'], 'n_repeats': 3})
+    _write(tmp_path / 'metrics.json', original_metrics)
+    original_stability = retest.runner.read_json(tmp_path / 'stability.json')
+    original_stability['metadata']['n_repeats'] = 3
+    for row in original_stability['rows']:
+        row['panel'] = [
+            {'model': 'm', 'success': True, 'value': True, 'repetitions': [True] * 3},
+            {'model': 'peer', 'success': True, 'value': row['source_index'] == 1,
+             'repetitions': [row['source_index'] == 1] * 3},
+        ]
+    _write(tmp_path / 'stability.json', original_stability)
+    seen_panels = []
+
+    def fake_main(*, run_dir, config, n_repeats=None, temperature=None, panel_models=None, metrics=True):
+        seen_panels.append(panel_models)
+        rd = Path(run_dir)
+        rows = retest.runner.read_jsonl(rd / 'traces.jsonl')
+        stab_rows = []
+        for i, _row in enumerate(rows):
+            votes = [
+                {'model': 'm', 'success': True, 'value': True, 'repetitions': [True] * 3},
+                {'model': 'peer', 'success': True, 'value': i == 1, 'repetitions': [i == 1] * 3},
+            ]
+            stab_rows.append({'source_index': i, 'aggregate_value': True, 'panel': votes})
+        retest.runner.write_json(rd / 'stability.json', {
+            'metadata': {'n_repeats': n_repeats}, 'rows': stab_rows,
+        })
+        retest.runner.write_json(rd / 'metrics.json', {
+            'metadata': {'judge_model': 'm', 'n_repeats': n_repeats},
+            'scores': {'mean_instability': 0.0},
+            'per_row': [{'source_index': i, 'instability': 0.0} for i in range(len(rows))],
+        })
+
+    monkeypatch.setattr(stability, 'main', fake_main)
+    retest.main(run_dir=str(tmp_path), config=FAKE_CONFIG)
+    result = retest.runner.read_json(tmp_path / 'retest_metrics.json')
+    assert seen_panels == [['peer']]
+    assert result['agreement']['panel_before']['peer']['accuracy'] == 1.0
+    assert result['agreement']['panel_after']['peer']['accuracy'] == 1.0
+    assert result['agreement']['panel_after']['m']['accuracy'] == 0.5
+    assert any('peer' in caveat for caveat in result['caveats'])
 
 
 def test_gate_b_regression_new_judge_covers_more_rows(tmp_path, monkeypatch):
@@ -1016,7 +1065,7 @@ def test_selection_bias_controlled_reflects_the_outcome_not_just_the_flag(tmp_pa
 
     import stability
 
-    def fake_main(*, run_dir, config, n_repeats=None, temperature=None, metrics=True):
+    def fake_main(*, run_dir, config, n_repeats=None, temperature=None, panel_models=None, metrics=True):
         rd = Path(run_dir)
         rows = retest.runner.read_jsonl(rd / 'traces.jsonl')
         is_baseline = rd.name == 'retest_baseline'

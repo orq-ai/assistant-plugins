@@ -10,14 +10,14 @@
 #     "truststore>=0.9; sys_platform == 'win32'",
 # ]
 # ///
-"""Step 4 — stability run: re-judge every datapoint N times.
+"""Step 3 — stability run: re-judge every datapoint N times per model.
 
 Reconstructs the audited judge (judge prompt + judge model from
-`evaluator.json`) as an evaluatorq single-judge panel and runs it
+`evaluator.json`) as an evaluatorq judge and runs it
 `repetitions=N` times per datapoint via `run_jury` — the only place the
 repetitions flag and a client-side temperature actually take effect (the hosted
-orq path supports neither). The N raw verdicts per row land in `stability.json`
-for the flip analysis in step 5.
+orq path supports neither). The N raw verdicts per model and row land in
+`stability.json` for the instability and cross-model analysis in step 4.
 
 Usage:
     cd skills/orq-evaluator-alignment
@@ -39,6 +39,7 @@ import _bootstrap  # noqa: F401
 from lib import runner
 from lib.content import traces_fingerprint
 from lib.judge import JudgeSpec, make_judge_client, make_replacements, run_jury_for_row
+from lib.panel import resolve_panel
 
 load_dotenv()
 
@@ -70,7 +71,6 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
             )
         indexed = kept
 
-    n_repeats = int(overrides.get('n_repeats') or cfg.get('n_repeats', 5))
     num_samples = overrides.get('num_samples')
     num_samples = cfg.get('num_samples', -1) if num_samples is None else num_samples
     num_samples = None if num_samples in (None, -1) else int(num_samples)
@@ -110,12 +110,35 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
             'Inspect evaluator.json["raw"] and set the model field.'
         )
 
+    # Jury panel (RES-1638): extra models judge the same rows with the same prompt.
+    # The aligned judge stays `judge_model`; the others are evidence about it.
+    panel_models = [m for m in resolve_panel(overrides.get('panel_models'), cfg) if m != judge_model]
+    default_repeats = cfg.get('panel_repeats', 3) if panel_models else cfg.get('n_repeats', 5)
+    n_repeats = int(overrides.get('n_repeats') or default_repeats)
+    models = [judge_model, *panel_models]
+
     sem = asyncio.Semaphore(max_concurrency)
     client = make_judge_client()
+    n_calls = len(indexed) * n_repeats * len(models)
     logger.info(
-        f'Stability: {len(indexed)} rows × {n_repeats} repeats = {len(indexed) * n_repeats} '
-        f'judge calls (judge={judge_model}, temp={temperature}, concurrency={max_concurrency})'
+        f'Stability: {len(indexed)} rows × {n_repeats} repeats × {len(models)} model(s) = {n_calls} '
+        f'judge calls (judge={judge_model}, panel={panel_models or "none"}, temp={temperature}, '
+        f'concurrency={max_concurrency})'
     )
+
+    async def _judge(model: str, spec: JudgeSpec) -> dict[str, Any]:
+        async with sem:
+            try:
+                return await run_jury_for_row(
+                    spec, model, client=client, repetitions=n_repeats,
+                    output_type=output_type, labels=categorical_labels, scale=scale,
+                )
+            except Exception as exc:  # noqa: BLE001
+                return {
+                    'success': False, 'error': f'{type(exc).__name__}: {exc}',
+                    'repetitions': [], 'repetitions_failed': n_repeats, 'n_wrong_output_type': 0,
+                    'value': None, 'explanation': None, '_raised': True,
+                }
 
     async def _one(idx: int, row: dict[str, Any]) -> dict[str, Any]:
         """`idx` is the row's position in traces.jsonl, not in the filtered list."""
@@ -124,37 +147,29 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
             replacements=make_replacements(variables, row),
             temperature=temperature,
         )
-        async with sem:
-            t0 = time.monotonic()
-            try:
-                res = await run_jury_for_row(
-                    spec, judge_model, client=client, repetitions=n_repeats,
-                    output_type=output_type, labels=categorical_labels, scale=scale,
+        t0 = time.monotonic()
+        results = await asyncio.gather(*(_judge(m, spec) for m in models))
+        res = results[0]
+        n_failed = int(res.get('repetitions_failed') or 0)
+        # A row counts as judged only if >=1 repetition produced a usable
+        # verdict. An all-failed vote (success=False) used to be recorded
+        # as ok=True with an all-None repetitions list, hiding the real
+        # judge error. Surface it loudly instead.
+        if res.get('_raised'):
+            ok, err = False, res['error']
+            logger.error(f'✗ stability row {idx} failed — {err}')
+        elif not res.get('success', False) or n_failed >= n_repeats:
+            ok = False
+            err = res.get('error') or 'all repetitions failed (no usable verdict)'
+            logger.error(f'✗ stability row {idx}: 0/{n_repeats} usable verdicts — {err}')
+        else:
+            ok = True
+            err = None
+            if n_failed:
+                logger.warning(
+                    f'⚠ stability row {idx}: {n_failed}/{n_repeats} repetitions failed (vote still decisive)'
                 )
-                n_failed = int(res.get('repetitions_failed') or 0)
-                # A row counts as judged only if >=1 repetition produced a usable
-                # verdict. An all-failed vote (success=False) used to be recorded
-                # as ok=True with an all-None repetitions list, hiding the real
-                # judge error. Surface it loudly instead.
-                if not res.get('success', False) or n_failed >= n_repeats:
-                    ok = False
-                    err = res.get('error') or 'all repetitions failed (no usable verdict)'
-                    logger.error(f'✗ stability row {idx}: 0/{n_repeats} usable verdicts — {err}')
-                else:
-                    ok = True
-                    err = None
-                    if n_failed:
-                        logger.warning(
-                            f'⚠ stability row {idx}: {n_failed}/{n_repeats} repetitions failed (vote still decisive)'
-                        )
-            except Exception as exc:  # noqa: BLE001
-                logger.exception(f'✗ stability row {idx} failed')
-                res = {
-                    'repetitions': [], 'repetitions_failed': n_repeats, 'n_wrong_output_type': 0,
-                    'value': None, 'explanation': None,
-                }
-                ok, err = False, f'{type(exc).__name__}: {exc}'
-        return {
+        record = {
             'source_index': idx,
             'query': row.get('query', ''),
             'output': row.get('output', ''),
@@ -179,6 +194,22 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
             'representative_explanation': res.get('explanation'),
             'elapsed_s': time.monotonic() - t0,
         }
+        if panel_models:
+            # Every model's votes, the aligned judge first. A failed panel model is
+            # recorded, not raised: it drops out of the panel signals in metrics.py.
+            record['panel'] = [
+                {
+                    'model': m,
+                    'success': bool(r.get('success')) and not r.get('_raised'),
+                    'error': r.get('error'),
+                    'repetitions': r.get('repetitions') or [],
+                    'repetitions_failed': r.get('repetitions_failed'),
+                    'value': r.get('value'),
+                    'explanation': r.get('explanation'),
+                }
+                for m, r in zip(models, results)
+            ]
+        return record
 
     tasks = [asyncio.create_task(_one(i, r)) for i, r in indexed]
     records: list[dict[str, Any]] = []
@@ -196,6 +227,7 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
             'evaluator_id': evaluator['id'],
             'evaluator_key': evaluator.get('key'),
             'judge_model': judge_model,
+            'panel_models': models if panel_models else [],
             'output_type': output_type,
             'n_repeats': n_repeats,
             'temperature': temperature,
@@ -221,6 +253,7 @@ def main(
     temperature: float | None = None,
     metrics: bool = True,
     include_degraded: bool = False,
+    panel_models: str | list[str] | None = None,
 ) -> str:
     """Run the stability protocol over a run directory's traces.
 
@@ -234,6 +267,9 @@ def main(
         metrics: When True (default), compute metrics on the result.
         include_degraded: Keep degraded/hollow rows (empty output) instead of
             skipping them. Off by default.
+        panel_models: Extra judge models, comma-separated `<provider>/<model>`
+            slugs, that judge the same rows with the same prompt (overrides config
+            `panel_models`). Each costs as much as the judge itself.
     """
     cfg = runner.load_config(config)
     out_dir = runner.resolve_run_dir(run_dir) if run_dir else runner.latest_run_dir(cfg.get('runs_dir', 'runs'))
@@ -250,6 +286,7 @@ def main(
                 'max_concurrency': max_concurrency,
                 'temperature': temperature,
                 'include_degraded': include_degraded,
+                'panel_models': panel_models,
             },
         )
     )
