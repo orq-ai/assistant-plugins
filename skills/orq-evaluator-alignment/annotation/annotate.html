@@ -249,14 +249,13 @@ function render() {
       <div class="badges">
         <span class="badge">#${it.source_index} · rank ${it.rank}</span>
         ${ambBadge}
-        ${judgeSpread(it)}
       </div>
       ${msgs ? `<details><summary>conversation / messages</summary><div class="inner"><div class="box">${esc(msgs)}</div></div></details>` : ''}
       ${inputs}
       ${meta.eval_prompt ? `<details><summary>evaluator prompt (template variables shown filled-in above)</summary><div class="inner"><div class="box md">${mdToHtml(meta.eval_prompt)}</div></div></details>` : ''}
       <details>
-        <summary>show judge's reasoning (hidden so it doesn't anchor you)</summary>
-        <div class="inner"><div class="box">${esc(jv.representative_explanation) || '<em>(none)</em>'}</div></div>
+        <summary>show the judge's votes and reasoning (hidden so they don't anchor you)</summary>
+        <div class="inner"><div class="badges">${judgeSpread(it)}</div><div class="box">${esc(jv.representative_explanation) || '<em>(none)</em>'}</div></div>
       </details>
     </div>`;
   $('#note').value = a.reason || '';

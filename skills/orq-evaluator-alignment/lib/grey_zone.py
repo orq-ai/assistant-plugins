@@ -410,7 +410,7 @@ _DEFAULT_LABEL_SOURCE = 'derived'
 def _check_value_in_space(value: Any, output_type: str, verdict_space: dict[str, Any], label: Any) -> None:
     """Raise if `value` is not something the judge can actually emit.
 
-    SKILL.md §6.4 tells the conductor never to invent a label or move the scale;
+    resources/grey-zone.md (step 6.4) tells the conductor never to invent a label or move the scale;
     nothing enforced it. An invented categorical label passed validation, entered
     the rewrite guidance, and then scored 0 accuracy at step 8 — which reads as a
     judge failure rather than as the policy error it is.

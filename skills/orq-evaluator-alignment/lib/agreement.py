@@ -6,8 +6,8 @@ judge that is consistently wrong but stable (the Part 1 blind spot). Signal (b) 
 this module: does the new evaluator's verdict actually *agree with the human label*
 on the same confusers?
 
-  - boolean     → TPR / TNR (+ overall accuracy). Positive class = True.
-  - categorical → exact-match accuracy (case/whitespace-normalized).
+  - boolean     → TPR / TNR (+ overall accuracy, balanced accuracy, Cohen's kappa). Positive class = True.
+  - categorical → exact-match accuracy (case/whitespace-normalized) + balanced accuracy, Cohen's kappa.
   - numeric     → MAE and within-tolerance rate on the raw scale, with the default
     band derived from the evaluator's DECLARED scale (`default_tolerance`).
 
@@ -108,6 +108,33 @@ def _require_pairs(pairs: Sequence[Pair], output_type: str) -> None:
         raise ValueError(f'{output_type} agreement needs at least one (human, judge) pair')
 
 
+def chance_corrected(labels: Sequence[tuple[str, str]]) -> dict[str, float | None]:
+    """Balanced accuracy and Cohen's kappa over already-normalized `(human, judge)` labels.
+
+    Accuracy alone flatters a judge on skewed labels: 27 passes and 3 fails, judged
+    "pass" every time, is 90% accurate, 0.5 balanced accuracy and kappa 0.
+    Balanced accuracy is the mean per-class recall over the classes the human used.
+    Kappa is `None` when chance agreement is 1 (both sides used one identical label),
+    where it is undefined rather than zero.
+    """
+    n = len(labels)
+    if not n:
+        return {'balanced_accuracy': None, 'cohen_kappa': None}
+    human_counts: dict[str, int] = {}
+    judge_counts: dict[str, int] = {}
+    hits: dict[str, int] = {}
+    for h, j in labels:
+        human_counts[h] = human_counts.get(h, 0) + 1
+        judge_counts[j] = judge_counts.get(j, 0) + 1
+        if h == j:
+            hits[h] = hits.get(h, 0) + 1
+    balanced = sum(hits.get(c, 0) / k for c, k in human_counts.items()) / len(human_counts)
+    p_o = sum(hits.values()) / n
+    p_e = sum(human_counts[c] * judge_counts.get(c, 0) for c in human_counts) / (n * n)
+    kappa = None if p_e >= 1.0 else (p_o - p_e) / (1.0 - p_e)
+    return {'balanced_accuracy': balanced, 'cohen_kappa': kappa}
+
+
 def boolean_agreement(pairs: Sequence[Pair]) -> dict[str, Any]:
     """TPR, TNR and overall accuracy over `(human, judge)` boolean pairs.
 
@@ -136,6 +163,7 @@ def boolean_agreement(pairs: Sequence[Pair]) -> dict[str, Any]:
         'tpr': (tp / n_pos) if n_pos else None,
         'tnr': (tn / n_neg) if n_neg else None,
         'accuracy': (tp + tn) / n,
+        **chance_corrected([(str(_coerce_bool(h)), str(_coerce_bool(j))) for h, j in pairs]),
         'tp': tp,
         'fn': fn,
         'tn': tn,
@@ -154,7 +182,12 @@ def categorical_agreement(pairs: Sequence[Pair]) -> dict[str, Any]:
     _require_pairs(pairs, 'categorical')
     n_correct = sum(1 for human, judge in pairs if _norm_label(human) == _norm_label(judge))
     n = len(pairs)
-    return {'accuracy': n_correct / n, 'n_correct': n_correct, 'n': n}
+    return {
+        'accuracy': n_correct / n,
+        **chance_corrected([(_norm_label(h), _norm_label(j)) for h, j in pairs]),
+        'n_correct': n_correct,
+        'n': n,
+    }
 
 
 def numeric_agreement(

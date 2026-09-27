@@ -1076,3 +1076,10 @@ def test_numeric_fallback_tolerance_refuses_before_any_judging(tmp_path, monkeyp
 
     rm = json.loads((tmp_path / 'retest_metrics.json').read_text(encoding='utf-8'))
     assert rm['agreement']['within_tolerance_rate'] == 1.0
+
+
+def test_caveat_flags_high_accuracy_with_near_zero_kappa():
+    caveats = retest._caveats(True, None, {}, agreement={'accuracy': 0.9, 'cohen_kappa': 0.0})
+    assert any("Cohen's kappa is 0.00" in c for c in caveats)
+    healthy = retest._caveats(True, None, {}, agreement={'accuracy': 0.93, 'cohen_kappa': 0.63})
+    assert not any('kappa' in c for c in healthy)
