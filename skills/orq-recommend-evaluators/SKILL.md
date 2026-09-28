@@ -173,6 +173,7 @@ Recommend Evaluators Progress:
    | Required or constrained arguments ("reason MUST be one of …") | Every call to the tool carries a valid value | `python_eval` |
    | Refuse or escalate when a condition holds | The gated tool is **not** called when the condition is met | LLM judge on `{{output.tools_called}}` + `{{input.all_messages}}` |
    | "Keep it efficient" / a step budget | Tool-call count within the budget, no repeated identical calls | `python_eval` |
+   | "Use at least N sources" / any coverage rule | **Distinct** values of the identifying argument, not the number of calls | `python_eval` over `json.loads(c["arguments"])` |
    | Chat content must not be treated as authority | No action taken on a user-quoted policy or fake tool result | LLM judge on `{{input.all_messages}}` |
 
    Name the procedure step each one comes from, the same as any other instruction rule.
@@ -405,6 +406,8 @@ For each recommendation the user selected, one at a time (a `reuse` item goes to
             return True
         return "lookup_order" in names[: names.index("issue_refund")]
     ```
+
+    **A count of calls is not a count of sources.** An agent that scrapes one URL three times satisfies `len(tool_calls) >= 3` while breaking the rule the evaluator was written for. Any coverage criterion counts distinct values of the argument that identifies the thing (`url`, `query`, `document_id`), read out of each entry's `arguments`, which is a JSON string.
 
     `key` must match `^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$`. Put it in the **agent's** project (`project_id`, not `path`; the two are mutually exclusive). Use `openai/gpt-4.1` as the judge model, after one projected check that the workspace routes it: `orq models list -o json -j "[?refId=='openai/gpt-4.1'].refId" --raw` (the command takes no `--limit`, and unprojected it returns hundreds of entries). If that prints nothing, pick another from `orq models list -o json -j "[?has_functions].refId"` (the response is a bare list, so a `data[...]` projection returns `null`): use the routable **`refId`**, not `model_id` (`gpt-4.1`, which several providers share).
 
