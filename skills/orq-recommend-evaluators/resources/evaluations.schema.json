@@ -77,7 +77,15 @@
         }
       },
       "if": { "properties": { "existing_evaluator_id": { "type": "null" } } },
-      "then": { "properties": { "type": { "enum": ["llm_eval", "python_eval"] } } }
+      "then": {
+        "properties": {
+          "type": { "enum": ["llm_eval", "python_eval"] },
+          "name": {
+            "description": "A new evaluator's name becomes its orq key, so it must match the key rule the API enforces. A reused evaluator's name echoes an existing key, which may hold spaces.",
+            "pattern": "^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$"
+          }
+        }
+      }
     }
   }
 }
