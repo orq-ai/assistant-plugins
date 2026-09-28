@@ -376,14 +376,24 @@ def _jury(
     by_idx = {e['source_index']: e for e in per_row}
     model_values: dict[str, dict[int, Any]] = {}
     model_insts: dict[str, list[float]] = {}
-    n_disagree = n_wobble = n_unmeasurable = 0
+    n_disagree = n_wobble = n_unmeasurable = n_abstained = 0
     for row in rows:
         if not row.get('panel'):
             continue
         sig = panel_lib.row_signals(row['panel'], output_type, clean=clean, floor=floor, k=k, scale=scale, tol=tol)
+        # Off-contract answers are typed abstentions only when no call failed
+        # and no usable verdict remains. A provider error stays diagnostic.
+        abstained_models = [
+            vote['model'] for vote in row['panel']
+            if vote.get('success')
+            and int(vote.get('n_wrong_output_type') or 0) > 0
+            and int(vote.get('repetitions_failed') or 0) == 0
+            and not clean(vote.get('repetitions') or [])
+        ]
         entry = by_idx.get(row.get('source_index'))
         if entry is not None:
             entry.update({
+                'panel_abstained_models': abstained_models,
                 'panel_disagreement': sig['disagreement'],
                 'panel_tied': sig['tied'],
                 'panel_agreement': sig['panel_agreement'],
@@ -392,6 +402,7 @@ def _jury(
                 'panel_max_instability': sig['max_instability'],
                 'panel_votes': {m: e['value'] for m, e in sig['per_model'].items()},
             })
+            n_abstained += int(bool(abstained_models))
         n_disagree += int(sig['disagreement'] is True)
         n_wobble += int(bool(sig['unstable_models']))
         n_unmeasurable += int(sig['disagreement'] is None)
@@ -403,6 +414,7 @@ def _jury(
     block: dict[str, Any] = {
         'models': models,
         'n_panel_disagreement': n_disagree,
+        'n_panel_abstention': n_abstained,
         'n_any_model_unstable': n_wobble,
         'n_panel_unmeasurable': n_unmeasurable,
         'mean_instability_by_model': {m: (fmean(model_insts[m]) if model_insts.get(m) else None) for m in models},
@@ -420,6 +432,7 @@ def _jury_lines(j: dict[str, Any] | None) -> list[str]:
     lines = [
         f"  - panel of {len(j['models'])} models: models disagreed on {j['n_panel_disagreement']} row(s); "
         f"at least one model wobbled on {j['n_any_model_unstable']}"
+        + (f"; at least one model abstained on {j['n_panel_abstention']} row(s)" if j['n_panel_abstention'] else '')
         + (f"; {j['n_panel_unmeasurable']} row(s) had fewer than 2 usable models" if j['n_panel_unmeasurable'] else '')
         + '.',
     ]

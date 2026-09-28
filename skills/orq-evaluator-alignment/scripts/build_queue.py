@@ -95,18 +95,23 @@ def _is_confuser(e: dict[str, Any]) -> bool:
 def _is_jury_confuser(e: dict[str, Any]) -> bool:
     # With a panel (RES-1638) a row is also a confuser when the models land on
     # different sides, or any one of them wobbles, even if the aligned judge is steady.
-    # A failed primary judge is a mechanical error, never an annotation question.
+    # An off-contract panel verdict is a typed abstention and gets priority;
+    # provider failures are mechanical errors and never become questions.
+    if e.get('panel_abstained_models'):
+        return True
     if not isinstance(e.get('instability'), (int, float)):
         return False
     return _is_confuser(e) or e.get('panel_disagreement') is True or bool(e.get('panel_unstable_models'))
 
 
 def _jury_rank(e: dict[str, Any]) -> tuple:
-    # Tiers: unresolved tie, disagreement + wobble, disagreement, wobble.
+    # Tiers: panel abstention, unresolved tie, disagreement + wobble,
+    # disagreement, wobble.
     # Provider failures never create a tier: metrics excludes unmeasurable votes.
     disagree = e.get('panel_disagreement') is True
     wobble = bool(e.get('panel_unstable_models')) or _is_confuser(e)
-    tier = 0 if e.get('panel_tied') else 1 if disagree and wobble else 2 if disagree else 3
+    tier = (0 if e.get('panel_abstained_models') else 1 if e.get('panel_tied')
+            else 2 if disagree and wobble else 3 if disagree else 4)
     agreement = e.get('panel_agreement')
     return (
         tier,
@@ -154,7 +159,8 @@ def _display_item(
         # Why this datapoint is in the queue: 'instability' (self-inconsistent),
         # 'cross_model' (two models disagree — §11.3 opt 4), 'wrong_vs_reference'
         # (stable, and disagrees with the dataset's ground truth), 'panel_disagreement'
-        # (the jury's models landed on different sides, RES-1638), or 'low_flip'.
+        # (the jury's models landed on different sides), 'panel_abstention'
+        # (a panel model returned only off-contract answers), or 'low_flip'.
         'reason': reason,
         # Ground truth and whether the judge matched it, when the dataset carried a
         # label. Lets the conductor group by HOW the judge is wrong (systematically
@@ -194,6 +200,7 @@ def _display_item(
         # Each panel model's aggregate verdict ({model: value}), None for a judge-only run.
         'panel_votes': e.get('panel_votes'),
         'panel_tied': e.get('panel_tied'),
+        'panel_abstained_models': e.get('panel_abstained_models'),
         'panel_unstable_models': e.get('panel_unstable_models'),
         'panel_agreement': e.get('panel_agreement'),
     }
@@ -341,7 +348,8 @@ def main(
     ]
 
     all_confusers = (
-        [(e, 'panel_disagreement' if e.get('panel_disagreement') is True else 'instability') for e in flipped]
+        [(e, 'panel_abstention' if e.get('panel_abstained_models') else
+          'panel_disagreement' if e.get('panel_disagreement') is True else 'instability') for e in flipped]
         + [(e, 'cross_model') for e in cross_only]
         + [(e, 'wrong_vs_reference') for e in wrong_only]
     )
@@ -395,6 +403,7 @@ def main(
     # the confuser list.
     n_flipped_in_queue = sum(1 for _, reason in confusers if reason == 'instability')
     n_panel_in_queue = sum(1 for _, reason in confusers if reason == 'panel_disagreement')
+    n_abstained_in_queue = sum(1 for _, reason in confusers if reason == 'panel_abstention')
     n_cross_in_queue = sum(1 for _, reason in confusers if reason == 'cross_model')
     n_wrong_in_queue = sum(1 for _, reason in confusers if reason == 'wrong_vs_reference')
 
@@ -413,6 +422,7 @@ def main(
             'n_flipped_items': n_flipped_in_queue,
             'n_cross_model': n_cross_in_queue,
             'n_panel_disagreement': n_panel_in_queue,
+            'n_panel_abstention': n_abstained_in_queue,
             'n_wrong_vs_reference': n_wrong_in_queue,
             'n_dropped_by_count': n_dropped_by_count,
             'n_low_flip_sample': len(sampled_low),
@@ -424,7 +434,7 @@ def main(
     runner.write_json(out_dir / 'queue.json', queue)
     logger.info(
         f'✓ Wrote {out_dir / "queue.json"}: {n_flipped_in_queue} flipped + '
-        + (f'{n_panel_in_queue} panel-disagreement + ' if jury else '')
+        + (f'{n_abstained_in_queue} panel-abstention + {n_panel_in_queue} panel-disagreement + ' if jury else '')
         + f'{n_cross_in_queue} cross-model + {n_wrong_in_queue} wrong-vs-reference + '
         f'{len(sampled_low)} low-flip sanity items = {len(items)} to annotate'
     )

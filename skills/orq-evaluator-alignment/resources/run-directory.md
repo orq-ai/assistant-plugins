@@ -13,7 +13,7 @@ source supplied ground truth, plus every model's repetitions and errors in a pan
 run), `metrics.json` (+ a `correctness` block when labels were present and a `panel`
 block when several models judged), `queue.json` (each confuser carries its
 `verdict_space` + a `reason` of
-instability/panel_disagreement/cross_model/wrong_vs_reference/low_flip),
+instability/panel_disagreement/panel_abstention/cross_model/wrong_vs_reference/low_flip),
 `dataset_inventory.json` + `input_mapping.json` (what a dataset held and how its
 fields were mapped, written only when rows were skipped or `--map` was used),
 `synthetic_datapoints.json`

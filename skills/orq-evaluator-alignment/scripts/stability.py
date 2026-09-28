@@ -151,16 +151,19 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
         results = await asyncio.gather(*(_judge(m, spec) for m in models))
         res = results[0]
         n_failed = int(res.get('repetitions_failed') or 0)
-        # A row counts as judged only if >=1 repetition produced a usable
-        # verdict. An all-failed vote (success=False) used to be recorded
-        # as ok=True with an all-None repetitions list, hiding the real
-        # judge error. Surface it loudly instead.
+        # Keep evaluatorq's successful typed abstention distinct from an
+        # all-failed vote. The former has no usable repetitions but enters
+        # the annotation queue; the latter remains a provider error.
         if res.get('_raised'):
             ok, err = False, res['error']
             logger.error(f'✗ stability row {idx} failed — {err}')
         elif not res.get('success', False) or n_failed >= n_repeats:
             ok = False
-            err = res.get('error') or 'all repetitions failed (no usable verdict)'
+            err = res.get('error') or (
+                'all repetitions off-contract (abstained)'
+                if int(res.get('n_wrong_output_type') or 0) >= n_repeats and n_failed == 0
+                else 'all repetitions failed (no usable verdict)'
+            )
             logger.error(f'✗ stability row {idx}: 0/{n_repeats} usable verdicts — {err}')
         else:
             ok = True
@@ -204,6 +207,7 @@ async def _run(out_dir, cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[
                     'error': r.get('error'),
                     'repetitions': r.get('repetitions') or [],
                     'repetitions_failed': r.get('repetitions_failed'),
+                    'n_wrong_output_type': int(r.get('n_wrong_output_type') or 0),
                     'value': r.get('value'),
                     'explanation': r.get('explanation'),
                 }

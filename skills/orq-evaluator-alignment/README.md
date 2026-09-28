@@ -67,7 +67,7 @@ is re-runnable in isolation against an existing run directory.
 | 3 | `stability.py` | `traces.jsonl`, `evaluator.json` | `stability.json` (all model votes; carries `reference` when the source had ground truth) |
 | 4 | `metrics.py` | `stability.json` | `metrics.json` (auto-run by `stability.py`) — instability, panel disagreement, and correctness when rows carried labels |
 | 4 | `cross_model.py` | `stability.json` (+ `traces.jsonl`) | `cross_model.json` — second-judge disagreers; a step-4 remedy for a judge that never wavers, not an input source |
-| 5 | `build_queue.py` | `metrics.json` | `queue.json` — confusers by `reason`: panel_disagreement / instability / cross_model / wrong_vs_reference |
+| 5 | `build_queue.py` | `metrics.json` | `queue.json` — confusers by `reason`: panel_abstention / panel_disagreement / instability / cross_model / wrong_vs_reference |
 | 6 | `grey_zone.py assemble` | `queue.json` | `grey_zone_payload.json` — the bounded confuser payload |
 | 6 | `grey_zone.py apply` | `grey_zone_policy.json` (already carries the per-point labels) | `aggregated.md` — rewrite guidance |
 | 6 | `serve_annotation.py` | `queue.json` | `annotations.json` — the per-row UI fallback |

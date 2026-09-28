@@ -520,7 +520,7 @@ def _panel_agreement(
     It is the check the panel aggregate hides: a model that catches the failures the
     others pass is outvoted, and only its own score shows it.
     """
-    from lib import panel as panel_lib
+    from lib import agreement as agreement_lib
     from metrics import _clean_verdicts
 
     by_model: dict[str, dict[int, Any]] = {}
@@ -538,16 +538,16 @@ def _panel_agreement(
                 by_model.setdefault(vote['model'], {})[idx] = vote['value']
     if not by_model:
         return None
-    human: dict[int, Any] = {}
-    for key, ann in labels.items():
-        if isinstance(ann, dict) and ann.get('value') is not None:
-            try:
-                human[int(key)] = ann['value']
-            except (TypeError, ValueError):
-                continue
-    scored = panel_lib.per_model_agreement(output_type, human, by_model, tol=tol)
-    for model, result in scored.items():
-        result['source_indices'] = sorted(set(human) & set(by_model[model]))
+    scored: dict[str, dict[str, Any]] = {}
+    for model, values in by_model.items():
+        # Reuse the main retest's label pairing so numeric policy bands apply to
+        # every model, in the same order, rather than reverting to the run-wide tol.
+        pairs, tols, indices = _pair_with_labels(labels, values)
+        if pairs:
+            scored[model] = {
+                **agreement_lib.agreement(output_type, pairs, tol=tol, tols=tols),
+                'source_indices': sorted(indices),
+            }
     return scored or None
 
 

@@ -47,7 +47,8 @@ panel models and repetition count. `agreement.panel_before` and
 `agreement.panel_after` score each model against the human labels, with failed votes
 omitted and `source_indices` showing each model's scoring set. Compare models only
 on the same rows. Lead with balanced accuracy and rare-label recall when the labels
-are skewed; overall accuracy can let two weak models outvote one useful one.
+are skewed; overall accuracy can let two weak models outvote one useful one. Numeric
+panel scores use each label's own tolerance band when the policy supplied one.
 
 **Say what the numbers can't be.** `retest_metrics.json` carries a `caveats` list;
 read it out rather than summarising it away. They all point the same way — the result

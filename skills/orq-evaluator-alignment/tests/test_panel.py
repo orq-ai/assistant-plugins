@@ -32,6 +32,9 @@ def test_three_model_jury_flows_through_metrics_and_queue(tmp_path, monkeypatch,
         {'output': 'wobble', 'reference': False},
         {'output': 'control', 'reference': True},
         {'output': 'failed_extra', 'reference': True},
+        {'output': 'abstain', 'reference': False},
+        {'output': 'provider_failure', 'reference': False},
+        {'output': 'peer_abstain', 'reference': True},
     ])
     calls = []
     votes = {
@@ -39,6 +42,9 @@ def test_three_model_jury_flows_through_metrics_and_queue(tmp_path, monkeypatch,
         'wobble': {'judge': [True] * 3, 'other-a': [True, False, False], 'other-b': [False] * 3},
         'control': {'judge': [True] * 3, 'other-a': [True] * 3, 'other-b': [True] * 3},
         'failed_extra': {'judge': [True] * 3, 'other-a': [True] * 3, 'other-b': None},
+        'abstain': {'judge': 'off_contract', 'other-a': [False] * 3, 'other-b': [False] * 3},
+        'provider_failure': {'judge': None, 'other-a': [False] * 3, 'other-b': [False] * 3},
+        'peer_abstain': {'judge': [True] * 3, 'other-a': [True] * 3, 'other-b': 'off_contract'},
     }
 
     async def fake_jury(spec, model, *, client, repetitions, output_type, labels, scale):
@@ -49,6 +55,10 @@ def test_three_model_jury_flows_through_metrics_and_queue(tmp_path, monkeypatch,
             return {'success': False, 'error': 'provider outage', 'repetitions': [None] * repetitions,
                     'repetitions_failed': repetitions, 'n_wrong_output_type': 0,
                     'value': None, 'explanation': None}
+        if reps == 'off_contract':
+            return {'success': True, 'error': None, 'repetitions': [None] * repetitions,
+                    'repetitions_failed': 0, 'n_wrong_output_type': repetitions,
+                    'value': None, 'explanation': None}
         value = max(set(reps), key=reps.count)
         return {'success': True, 'error': None, 'repetitions': reps,
                 'repetitions_failed': 0, 'n_wrong_output_type': 0,
@@ -57,27 +67,35 @@ def test_three_model_jury_flows_through_metrics_and_queue(tmp_path, monkeypatch,
     monkeypatch.setattr(stability, 'make_judge_client', lambda: object())
     monkeypatch.setattr(stability, 'run_jury_for_row', fake_jury)
     estimate_cost.main(run_dir=str(tmp_path), config=CONFIG, panel_models='other-a,other-b')
-    assert '36 judge calls (4 datapoints × 3 repeats × 3 models)' in capsys.readouterr().out
+    assert '63 judge calls (7 datapoints × 3 repeats × 3 models)' in capsys.readouterr().out
     stability.main(run_dir=str(tmp_path), config=CONFIG, panel_models='other-a,other-b')
     build_queue.main(run_dir=str(tmp_path), config=CONFIG, count=-1, low_flip_sample_size=1)
 
-    assert len(calls) == 12
+    assert len(calls) == 21
     assert {n for _, _, n in calls} == {3}  # 3 repeats/model is the panel default
     stab = runner.read_json(tmp_path / 'stability.json')
     assert stab['metadata']['panel_models'] == ['judge', 'other-a', 'other-b']
+    assert stab['rows'][4]['success'] is True
+    assert stab['rows'][6]['panel'][2]['n_wrong_output_type'] == 3
     assert len(stab['rows'][0]['panel']) == 3
     m = runner.read_json(tmp_path / 'metrics.json')
     assert m['panel']['n_panel_disagreement'] == 2
     assert m['panel']['n_any_model_unstable'] == 1
     assert m['panel']['n_panel_unmeasurable'] == 0
+    assert m['panel']['n_panel_abstention'] == 2
     assert m['panel']['correctness_by_model']['judge']['tnr'] == 0.0
     assert m['panel']['correctness_by_model']['other-a']['tnr'] == 1.0
     queue = runner.read_json(tmp_path / 'queue.json')
-    assert [(x['source_index'], x['reason']) for x in queue['items'][:2]] == [
+    assert [(x['source_index'], x['reason']) for x in queue['items'][:4]] == [
+        (4, 'panel_abstention'), (6, 'panel_abstention'),
         (1, 'panel_disagreement'), (0, 'panel_disagreement'),
     ]
-    assert queue['items'][0]['panel_votes'] == {'judge': True, 'other-a': False, 'other-b': False}
+    assert queue['items'][0]['panel_abstained_models'] == ['judge']
+    assert queue['items'][1]['panel_abstained_models'] == ['other-b']
+    assert queue['items'][2]['panel_votes'] == {'judge': True, 'other-a': False, 'other-b': False}
     assert queue['meta']['n_panel_disagreement'] == 2
+    assert queue['meta']['n_panel_abstention'] == 2
+    assert all(x['source_index'] != 5 for x in queue['items'])
     assert len([x for x in queue['items'] if x['low_flip_sample']]) == 1
 
 
@@ -156,3 +174,22 @@ def test_model_diagnosis_uses_balanced_accuracy_on_same_rows():
     # Equal sample counts on different rows are not a fair model comparison.
     scores['peer']['source_indices'] = list(range(1, 30)) + [99]
     assert retest._better_panel_model(scores, 'judge', 'boolean') is None
+
+
+def test_numeric_panel_uses_each_human_tolerance_band():
+    labels = {
+        '0': {'value': 0.0, 'tolerance': 0.1},
+        '1': {'value': 10.0, 'tolerance': 10.0},
+    }
+    rows = []
+    for idx, (judge, peer) in enumerate(((0.2, 0.0), (10.0, 0.0))):
+        rows.append({'source_index': idx, 'panel': [
+            {'model': 'judge', 'success': True, 'value': judge, 'repetitions': [judge] * 3},
+            {'model': 'peer', 'success': True, 'value': peer, 'repetitions': [peer] * 3},
+        ]})
+    scores = retest._panel_agreement({'metadata': {'n_repeats': 3}, 'rows': rows}, labels,
+                                     'number', 0.5, {0, 1})
+    assert scores['judge']['within_tolerance_rate'] == 0.5
+    assert scores['peer']['within_tolerance_rate'] == 1.0
+    assert scores['peer']['tol_source'] == 'per_point'
+    assert retest._better_panel_model(scores, 'judge', 'number')[0] == 'peer'
