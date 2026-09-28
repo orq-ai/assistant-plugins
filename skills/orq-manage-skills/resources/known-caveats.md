@@ -46,12 +46,32 @@ After the delete, any leftover `{{snippet.<deleted-name>}}` placeholder will sil
 
 ```text
 # 1. Enumerate candidate consumers
-#    search_entities supports type="prompt", "deployment", "agent", and "skill"
-#    but only matches metadata (display_name, key, description) — NOT body text.
-#    Always fetch the full body to find {{skill.X}} / {{snippet.X}} references.
-#    Also paginate list_skills to cover any skills missed by search.
-prompt_like_candidates = search_entities()
-sibling_skills = list_skills(paginated=True)
+#    search_entities only matches metadata (display_name, key, description) —
+#    NOT body text. Always fetch the full body to find {{skill.X}} /
+#    {{snippet.X}} references.
+#    search_entities requires type, so query each consumer type separately,
+#    and page to completion: an unpaged call stops at 50 results per type.
+#    Its items carry the cursor as `_id`; list_skills items use `id`.
+prompt_like_candidates = []
+for entity_type in ("prompt", "deployment", "agent"):
+    cursor = None
+    while True:
+        page = search_entities(type=entity_type, limit=100, starting_after=cursor)
+        prompt_like_candidates.extend(page.data)
+        if not page.has_more:
+            break
+        cursor = page.data[-1]._id
+#    Sibling Skills come from list_skills, which is complete once paginated;
+#    search_entities(type="skill") would only duplicate them.
+#    list_skills takes only limit / starting_after / ending_before.
+sibling_skills = []
+cursor = None
+while True:
+    page = list_skills(limit=200, starting_after=cursor)
+    sibling_skills.extend(page.data)
+    if not page.has_more:
+        break
+    cursor = page.data[-1].id
 candidates = prompt_like_candidates + sibling_skills
 
 # 2. For each candidate, fetch its full body and look for the placeholder

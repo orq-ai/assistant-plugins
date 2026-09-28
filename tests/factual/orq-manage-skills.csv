@@ -10,7 +10,9 @@ mcp_tool_exists,delete_skill,,delete_skill listed on MCP server
 mcp_tool_exists,search_directories,,search_directories listed on MCP server
 mcp_tool_param,list_skills,limit,list_skills takes limit
 mcp_tool_param,list_skills,starting_after,list_skills takes starting_after
-mcp_tool_param,list_skills,paginated,list_skills takes paginated
+mcp_tool_param,search_entities,type,search_entities takes type
+mcp_tool_param,search_entities,limit,search_entities takes limit
+mcp_tool_param,search_entities,starting_after,search_entities takes starting_after
 cli_subcommand,skills,,orq skills exists
 doc_url,https://docs.orq.ai/docs/integrations/code-assistants/skills,,skills page reachable
 doc_url,https://docs.orq.ai/docs/prompt-snippets/overview,,overview page reachable
@@ -20,4 +22,3 @@ mcp_tool_args,search_entities,"{""type"": ""deployment""}",search_entities(type=
 mcp_tool_args,search_entities,"{""type"": ""prompt""}",search_entities(type=prompt) matches the schema
 mcp_tool_args,search_entities,"{""type"": ""skill""}",search_entities(type=skill) matches the schema
 mcp_tool_args,list_skills,"{""limit"": 200}",list_skills(limit=200) matches the schema
-mcp_tool_args,search_entities,,search_entities() matches the schema
