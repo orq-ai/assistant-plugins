@@ -9,7 +9,7 @@
     "evaluatorq": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "d1b453b917718f0b5df47842b2fb866fe5495f8f078e95ddf6d54648d31874db"
+      "computedHash": "f098a0953616f1bb5bdf1497dfe402f68f2c979a57367dc2e4a0b1906ef72b3a"
     },
     "orq-analyze-traces": {
       "source": "orq-ai/assistant-plugins",
