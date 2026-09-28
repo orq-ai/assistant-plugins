@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["orq-ai-sdk", "evaluatorq"]
+# dependencies = ["orq-ai-sdk", "evaluatorq", "jsonschema"]
 # ///
 """Factual test runner for orq skills.
 
@@ -9,15 +9,18 @@ Reads CSV test fixtures from tests/factual/<skill>.csv and executes
 deterministic checks against the live environment. Outputs structured
 JSON for CI integration.
 
-Phase 1 test types (the two mcp_* types need ORQ_API_KEY and skip without it):
+Phase 1 test types (the mcp_* types need ORQ_API_KEY and skip without it):
   mcp_tool_exists    MCP server lists the named tool
   mcp_tool_param     MCP tool schema includes the named parameter
+  mcp_tool_args      The arguments the skill shows (assertion = JSON object, blank
+                     for none) validate against the tool's input schema, and every
+                     key is a declared parameter
   sdk_import         Python import succeeds
   sdk_method         Python object has the named attribute
   cli_subcommand     `orq <subcommand> --help` resolves to that subcommand
   cli_flag           `orq <subcommand> --help` output mentions the flag
   doc_url            curl returns 2xx/3xx (non-gating: reported, never fails the run)
-  github_repo        `gh repo view` finds the repo
+  github_repo        The repo is public, so users of the skill can open it
   pypi_package       PyPI JSON API returns 200
   pypi_extra         PyPI metadata lists the extra (target package, assertion extra)
   npm_package        npm registry returns 200
@@ -56,6 +59,7 @@ PHASE1_TYPES = frozenset(
     {
         "mcp_tool_exists",
         "mcp_tool_param",
+        "mcp_tool_args",
         "sdk_import",
         "sdk_method",
         "cli_subcommand",
@@ -155,13 +159,13 @@ class MCPClient:
             if line.lower().startswith("mcp-session-id:"):
                 self.session_id = line.split(":", 1)[1].strip()
 
-        if not body_text:
-            return None
-
         status_parts = headers_block.split("\n", 1)[0].split()
         status = status_parts[1] if len(status_parts) > 1 else "?"
         if not status.startswith("2"):
             raise RuntimeError(f"MCP HTTP {status}: {body_text[:200]}")
+
+        if not body_text:
+            return None
 
         if "text/event-stream" in headers_block.lower():
             payload = None
@@ -325,31 +329,48 @@ class FactualTestRunner:
 
     # -- test type implementations --
 
-    def _check_mcp_tool_exists(self, target: str, _assertion: str) -> tuple[bool, str | None]:
+    def _mcp_tools(self) -> dict[str, dict]:
         client = self.mcp
         if client is None:
             if not os.environ.get("ORQ_API_KEY"):
                 raise SkipCheck("ORQ_API_KEY not set")
             raise RuntimeError(f"MCP unavailable: {self._mcp_err}")
-        tools = client.list_tools()
+        return client.list_tools()
+
+    def _check_mcp_tool_exists(self, target: str, _assertion: str) -> tuple[bool, str | None]:
+        tools = self._mcp_tools()
         if target in tools:
             return True, None
         available = ", ".join(sorted(tools)[:15])
         return False, f"tool '{target}' not found (have: {available})"
 
     def _check_mcp_tool_param(self, target: str, assertion: str) -> tuple[bool, str | None]:
-        client = self.mcp
-        if client is None:
-            if not os.environ.get("ORQ_API_KEY"):
-                raise SkipCheck("ORQ_API_KEY not set")
-            raise RuntimeError(f"MCP unavailable: {self._mcp_err}")
-        tools = client.list_tools()
+        tools = self._mcp_tools()
         if target not in tools:
             return False, f"tool '{target}' not found"
         props = tools[target].get("inputSchema", {}).get("properties", {})
         if assertion in props:
             return True, None
         return False, f"param '{assertion}' not in {target} (have: {', '.join(sorted(props))})"
+
+    def _check_mcp_tool_args(self, target: str, assertion: str) -> tuple[bool, str | None]:
+        import jsonschema  # not at top level: bootstrap imports this module without the script's deps
+
+        arguments = json.loads(assertion or "{}")
+        if not isinstance(arguments, dict):
+            raise TypeError(f"assertion must be a JSON object, got {type(arguments).__name__}")
+        tools = self._mcp_tools()
+        if target not in tools:
+            return False, f"tool '{target}' not found"
+        schema = tools[target].get("inputSchema", {})
+        # The server ignores keys it does not declare, so a live call would accept them.
+        unknown = sorted(set(arguments) - set(schema.get("properties", {})))
+        if unknown:
+            return False, f"{target} has no parameter {', '.join(unknown)}"
+        errors = sorted(jsonschema.Draft202012Validator(schema).iter_errors(arguments), key=str)
+        if errors:
+            return False, "; ".join(e.message for e in errors)[:300]
+        return True, None
 
     def _check_sdk_import(self, target: str, _assertion: str) -> tuple[bool, str | None]:
         parts = target.rsplit(".", 1)
@@ -455,21 +476,26 @@ class FactualTestRunner:
         if gh is None:
             raise SkipCheck("gh CLI not on PATH")
         result = subprocess.run(
-            [gh, "repo", "view", target, "--json", "name"],
+            [gh, "repo", "view", target, "--json", "visibility", "-q", ".visibility"],
             capture_output=True,
             timeout=30,
             text=True,
         )
+        # The skill ships to users, so the repo must be public, whatever this token can read.
         if result.returncode == 0:
-            return True, None
+            visibility = result.stdout.strip()
+            return (True, None) if visibility == "PUBLIC" else (False, f"{target} is {visibility.lower()}")
         error = result.stderr.strip()[:200]
         if "Could not resolve to a Repository" in error:
-            return False, error
+            # gh says this for an absent repo and for one the token cannot read;
+            # an anonymous request tells them apart.
+            code, _ = self._registry_get(f"https://api.github.com/repos/{target}")
+            return (True, None) if code == 200 else (False, error)
         raise SkipCheck(error)
 
     def _registry_get(self, url: str, read_body: bool = False) -> tuple[int, str]:
-        """GET a registry URL: (status, body). Anything but 200 or 404 is not an
-        answer about the package, so it skips the row instead of failing it.
+        """GET a public URL: (status, body). Anything but 200 or 404 is not an
+        answer about the target, so it skips the row instead of failing it.
         The body is discarded (empty string) unless read_body is set."""
         cmd = ["curl", "-s", "--retry", str(NETWORK_RETRIES), "--max-time", "10", "-w", "\n%{http_code}", url]
         if not read_body:

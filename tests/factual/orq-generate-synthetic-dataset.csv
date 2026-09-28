@@ -13,3 +13,4 @@ doc_url,https://docs.orq.ai/docs/datasets/overview,,overview page reachable
 doc_url,https://docs.orq.ai/docs/datasets/creating,,creating page reachable
 doc_url,https://docs.orq.ai/docs/datasets/api-usage,,api-usage page reachable
 doc_url,https://docs.orq.ai/docs/experiments/creating,,creating page reachable
+mcp_tool_args,search_entities,"{""type"": ""dataset""}",search_entities(type=dataset) matches the schema

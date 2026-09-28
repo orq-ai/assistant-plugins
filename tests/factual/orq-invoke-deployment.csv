@@ -17,3 +17,5 @@ doc_url,https://docs.orq.ai/docs/proxy/openai-compatible-api,,openai-compatible-
 doc_url,https://docs.orq.ai/docs/proxy/supported-models,,supported-models page reachable
 doc_url,https://docs.orq.ai/docs/sdk/python,,python page reachable
 doc_url,https://docs.orq.ai/docs/sdk/node,,node page reachable
+mcp_tool_args,search_entities,"{""type"": ""agent""}",search_entities(type=agent) matches the schema
+mcp_tool_args,search_entities,"{""type"": ""deployment""}",search_entities(type=deployment) matches the schema

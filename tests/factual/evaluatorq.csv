@@ -46,3 +46,7 @@ pypi_package,evaluatorq,,evaluatorq on PyPI
 pypi_extra,evaluatorq,redteam,evaluatorq has extra [redteam]
 pypi_package,orq-ai-sdk,,orq-ai-sdk on PyPI
 npm_package,@orq-ai/evaluatorq,,@orq-ai/evaluatorq on npm
+mcp_tool_args,search_entities,"{""type"": ""agent""}",search_entities(type=agent) matches the schema
+mcp_tool_args,search_entities,"{""type"": ""dataset""}",search_entities(type=dataset) matches the schema
+mcp_tool_args,search_entities,"{""type"": ""deployment""}",search_entities(type=deployment) matches the schema
+mcp_tool_args,search_entities,"{""type"": ""evaluator""}",search_entities(type=evaluator) matches the schema

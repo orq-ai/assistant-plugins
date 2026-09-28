@@ -14,3 +14,5 @@ sdk_import,evaluatorq.simulation.generate_and_simulate,,generate_and_simulate im
 sdk_import,evaluatorq.simulation.SimulationResult,,SimulationResult importable from evaluatorq.simulation
 sdk_import,evaluatorq.simulation.TerminatedBy,,TerminatedBy importable from evaluatorq.simulation
 sdk_import,evaluatorq.simulation.evaluators.SIMULATION_EVALUATORS,,SIMULATION_EVALUATORS importable from evaluatorq.simulation.evaluators
+mcp_tool_args,search_entities,"{""type"": ""agent""}",search_entities(type=agent) matches the schema
+mcp_tool_args,search_entities,"{""type"": ""deployment""}",search_entities(type=deployment) matches the schema

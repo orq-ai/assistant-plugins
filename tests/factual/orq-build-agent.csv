@@ -28,3 +28,7 @@ doc_url,https://docs.orq.ai/docs/proxy/fallbacks,,fallbacks page reachable
 doc_url,https://docs.orq.ai/docs/proxy/cache,,cache page reachable
 doc_url,https://docs.orq.ai/reference/agents/create-agent,,create-agent page reachable
 doc_url,https://docs.orq.ai/reference/agents/create-response,,create-response page reachable
+mcp_tool_args,search_entities,"{""type"": ""evaluator""}",search_entities(type=evaluator) matches the schema
+mcp_tool_args,search_entities,"{""type"": ""knowledge""}",search_entities(type=knowledge) matches the schema
+mcp_tool_args,search_entities,"{""type"": ""memory_store""}",search_entities(type=memory_store) matches the schema
+mcp_tool_args,search_entities,"{""type"": ""agent""}",search_entities(type=agent) matches the schema
