@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.12"
 # # Pinned exactly: the runner subclasses and patches CodingAgentTarget internals.
-# dependencies = ["evaluatorq==1.47.0", "pyyaml"]
+# dependencies = ["evaluatorq==1.47.1", "pyyaml"]
 # ///
 """Invocation and behavioural evals for the orq skills (RES-1076).
 
@@ -21,6 +21,7 @@ Usage:
     uv run tests/scripts/run_evals.py                          # all cases, all agents
     uv run tests/scripts/run_evals.py --skill orq-build-evaluator --agent claude
     uv run tests/scripts/run_evals.py --case build-evaluator-asks-first --runs 1 --no-send
+    uv run tests/scripts/run_evals.py --container                # each agent in a Docker container
 
 Exit code: 0 every case passed, 1 a case fell below its threshold, 2 errors only
 or the cost cap stopped runs from launching.
@@ -47,7 +48,7 @@ from typing import Any
 
 import yaml
 from evaluatorq import DataPoint, EvaluationResult, evaluatorq
-from evaluatorq.backends import coding_agent
+from evaluatorq.backends import DockerOptions, coding_agent
 from evaluatorq.backends.coding_agent import (
     AgentName,
     CodingAgentError,
@@ -77,6 +78,9 @@ CLAUDE_BUILTINS = ["Read", "Glob", "Grep", "Skill"]
 CLAUDE_MCP_PREFIX = "mcp__plugin_orq_orq-workspace__"
 OPENCODE_MCP_PREFIX = "orq-workspace_"
 MCP_URL = "https://my.orq.ai/v2/mcp"
+# What a container run does not need from the plugin checkout it copies in. `.claude` holds this
+# repo's maintainer skills, which must not load next to the plugin under test.
+PLUGIN_COPY_IGNORE = shutil.ignore_patterns(".git", ".venv", ".ruff_cache", "node_modules", "__pycache__", ".claude", "tests", "docs")
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +200,18 @@ def check_orq_version(orq: Path) -> str:
     return version
 
 
+def check_container_image(image: str) -> None:
+    """Stop before any run when Docker or the image is missing; each run would otherwise fail the same way."""
+    if shutil.which("docker") is None:
+        sys.exit("--container needs Docker on PATH")
+    found = subprocess.run(["docker", "image", "inspect", image], capture_output=True, check=False, timeout=60)
+    if found.returncode != 0:
+        sys.exit(
+            f"--container: image {image} not found (or Docker is not running). Build it once with "
+            f"`uv run --with evaluatorq=={image.rsplit(':', 1)[-1]} eq coding-agent build-image`"
+        )
+
+
 def load_dotenv_key(name: str) -> str | None:
     """The variable from the environment, else from a gitignored .env at the repo root."""
     if os.environ.get(name):
@@ -228,16 +244,6 @@ def _render_single_turn_raw(messages: list[Message], *, system_prompt: str | Non
 
 
 coding_agent.render_prompt = _render_single_turn_raw
-
-if os.name == "nt":
-    # os.killpg does not exist on Windows; the upstream helper only reaches it on timeout or
-    # cancel. The process is orq.exe, so kill its tree: the agent it launched keeps billing otherwise.
-    def _kill_proc(proc: asyncio.subprocess.Process, *, force: bool = False) -> None:
-        if proc.returncode is None or force:
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, check=False)
-
-    coding_agent.kill_group = _kill_proc
-
 
 class EvalTarget(CodingAgentTarget):
     """CodingAgentTarget that keeps the raw stdout of its last run.
@@ -279,31 +285,51 @@ def mcp_name(agent: AgentName, bare: str) -> str:
     return (CLAUDE_MCP_PREFIX if agent == "claude" else OPENCODE_MCP_PREFIX) + bare
 
 
-def build_target(agent: AgentName, case: Case, branch: Path, key: str, run_id: str) -> tuple[EvalTarget, list[Path]]:
-    """One isolated target per run, plus the temp dirs to remove afterwards."""
+def build_target(
+    agent: AgentName, case: Case, branch: Path, key: str, run_id: str, container: DockerOptions | None = None
+) -> tuple[EvalTarget, list[Path]]:
+    """One isolated target per run, plus the temp dirs to remove afterwards.
+
+    On the host, empty config dirs stand in for isolation. In a container the agent gets a fresh
+    home and sees only its workdir, so those stopgaps are dropped, and anything it needs from the
+    host has to be copied into the workdir: a host path does not exist inside.
+    """
     temp = [Path(tempfile.mkdtemp(prefix=f"skill-evals-{agent}-"))]
     env = {"ORQ_API_KEY": key}
     if agent == "claude":
         allowed = CLAUDE_BUILTINS + [mcp_name("claude", t) for t in case.allow_tools]
-        env |= {"CLAUDE_CONFIG_DIR": str(temp[0]), "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"}
+        env |= {"CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"}
+        workdir: Path | None = None
+        if container is None:
+            env["CLAUDE_CONFIG_DIR"] = str(temp[0])
+            plugin_dir = str(branch)
+        else:
+            workdir = temp[0] / "work"
+            shutil.copytree(branch, workdir / "plugin", ignore=PLUGIN_COPY_IGNORE)
+            plugin_dir = f"{container.workdir}/plugin"
         target = EvalTarget(
             "claude",
             launcher="orq",
             orq=OrqLaunchOptions(mcp=False, skills=False),
             extra_args=[
-                "--plugin-dir", str(branch),
+                "--plugin-dir", plugin_dir,
                 "--allowedTools", ",".join(allowed),
                 "--max-turns", str(case.max_turns),
             ],
             env=env,
+            workdir=workdir,
+            container=container,
+            # A container defaults Claude to bypassPermissions, which would make --allowedTools a no-op.
+            permission_mode="default" if container is not None else None,
         )
         return target, temp
 
-    # OpenCode: empty XDG dirs hide the user's config, skills and sessions.
-    for var in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "OPENCODE_CONFIG_DIR"):
-        d = temp[0] / var.lower()
-        d.mkdir()
-        env[var] = str(d)
+    if container is None:
+        # OpenCode: empty XDG dirs hide the user's config, skills and sessions.
+        for var in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "OPENCODE_CONFIG_DIR"):
+            d = temp[0] / var.lower()
+            d.mkdir()
+            env[var] = str(d)
     env |= {
         "OPENCODE_DISABLE_EXTERNAL_SKILLS": "1",
         "OPENCODE_DISABLE_CLAUDE_CODE": "1",
@@ -349,6 +375,7 @@ def build_target(agent: AgentName, case: Case, branch: Path, key: str, run_id: s
         extra_args=["--auto"],
         workdir=workdir,
         env=env,
+        container=container,
     )
     return target, temp
 
@@ -413,8 +440,10 @@ class Budget:
             self.spent += cost or 0.0
 
 
-async def run_once(agent: AgentName, case: Case, branch: Path, key: str, run_id: str, budget: Budget) -> dict[str, Any]:
-    target, temp = build_target(agent, case, branch, key, run_id)
+async def run_once(
+    agent: AgentName, case: Case, branch: Path, key: str, run_id: str, budget: Budget, container: DockerOptions | None
+) -> dict[str, Any]:
+    target, temp = build_target(agent, case, branch, key, run_id, container)
     try:
         try:
             response = await target.respond([Message(role="user", content=case.prompt)])
@@ -442,7 +471,7 @@ async def run_once(agent: AgentName, case: Case, branch: Path, key: str, run_id:
             remove_tree(d)
 
 
-def make_job(agent: AgentName, branch: Path, key: str, budget: Budget) -> Job:
+def make_job(agent: AgentName, branch: Path, key: str, budget: Budget, container: DockerOptions | None) -> Job:
     async def run(data: DataPoint, row: int) -> dict[str, Any]:
         case = Case(**data.inputs["case"])
         base = {"agent": agent, "case_id": case.id, "run": data.inputs["run"]}
@@ -454,7 +483,7 @@ def make_job(agent: AgentName, branch: Path, key: str, budget: Budget) -> Job:
             if not await budget.admit():
                 return {"name": agent, "output": base | {"skipped": "cost cap reached"}, "error": None}
             try:
-                out = await run_once(agent, case, branch, key, run_id, budget)
+                out = await run_once(agent, case, branch, key, run_id, budget, container)
                 out |= base | {"attempts": attempt, "thread_id": out.get("session_id") if agent == "claude" else run_id}
                 if failed := errored_expected_tools(agent, case, out["tool_calls"]):
                     # The agent took the right step and the server failed it: not a verdict on the skill.
@@ -767,6 +796,11 @@ async def amain() -> int:
     # A full run is 72 agent runs: about $4 of Claude plus 36 unpriced OpenCode runs charged at $0.25.
     parser.add_argument("--max-cost-usd", type=float, default=20.0, help="Stop launching runs once this much is spent")
     parser.add_argument("--list", action="store_true", help="List the selected cases and the run count, then exit")
+    parser.add_argument(
+        "--container",
+        action="store_true",
+        help="Run each agent in a Docker container (evaluatorq's image; build it once with `eq coding-agent build-image`)",
+    )
     args = parser.parse_args()
 
     branch = args.branch.resolve()
@@ -793,8 +827,13 @@ async def amain() -> int:
     key = load_dotenv_key("ORQ_SKILL_EVALS_KEY")
     if not key:
         sys.exit("ORQ_SKILL_EVALS_KEY is not set: agent runs must use the skill-evals project key, refusing to start")
-    orq = resolve_orq()
-    orq_version = check_orq_version(orq)
+    container: DockerOptions | None = None
+    if args.container:
+        container = DockerOptions()
+        check_container_image(container.image)
+        orq_version = f"from image {container.image}"
+    else:
+        orq_version = check_orq_version(resolve_orq())
 
     data = [
         DataPoint(inputs={"case": c.__dict__, "run": i + 1, "orq_skills": sorted(skill_names), "prompt": c.prompt})
@@ -802,7 +841,7 @@ async def amain() -> int:
         for i in range(c.runs)
     ]
     budget = Budget(args.max_cost_usd)
-    jobs: list[Job] = [make_job(a, branch, key, budget) for a in agents]
+    jobs: list[Job] = [make_job(a, branch, key, budget, container) for a in agents]
 
     started = datetime.now(timezone.utc)
     # Upload later, from disk and in a child process: evaluatorq uploads at the very end,

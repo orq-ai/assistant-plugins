@@ -2,7 +2,7 @@
 
 Pure functions on hand-built run outputs: no agent, no network. These decide every
 verdict the eval suite reports, so a wrong branch here mis-scores every run.
-Run: uv run --no-project --with evaluatorq==1.47.0 --with pyyaml --with pytest python -m pytest tests/scripts/test_run_evals.py -q
+Run: uv run --no-project --with evaluatorq==1.47.1 --with pyyaml --with pytest python -m pytest tests/scripts/test_run_evals.py -q
 """
 
 from __future__ import annotations

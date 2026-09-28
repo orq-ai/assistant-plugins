@@ -51,6 +51,15 @@ so when presenting them, and point to the flaky bucket for mixed results.
   aborts (`OPENSSL_Applink`) or TLS interception (Norton) breaks verification. The
   eval runner saves its results before uploading, so a failed upload loses nothing:
   it prints the `--upload <file>` command to retry.
+- **Container mode (recommended when Docker is available):** add `--container` to the
+  eval run. Each agent then runs in a Docker container that sees only its own
+  workdir, instead of on the host behind stopgaps. It needs Docker running and the
+  evaluatorq image, built once per evaluatorq version:
+  `uv run --with evaluatorq==<pinned version> eq coding-agent build-image` (the
+  runner names the exact command if the image is missing). Behind TLS-intercepting
+  antivirus the build's `npm install` fails; build from a copy of the Dockerfile
+  that adds the antivirus root CA and sets `NODE_EXTRA_CA_CERTS`. Ask the user
+  before building: it takes a few minutes and about 2 GB.
 
 ## 3. Run
 

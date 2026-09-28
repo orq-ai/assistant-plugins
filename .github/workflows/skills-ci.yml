@@ -91,7 +91,7 @@ jobs:
         # Pure functions on fake run outputs. test_run_evals.py fails if this pin and
         # run_evals.py's inline pin drift apart.
         run: |
-          uv run --no-project --python 3.12 --with evaluatorq==1.47.0 --with pyyaml --with pytest \
+          uv run --no-project --python 3.12 --with evaluatorq==1.47.1 --with pyyaml --with pytest \
             python -m pytest tests/scripts/test_run_evals.py -q
       - name: PR title pattern lint
         env:
