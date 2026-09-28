@@ -23,7 +23,7 @@ Usage:
     uv run tests/scripts/run_evals.py --case build-evaluator-asks-first --runs 1 --no-send
 
 Exit code: 0 every case passed, 1 a case fell below its threshold, 2 errors only
-or the cost cap was hit.
+or the cost cap stopped runs from launching.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ EVALS_DIR = REPO_ROOT / "tests" / "evals"
 RESULTS_DIR = REPO_ROOT / "tests" / "eval-results"
 MIN_ORQ_VERSION = (10, 3, 1)
 # Charged against --max-cost-usd for a run that reports no cost. OpenCode gets no
-# pricing for the orq provider and reports 0; a Claude run costs about this much.
+# pricing for the orq provider and reports 0. A Claude run averages about $0.11 (up to ~$0.27).
 UNPRICED_RUN_COST_USD = 0.25
 AGENTS: tuple[AgentName, ...] = ("claude", "opencode")
 KINDS = ("invocation", "behavioural")
@@ -114,6 +114,7 @@ def load_cases(skill_names: set[str]) -> list[Case]:
     """Every tests/evals/<skill>/*.yaml, validated. A malformed case stops the run."""
     cases: list[Case] = []
     problems: list[str] = []
+    seen: dict[str, str] = {}
     known = set(Case.__dataclass_fields__)
     for path in sorted(EVALS_DIR.glob("*/*.yaml")):
         rel = path.relative_to(REPO_ROOT).as_posix()
@@ -145,6 +146,10 @@ def load_cases(skill_names: set[str]) -> list[Case]:
             problems.append(f"{rel}: allow_tools {overlap} match forbid_tools")
         if case.turns:
             problems.append(f"{rel}: multi-turn cases (turns:) are not supported yet")
+        # Results are keyed on the id alone, so a duplicate would merge two cases' runs.
+        if case.id in seen:
+            problems.append(f"{rel}: id '{case.id}' is also used by {seen[case.id]}")
+        seen[case.id] = rel
         cases.append(case)
     if problems:
         sys.exit("invalid eval cases:\n  " + "\n  ".join(problems))
@@ -451,6 +456,9 @@ def make_job(agent: AgentName, branch: Path, key: str, budget: Budget) -> Job:
             try:
                 out = await run_once(agent, case, branch, key, run_id, budget)
                 out |= base | {"attempts": attempt, "thread_id": out.get("session_id") if agent == "claude" else run_id}
+                if failed := errored_expected_tools(agent, case, out["tool_calls"]):
+                    # The agent took the right step and the server failed it: not a verdict on the skill.
+                    out["error"] = f"expected tool(s) {failed} were called but errored"
                 return {"name": agent, "output": out, "error": None}
             except CodingAgentError as exc:
                 last_error = f"{exc.code}: {exc.message[-300:]}"  # the tail holds the actual failure
@@ -476,9 +484,26 @@ def bare_tool(agent: str, name: str) -> str | None:
     return None
 
 
+def errored(call: dict[str, Any]) -> bool:
+    """The call ran and failed (Claude marks an is_error result `incomplete`); a denial counts too."""
+    return call.get("status") == "incomplete"
+
+
+def errored_expected_tools(agent: str, case: Case, calls: list[dict[str, Any]]) -> list[str]:
+    """Expected tools that were only ever called with an error (a server failure, not a skill regression)."""
+    if case.kind != "behavioural":
+        return []
+    ok = {bare_tool(agent, c["name"]) for c in calls if not errored(c)}
+    failed = {bare_tool(agent, c["name"]) for c in calls if errored(c)}
+    return [t for t in case.expected_tools(agent) if t in failed and t not in ok]
+
+
 def fired_skills(agent: str, calls: list[dict[str, Any]]) -> list[str]:
+    """Skills that loaded. A Skill call that errored (unknown skill, load failure) did not fire one."""
     fired: list[str] = []
     for c in calls:
+        if errored(c):
+            continue
         args = c["arguments"] if isinstance(c["arguments"], dict) else {}
         if agent == "claude" and c["name"] == "Skill":
             name = str(args.get("skill", ""))
@@ -535,9 +560,12 @@ async def tools_called(params: ScorerParameter) -> EvaluationResult:
     case, out = usable
     if case.kind != "behavioural":
         return _skip("invocation case")
-    called = {bare_tool(out["agent"], c["name"]) for c in out["tool_calls"]}
+    # A call that errored is not evidence the step worked (a server error scores like a pass otherwise).
+    called = {bare_tool(out["agent"], c["name"]) for c in out["tool_calls"] if not errored(c)}
+    failed = {bare_tool(out["agent"], c["name"]) for c in out["tool_calls"] if errored(c)}
     missing = [t for t in case.expected_tools(out["agent"]) if t not in called]
-    return _verdict(not missing, not missing, f"missing {missing}" if missing else "all expected tools called")
+    why = "; ".join(f"{t} (called but errored)" if t in failed else t for t in missing)
+    return _verdict(not missing, not missing, f"missing {why}" if missing else "all expected tools called")
 
 
 async def no_forbidden_tools(params: ScorerParameter) -> EvaluationResult:
@@ -612,10 +640,11 @@ def aggregate(results: list[Any], cases: list[Case]) -> dict[str, Any]:
         scored = [r for r in runs if r["status"] in ("pass", "fail")]
         passes = sum(r["status"] == "pass" for r in scored)
         rate = passes / len(scored) if scored else None
-        if case.borderline:
-            status = "measured"
-        elif rate is None:
+        # No scored run is checked first: a borderline case whose runs all errored measured nothing.
+        if rate is None:
             status = "error" if any(r["status"] == "error" for r in runs) else "skipped"
+        elif case.borderline:
+            status = "measured"
         else:
             status = "pass" if rate >= case.pass_threshold else "fail"
             if status == "pass" and len(scored) < len(runs):
@@ -735,7 +764,8 @@ async def amain() -> int:
     parser.add_argument("--no-send", action="store_true", help="Do not upload the experiment to orq")
     parser.add_argument("--json", dest="json_path", type=Path, help="Write the summary here (default tests/eval-results/<timestamp>.json)")
     parser.add_argument("--branch", type=Path, default=REPO_ROOT, help="Plugin root under test (default: this checkout)")
-    parser.add_argument("--max-cost-usd", type=float, default=10.0, help="Stop launching runs once this much is spent")
+    # A full run is 72 agent runs: about $4 of Claude plus 36 unpriced OpenCode runs charged at $0.25.
+    parser.add_argument("--max-cost-usd", type=float, default=20.0, help="Stop launching runs once this much is spent")
     parser.add_argument("--list", action="store_true", help="List the selected cases and the run count, then exit")
     args = parser.parse_args()
 
@@ -821,7 +851,9 @@ async def amain() -> int:
         "experiment_url": None,
         "results_file": str(raw_path),
         "cost_usd": round(budget.spent, 4),
-        "cost_cap_hit": budget.breached,
+        # Reached: the cap was spent, possibly by the last run. Skipped: runs were not launched because of it.
+        "cost_cap_reached": budget.spent >= budget.cap,
+        "runs_skipped_by_cap": budget.breached,
         "exit_code": code,
         "skill_evals_project": entities,
         **report,

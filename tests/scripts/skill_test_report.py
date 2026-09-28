@@ -16,6 +16,7 @@ Buckets:
   flaky       eval case that passed some runs and failed others
   error       factual or eval run that could not complete (not a verdict)
   measured    borderline eval case, trigger rate only
+  skipped     eval case with no run scored (cost cap hit); measured nothing, so not clean
 
 Usage:
     uv run tests/scripts/run_factual_tests.py --json > factual.json
@@ -35,7 +36,7 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-BUCKETS = ("drift", "regression", "flaky", "error", "measured")
+BUCKETS = ("drift", "regression", "flaky", "error", "measured", "skipped")
 
 
 def skill_line(skill: str, needle: str) -> str | None:
@@ -101,6 +102,8 @@ def eval_findings(data: dict[str, Any]) -> list[dict[str, Any]]:
             buckets.append("error")
         elif row["status"] == "measured":
             buckets.append("measured")
+        elif row["status"] == "skipped":
+            buckets.append("skipped")
         if row["flaky"] and row["status"] != "measured":
             buckets.append("flaky")
         rate = "-" if row["pass_rate"] is None else f"{row['pass_rate']:.0%}"
@@ -173,7 +176,7 @@ def main() -> None:
     if evals.get("experiment_url"):
         print(f"\nexperiment: {evals['experiment_url']}")
     if evals:
-        print(f"eval cost: ${evals.get('cost_usd', 0):.2f}" + (" (cost cap hit)" if evals.get("cost_cap_hit") else ""))
+        print(f"eval cost: ${evals.get('cost_usd', 0):.2f}" + (" (cost cap stopped some runs)" if evals.get("runs_skipped_by_cap") else ""))
 
     if args.json_path:
         args.json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")

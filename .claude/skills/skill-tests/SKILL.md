@@ -17,7 +17,7 @@ re-score, re-interpret or soften a result.
 | Suite | Script | What it answers | Cost |
 |---|---|---|---|
 | Factual | `tests/scripts/run_factual_tests.py` | Do the tools, CLI commands, SDK calls and URLs a skill names still exist? | free, ~1 min |
-| Evals | `tests/scripts/run_evals.py` | Does the right skill fire, and does the agent take the right first actions without creating anything? | ~$0.10-0.30 per agent run |
+| Evals | `tests/scripts/run_evals.py` | Does the right skill fire, and does the agent take the right first actions without creating anything? | Claude ~$0.11 per run; OpenCode reports no cost and is charged $0.25 |
 
 ## 1. Confirm scope and cost
 
@@ -29,8 +29,14 @@ uv run tests/scripts/run_evals.py --list [--skill <name>] [--agent claude]
 ```
 
 It prints the case count and the number of agent runs. Estimate cost as runs x
-$0.25 and state it, with the default cap of $10 (`--max-cost-usd`). Wait for the
-user to confirm before running the evals. The factual suite needs no confirmation.
+$0.25 (about twice Claude's average, the flat charge for OpenCode) and state it, with the
+default cap of $20 (`--max-cost-usd`); a full run of every case on both agents is
+72 runs. Wait for the user to confirm before running the evals. The factual suite
+needs no confirmation.
+
+The invocation cases (`*-fires`) run 3 times with a 2-of-3 threshold: a smoke
+check that catches a skill that stopped firing, not one that fires unreliably. Say
+so when presenting them, and point to the flaky bucket for mixed results.
 
 ## 2. Preconditions
 
@@ -69,8 +75,9 @@ Show the merged report per skill, in its own buckets:
 - **drift**: a factual check failed; the skill names something that no longer exists. Point to the SKILL.md line the report gives.
 - **regression**: an eval case fell below its pass threshold. Name the failing scorer and, for an attempted forbidden call, the arguments it was called with.
 - **flaky**: passed some runs, failed others. Flag it; do not call it a pass.
-- **error**: a run could not complete (timeout, agent crash). Not a verdict on the skill.
+- **error**: a run could not complete (timeout, agent crash, an expected orq tool that errored server side), or the cost cap stopped some of a case's runs. Not a verdict on the skill.
 - **measured**: borderline cases, reported as a trigger rate only.
+- **skipped**: an eval case with no scored run, usually because the cost cap stopped it. It measured nothing; say so, do not call the skill clean.
 - **factual skipped**: rows that could not run (usually no `ORQ_API_KEY`). Say how many; a skill with skipped rows is not clean.
 
 Include the orq experiment link and the total cost. For a failing eval run, give
