@@ -46,12 +46,10 @@ After the delete, any leftover `{{snippet.<deleted-name>}}` placeholder will sil
 
 ```text
 # 1. Enumerate candidate consumers
-#    search_entities only matches metadata (display_name, key, description) —
-#    NOT body text. Always fetch the full body to find {{skill.X}} /
-#    {{snippet.X}} references.
-#    search_entities requires type, so query each consumer type separately,
-#    and page to completion: an unpaged call stops at 50 results per type.
-#    Its items carry the cursor as `_id`; list_skills items use `id`.
+#    search_entities matches metadata only (display_name, key, description),
+#    never body text, so fetch every body in step 2.
+#    type is required: page each type to completion (default limit is 50).
+#    The cursor is the item's `_id`.
 prompt_like_candidates = []
 for entity_type in ("prompt", "deployment", "agent"):
     cursor = None
@@ -61,23 +59,15 @@ for entity_type in ("prompt", "deployment", "agent"):
         if not page.has_more:
             break
         cursor = page.data[-1]._id
-#    Sibling Skills come from list_skills, which is complete once paginated;
+#    Sibling Skills: all_skills from the SKILL.md "Pagination & Filtering" loop.
 #    search_entities(type="skill") would only duplicate them.
-#    list_skills takes only limit / starting_after / ending_before.
-sibling_skills = []
-cursor = None
-while True:
-    page = list_skills(limit=200, starting_after=cursor)
-    sibling_skills.extend(page.data)
-    if not page.has_more:
-        break
-    cursor = page.data[-1].id
+sibling_skills = all_skills
 candidates = prompt_like_candidates + sibling_skills
 
 # 2. For each candidate, fetch its full body and look for the placeholder
 references = []
 for entity in candidates:
-    body = fetch_full_body(entity)  # get_deployment / get_agent / get_skill etc.
+    body = fetch_full_body(entity)  # get_deployment / get_agent / get_skill / orq prompts retrieve
     if (f"{{{{skill.{skill.display_name}}}}}" in body      # canonical form
             or f"{{{{snippet.{skill.display_name}}}}}" in body):  # backward-compat alias
         references.append(entity)
