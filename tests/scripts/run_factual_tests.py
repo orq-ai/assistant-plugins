@@ -349,7 +349,10 @@ class FactualTestRunner:
         tools = self._mcp_tools()
         if target not in tools:
             return False, f"tool '{target}' not found"
-        props = tools[target].get("inputSchema", {}).get("properties", {})
+        schema = tools[target].get("inputSchema")
+        if not isinstance(schema, dict):
+            return False, f"{target} declares no inputSchema"
+        props = schema.get("properties", {})
         if assertion in props:
             return True, None
         return False, f"param '{assertion}' not in {target} (have: {', '.join(sorted(props))})"

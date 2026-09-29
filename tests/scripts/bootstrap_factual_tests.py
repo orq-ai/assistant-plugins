@@ -74,7 +74,8 @@ CLI_WORD_RE = re.compile(r"^[a-z][a-z-]*$")
 CLI_FLAG_RE = re.compile(r"^(--[a-z][a-z0-9-]*|-[a-zA-Z])(?:=.*)?$")
 MAX_CLI_WORDS = 3
 # A flag written on its own in backticks, e.g. a bullet `--reasoning=false` or
-# `-i/--include`, under a section whose command sits in a code block above it.
+# `-i/--include`, in a section that names exactly one `orq` command, anywhere
+# in the section.
 BARE_FLAG_RE = re.compile(r"(?<![\w`])`(?:(-[a-zA-Z])/)?(--[a-z][a-z0-9-]*|-[a-zA-Z])(?:[= ][^`\n]*)?`")
 HEADING_RE = re.compile(r"#{1,6}[ \t]")
 FENCE_PREFIXES = ("```", "~~~")
@@ -394,24 +395,27 @@ def main() -> None:
         if unknown:
             print(f"{name}: not on the MCP server, add by hand only if it is drift: {', '.join(sorted(unknown))}", file=sys.stderr)
         csv_path = FACTUAL_DIR / f"{name}.csv"
+        append = args.new and csv_path.exists()
+        if append:
+            with open(csv_path, newline="", encoding="utf-8") as f:
+                have = {(r["test_type"], r["target"], r["assertion"]) for r in csv.DictReader(f)}
+            rows = [r for r in rows if r[:3] not in have]
+            if not rows:
+                continue
 
         if args.dry_run:
-            print(f"\n{name}: {len(rows)} tests")
+            print(f"\n{name}: {len(rows)} {'new ' if append else ''}tests")
             for r in rows:
                 print(f"  {r[0]:20s} {r[1]}" + (f"  [{r[2]}]" if r[2] else ""))
             total += len(rows)
             skills_written += 1
             continue
 
-        if csv_path.exists() and args.new:
-            with open(csv_path, newline="", encoding="utf-8") as f:
-                have = {(r["test_type"], r["target"], r["assertion"]) for r in csv.DictReader(f)}
-            added = [r for r in rows if r[:3] not in have]
-            if added:
-                with open(csv_path, "a", newline="", encoding="utf-8") as f:
-                    csv.writer(f, lineterminator="\n").writerows(added)
-                print(f"  {name}: +{len(added)} new -> {csv_path.relative_to(REPO_ROOT)}")
-            total += len(added)
+        if append:
+            with open(csv_path, "a", newline="", encoding="utf-8") as f:
+                csv.writer(f, lineterminator="\n").writerows(rows)
+            print(f"  {name}: +{len(rows)} new -> {csv_path.relative_to(REPO_ROOT)}")
+            total += len(rows)
             skills_written += 1
             continue
 
