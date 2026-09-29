@@ -26,6 +26,7 @@ def test_top_level_exports_exist():
         "DataPoint",
         "DatasetIdInput",
         "ExperimentInput",
+        "TraceInput",
         "EvaluationResult",
         "EvaluationResultCell",
         "ScorerParameter",
@@ -50,10 +51,10 @@ def test_evaluatorq_kwarg_defaults(name, default):
 def test_inference_resolves_from_the_data_source():
     """The signature says `None`; the validator picks the value the skill documents.
 
-    A replay source means no generation, anything else generates. Asserting the
+    A replay source means no generation; inline rows and datasets generate. Asserting the
     literal default would pin nothing, since `None` is not what the run uses.
     """
-    from evaluatorq import DataPoint, DatasetIdInput, ExperimentInput, evaluatorq, job
+    from evaluatorq import DataPoint, DatasetIdInput, ExperimentInput, TraceInput, evaluatorq, job
     from evaluatorq.evaluatorq import EvaluatorParams
 
     assert params(evaluatorq)["inference"].default is None, (
@@ -70,6 +71,7 @@ def test_inference_resolves_from_the_data_source():
     assert resolved([DataPoint(inputs={"q": "?"})], jobs=[probe]) is True
     assert resolved(DatasetIdInput(dataset_id="d"), jobs=[probe]) is True
     assert resolved(ExperimentInput(experiment_id="x")) is False
+    assert resolved(TraceInput(trace_id="trace")) is False
 
 
 def test_datapoint_parallelism_still_resolves_to_ten():

@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.6.0] - 2026-09-27
+## [3.6.0] - 2026-09-30
 
 Learnings from the PyData 2026 evaluation-flywheel run (RES-1565) folded into `orq-evaluator-alignment`.
 
@@ -17,6 +17,7 @@ Learnings from the PyData 2026 evaluation-flywheel run (RES-1565) folded into `o
 
 ### Changed
 
+- `evaluatorq` and `orq-compare-agents`: add `TraceInput` replay guidance for `evaluatorq` 1.47.1 and cover it in the inference contract test.
 - `orq-evaluator-alignment`: `SKILL.md` is a 142-line router (was 777); each step's instructions live in `resources/` (`judge-and-examples.md`, `measure.md`, `grey-zone.md`, `rewrite-and-create.md`, `retest.md`) and are read when that step starts. Configuration and the run-directory contract moved to `resources/configuration.md` and `resources/run-directory.md`. The step text itself is unchanged apart from the additions above.
 - `orq-evaluator-alignment`: step 4, step 8 and the final summary lead with how many of the rare label the judge caught before quoting overall accuracy.
 - `orq-evaluator-alignment` annotation UI: the judge's vote spread moved into the collapsed "votes and reasoning" panel, so neither anchors a first-pass label.
@@ -30,6 +31,7 @@ Learnings from the PyData 2026 evaluation-flywheel run (RES-1565) folded into `o
 
 ### Fixed
 - `evaluatorq` skill: `inference` now defaults to `None` upstream (1.47.0) and resolves from `data`, `False` for a replay source and `True` otherwise, so the contract suite asserted a literal default that no longer exists and turned `skill-tests` red on every PR. The test asserts the resolved value instead, and `SKILL.md` / `resources/inputs-and-data.md` no longer say `ExperimentInput` requires `inference=False`.
+
 ## [3.4.0] - 2026-09-21
 
 ### Added
