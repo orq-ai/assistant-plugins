@@ -624,6 +624,12 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-improve-agent/SKILL.md`
 - `skills/orq-recommend-evaluators/SKILL.md`
 - `skills/orq-recommend-evaluators/resources/evaluations.schema.json`
+- `skills/orq-recommend-evaluators/resources/reading-traces.md`
+- `skills/orq-recommend-evaluators/resources/candidate-signals.md`
+- `skills/orq-recommend-evaluators/resources/ranking.md`
+- `skills/orq-recommend-evaluators/resources/matching.md`
+- `skills/orq-recommend-evaluators/resources/output-files.md`
+- `skills/orq-recommend-evaluators/resources/create-and-attach.md`
 - `skills/orq-setup-observability/SKILL.md`
 - `skills/orq-setup-observability/resources/traced-decorator-guide.md`
 - `skills/orq-setup-observability/resources/framework-integrations.md`
