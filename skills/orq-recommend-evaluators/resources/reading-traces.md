@@ -26,13 +26,9 @@ The goal is to **confirm or rank** Phase 4a candidates ("the scope rule was brok
 When the Task tool is available, give the trace reads to one subagent. It returns one short summary per trace: trace id, user request, what the agent did, which candidate rules it broke. That keeps raw spans out of the main context.
 
 1. **List.** `orq traces search`, sorted `end_time desc`, ids only, up to 20 recent traces.
-2. **Find the LLM span** with `list-spans`, using a null-safe `-j` projection.
-3. **Project the message text.** Try these in order and stop at the first that returns real text. A null value or a stub like `{"type":"text"}` does not count.
-   1. `-j 'span.attributes.gen_ai.{input:input,output:output}'`
-   2. `-j 'span.attributes.openresponses.{input:input._value,output:output._value}'`
-   3. On an orq-hosted agent, `openresponses.input` often returns only an item count. Use `orq agents get-response` on the trace instead. The agent span is spelled either `span.agent` named `agent.response` or `span.agent_execution`.
-   4. `orq traces thread <trace_id> -o json`, which returns the normalized conversation. Use single-key `-j` projections here, because a multi-key projection containing a filter expression fails on older CLIs.
-4. **Say when earlier turns could not be read.** Both projections hold JSON strings. For a multi-turn input, only an item count may come back.
-5. **Last resort:** `mcp__orq-workspace__get_span mode=full`, only when every CLI projection returned no text.
+2. **Read the normalized thread first:** `orq traces thread <trace_id> -o json`. It selects the most specific conversation span; use `--spans` to inspect that choice, or pass a span id when needed. For a trajectory candidate, project `messages[].{index:index,role:role,tool_names:tool_calls[].name,content_types:content[].type}` first to check turn and tool-call order without returning message text. A 2026-09-29 agent trace showed system, user, assistant tool call, tool result and final assistant in order across two chat-completion spans.
+3. **Read bounded message text** from the thread for the candidate rules being checked. The command defaults to `--max-chars 4000` per rendered block; use `--slice`, `--match` or `--include` to narrow a long conversation. A null value or a stub like `{"type":"text"}` does not count as readable text.
+4. **If the thread lacks text,** find the LLM span with `list-spans` using a null-safe `-j` projection, then try `get-span -j 'span.attributes.gen_ai.{input:input,output:output}'` and `-j 'span.attributes.openresponses.{input:input._value,output:output._value}'`. On an orq-hosted agent, `openresponses.input` may hold only an item count; use `orq agents get-response` on the agent-execution span for final output, but do not treat that final turn as the whole thread.
+5. **Last resort:** `mcp__orq-workspace__get_span mode=full`, only when the CLI thread and projections returned no text. Say when earlier turns could not be read.
 
 **Check the subcommand spelling.** On CLI 10.3.1 the subcommand is `thread`. `orq traces conversation` and `orq traces conv` print the `traces` help and **exit 0**, so a wrong spelling looks like an empty conversation. Run `orq traces --help` to check.

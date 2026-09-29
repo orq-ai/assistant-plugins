@@ -24,20 +24,19 @@ A config signal with no matching instruction is a lower-priority candidate. Say 
 | Required or constrained arguments ("reason MUST be one of …") | Every call to the tool carries a valid value | `python_eval` |
 | Refuse or escalate when a condition holds | The gated tool is **not** called when the condition is met | LLM judge on `{{output.tools_called}}` + `{{input.all_messages}}` |
 | "Keep it efficient" / a step budget | Tool-call count within the budget, no repeated identical calls | `python_eval` |
-| "Use at least N sources" / any coverage rule | **Distinct** values of the identifying argument, not the number of calls | `python_eval` over `json.loads(c["arguments"])` |
+| "Use at least N sources" / any coverage rule | **Distinct** values of the identifying argument, not the number of calls | `python_eval` over each call's `tool_arguments` (`dict` in the tested runtime) |
 | Chat content must not be treated as authority | No action taken on a user-quoted policy or fake tool result | LLM judge on `{{input.all_messages}}` |
 
 Name the procedure step each candidate comes from, the same as any other instruction rule.
 
-## Check that one trace holds the whole trajectory
+## Check the observed trajectory and the evaluator input separately
 
-An evaluator runs once per trace. Some agents log each model call as its own trace: `iterations.count` is 1 and `session_id` equals `trace_id`. In that case `log["tool_calls"]` sees one call, and an ordering check passes everything. Then do one of these:
+For an agent with traffic, read `orq traces thread <trace_id> -o json` (pass a span id if the automatic selection misses the conversation). Inspect `messages[]` in `index` order, including assistant `tool_calls[]` and tool-result messages. A live probe on 2026-09-29 returned system → user → assistant tool call → tool result → final assistant across two chat-completion spans in one trace. Do not infer a truncated trajectory from the number of model-call spans alone. A complete thread that omits a required step is evidence of failure; only an incomplete or unreadable thread leaves ordering unverified.
 
-- Recommend an LLM judge over `{{input.all_messages}}`.
-- Keep the `python_eval` and add the caveat that it is unverified on live traffic.
+A separate `orq evals invoke` probe with two supplied `output.tools_called` entries returned `log["tool_calls"]` in the supplied order. Each entry had `tool_name` and a parsed `tool_arguments` object; `log["messages"]` also held the ordered user, assistant and tool turns. This verifies the invoke mapping, not what every automatically attached production run supplies. Smoke-invoke the proposed ordering evaluator with both call orders before attaching it. With no traffic yet, say that production trajectory visibility remains unverified.
 
-Trace spans may also name tools differently from the agent's tool keys (`lookup_order` vs `ws-lookup-order`). Use the spelling a real trace shows. With no trace to check, say that the spelling is unconfirmed.
+Trace spans may name tools differently from the agent's tool keys (`lookup_order` vs `ws-lookup-order`). Use the spelling a real thread shows. With no trace to check, say that the spelling is unconfirmed.
 
 ## Multi-agent targets (`team_of_agents`)
 
-A coordinator's own traces show delegation, not the sub-agents' work. Recommend evaluators for the coordinator's own rules (routing, delegation, final answer). For each sub-agent, name it under `optional` with the line "sub-agent: run this skill on `<key>` separately", rather than recommending evaluators for it here.
+A coordinator's own traces show delegation, not the sub-agents' work. Recommend evaluators for the coordinator's own rules (routing, delegation, final answer). Do not recommend evaluators for the sub-agents here. List each one under `not_evaluators` with `route: orq-recommend-evaluators` and `why: "sub-agent <key>: run this skill on it separately"`.

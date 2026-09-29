@@ -21,7 +21,7 @@ Every create, repair and attach in this file happens only after the user approve
 **`python_eval`.** The body carries `code` instead of `prompt`/`model`/`mode`. The `evaluate(log)` contract and the `log` keys are in [`orq-build-evaluator`](../../orq-build-evaluator/SKILL.md) ("Python evaluators"). Two traps fail silently:
 
 - Each `log["tool_calls"]` entry names its tool under **`tool_name`**. `name` and `function.name` both read as `None`, so a check built on them passes every case. The list keeps call order.
-- A count of calls is not a count of sources. An agent that scrapes one URL three times satisfies `len(tool_calls) >= 3` while breaking the rule. A coverage criterion counts distinct values of the identifying argument (`url`, `query`, `document_id`), read from each entry's `arguments`, which is a JSON string.
+- A count of calls is not a count of sources. An agent that scrapes one URL three times satisfies `len(tool_calls) >= 3` while breaking the rule. A coverage criterion counts distinct values of the identifying argument (`url`, `query`, `document_id`), read from each entry's `tool_arguments`. A 2026-09-29 `python_eval` invoke returned this as a parsed object; handle a string by parsing JSON if an older runtime supplies one.
 
 A tool-order check, tested against all four orderings:
 
@@ -53,7 +53,9 @@ Invoke the recommendation's `test_cases` with the invoke shapes in [`matching.md
 
 Two cases are a smoke test, not validation, and say nothing about accuracy. A real test set comes from `orq-generate-synthetic-dataset` and `orq-evaluator-alignment`. A step 15 flip on an *existing* evaluator makes it worth reusing, not proven right for this agent.
 
-## Step 21: attach
+## Step 21: attach to an agent only
+
+For a deployment, stop after smoke-invoke and give the evaluator key and id for attachment in the deployment's settings in orq.ai. The steps below apply only to an orq agent.
 
 1. Read-modify-write `settings` whole, appending `{"id": "<id>", "execute_on": "output", "sample_rate": 100}` to `settings.evaluators`, or to `settings.guardrails` for an input guardrail.
 2. Follow [`trace-queries.md` §7](../../orq-shared/resources/trace-queries.md#7-write-path--orq-agents-update) exactly. `settings.tools[]` does not round-trip and must be translated, never dropped.

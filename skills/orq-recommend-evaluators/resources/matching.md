@@ -37,7 +37,7 @@ orq evals invoke <id> -o json --query "<query>" --output "<output>" -j '{value:v
 Invoke shapes by criterion:
 
 - **Grounded in the agent's instructions** (no invented facts, follows the procedure): pass `--messages` with a system turn, via `--from-file` for anything long. With only `--query`/`--output`, such a judge fails correct answers.
-- **Trajectory criteria, and anything beyond query and output:** take the body shape from [`api-reference.md` "Programmatic Invoke"](../../orq-build-evaluator/resources/api-reference.md), which documents `--context` against `--from-file`, the flat aliases and the variable names. `tools_called` entries there are `{name, arguments, output}`, and `arguments` is a JSON **string**; an object returns HTTP 400. This differs from a `python_eval`'s `log["tool_calls"]`, whose entries name the tool under `tool_name`.
+- **Trajectory criteria, and anything beyond query and output:** take the body shape from [`api-reference.md` "Programmatic Invoke"](../../orq-build-evaluator/resources/api-reference.md), which documents `--context` against `--from-file`, the flat aliases and the variable names. Invoke-body `tools_called` entries are `{name, arguments, output}`, and `arguments` is a JSON **string**; an object returns HTTP 400. Inside a `python_eval`, the tested runtime exposed those calls in order as `log["tool_calls"]` entries with `tool_name` and parsed `tool_arguments` objects.
 - **Retrievals and tool results:** pass them as a `retrievals` array in a flat `--from-file` body. A judge that checks figures against a tool's output reads the tool result from there.
 - **HTTP 520:** transient. Retry once.
 

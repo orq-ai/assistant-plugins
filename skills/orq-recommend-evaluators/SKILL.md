@@ -69,7 +69,7 @@ Recommend Evaluators Progress:
 - [ ] Phase 3: Choose the grounding mode
 - [ ] Phase 4: Derive candidate criteria
 - [ ] Phase 5: Rank, match, write the recommendation files, present, ask
-- [ ] Phase 6: Create approved evaluators, smoke-invoke, offer to attach
+- [ ] Phase 6: Create approved evaluators, smoke-invoke, attach to agents when approved
 ```
 
 ## Done When
@@ -151,7 +151,7 @@ Recommend Evaluators Progress:
 
 9. **Map config signals to evaluator shapes** with [`candidate-signals.md`](resources/candidate-signals.md). For a target with `team_of_agents`, follow its "Multi-agent targets" section.
 
-10. **Judge the trajectory, not only the final answer.** When the instructions state a procedure ("call X first", "never do Y before Z", "confirm before acting"), each ordering or gating rule is its own candidate. Use the trajectory table in [`candidate-signals.md`](resources/candidate-signals.md), and check that one trace holds the whole trajectory before recommending a `python_eval` ordering check.
+10. **Judge the trajectory, not only the final answer.** When the instructions state a procedure ("call X first", "never do Y before Z", "confirm before acting"), each ordering or gating rule is its own candidate. Use the trajectory table in [`candidate-signals.md`](resources/candidate-signals.md). For an agent with traffic, read a full `orq traces thread` before choosing a `python_eval` ordering check; the number of model-call spans alone does not tell you whether the trace holds the whole trajectory.
 
 11. **Drop specification gaps.** If a behaviour matters but the instructions never ask for it, list it under "Not an evaluator" with `orq-improve-agent`. **Two rules that contradict each other** go the same way: a judge built on either rule would fail every response that follows the other. Quote both lines, say which behaviour the agent actually shows, and route the conflict to `orq-improve-agent`.
 
@@ -169,16 +169,16 @@ Recommend Evaluators Progress:
 
 16. **Write and validate both output files** in the current working directory: `eval-recommendations-<key>-<YYYYMMDD-HHMMSS>.md` and `.json` with the same timestamp. The format, the `.json` field mapping and the `ajv` command are in [`output-files.md`](resources/output-files.md). Never present a `.json` that failed validation.
 
-17. **Present in rank order and ask** with one `AskUserQuestion` (`multiSelect: true`): which recommendations to act on. A new evaluator goes to step 18; a `reuse` item skips creation and goes to the attach question (step 21). Offer "none, just keep the file", and mention the `optional` list in one line. The user can promote an `optional` item: run step 15 on it, move it into `recommendations` in the `.md` and `evaluations` in the `.json` at its rank, then **rewrite and re-validate both files**. Declined recommendations stay in the file.
+17. **Present in rank order and ask** with one `AskUserQuestion` (`multiSelect: true`): which recommendations to act on. A new evaluator goes to step 18. A `reuse` item skips creation: for an agent, go to the attach question (step 21); for a deployment, give its key and id for attachment in the deployment's settings in orq.ai. Offer "none, just keep the file", and mention the `optional` list in one line. The user can promote an `optional` item: run step 15 on it, move it into `recommendations` in the `.md` and `evaluations` in the `.json` at its rank, then **rewrite and re-validate both files**. Declined recommendations stay in the file.
 
-### Phase 6: Create, Smoke-Test, Offer to Attach
+### Phase 6: Create, Smoke-Test, Attach to Agents
 
 For each recommendation the user selected, one at a time, follow [`create-and-attach.md`](resources/create-and-attach.md):
 
 18. **Show the exact create body** and ask for approval of that one evaluator.
 19. **Create** it with `orq evals create --from-file eval.json`.
 20. **Smoke-invoke both `test_cases`** and read `value`. If the invoke fails on the model, ask before repairing with `orq evals update`. Never offer to attach an evaluator that does not run. This is a smoke test, not validation.
-21. **Offer to attach**, as a separate question. On yes, read-modify-write `settings` whole, then re-read to confirm the evaluator is listed and `settings.tools[]` is unchanged.
+21. **Agent targets only:** offer to attach as a separate question. On yes, read-modify-write `settings` whole, then re-read to confirm the evaluator is listed and `settings.tools[]` is unchanged. For a deployment, give the created evaluator's key and id and point to the deployment's settings in orq.ai; do not call `orq agents update`.
 
 22. **Close.** List what was created, reused, attached, and declined. For each LLM judge: *unvalidated, run `orq-evaluator-alignment` before trusting its scores*. Recommend `orq-run-experiment` to measure the agent with its new evaluators. Name the scratch files this run wrote (`evals-inventory.json`, and any `eval.json`, `patch.json` or `body.json`) so the user can remove them; this skill has no delete tool.
 
