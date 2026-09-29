@@ -142,6 +142,9 @@ def load_cases(skill_names: set[str]) -> list[Case]:
             problems.append(f"{rel}: '{case.skill}' is not a skill in skills/ (cross-skill folders start with _)")
         if case.expect_skill not in ("none", "any") and case.expect_skill not in skill_names:
             problems.append(f"{rel}: expect_skill '{case.expect_skill}' is not a skill in skills/")
+        # An invocation case is scored by skill_fired alone, which skips `any`: no verdict, so every run fails.
+        if case.kind == "invocation" and case.expect_skill == "any":
+            problems.append(f"{rel}: an invocation case needs an expected skill or 'none', not 'any'")
         if bad := set(case.agents) - set(AGENTS):
             problems.append(f"{rel}: unknown agent(s) {sorted(bad)}")
         # Claude has no deny layer on top of --allowedTools, so an allowed tool that is also
@@ -793,7 +796,7 @@ async def amain() -> int:
     parser.add_argument("--no-send", action="store_true", help="Do not upload the experiment to orq")
     parser.add_argument("--json", dest="json_path", type=Path, help="Write the summary here (default tests/eval-results/<timestamp>.json)")
     parser.add_argument("--branch", type=Path, default=REPO_ROOT, help="Plugin root under test (default: this checkout)")
-    # A full run is 72 agent runs: about $4 of Claude plus 36 unpriced OpenCode runs charged at $0.25.
+    # Fits a full run of the v1 cases on both agents; OpenCode runs are unpriced and charged at $0.25 each.
     parser.add_argument("--max-cost-usd", type=float, default=20.0, help="Stop launching runs once this much is spent")
     parser.add_argument("--list", action="store_true", help="List the selected cases and the run count, then exit")
     parser.add_argument(

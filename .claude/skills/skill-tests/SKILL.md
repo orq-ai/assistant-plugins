@@ -17,7 +17,7 @@ re-score, re-interpret or soften a result.
 | Suite | Script | What it answers | Cost |
 |---|---|---|---|
 | Factual | `tests/scripts/run_factual_tests.py` | Do the tools, CLI commands, SDK calls and URLs a skill names still exist? | free, ~1 min |
-| Evals | `tests/scripts/run_evals.py` | Does the right skill fire, and does the agent take the right first actions without creating anything? | Claude ~$0.11 per run; OpenCode reports no cost and is charged $0.25 |
+| Evals | `tests/scripts/run_evals.py` | Does the right skill fire, and does the agent take the right first actions without creating anything? | per agent run; OpenCode reports no cost and is charged $0.25 |
 
 ## 1. Confirm scope and cost
 
@@ -28,11 +28,11 @@ default both). Then show the plan without spending anything:
 uv run tests/scripts/run_evals.py --list [--skill <name>] [--agent claude]
 ```
 
-It prints the case count and the number of agent runs. Estimate cost as runs x
-$0.25 (about twice Claude's average, the flat charge for OpenCode) and state it, with the
-default cap of $20 (`--max-cost-usd`); a full run of every case on both agents is
-72 runs. Wait for the user to confirm before running the evals. The factual suite
-needs no confirmation.
+It prints the case count and the number of agent runs. Estimate cost as that run
+count x $0.25 (the flat charge for OpenCode, above Claude's usual cost) and state it,
+with the cap the output prints (`--max-cost-usd`, default $20). Take both numbers
+from this output, not from memory: they grow as cases are added. Wait for the user
+to confirm before running the evals. The factual suite needs no confirmation.
 
 The invocation cases (`*-fires`) run 3 times with a 2-of-3 threshold: a smoke
 check that catches a skill that stopped firing, not one that fires unreliably. Say
@@ -42,11 +42,13 @@ so when presenting them, and point to the flaky bucket for mixed results.
 
 - `orq --version` is 10.3.1 or newer; if not, tell the user to run `orq update`
   first. A stale CLI reports false drift.
-- `ORQ_SKILL_EVALS_KEY` is set (environment or a gitignored `.env` at the repo
-  root). It is the `skill-evals` project key; the eval runner refuses to start
-  without it. Never substitute another key.
+- `ORQ_SKILL_EVALS_KEY` is set. It is the `skill-evals` project key; the eval
+  runner refuses to start without it. Never substitute another key.
   The experiment upload uses the same key; pass `--no-send` to skip it.
 - `ORQ_API_KEY` is set for the factual suite's MCP checks.
+- Keep these in a gitignored `.env` at the repo root. Only the eval runner reads
+  `ORQ_SKILL_EVALS_KEY` from it; `ORQ_API_KEY` and `SSL_VERIFY` must be in the
+  environment, so step 3 loads the file into the shell first.
 - On Windows, set `SSL_VERIFY=0` for both runners if Python's default TLS setup
   aborts (`OPENSSL_Applink`) or TLS interception (Norton) breaks verification. The
   eval runner saves its results before uploading, so a failed upload loses nothing:
@@ -64,9 +66,11 @@ so when presenting them, and point to the flaky bucket for mixed results.
 ## 3. Run
 
 Run both from the repo root with the Bash tool (not PowerShell: its `>` writes
-UTF-16), and write the JSON outputs to `tests/eval-results/` (gitignored):
+UTF-16), and write the JSON outputs to `tests/eval-results/` (gitignored). Each
+Bash call starts a fresh shell, so load `.env` in the same call as the runner:
 
 ```bash
+[ -f .env ] && { set -a; . ./.env; set +a; }
 mkdir -p tests/eval-results
 uv run tests/scripts/run_factual_tests.py --json [--skill <name>] > tests/eval-results/factual.json
 uv run tests/scripts/run_evals.py --json tests/eval-results/evals.json [--skill <name>] [--agent <agent>]

@@ -610,13 +610,15 @@ for (const f of factualCsvs)
 // ---------- 14. tests/evals/<skill>/ <-> skills/ ----------
 // Invocation and behavioural cases per skill, run by tests/scripts/run_evals.py.
 // Folders starting with _ hold cross-skill cases (_no-skill, _general). A warning
-// until every skill has cases (RES-1076).
+// until every skill has cases (RES-1076). Reference bundles are read by other skills
+// and never invoked on their own, so no case could fire them.
+const REFERENCE_ONLY_SKILLS = ["orq-shared"];
 const evalsDir = join(root, "tests", "evals");
 const evalDirs = existsSync(evalsDir)
   ? readdirSync(evalsDir, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith("_")).map((d) => d.name)
   : [];
 for (const name of skillDirs)
-  if (!evalDirs.includes(name))
+  if (!evalDirs.includes(name) && !REFERENCE_ONLY_SKILLS.includes(name))
     warn(`skills/${name} has no tests/evals/${name}/ — nothing checks that it fires or what it does first`);
 for (const d of evalDirs)
   if (!skillDirs.includes(d))
