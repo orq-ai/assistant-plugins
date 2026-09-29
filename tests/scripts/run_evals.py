@@ -68,6 +68,16 @@ MIN_ORQ_VERSION = (10, 3, 1)
 # Charged against --max-cost-usd for a run that reports no cost. OpenCode gets no
 # pricing for the orq provider and reports 0. A Claude run averages about $0.11 (up to ~$0.27).
 UNPRICED_RUN_COST_USD = 0.25
+# orq launch prints this whenever the key differs from the `orq auth login` workspace. Runs
+# always use the skill-evals key, so it is expected; left in, it hides the real failure.
+KEY_NOTE = re.compile(r"Note: ORQ_API_KEY may not belong to the workspace[^\n]*\n?")
+# Model errors a second attempt can clear. Any other model error (empty_response, a
+# refused request) replays on the same model and prompt, so it is not retried.
+TRANSIENT_MODEL_ERROR = re.compile(r"rate.?limit|\b429\b|\b5\d\d\b|overloaded|temporarily|unavailable", re.IGNORECASE)
+# Failures before any agent session started: there is no trace to open.
+NO_SESSION_CODES = {"cli.not_found", "cli.prompt_too_long", "cli.agent_not_found", "cli.image_missing", "cli.container_start"}
+# Model tiers too small to follow the tool-calling rules; a run on one measures the model, not the skill.
+WEAK_MODEL = re.compile(r"(?:^|[-/._])(?:lite|nano)(?:$|[-/._])", re.IGNORECASE)
 AGENTS: tuple[AgentName, ...] = ("claude", "opencode")
 KINDS = ("invocation", "behavioural")
 
@@ -203,6 +213,32 @@ def check_orq_version(orq: Path) -> str:
     return version
 
 
+def resolve_default_model(orq: Path, agent: AgentName, key: str) -> str | None:
+    """The model `orq launch <agent>` picks without --model, read from its dry run.
+
+    It runs with the same ORQ_API_KEY the agent runs get, so it resolves against the
+    same workspace catalogue (and the same profile precedence) as the runs themselves.
+    """
+    found = subprocess.run(
+        [str(orq), "launch", agent, "--dry-run", "--no-mcp", "--no-skills"],
+        capture_output=True, text=True, timeout=60, check=False, env={**os.environ, "ORQ_API_KEY": key},
+    )
+    out = found.stdout + found.stderr
+    if agent == "claude":
+        m = re.search(r"^\s*ANTHROPIC_MODEL=(\S+)", out, re.MULTILINE)
+        return m.group(1) if m else None
+    # OpenCode's config names it as "<provider key>/<model>"; the last "model" key is the top-level one.
+    picked = re.findall(r'"model":"([^"]+)"', out)
+    return re.sub(r"^orq(?:-openai)?/", "", picked[-1]) if picked else None
+
+
+def describe_models(models: dict[AgentName, dict[str, str | None]]) -> str:
+    return ", ".join(
+        f"{a}={m['model'] or 'unresolved'}{' (orq launch default)' if m['source'] != 'flag' else ''}"
+        for a, m in models.items()
+    )
+
+
 def check_container_image(image: str) -> None:
     """Stop before any run when Docker or the image is missing; each run would otherwise fail the same way."""
     if shutil.which("docker") is None:
@@ -289,9 +325,17 @@ def mcp_name(agent: AgentName, bare: str) -> str:
 
 
 def build_target(
-    agent: AgentName, case: Case, branch: Path, key: str, run_id: str, container: DockerOptions | None = None
+    agent: AgentName,
+    case: Case,
+    branch: Path,
+    key: str,
+    run_id: str,
+    container: DockerOptions | None = None,
+    model: str | None = None,
 ) -> tuple[EvalTarget, list[Path]]:
     """One isolated target per run, plus the temp dirs to remove afterwards.
+
+    ``model`` renders `orq launch --model`; None keeps the default orq launch resolves.
 
     On the host, empty config dirs stand in for isolation. In a container the agent gets a fresh
     home and sees only its workdir, so those stopgaps are dropped, and anything it needs from the
@@ -313,6 +357,7 @@ def build_target(
         target = EvalTarget(
             "claude",
             launcher="orq",
+            model=model,
             orq=OrqLaunchOptions(mcp=False, skills=False),
             extra_args=[
                 "--plugin-dir", plugin_dir,
@@ -374,6 +419,7 @@ def build_target(
     target = EvalTarget(
         "opencode",
         launcher="orq",
+        model=model,
         orq=OrqLaunchOptions(mcp=False, skills=False),  # only the branch copy and opencode.json's server
         extra_args=["--auto"],
         workdir=workdir,
@@ -413,6 +459,43 @@ def _recover_max_turns(agent: AgentName, stdout: str) -> dict[str, Any] | None:
     }
 
 
+def _run_error(agent: AgentName, exc: CodingAgentError, stdout: str) -> dict[str, Any]:
+    """A failed run: the agent's own error event first, then orq's stderr tail, and what kind of failure it is.
+
+    On a non-zero exit evaluatorq reports stderr only, but OpenCode (an `error` event) and
+    Claude (an is_error result) write the real cause to stdout. A genuine orq failure only
+    shows in stderr, so both are kept.
+    """
+    try:
+        turn = coding_agent.parse_events(agent, coding_agent.parse_jsonl(stdout))
+    except Exception:  # noqa: BLE001 -- a half-written stdout still leaves stderr to report
+        turn = None
+    agent_error = turn.agent_error if turn else None
+    stderr = KEY_NOTE.sub("", exc.message).strip()
+    if re.fullmatch(r".* exited -?\d+:", stderr):  # only evaluatorq's prefix is left: stderr said nothing else
+        stderr = ""
+    parts = [f"agent error: {agent_error[:300]}"] if agent_error and agent_error not in stderr else []
+    if stderr:
+        parts.append(f"stderr: {stderr[-300:]}")
+    if exc.code == "cli.timeout":
+        kind = "timeout"
+    elif agent_error or exc.code in ("cli.agent_error", "cli.no_result"):
+        kind = "model"
+    else:
+        kind = "harness"
+    unavailable = isinstance(exc, CodingAgentUnavailableError)  # not found, timeout, prompt too long: a re-run replays it
+    return {
+        "error": f"{exc.code}: {' | '.join(parts)}",
+        "error_kind": kind,
+        "retryable": not unavailable and (kind == "harness" or (kind == "model" and bool(TRANSIENT_MODEL_ERROR.search(agent_error or stderr)))),
+        "launched": exc.code not in NO_SESSION_CODES,
+        "session_id": turn.session_id if turn else None,
+        # Not `tool_calls`: an errored run is not scored, but what it did first helps the reader.
+        "tool_calls_before_error": [c.name for c in turn.tool_calls] if turn else [],
+        "stopped": "error",
+    }
+
+
 def _cost_from_stdout(agent: AgentName, stdout: str) -> tuple[float, bool]:
     """(cost, estimated): the agent's own figure, else the flat estimate so the cap still binds."""
     try:
@@ -444,20 +527,28 @@ class Budget:
 
 
 async def run_once(
-    agent: AgentName, case: Case, branch: Path, key: str, run_id: str, budget: Budget, container: DockerOptions | None
+    agent: AgentName,
+    case: Case,
+    branch: Path,
+    key: str,
+    run_id: str,
+    budget: Budget,
+    container: DockerOptions | None,
+    model: str | None,
 ) -> dict[str, Any]:
-    target, temp = build_target(agent, case, branch, key, run_id, container)
+    target, temp = build_target(agent, case, branch, key, run_id, container, model)
     try:
         try:
             response = await target.respond([Message(role="user", content=case.prompt)])
         except CodingAgentError as exc:
-            recovered = _recover_max_turns(agent, target.last_stdout)
             # A timeout leaves no stdout but the agent ran (and billed) until it was killed.
             timed_out = exc.code == "cli.timeout"
-            await budget.add(UNPRICED_RUN_COST_USD if timed_out else _cost_from_stdout(agent, target.last_stdout)[0])
+            cost = UNPRICED_RUN_COST_USD if timed_out else _cost_from_stdout(agent, target.last_stdout)[0]
+            await budget.add(cost)
+            recovered = _recover_max_turns(agent, target.last_stdout)
             if recovered is None:
-                raise
-            return recovered
+                return _run_error(agent, exc, target.last_stdout) | {"cost_usd": cost}
+            return recovered | {"cost_usd": cost}
         cost, estimated = _cost_from_stdout(agent, target.last_stdout)
         await budget.add(cost)
         return {
@@ -474,29 +565,36 @@ async def run_once(
             remove_tree(d)
 
 
-def make_job(agent: AgentName, branch: Path, key: str, budget: Budget, container: DockerOptions | None) -> Job:
+def make_job(
+    agent: AgentName, branch: Path, key: str, budget: Budget, container: DockerOptions | None, model: str | None
+) -> Job:
     async def run(data: DataPoint, row: int) -> dict[str, Any]:
         case = Case(**data.inputs["case"])
         base = {"agent": agent, "case_id": case.id, "run": data.inputs["run"]}
         if agent not in case.agents:
             return {"name": agent, "output": base | {"skipped": "agent not enabled for this case"}, "error": None}
         run_id = f"skill-evals-{case.id}-{agent}-{data.inputs['run']}-{int(time.time())}"
-        last_error = ""
-        for attempt in (1, 2):  # an errored run is re-run once, then reported as an error
+        spent = 0.0
+        out: dict[str, Any] = {}
+        for attempt in (1, 2):  # a retryable error is re-run once, then reported as an error
             if not await budget.admit():
-                return {"name": agent, "output": base | {"skipped": "cost cap reached"}, "error": None}
-            try:
-                out = await run_once(agent, case, branch, key, run_id, budget, container)
-                out |= base | {"attempts": attempt, "thread_id": out.get("session_id") if agent == "claude" else run_id}
+                if attempt == 1:
+                    return {"name": agent, "output": base | {"skipped": "cost cap reached"}, "error": None}
+                break  # the cap stopped the retry: report the first attempt's error
+            out = await run_once(agent, case, branch, key, run_id, budget, container, model)
+            spent += out["cost_usd"] or 0.0
+            # OpenCode's thread is the run_id sent as X-ORQ-THREAD-ID; Claude's is its session id.
+            thread_id = (out.get("session_id") if agent == "claude" else run_id) if out.pop("launched", True) else None
+            # Every attempt is billed, so the run carries the cost of all of them.
+            out |= base | {"attempts": attempt, "thread_id": thread_id, "cost_usd": round(spent, 4)}
+            if "error" not in out:
                 if failed := errored_expected_tools(agent, case, out["tool_calls"]):
                     # The agent took the right step and the server failed it: not a verdict on the skill.
-                    out["error"] = f"expected tool(s) {failed} were called but errored"
+                    out |= {"error": f"expected tool(s) {failed} were called but errored", "error_kind": "tool"}
                 return {"name": agent, "output": out, "error": None}
-            except CodingAgentError as exc:
-                last_error = f"{exc.code}: {exc.message[-300:]}"  # the tail holds the actual failure
-                if isinstance(exc, CodingAgentUnavailableError):
-                    break  # not found, timeout, prompt too long: a re-run replays the same outcome
-        return {"name": agent, "output": base | {"error": last_error}, "error": last_error}
+            if not out.pop("retryable"):
+                break
+        return {"name": agent, "output": out, "error": out["error"]}
 
     # Not wrapped in evaluatorq's job(): that would nest our JobReturn inside `output`,
     # and a handled error has to reach evaluatorq as the top-level `error`.
@@ -655,10 +753,13 @@ def aggregate(results: list[Any], cases: list[Case]) -> dict[str, Any]:
                     "status": status,
                     "scores": {s.evaluator_name: {"pass": s.score.pass_, "why": s.score.explanation} for s in jr.evaluator_scores or []},
                     "error": jr.error or out.get("error") or dp.error,
+                    "error_kind": out.get("error_kind") or ("harness" if status == "error" else None),
                     "thread_id": out.get("thread_id"),
+                    "attempts": out.get("attempts", 0),
                     "cost_usd": out.get("cost_usd"),
                     "stopped": out.get("stopped"),
-                    "tool_calls": [f"{c['name']}{' (denied)' if is_denied(c) else ''}" for c in out.get("tool_calls", [])],
+                    "tool_calls": [f"{c['name']}{' (denied)' if is_denied(c) else ''}" for c in out.get("tool_calls", [])]
+                    or out.get("tool_calls_before_error", []),
                     "tool_call_details": [
                         {"name": c["name"], "denied": is_denied(c), "arguments": json.dumps(c["arguments"])[:400]}
                         for c in out.get("tool_calls", [])
@@ -693,6 +794,11 @@ def aggregate(results: list[Any], cases: list[Case]) -> dict[str, Any]:
                 "threshold": case.pass_threshold,
                 "flaky": rate is not None and 0 < rate < 1,
                 "errors": sum(r["status"] == "error" for r in runs),
+                # "the model broke 6/6 times" reads differently from "the harness broke"; neither is a verdict.
+                "errors_by_kind": {
+                    k: sum(r["error_kind"] == k for r in runs if r["status"] == "error")
+                    for k in sorted({r["error_kind"] for r in runs if r["status"] == "error"})
+                },
                 "cost_usd": round(sum(r["cost_usd"] or 0 for r in runs), 4),
                 "runs": runs,
             }
@@ -723,12 +829,16 @@ def print_report(report: dict[str, Any]) -> None:
             print(f"\n{current}")
         rate = "-" if row["pass_rate"] is None else f"{row['pass_rate']:.0%}"
         flaky = " flaky" if row["flaky"] else ""
-        print(f"  [{icons[row['status']]}] {row['case']} [{row['agent']}] {rate} (need {row['threshold']:.0%}){flaky}  ${row['cost_usd']:.2f}")
+        by_kind = ", ".join(f"{k} {n}/{len(row['runs'])}" for k, n in row["errors_by_kind"].items())
+        errors = f"  errors: {by_kind}" if by_kind else ""
+        print(f"  [{icons[row['status']]}] {row['case']} [{row['agent']}] {rate} (need {row['threshold']:.0%}){flaky}  ${row['cost_usd']:.2f}{errors}")
         if row["status"] in ("fail", "error", "measured"):
             for r in row["runs"]:
                 failing = {k: v["why"] for k, v in r["scores"].items() if v["pass"] is False}
                 detail = r["error"] or failing or ", ".join(r["tool_calls"])
-                print(f"      run {r['run']}: {r['status']}  {detail}  thread={r['thread_id']}")
+                status = f"error [{r['error_kind']}]" if r["status"] == "error" else r["status"]
+                tries = f"  attempts={r['attempts']}" if r["attempts"] > 1 else ""
+                print(f"      run {r['run']}: {status}  {detail}  thread={r['thread_id']}{tries}")
     print("\nper skill:")
     for skill, s in sorted(report["skills"].items()):
         print(f"  {skill}: invocation {s['invocation']}, behavioural {s['behavioural']}, errors {s['errors']}, ${s['cost_usd']:.2f}"
@@ -792,6 +902,15 @@ async def amain() -> int:
     parser.add_argument("--case", action="append", help="Only this case id (repeatable)")
     parser.add_argument("--agent", action="append", choices=AGENTS, help="Only this agent (repeatable)")
     parser.add_argument("--runs", type=int, help="Override runs per case")
+    parser.add_argument(
+        "--pass-threshold", type=float, help="Override every selected case's pass threshold (0..1; fraction of runs that must pass)"
+    )
+    parser.add_argument(
+        "--claude-model", help="Gateway model for Claude runs (provider/model_id; default: what orq launch resolves)"
+    )
+    parser.add_argument(
+        "--opencode-model", help="Gateway model for OpenCode runs (provider/model_id; default: what orq launch resolves)"
+    )
     parser.add_argument("--parallel", type=int, default=2, help="Concurrent agent runs (each is a full agent process)")
     parser.add_argument("--no-send", action="store_true", help="Do not upload the experiment to orq")
     parser.add_argument("--json", dest="json_path", type=Path, help="Write the summary here (default tests/eval-results/<timestamp>.json)")
@@ -814,29 +933,61 @@ async def amain() -> int:
     if args.case:
         cases = [c for c in cases if c.id in args.case]
     agents: list[AgentName] = args.agent or list(AGENTS)
-    if args.runs:
+    if args.runs is not None:
+        if args.runs < 1:
+            parser.error("--runs must be at least 1")
         for c in cases:
             c.runs = args.runs
+    if args.pass_threshold is not None:
+        if not 0 <= args.pass_threshold <= 1:
+            parser.error("--pass-threshold must be between 0 and 1")
+        for c in cases:
+            c.pass_threshold = args.pass_threshold
     if not cases:
         print("no eval cases selected", file=sys.stderr)
         return 2
-    total_runs = sum(c.runs * len(set(c.agents) & set(agents)) for c in cases)
-    print(f"{len(cases)} case(s), {total_runs} agent run(s), agents {agents}, cap ${args.max_cost_usd:.2f}")
-    if args.list:
-        for c in cases:
-            print(f"  {c.skill}/{c.id} [{c.kind}] x{c.runs} agents={sorted(set(c.agents) & set(agents))}")
-        return 0
 
     key = load_dotenv_key("ORQ_SKILL_EVALS_KEY")
-    if not key:
+    if not key and not args.list:
         sys.exit("ORQ_SKILL_EVALS_KEY is not set: agent runs must use the skill-evals project key, refusing to start")
+    flag_models: dict[AgentName, str | None] = {"claude": args.claude_model, "opencode": args.opencode_model}
+    orq = None if args.container else resolve_orq()
+    models = {
+        a: {"model": flag_models[a], "source": "flag"}
+        if flag_models[a]
+        else {"model": resolve_default_model(orq, a, key) if orq and key else None, "source": "orq launch default"}
+        for a in agents
+    }
+
+    total_runs = sum(c.runs * len(set(c.agents) & set(agents)) for c in cases)
+    print(f"{len(cases)} case(s), {total_runs} agent run(s), agents {agents}, cap ${args.max_cost_usd:.2f}")
+    print(f"models: {describe_models(models)}")
+    for a, m in models.items():
+        if m["model"] and WEAK_MODEL.search(m["model"]):
+            print(
+                f"warning: {a} model {m['model']} is a lite/nano tier; such models tend to fail as models "
+                "before they reach the skill decision, so a run measures the model, not the skill",
+                file=sys.stderr,
+            )
+    if args.list:
+        for c in cases:
+            print(
+                f"  {c.skill}/{c.id} [{c.kind}] x{c.runs} threshold={c.pass_threshold:g}"
+                f"{' (measured, not scored)' if c.borderline else ''} agents={sorted(set(c.agents) & set(agents))}"
+            )
+        return 0
+
     container: DockerOptions | None = None
     if args.container:
         container = DockerOptions()
         check_container_image(container.image)
         orq_version = f"from image {container.image}"
     else:
-        orq_version = check_orq_version(resolve_orq())
+        orq_version = check_orq_version(orq)
+    print(
+        "note: orq launch may warn that ORQ_API_KEY does not belong to your `orq auth login` workspace; "
+        "expected, every run uses the skill-evals key. It is left out of run errors."
+    )
 
     data = [
         DataPoint(inputs={"case": c.__dict__, "run": i + 1, "orq_skills": sorted(skill_names), "prompt": c.prompt})
@@ -844,7 +995,7 @@ async def amain() -> int:
         for i in range(c.runs)
     ]
     budget = Budget(args.max_cost_usd)
-    jobs: list[Job] = [make_job(a, branch, key, budget, container) for a in agents]
+    jobs: list[Job] = [make_job(a, branch, key, budget, container, flag_models[a]) for a in agents]
 
     started = datetime.now(timezone.utc)
     # Upload later, from disk and in a child process: evaluatorq uploads at the very end,
@@ -869,7 +1020,7 @@ async def amain() -> int:
             {
                 "started": started.isoformat(),
                 "ended": ended.isoformat(),
-                "description": f"invocation + behavioural evals, branch {branch.name}, agents {agents}",
+                "description": f"invocation + behavioural evals, branch {branch.name}, models {describe_models(models)}",
                 "results": [r.model_dump(mode="json") for r in results],
             }
         ),
@@ -885,14 +1036,20 @@ async def amain() -> int:
             print(f"  created during this batch: {line}")
 
     code = exit_code(report, budget)
+    attempts = [r["attempts"] for row in report["cases"] for r in row["runs"]]
+    sessions, retries = sum(attempts), sum(max(0, a - 1) for a in attempts)
     summary = {
         "started": started.isoformat(),
         "branch": str(branch),
         "orq_version": orq_version,
         "agents": agents,
+        # A null model is a default that could not be read (container mode, or the dry run failed).
+        "models": models,
         "experiment_url": None,
         "results_file": str(raw_path),
         "cost_usd": round(budget.spent, 4),
+        "sessions": sessions,
+        "retries": retries,
         # Reached: the cap was spent, possibly by the last run. Skipped: runs were not launched because of it.
         "cost_cap_reached": budget.spent >= budget.cap,
         "runs_skipped_by_cap": budget.breached,
@@ -901,7 +1058,8 @@ async def amain() -> int:
         **report,
     }
     out_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
-    print(f"\nspent ${budget.spent:.2f}{' (cost cap hit, later runs skipped)' if budget.breached else ''}; summary: {out_path}")
+    capped = " (cost cap hit, later runs skipped)" if budget.breached else ""
+    print(f"\nspent ${budget.spent:.2f} ({sessions} sessions, {retries} retries){capped}; summary: {out_path}")
 
     if not args.no_send:
         child = await asyncio.create_subprocess_exec(

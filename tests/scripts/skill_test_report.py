@@ -107,9 +107,10 @@ def eval_findings(data: dict[str, Any]) -> list[dict[str, Any]]:
         if row["flaky"] and row["status"] != "measured":
             buckets.append("flaky")
         rate = "-" if row["pass_rate"] is None else f"{row['pass_rate']:.0%}"
+        by_kind = ", ".join(f"{k} {n}/{len(row['runs'])}" for k, n in row.get("errors_by_kind", {}).items())
         failing = sorted(
             {k for r in row["runs"] for k, v in r["scores"].items() if v["pass"] is False}
-            | ({"run error"} if row["errors"] else set())
+            | ({f"run error ({by_kind})" if by_kind else "run error"} if row["errors"] else set())
         )
         for bucket in buckets:
             findings.append(
@@ -176,7 +177,8 @@ def main() -> None:
     if evals.get("experiment_url"):
         print(f"\nexperiment: {evals['experiment_url']}")
     if evals:
-        print(f"eval cost: ${evals.get('cost_usd', 0):.2f}" + (" (cost cap stopped some runs)" if evals.get("runs_skipped_by_cap") else ""))
+        sessions = f" ({evals['sessions']} sessions, {evals['retries']} retries)" if "sessions" in evals else ""
+        print(f"eval cost: ${evals.get('cost_usd', 0):.2f}{sessions}" + (" (cost cap stopped some runs)" if evals.get("runs_skipped_by_cap") else ""))
 
     if args.json_path:
         args.json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
