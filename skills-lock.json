@@ -39,7 +39,7 @@
     "orq-evaluator-alignment": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "8055225fd3a061238eacd8f160972edea607e321344a94c1bdeb75f77a4eff8a"
+      "computedHash": "4211870d3043af9acffb260558d4758007492c311856902ad92bb282715a54a5"
     },
     "orq-generate-synthetic-dataset": {
       "source": "orq-ai/assistant-plugins",

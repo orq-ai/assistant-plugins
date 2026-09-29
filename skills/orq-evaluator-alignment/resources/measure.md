@@ -124,9 +124,9 @@ they chose coverage, so correct it here rather than re-asking later.
 With a panel, queue priority is any model's abstentions (all answers off-contract)
 → unresolved ties → model disagreement plus wobble → model disagreement → wobble,
 followed by stable controls. Provider failures do not enter the question queue.
-The queue carries each model's aggregate
-verdict for later diagnosis; the human should label from the evidence before seeing
-those votes in an annotation UI.
+Stable controls require a usable vote from every panel model. The queue carries each
+model's aggregate verdict for later diagnosis; the human should label from the
+evidence before seeing those votes in an annotation UI.
 
 ---
 

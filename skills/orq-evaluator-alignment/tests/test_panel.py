@@ -98,6 +98,12 @@ def test_three_model_jury_flows_through_metrics_and_queue(tmp_path, monkeypatch,
     assert all(x['source_index'] != 5 for x in queue['items'])
     assert len([x for x in queue['items'] if x['low_flip_sample']]) == 1
 
+    # A capped queue must not relabel a peer abstention or provider failure as
+    # a stable control merely because the audited judge was steady.
+    build_queue.main(run_dir=str(tmp_path), config=CONFIG, count=0, low_flip_sample_size=5)
+    capped = runner.read_json(tmp_path / 'queue.json')
+    assert [(x['source_index'], x['reason']) for x in capped['items']] == [(2, 'low_flip')]
+
 
 def test_tie_precedes_disagreement_and_failed_primary_is_not_queued(tmp_path):
     runner.write_json(tmp_path / 'evaluator.json', {'id': 'e', 'prompt': 'judge', 'output_type': 'boolean'})

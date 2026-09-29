@@ -129,6 +129,8 @@ def _is_low_instability(e: dict[str, Any]) -> bool:
         e.get('instability') == 0.0 and (e.get('n_successful_repeats') or 0) >= 2
         and ('panel_disagreement' not in e or e.get('panel_disagreement') is False)
         and not e.get('panel_unstable_models')
+        and ('panel_n_models_measured' not in e
+             or e['panel_n_models_measured'] == len(e.get('panel_votes') or {}))
     )
 
 
