@@ -27,6 +27,7 @@ Phase 1 test types (the mcp_* types need ORQ_API_KEY and skip without it):
 
 For github_repo and the package types only "not found" is drift and fails the
 run; an outage, rate limit or auth error skips the row with its reason.
+github_repo also fails a repo that exists but is not public.
 
 Usage (uv installs the latest orq-ai-sdk and evaluatorq, so SDK checks run against the
 current release rather than whatever the caller's environment holds):
@@ -348,7 +349,10 @@ class FactualTestRunner:
         tools = self._mcp_tools()
         if target not in tools:
             return False, f"tool '{target}' not found"
-        props = tools[target].get("inputSchema", {}).get("properties", {})
+        schema = tools[target].get("inputSchema")
+        if not isinstance(schema, dict):
+            return False, f"{target} declares no inputSchema"
+        props = schema.get("properties", {})
         if assertion in props:
             return True, None
         return False, f"param '{assertion}' not in {target} (have: {', '.join(sorted(props))})"
@@ -362,7 +366,11 @@ class FactualTestRunner:
         tools = self._mcp_tools()
         if target not in tools:
             return False, f"tool '{target}' not found"
-        schema = tools[target].get("inputSchema", {})
+        schema = tools[target].get("inputSchema")
+        # MCP requires inputSchema; without one an empty schema would pass any blank row.
+        # An empty `properties` is fine: that is a tool that takes no arguments.
+        if not isinstance(schema, dict):
+            return False, f"{target} declares no inputSchema"
         # The server ignores keys it does not declare, so a live call would accept them.
         unknown = sorted(set(arguments) - set(schema.get("properties", {})))
         if unknown:

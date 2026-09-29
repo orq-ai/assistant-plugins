@@ -135,3 +135,10 @@ doc_url,https://github.com/orq-ai/orq-cli.git,,orq-cli.git page reachable
 github_repo,orq-ai/orq-cli,,orq-ai/orq-cli exists
 github_repo,orq-ai/bartolo,,orq-ai/bartolo exists
 npm_package,@orq-ai/cli,,@orq-ai/cli on npm
+cli_flag,traces thread,--include,orq traces thread accepts --include
+cli_flag,traces thread,--max-chars,orq traces thread accepts --max-chars
+cli_flag,traces search,-j,orq traces search accepts -j
+cli_flag,traces search,--jmespath,orq traces search accepts --jmespath
+cli_flag,traces search,--profile,orq traces search accepts --profile
+cli_flag,request,--profile,orq request accepts --profile
+cli_flag,request,--server,orq request accepts --server
