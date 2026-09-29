@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `orq-manage-skills` skill: the delete-safety reference scan in `resources/known-caveats.md` called `list_skills(paginated=True)`, a parameter the MCP tool does not have (it takes only `limit`, `starting_after`, `ending_before`). It is now the explicit cursor loop the skill's Pagination section already documents.
 - `orq-manage-skills` skill: the same scan called `search_entities()` with no arguments, which the live MCP schema rejects now that `type` is required. It now queries `prompt`, `deployment` and `agent` separately and pages each to completion; an unpaged call stopped at 50 results per type, so a large workspace got a partial scan that could wrongly clear a Skill for hard delete.
 - `orq-invoke-deployment` skill: four dead doc links. Invoke and Stream now point at `/reference/deployments/invoke` and `/reference/deployments/stream`; the Python and Node.js SDK pages are gone, so the SDK line links the single `/reference/client-libraries` page plus the `orq-python` and `orq-node` repos.
+- `orq-cli` skill: `orq traces thread` documented `--reasoning=false`, which CLI 11.0 removed. It now documents `-x/--exclude` (`-x reasoning` drops the thinking), the flag that replaced it.
 
 ## [3.4.0] - 2026-09-21
 
