@@ -23,3 +23,6 @@ doc_url,https://docs.orq.ai/docs/datasets/overview,,overview page reachable
 doc_url,https://docs.orq.ai/docs/observability/traces,,traces page reachable
 doc_url,https://docs.orq.ai/docs/ai-studio/optimize/evaluators,,evaluators page reachable
 doc_url,https://docs.orq.ai/docs/administer/annotation-queue,,annotation-queue page reachable
+cli_flag,evals create,--categories,orq evals create accepts --categories
+cli_flag,evals create,--categorical-labels,orq evals create accepts --categorical-labels
+cli_flag,evals create,--guardrail-config,orq evals create accepts --guardrail-config

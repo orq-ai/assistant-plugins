@@ -50,3 +50,4 @@ mcp_tool_exists,get_analytics_overview,,get_analytics_overview listed on MCP ser
 mcp_tool_exists,get_span,,get_span listed on MCP server
 mcp_tool_exists,update_agent,,update_agent listed on MCP server
 mcp_tool_args,search_entities,"{""type"": ""agent"", ""query"": ""support""}",search_entities(type=agent, query=...) matches the schema
+cli_flag,reporting query,--metric,orq reporting query accepts --metric

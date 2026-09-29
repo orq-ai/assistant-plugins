@@ -18,7 +18,11 @@ when the skill really means an orq MCP tool (that is drift).
 Usage:
     uv run --no-project python tests/scripts/bootstrap_factual_tests.py --skill X          # new skill
     uv run --no-project python tests/scripts/bootstrap_factual_tests.py --dry-run          # preview all
+    uv run --no-project python tests/scripts/bootstrap_factual_tests.py --new              # append missing rows
     uv run --no-project python tests/scripts/bootstrap_factual_tests.py --force            # regenerate all
+
+--new re-extracts and appends only the rows a CSV lacks, so its review
+survives. Rows a reviewer pruned come back too: drop them again in the diff.
 """
 
 from __future__ import annotations
@@ -69,6 +73,11 @@ CLI_LINE_RE = re.compile(r"(?:^|[`|]|\$|&&|;|\()[ \t]*orq[ \t]+([^`\n]*)", re.MU
 CLI_WORD_RE = re.compile(r"^[a-z][a-z-]*$")
 CLI_FLAG_RE = re.compile(r"^(--[a-z][a-z0-9-]*|-[a-zA-Z])(?:=.*)?$")
 MAX_CLI_WORDS = 3
+# A flag written on its own in backticks, e.g. a bullet `--reasoning=false` or
+# `-i/--include`, under a section whose command sits in a code block above it.
+BARE_FLAG_RE = re.compile(r"(?<![\w`])`(?:(-[a-zA-Z])/)?(--[a-z][a-z0-9-]*|-[a-zA-Z])(?:[= ][^`\n]*)?`")
+HEADING_RE = re.compile(r"#{1,6}[ \t]")
+FENCE_PREFIXES = ("```", "~~~")
 
 URL_RE = re.compile(r"https?://[\w./:%-]+(?:\?[\w=&.%-]*)?")
 GITHUB_REPO_RE = re.compile(r"github\.com/([\w-]+/[\w.-]+?)(?:\.git)?(?![\w.-])")
@@ -234,9 +243,11 @@ def _fails_next_line(body: str, pos: int) -> bool:
     return end != -1 and any(kw in _line_at(body, end + 1).lower() for kw in FAILS_NEXT_LINE)
 
 
-def extract_cli(body: str, rows: Rows) -> None:
-    for m in CLI_LINE_RE.finditer(body):
-        if _fails_next_line(body, m.start()):
+def _cli_commands(text: str) -> list[tuple[str, list[str]]]:
+    """Every `orq <subcommand> [flags]` in the text, as (subcommand, flags)."""
+    found: list[tuple[str, list[str]]] = []
+    for m in CLI_LINE_RE.finditer(text):
+        if _fails_next_line(text, m.start()):
             continue
         tokens = m.group(1).split()
         words: list[str] = []
@@ -246,14 +257,48 @@ def extract_cli(body: str, rows: Rows) -> None:
             words.append(tok)
         if not words or words[0] in PROSE_NOISE:
             continue
-        cmd = " ".join(words)
-        rows.add("cli_subcommand", cmd, "", f"orq {cmd} exists")
+        flags: list[str] = []
         for tok in tokens[len(words) :]:
             if tok in ("|", ">", "<", "&&", ";", "\\"):
                 break
             flag = CLI_FLAG_RE.match(tok)
             if flag:
-                rows.add("cli_flag", cmd, flag.group(1), f"orq {cmd} accepts {flag.group(1)}")
+                flags.append(flag.group(1))
+        found.append((" ".join(words), flags))
+    return found
+
+
+def _sections(body: str) -> list[str]:
+    """The body split at markdown headings, ignoring `#` lines inside code fences."""
+    sections: list[list[str]] = [[]]
+    in_fence = False
+    for line in body.splitlines(keepends=True):
+        if line.lstrip().startswith(FENCE_PREFIXES):
+            in_fence = not in_fence
+        elif not in_fence and HEADING_RE.match(line):
+            sections.append([])
+        sections[-1].append(line)
+    return ["".join(lines) for lines in sections]
+
+
+def extract_cli(body: str, rows: Rows) -> None:
+    for cmd, flags in _cli_commands(body):
+        rows.add("cli_subcommand", cmd, "", f"orq {cmd} exists")
+        for flag in flags:
+            rows.add("cli_flag", cmd, flag, f"orq {cmd} accepts {flag}")
+    # A flag documented on its own (a bullet, prose) names no command, so it
+    # belongs to its section's command. Only when the section has exactly one:
+    # with several the owner is a guess, and a wrong row is a false failure.
+    for section in _sections(body):
+        cmds = {cmd for cmd, _ in _cli_commands(section)}
+        if len(cmds) != 1:
+            continue
+        (cmd,) = cmds
+        for m in BARE_FLAG_RE.finditer(section):
+            if _negated(section, m.start()):
+                continue
+            for flag in filter(None, m.groups()):
+                rows.add("cli_flag", cmd, flag, f"orq {cmd} accepts {flag}")
 
 
 def extract_doc_urls(body: str, rows: Rows) -> None:
@@ -321,7 +366,10 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Preview without writing")
     parser.add_argument("--skill", help="Process one skill only")
     parser.add_argument("--force", action="store_true", help="Overwrite existing (reviewed) CSVs")
+    parser.add_argument("--new", action="store_true", help="Append rows missing from existing CSVs, keep the reviewed ones")
     args = parser.parse_args()
+    if args.new and args.force:
+        parser.error("--new keeps the reviewed rows and --force replaces them; pass one")
 
     FACTUAL_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -352,6 +400,18 @@ def main() -> None:
             for r in rows:
                 print(f"  {r[0]:20s} {r[1]}" + (f"  [{r[2]}]" if r[2] else ""))
             total += len(rows)
+            skills_written += 1
+            continue
+
+        if csv_path.exists() and args.new:
+            with open(csv_path, newline="", encoding="utf-8") as f:
+                have = {(r["test_type"], r["target"], r["assertion"]) for r in csv.DictReader(f)}
+            added = [r for r in rows if r[:3] not in have]
+            if added:
+                with open(csv_path, "a", newline="", encoding="utf-8") as f:
+                    csv.writer(f, lineterminator="\n").writerows(added)
+                print(f"  {name}: +{len(added)} new -> {csv_path.relative_to(REPO_ROOT)}")
+            total += len(added)
             skills_written += 1
             continue
 
