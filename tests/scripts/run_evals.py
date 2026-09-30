@@ -89,7 +89,8 @@ TRANSIENT_MODEL_ERROR = re.compile(r"rate.?limit|\b429\b|\b5\d\d\b|overloaded|te
 NO_SESSION_CODES = {"cli.not_found", "cli.prompt_too_long", "cli.agent_not_found", "cli.image_missing", "cli.container_start"}
 # At its `steps` cap OpenCode appends a "MAXIMUM STEPS REACHED" notice as an assistant message,
 # so the request ends on an assistant turn. Gemini rejects that with this error: the run did
-# reach its cap, like Claude's error_max_turns, and what it called before is scored.
+# reach its cap, like Claude's error_max_turns, and what it called before is scored. The match
+# is on the text alone: OpenCode ends a request on an assistant turn only at the cap.
 OPENCODE_STEP_CAP_REJECTED = re.compile(r"Requests ending with a model turn are not supported")
 # Model tiers too small to follow the tool-calling rules; a run on one measures the model, not the skill.
 WEAK_MODEL = re.compile(r"(?:^|[-/._])(?:lite|nano)(?:$|[-/._])", re.IGNORECASE)
@@ -328,7 +329,10 @@ async def trace_costs(orq: Path, key: str, thread_ids: list[str], start: datetim
                 "compute": [{"metric": "cost.total", "op": "sum"}],
             })  # fmt: skip
             for row in rows:
-                costs[row["group"]["session_id"]] = row["metrics"].get("cost.total.sum") or 0.0
+                thread, cost = (row.get("group") or {}).get("session_id"), (row.get("metrics") or {}).get("cost.total.sum")
+                # A null sum is a trace not costed yet (or an unpriced model): missing, not $0.
+                if thread and cost is not None:
+                    costs[thread] = cost
         if len(costs) == len(thread_ids) or attempt == 3:
             return costs
         await asyncio.sleep(15)
@@ -1011,8 +1015,8 @@ async def apply_trace_costs(results: list[Any], orq: Path | None, key: str, star
         return 0
     try:
         costs = await trace_costs(orq, key, sorted({out["thread_id"] for out in traceable}), started)
-    except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as exc:
-        print(f"warning: could not read run costs from orq traces ({exc}); costs are estimates", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 -- best effort; a surprise response must not cost the batch its results
+        print(f"warning: could not read run costs from orq traces ({type(exc).__name__}: {exc}); costs are estimates", file=sys.stderr)
         return 0
     for out in traceable:
         if out["thread_id"] in costs:
@@ -1053,7 +1057,7 @@ async def amain() -> int:
     parser.add_argument("--no-send", action="store_true", help="Do not upload the experiment to orq")
     parser.add_argument("--json", dest="json_path", type=Path, help="Write the summary here (default tests/eval-results/<timestamp>.json)")
     parser.add_argument("--branch", type=Path, default=REPO_ROOT, help="Plugin root under test (default: this checkout)")
-    parser.add_argument("--max-cost-usd", type=float, default=20.0, help="Stop launching runs once this much is spent")
+    parser.add_argument("--max-cost-usd", type=float, default=30.0, help="Stop launching runs once this much is spent")
     parser.add_argument("--list", action="store_true", help="List the selected cases and the run count, then exit")
     parser.add_argument("--allow-stale-orq", action="store_true", help="Run even when orq is older than the minimum")
     parser.add_argument(
@@ -1116,6 +1120,9 @@ async def amain() -> int:
         except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as exc:
             print(f"warning: could not read model prices ({exc}); estimating at the flat rate", file=sys.stderr)
     estimates = run_estimates(prices, models, cases)
+    # Claude Code's own cost figure is right only on an Anthropic model; elsewhere it prices at
+    # Anthropic rates, and OpenCode reports 0 for the orq provider.
+    own_cost = {"claude"} if "claude" in models and (models["claude"]["model"] or "").startswith("anthropic/") else set()
     for a in agents:
         priced = bool(prices and models[a]["model"] in prices)
         likely, upper = (sum(estimates[(a, c.id)][i] * c.runs for c in cases) for i in (0, 1))
@@ -1124,6 +1131,14 @@ async def amain() -> int:
     likely, estimate = (sum(estimates[(a, c.id)][i] * c.runs for a in agents for c in cases) for i in (0, 1))
     # Both attempts of a retried run are billed, and at most one retry is made.
     print(f"estimated cost: about ${likely:.4f}, up to ${estimate:.4f} (${2 * estimate:.4f} if every run is retried)")
+    # What the cap will count: an agent's own figure where it is trusted (about the likely one), the bound elsewhere.
+    charged = sum(estimates[(a, c.id)][0 if a in own_cost else 1] * c.runs for a in agents for c in cases)
+    if charged > args.max_cost_usd:
+        print(
+            f"warning: the cap will count about ${charged:.2f} against --max-cost-usd {args.max_cost_usd:.2f}; "
+            "later runs may be skipped. Raise the cap or select fewer cases.",
+            file=sys.stderr,
+        )
     for a, m in models.items():
         if m["model"] and WEAK_MODEL.search(m["model"]):
             print(
@@ -1162,7 +1177,7 @@ async def amain() -> int:
         args.max_cost_usd,
         # The bound, not the likely figure: the cap should stop a batch early rather than late.
         per_run={k: upper for k, (_, upper) in estimates.items()},
-        own_cost={"claude"} if "claude" in models and (models["claude"]["model"] or "").startswith("anthropic/") else set(),
+        own_cost=own_cost,
     )
     jobs: list[Job] = [make_job(a, branch, key, budget, container, flag_models[a]) for a in agents]
 
@@ -1181,21 +1196,27 @@ async def amain() -> int:
         _send_results=False,
     )
     ended = datetime.now(timezone.utc)
-    traced = await apply_trace_costs(results, trace_orq, key, started)
-
     out_path.parent.mkdir(parents=True, exist_ok=True)
     raw_path = out_path.with_suffix(".results.json")
-    raw_path.write_text(
-        json.dumps(
-            {
-                "started": started.isoformat(),
-                "ended": ended.isoformat(),
-                "description": f"invocation + behavioural evals, branch {branch.name}, models {describe_models(models)}",
-                "results": [r.model_dump(mode="json") for r in results],
-            }
-        ),
-        encoding="utf-8",
-    )
+
+    def save_raw() -> None:
+        raw_path.write_text(
+            json.dumps(
+                {
+                    "started": started.isoformat(),
+                    "ended": ended.isoformat(),
+                    "description": f"invocation + behavioural evals, branch {branch.name}, models {describe_models(models)}",
+                    "results": [r.model_dump(mode="json") for r in results],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    # Saved before the trace lookup, which waits on the network: a paid batch must survive it.
+    save_raw()
+    traced = await apply_trace_costs(results, trace_orq, key, started)
+    if traced:
+        save_raw()
 
     report = aggregate(results, cases)
     print_report(report)

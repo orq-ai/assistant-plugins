@@ -105,10 +105,13 @@ as on DeepSeek and Gemini. Give both. Actual costs have landed between 0.4x and
 1.5x the "about" figure, and under "up to". The catalogue price can differ from
 the billed one (DeepSeek billed 1.5x its listed input price). A model missing from
 the catalogue is charged a flat $0.25 per run, which says nothing about its price:
-say that figure is a placeholder. The retry figure is twice the bound: a run that errors in a way a retry can clear is
-re-run once, and both attempts are billed (see [Retries](#retries)). State both
-against the printed cap. Time: each run is a full
-agent session, so wall time is roughly runs / `--parallel` (default 2) sessions.
+say that figure is a placeholder. In container mode the Claude model prints as
+`unresolved`, so Claude runs are charged that flat figure too. The retry figure is
+twice the bound: a run that errors in a way a retry can clear is re-run once, and
+both attempts are billed (see [Retries](#retries)). State both against the printed
+cap; `--list` warns when what the cap will count exceeds it, and then the cap has
+to be raised or the selection cut before running. Time: each run is a full agent
+session, so wall time is roughly runs / `--parallel` (default 2) sessions.
 
 Give the estimate per suite, then the total.
 
@@ -161,6 +164,15 @@ The factual suite needs no confirmation when it is the only suite run.
   runner refuses to start without it. Never substitute another key.
   The experiment upload uses the same key; pass `--no-send` to skip it.
 - `ORQ_API_KEY` is set for the factual suite's MCP checks.
+- The `skill-evals` project holds the fixture agent `support-bot` (path `fixtures`)
+  that the `orq-improve-agent` cases name. `improve-agent-reads-config-first`
+  expects its `get_agent` to succeed, so without the fixture all its runs come back
+  as `tool` errors, not a regression. Check with
+  `ORQ_API_KEY=$ORQ_SKILL_EVALS_KEY orq agents retrieve support-bot`. To recreate
+  it: model `anthropic/claude-haiku-4-5`, role "Customer support agent",
+  `max_iterations` 2, no tools, and instructions that demand three separate steps
+  per request and an answer of at least 800 words. Those instructions contradict
+  the iteration cap, so the fault shows in the config alone.
 - Keep these in a gitignored `.env` at the repo root. Only the eval runner reads
   `ORQ_SKILL_EVALS_KEY` from it; `ORQ_API_KEY` and `SSL_VERIFY` must be in the
   environment, so every command in this skill loads the file into the shell first.
@@ -401,7 +413,7 @@ Complete for each script; run all of them from the repo root.
 | `--claude-model <id>` | `orq launch` default (see `--list`) | Gateway model for Claude runs, as `provider/model_id` (Claude models only; not validated). |
 | `--opencode-model <id>` | `orq launch` default (see `--list`) | Gateway model for OpenCode runs, as `provider/model_id`. |
 | `--parallel <n>` | 2 | Concurrent agent runs; each is a full agent process. |
-| `--max-cost-usd <x>` | 20.0 | Stop launching runs once this much is spent. |
+| `--max-cost-usd <x>` | 30.0 | Stop launching runs once this much is spent. `--list` warns when the estimate exceeds it. |
 | `--allow-stale-orq` | off | Run even when orq is older than 10.3.1. |
 | `--list` | off | Print the selected cases, run count, models and thresholds, then exit. Spends nothing. |
 | `--json <path>` | `tests/eval-results/<timestamp>.json` | Write the summary here. |
