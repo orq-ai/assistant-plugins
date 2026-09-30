@@ -2,6 +2,11 @@
 
 All notable changes to the `orq-trace` plugin are documented here. Follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] - 2026-09-30
+
+### Fixed
+- Free-text provider keys reach the trace redacted. Tool input and output arrive as plain strings, where only the value pattern runs, and it required an unbroken alphanumeric run after `sk-`, so every segmented key passed through: `sk-ant-api03-...`, `sk-proj-...` and orq's own `sk-orq-...`. A key issued from the orq dashboard is a bare JWT and matched nothing at all, and neither did `Authorization: Bearer <token>` in a shell command. The pattern now covers dashed `sk-` keys, JWTs and bearer tokens, and `tests/test-redact.mjs` pins all of it, including the prose it must leave alone.
+
 ## [0.4.0] - 2026-07-28
 
 ### Removed

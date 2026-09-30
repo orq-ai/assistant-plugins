@@ -1,7 +1,14 @@
 import { boolEnv } from "./common.js";
 
 const SENSITIVE_KEY_PATTERN = /(secret|password|token|api[_-]?key|authorization|private[_-]?key|access[_-]?key)/i;
-const SENSITIVE_VALUE_PATTERN = /(sk-[a-z0-9]{16,}|sk_live_[a-z0-9]+|sk_test_[a-z0-9]+|xox[baprs]-|ghp_[a-z0-9]{20,}|ghu_[a-z0-9]+|ghs_[a-z0-9]+|AKIA[A-Z0-9]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/i;
+// Free-text secrets only reach this pattern, never SENSITIVE_KEY_PATTERN, so
+// the shapes a coding session actually pastes have to be here. Three of them
+// used to slip through: the `sk-` run allows dashes, because every current
+// provider key is segmented (`sk-ant-api03-...`, `sk-proj-...`, `sk-orq-...`);
+// a JWT stands alone, which is how an orq key issued from the dashboard looks
+// and what an `Authorization` header carries; and a bearer token is redacted
+// only when it reads like a token, so "Bearer authentication" stays legible.
+const SENSITIVE_VALUE_PATTERN = /(sk-[a-z0-9][a-z0-9-]{15,}|sk_live_[a-z0-9]+|sk_test_[a-z0-9]+|xox[baprs]-|ghp_[a-z0-9]{20,}|ghu_[a-z0-9]+|ghs_[a-z0-9]+|AKIA[A-Z0-9]{16}|eyJ[a-z0-9_=-]{8,}\.[a-z0-9_=-]{16,}|bearer\s+(?=[a-z0-9._~+\/=-]{16,})[a-z0-9._~+\/=-]*[0-9]|-----BEGIN [A-Z ]*PRIVATE KEY-----)/i;
 const SENSITIVE_PATH_PATTERN = /(^|\/|\\)\.env(\.|$)/i;
 
 const MAX_JSON_REDACT_LEN = 10000;
