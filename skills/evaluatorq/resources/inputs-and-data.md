@@ -9,7 +9,7 @@ Probed against Python `evaluatorq` 1.39.0, 2026-09-20. Upstream reference (re-pr
 | `list[DataPoint]` or `list[dict]` | Inline rows. A plain dict with `inputs` / `expected_output` keys is accepted anywhere a `DataPoint` is. | no |
 | `list[Awaitable[DataPoint]]` | Rows that resolve lazily — a network fetch per row, streamed into the run instead of blocking on all of them first. | no |
 | `DatasetIdInput(dataset_id="...")` | Rows from an orq.ai dataset, fetched in pages of 50. | yes |
-| `ExperimentInput(experiment_id="...", run_id=None)` | The recorded outputs of a past orq.ai experiment run. Requires `inference=False`. | yes |
+| `ExperimentInput(experiment_id="...", run_id=None)` | The recorded outputs of a past orq.ai experiment run. Implies `inference=False`. | yes |
 
 ## A datapoint
 
@@ -47,7 +47,7 @@ await evaluatorq(
     "replay",
     data=ExperimentInput(experiment_id="<experiment_id>"),  # omit run_id for the latest run
     evaluators=[my_judge],
-    inference=False,
+    inference=False,  # optional: an unset inference resolves to False for ExperimentInput
 )
 ```
 

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.1] - 2026-09-30
+
+### Fixed
+
+- `evaluatorq` skill: evaluatorq 1.47 changed the `inference` default from `True` to `None`, resolved from `data` (`ExperimentInput` means `False`, anything else `True`). The skill said `ExperimentInput` "requires" `inference=False`; it now says it implies it. `tests/test_documented_api.py` asserts the new default and `tests/requirements.txt` floors evaluatorq at 1.47.0.
+
 ## [3.4.0] - 2026-09-21
 
 ### Added

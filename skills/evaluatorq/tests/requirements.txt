@@ -8,5 +8,5 @@
 # Unpinned on purpose: the point is to fail when the latest release moves out
 # from under the docs. A failure here is a re-probe task, not a flake.
 pytest>=8.0
-evaluatorq>=1.39.0
+evaluatorq>=1.47.0
 orq-ai-sdk>=4.15.6
