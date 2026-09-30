@@ -87,9 +87,9 @@ agent, and each case's runs and threshold (load `.env` first, as in step 6):
 uv run tests/scripts/run_evals.py --list [--skill <name>] [--case <id>] [--agent <agent>]
 ```
 
-Each run is a fresh agent session with only this checkout's skills and the orq MCP.
-Claude runs also see the skills Claude Code ships with (dataviz, code-review, loop,
-...), as every real install does; a prompt one of them takes fires no orq skill.
+Each run is a fresh agent session with this checkout's skills and the orq MCP. Claude
+runs also see Claude Code's bundled skills (dataviz, code-review, loop, ...), as every
+real install does, and a prompt one of those claims fires no orq skill.
 Take the run counts, thresholds and cap from this output, not from memory: each
 case sets its own, and they grow as cases are added. Invocation cases usually run 3
 times at 2 of 3, a smoke check that catches a skill that stopped firing, not one that

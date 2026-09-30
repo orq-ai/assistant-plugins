@@ -459,7 +459,8 @@ def _opencode_error(stdout: str) -> str | None:
     """OpenCode's own error text. It nests it as error.data.message, where evaluatorq looks
     for error.message and so reports every OpenCode failure as the bare word "error"."""
     for event in reversed(coding_agent.parse_jsonl(stdout)):
-        error = event.get("error") if event.get("type") == "error" else None
+        # Same lookup order as evaluatorq: the part's error first, then the event's.
+        error = ((event.get("part") or {}).get("error") or event.get("error")) if event.get("type") == "error" else None
         if isinstance(error, dict):
             data = error.get("data") if isinstance(error.get("data"), dict) else {}
             message = data.get("message") or error.get("message")
