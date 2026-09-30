@@ -7,6 +7,7 @@ import {
   enqueuePayload,
   listQueuedFiles,
   readQueuedPayload,
+  shouldWarnUndeliverable,
   writeQueuedPayload,
 } from "./state.js";
 
@@ -297,21 +298,20 @@ export async function drainQueue() {
     await debugLog(`[otlp] DRAIN skipped ${skipped} queued file(s) for another destination\n`);
     // A file this session cannot deliver is usually another workspace's. It can
     // also be this session's own, after the key was rotated: the fingerprint no
-    // longer matches, so the spans sit there until pruneStaleFiles removes them
-    // an hour later. Say so on stderr, like the other failure paths here, or
-    // the loss is invisible without ORQ_DEBUG. Once per process, because a
-    // drain runs on every hook and the condition lasts as long as the files do.
-    if (!warnedAboutSkipped) {
-      warnedAboutSkipped = true;
+    // longer matches. Either way the spans sit there until a later session
+    // start prunes them, which is why the line says that rather than promising
+    // they expire on a timer. Say it on stderr, like the other failure paths
+    // here, or the loss is invisible without ORQ_DEBUG. Rate limited through
+    // the state directory rather than a module flag, because every hook is its
+    // own process and the condition lasts as long as the files do.
+    if (await shouldWarnUndeliverable()) {
       process.stderr.write(
-        `[orq-trace] WARN: ${skipped} queued batch(es) belong to another endpoint or API key and will not be sent; ` +
-          `they are removed an hour after they were queued\n`,
+        `[orq-trace] WARN: ${skipped} queued batch(es) were queued for a different endpoint or API key, ` +
+          `so this session cannot deliver them; a later session start removes them once they are an hour old\n`,
       );
     }
   }
 }
-
-let warnedAboutSkipped = false;
 
 export async function sendSpan(span) {
   return sendSpans([span]);

@@ -41,6 +41,7 @@ const CASES = [
   ["stops when the switch is set", { ORQ_API_KEY: "test-key", ORQ_TRACE_DISABLED: "1" }, false],
   ["stops on the word true as well", { ORQ_API_KEY: "test-key", ORQ_TRACE_DISABLED: "true" }, false],
   ["stops on yes", { ORQ_API_KEY: "test-key", ORQ_TRACE_DISABLED: "yes" }, false],
+  ["stops on TRUE, since an env var carries whatever case it was set in", { ORQ_API_KEY: "test-key", ORQ_TRACE_DISABLED: "TRUE" }, false],
   ["stops on on, with the trailing space a shell script leaves", { ORQ_API_KEY: "test-key", ORQ_TRACE_DISABLED: "on " }, false],
   ["keeps running when the switch is off", { ORQ_API_KEY: "test-key", ORQ_TRACE_DISABLED: "0" }, true],
   ["keeps running on a word that is not a yes", { ORQ_API_KEY: "test-key", ORQ_TRACE_DISABLED: "maybe" }, true],

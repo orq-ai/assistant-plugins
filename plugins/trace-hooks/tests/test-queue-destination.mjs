@@ -133,16 +133,37 @@ await test("a batch queued for one workspace is not drained by another", async (
   // Same endpoint, different workspace key: the batch is not this session's to
   // deliver, so nothing may leave and the file must survive for its owner.
   state.reachable = true;
-  ranCleanly(
-    await runInChild(drain, {
-      ORQ_CLAUDE_STATE_DIR: dir,
-      ORQ_API_KEY: "key-workspace-b",
-      OTEL_EXPORTER_OTLP_ENDPOINT: endpoint,
-    }),
-    "workspace B's drain",
-  );
+  const bDrain = await runInChild(drain, {
+    ORQ_CLAUDE_STATE_DIR: dir,
+    ORQ_API_KEY: "key-workspace-b",
+    OTEL_EXPORTER_OTLP_ENDPOINT: endpoint,
+  });
+  ranCleanly(bDrain, "workspace B's drain");
   assert.deepEqual(delivered, [], "workspace B drained workspace A's session content");
   assert.equal(queuedFiles(dir).length, 1, "the batch was consumed by the wrong workspace");
+  // The spans are held back, and the operator is told so on stderr: without
+  // this the only trace of the skip is an ORQ_DEBUG log nobody has on.
+  assert.match(
+    bDrain.stderr,
+    /1 queued batch\(es\) were queued for a different endpoint or API key, so this session cannot deliver them; a later session start removes them once they are an hour old/,
+    "workspace B's drain said nothing about the batch it could not deliver",
+  );
+
+  // Said once an hour, not once per hook. The rate limit lives in the state
+  // directory because each hook is a new process, so a repeat drain from the
+  // same workspace must stay quiet about the same files.
+  const bAgain = await runInChild(drain, {
+    ORQ_CLAUDE_STATE_DIR: dir,
+    ORQ_API_KEY: "key-workspace-b",
+    OTEL_EXPORTER_OTLP_ENDPOINT: endpoint,
+  });
+  ranCleanly(bAgain, "workspace B's second drain");
+  assert.doesNotMatch(
+    bAgain.stderr,
+    /cannot deliver them/,
+    "the warning repeated on the next hook in the same hour",
+  );
+  assert.equal(queuedFiles(dir).length, 1, "the second drain consumed the batch");
 
   // Its own workspace comes back and collects it.
   ranCleanly(

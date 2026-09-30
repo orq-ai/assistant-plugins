@@ -22,9 +22,10 @@ const SENSITIVE_KEY_PATTERN = /(secret|password|token|api[_-]?key|authorization|
 // unbounded, it rescans and backtracks over the whole run at every `sk-`
 // start, which took 16.8s on 240k characters of `sk-` and would outlive the
 // 30s hook timeout on a longer one. Bounded at 64 it takes 0.02s. A key whose
-// first 64 body characters hold no digit at all is still kept, which is about
-// 0.03% of digitless short keys, and is the price of not redacting every long
-// kebab-case identifier.
+// first 64 body characters hold no digit at all is still kept. Over 200k
+// random base64url bodies per length that is 1.7% at 24 characters and 0.03%
+// at 48, and it is the price of not redacting every long kebab-case
+// identifier.
 const SENSITIVE_VALUE_PATTERN = /(\bsk-(?=[a-z0-9_-]{0,64}[0-9])[a-z0-9][a-z0-9_-]{15,}|sk_live_[a-z0-9]+|sk_test_[a-z0-9]+|xox[baprs]-|ghp_[a-z0-9]{20,}|ghu_[a-z0-9]+|ghs_[a-z0-9]+|github_pat_[a-z0-9_]{22,}|AIza[a-z0-9_-]{35}|hf_[a-z0-9]{30,}|AKIA[A-Z0-9]{16}|eyJ[a-z0-9_=-]{8,}\.[a-z0-9_=-]{8,}|bearer\s+(?=[a-z0-9._~+\/=-]{16,})[a-z0-9._~+\/=-]*[0-9]|-----BEGIN [A-Z ]*PRIVATE KEY-----)/i;
 const SENSITIVE_PATH_PATTERN = /(^|\/|\\)\.env(\.|$)/i;
 
