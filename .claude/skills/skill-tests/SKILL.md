@@ -281,7 +281,7 @@ prefix (`list_models`, not `mcp__plugin_orq_orq-workspace__list_models`).
 | `forbid_tools` | no | `[create_*, update_*, delete_*, invoke_*]` | Glob patterns; attempting one fails a behavioural case, denied or not. Must not overlap `allow_tools`. |
 | `runs` | no | 5 | Runs per agent. Invocation cases usually set 3. |
 | `pass_threshold` | no | 0.8 | Fraction of scored runs that must pass. Invocation cases usually set 0.66; near misses 1.0. |
-| `max_turns` | no | 6 | Claude turns before the run is stopped. Invocation cases usually set 2. OpenCode has no turn limit: it runs until it stops or times out, and is charged a flat $0.25 per run. |
+| `max_turns` | no | 6 | Agent turns before the run is stopped (Claude `--max-turns`; OpenCode's agent `steps`, after which it may only answer in text). Invocation cases usually set 2. |
 | `borderline` | no | `false` | `true` makes the case measured only: a trigger rate, no pass or fail. |
 
 Any other field, or a field of the wrong type, is rejected. Scoring:

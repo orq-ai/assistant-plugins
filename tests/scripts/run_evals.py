@@ -112,7 +112,7 @@ class Case:
     allow_tools: list[str] = field(default_factory=list)
     runs: int = 5
     pass_threshold: float = 0.8
-    # Claude only (--max-turns). OpenCode has no turn limit: it runs until it stops or times out.
+    # Claude --max-turns; OpenCode agent `steps` (after which it may only answer in text).
     max_turns: int = 6
     # Excluded from pass/fail; reported as a trigger rate.
     borderline: bool = False
@@ -403,6 +403,9 @@ def build_target(
             }
         },
         "permission": permission,
+        # OpenCode's counterpart of Claude's --max-turns: after `steps` iterations the agent
+        # (`opencode run` uses build) must answer in text, so the run stops at its first actions.
+        "agent": {"build": {"steps": case.max_turns}},
         # orq launch defines both providers (chat completions and Responses) and picks one.
         "provider": {p: {"options": {"headers": {"X-ORQ-THREAD-ID": run_id}}} for p in ("orq", "orq-openai")},
     }

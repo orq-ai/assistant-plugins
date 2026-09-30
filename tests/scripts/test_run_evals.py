@@ -8,6 +8,7 @@ Run: uv run --no-project --with evaluatorq==1.47.1 --with pyyaml --with pytest p
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import sys
@@ -293,6 +294,19 @@ def test_make_job_cost_cap_after_an_error_keeps_the_error(monkeypatch: pytest.Mo
     assert calls == 1 and result["error"] == "boom"
     result, calls = run_job(monkeypatch, [], budget)
     assert calls == 0 and result["output"]["skipped"] == "cost cap reached"
+
+
+def test_opencode_config_mirrors_the_claude_limits() -> None:
+    c = case(allow_tools=["search_entities"], max_turns=3)
+    with contextlib.ExitStack() as stack:
+        target = r.build_target(stack, "opencode", c, r.REPO_ROOT, "key", "run-1")
+        config = json.loads((target._source_workdir / "opencode.json").read_text(encoding="utf-8"))
+    assert config["agent"]["build"]["steps"] == 3
+    perm = config["permission"]
+    assert perm["bash"] == "deny" and perm[r.OPENCODE_MCP_PREFIX + "*"] == "deny"
+    assert perm[r.OPENCODE_MCP_PREFIX + "search_entities"] == "allow"
+    assert perm[r.OPENCODE_MCP_PREFIX + "create_*"] == "deny"
+    assert not target._source_workdir.exists()  # the stack removed the temp dirs
 
 
 # -- case loading ----------------------------------------------------------------
