@@ -142,3 +142,5 @@ cli_flag,traces search,--jmespath,orq traces search accepts --jmespath
 cli_flag,traces search,--profile,orq traces search accepts --profile
 cli_flag,request,--profile,orq request accepts --profile
 cli_flag,request,--server,orq request accepts --server
+cli_flag,traces thread,-x,orq traces thread accepts -x
+cli_flag,traces thread,--exclude,orq traces thread accepts --exclude

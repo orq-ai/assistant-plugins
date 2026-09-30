@@ -46,18 +46,30 @@ After the delete, any leftover `{{snippet.<deleted-name>}}` placeholder will sil
 
 ```text
 # 1. Enumerate candidate consumers
-#    search_entities supports type="prompt", "deployment", "agent", and "skill"
-#    but only matches metadata (display_name, key, description) — NOT body text.
-#    Always fetch the full body to find {{skill.X}} / {{snippet.X}} references.
-#    Also paginate list_skills to cover any skills missed by search.
-prompt_like_candidates = search_entities()
-sibling_skills = list_skills(paginated=True)
+#    search_entities matches metadata only (display_name, key, description),
+#    never body text, so fetch every body in step 2.
+#    type is required: page each type to completion (default limit is 50).
+#    The cursor is the item's `_id` (read from a live search_entities(type="agent")
+#    response, 2026-09-30). The factual tester checks the request schema only,
+#    not response fields, so re-check this by hand if paging breaks.
+prompt_like_candidates = []
+for entity_type in ("prompt", "deployment", "agent"):
+    cursor = None
+    while True:
+        page = search_entities(type=entity_type, limit=100, starting_after=cursor)
+        prompt_like_candidates.extend(page.data)
+        if not page.has_more or not page.data:
+            break
+        cursor = page.data[-1]._id
+#    Sibling Skills: all_skills from the SKILL.md "Pagination & Filtering" loop.
+#    search_entities(type="skill") would only duplicate them.
+sibling_skills = all_skills
 candidates = prompt_like_candidates + sibling_skills
 
 # 2. For each candidate, fetch its full body and look for the placeholder
 references = []
 for entity in candidates:
-    body = fetch_full_body(entity)  # get_deployment / get_agent / get_skill etc.
+    body = fetch_full_body(entity)  # get_deployment / get_agent / get_skill / orq prompts retrieve
     if (f"{{{{skill.{skill.display_name}}}}}" in body      # canonical form
             or f"{{{{snippet.{skill.display_name}}}}}" in body):  # backward-compat alias
         references.append(entity)

@@ -474,7 +474,7 @@ The registry **grows and renames between releases**: 56 → 57 fields in one aft
 
 ### Reading a conversation: `traces thread`
 
-> **Probed against 8.6.9 (API 4.14.20), 2026-09-21,** on a live trace with a 3-message conversation (first probed on 8.5.2, RES-1507): `--spans` (marks the chosen span, `NOTE` says why others were skipped), the default `xml` and `markdown` renders, `--slice`, `--max-chars`, `-o json` (keys `messages`, `source`), and the exits below all behaved as documented. `--include` and `--reasoning` were not re-run.
+> **Probed against 8.6.9 (API 4.14.20), 2026-09-21,** on a live trace with a 3-message conversation (first probed on 8.5.2, RES-1507): `--spans` (marks the chosen span, `NOTE` says why others were skipped), the default `xml` and `markdown` renders, `--slice`, `--max-chars`, `-o json` (keys `messages`, `source`), and the exits below all behaved as documented. `--include` was not re-run.
 
 `orq traces thread <trace-id> [span-id]` renders a trace's conversation instead of its span JSON. Added in 7.4.0 (RES-1507) and substantially extended by 8.5.2. **Do not reconstruct a conversation out of `get-span` attributes** — the payload shapes differ per dialect (Chat Completions, OpenAI Responses, the flattened OpenTelemetry GenAI shape orq collectors emit) and `thread` normalizes all three into one model. It is also far cheaper to read: on one live Responses span the default render was roughly an order of magnitude smaller than the raw `get-span -o json`, and `-o json` about a quarter of it.
 
@@ -500,15 +500,15 @@ Two human renders, and the difference is a security property, not taste. **`xml`
 
 In both, the `index` is the `--slice` index and the system message is `0`, so `--slice 0` is the system prompt. Missing content is named rather than invented: `[content unavailable]`, `[content unavailable: N items]`, `[truncated: N more characters]`, `[unsupported content: <type>]`, `[redacted thinking]`.
 
-Flags beyond `-o`, all verified live on 8.5.2:
+Flags beyond `-o`, verified live on 8.5.2 unless marked:
 
 - `--spans` prints the span table instead of a thread: `TRY` (read order, not a ranking), `SPAN`, `TYPE`, `STARTED`, `TURNS` (messages found, blank when not read), `NAME`, `NOTE` (why a span was passed over), with `*` on the one selected. Run it when you doubt the selection — `TURNS` is what tells you the right span was picked.
 - `--match <regexp>` keeps messages whose recorded text matches, searching message text, reasoning, JSON values, and tool calls by name, id and arguments. Case-insensitive; `(?-i)` inline to respect case. Surviving messages **keep their original indices**, so a filtered render can read `0, 2, 4`.
 - `-i/--include` renders only the named parts: `system` (covers developer), `user`, `assistant`, `tool`, `reasoning`. Naming no role keeps every role, so `-i reasoning` is the thinking from all of them and `-i user,assistant` is the turns without it.
 - `--max-chars` (default **4000**) cuts each rendered block and appends `[truncated: N more characters]`; `--max-chars 0` lifts the cap. Applied last, so `--match` still searches the full text. Only text inside elements is cut, so the XML stays well-formed.
-- `--reasoning=false` drops reasoning everywhere, including `-o json`.
+- `-x/--exclude` renders everything but the named parts, from the same list as `--include`: `-x reasoning` is every turn without the thinking, `-x tool` the conversation without tool payloads. `--include` and `--exclude` select the same parts two ways; pass one. It replaces `--reasoning=false`, which 10.3.1 has and 11.0.1 does not. On 11.0.1 a turn left out by either flag still renders as its role and an `[omitted: N characters]` stub; left-out reasoning in a turn that keeps its body goes without a stub. From the 11.0.1 help, not probed live, so its effect on `-o json` is untested.
 
-Filters compose in a fixed order: `--slice`, then `--match`, then `--include`, then `--max-chars`.
+Filters compose in a fixed order: `--slice`, then `--match`, then `--include` or `--exclude`, then `--max-chars`.
 
 Three exit-code facts, each from a recorded call on 8.5.2:
 
