@@ -59,7 +59,7 @@
     "orq-manage-skills": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "446b707f2324de2007e68546dfdba54911785238fadb20f004185ba241f66f37"
+      "computedHash": "6e59c4942dbffcf55e6c4512db412cb5c57458d6989fdf960a8960707a8caff3"
     },
     "orq-red-team": {
       "source": "orq-ai/assistant-plugins",

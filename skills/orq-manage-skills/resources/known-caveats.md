@@ -49,14 +49,16 @@ After the delete, any leftover `{{snippet.<deleted-name>}}` placeholder will sil
 #    search_entities matches metadata only (display_name, key, description),
 #    never body text, so fetch every body in step 2.
 #    type is required: page each type to completion (default limit is 50).
-#    The cursor is the item's `_id`.
+#    The cursor is the item's `_id` (read from a live search_entities(type="agent")
+#    response, 2026-09-30). The factual tester checks the request schema only,
+#    not response fields, so re-check this by hand if paging breaks.
 prompt_like_candidates = []
 for entity_type in ("prompt", "deployment", "agent"):
     cursor = None
     while True:
         page = search_entities(type=entity_type, limit=100, starting_after=cursor)
         prompt_like_candidates.extend(page.data)
-        if not page.has_more:
+        if not page.has_more or not page.data:
             break
         cursor = page.data[-1]._id
 #    Sibling Skills: all_skills from the SKILL.md "Pagination & Filtering" loop.

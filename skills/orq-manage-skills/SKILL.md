@@ -106,7 +106,7 @@ all_skills = []
 while True:
     page = list_skills(limit=200, starting_after=cursor)
     all_skills.extend(page.data)
-    if not page.has_more:
+    if not page.has_more or not page.data:
         break
     cursor = page.data[-1].id  # the response uses "id", not "skill_id" (it's the same value)
 ```
