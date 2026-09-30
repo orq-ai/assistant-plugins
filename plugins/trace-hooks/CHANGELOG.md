@@ -2,6 +2,15 @@
 
 All notable changes to the `orq-trace` plugin are documented here. Follows [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-09-30
+
+### Added
+- `ORQ_TRACE_DISABLED=1` switches tracing off for one session. Once the plugin is installed in a user's own config, a launcher has no way to decline a session, so `orq launch claude --no-otel` could promise something it could not deliver. The gate sits in `runSafely`, so every hook honours it.
+
+### Fixed
+- A queued batch is only delivered to the workspace and endpoint it was meant for. The replay queue is one directory shared by every traced session, and a drain used to post whatever it found under the current session's key, so a batch queued while ingest was down could carry one workspace's session content into another, or a staging batch into production. Each file now travels with its destination (the endpoint, plus a fingerprint of the key rather than the key itself), and a drain skips what is not its own. Files written by earlier versions carry no destination and are left for the queue cap to evict.
+- Hook commands in the manifest quote `${CLAUDE_PLUGIN_ROOT}`. On Windows, a plugin root holding a space (a username with one, or `%TEMP%` under such a user) made `node` receive a truncated path and every hook failed, which showed up only as a session with metrics and no trace.
+
 ## [0.4.1] - 2026-09-30
 
 ### Fixed

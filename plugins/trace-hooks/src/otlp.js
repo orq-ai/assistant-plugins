@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { attr, compact, debugLog, nowUnixNano } from "./common.js";
 import { getApiKey, getBaseUrl, getOtlpEndpoint } from "./config.js";
 import {
@@ -98,6 +100,35 @@ function getHeaders() {
   }
 
   return headers;
+}
+
+// A queued batch belongs to the workspace and endpoint it was meant for. The
+// queue is one directory shared by every traced session, launcher-started or
+// not, so draining a file against whatever key the current session happens to
+// hold posts one workspace's session content to another. The key itself is
+// never written to disk: a fingerprint is all that is needed to tell two
+// destinations apart.
+export function currentDestination() {
+  const apiKey = getApiKey();
+  return {
+    endpoint: getEndpoint(),
+    key: apiKey ? createHash("sha256").update(apiKey).digest("hex").slice(0, 16) : null,
+  };
+}
+
+function sameDestination(a, b) {
+  return Boolean(a) && Boolean(b) && a.endpoint === b.endpoint && a.key === b.key;
+}
+
+// Queue files written before destinations were recorded hold the bare payload.
+// Their destination is unknowable, which is why they are skipped rather than
+// drained: the queue evicts the oldest file once it is full, so they leave on
+// their own.
+function queuedEntry(raw) {
+  if (raw && typeof raw === "object" && !Array.isArray(raw) && raw.orqDestination && raw.payload) {
+    return { destination: raw.orqDestination, payload: raw.payload };
+  }
+  return { destination: null, payload: raw };
 }
 
 function buildBatchPayload(spans) {
@@ -220,18 +251,28 @@ async function postSpans(spans) {
 
 export async function drainQueue() {
   const queueFiles = await listQueuedFiles();
+  const destination = currentDestination();
+  let skipped = 0;
   for (const filePath of queueFiles) {
-    let payload;
+    let raw;
     try {
-      payload = await readQueuedPayload(filePath);
+      raw = await readQueuedPayload(filePath);
     } catch (err) {
       process.stderr.write(`[orq-trace] WARN: dropping corrupt queue file: ${err?.message}\n`);
       await deleteQueuedFile(filePath);
       continue;
     }
+    const entry = queuedEntry(raw);
+    // Another workspace's batch, or one whose destination was never recorded.
+    // Left where it is: this session cannot deliver it, and posting it here
+    // would send its content to the wrong workspace.
+    if (!sameDestination(entry.destination, destination)) {
+      skipped += 1;
+      continue;
+    }
     // Re-chunked rather than posted as-is, so a file queued before batching
     // existed still gets through instead of wedging the queue forever.
-    const queued = spansOf(payload);
+    const queued = spansOf(entry.payload);
     const { undelivered, error } = await postSpans(queued);
 
     if (undelivered.length === 0) {
@@ -241,12 +282,19 @@ export async function drainQueue() {
 
     process.stderr.write(`[orq-trace] WARN: drain retry failed: ${error?.message}\n`);
     // Shrink the file to what still needs sending, so the next drain does not
-    // re-post the batches that already landed.
+    // re-post the batches that already landed. The destination travels with
+    // it, or the rewrite would strip what this drain just checked.
     if (undelivered.length !== queued.length) {
-      await writeQueuedPayload(filePath, buildBatchPayload(undelivered)).catch(() => {});
+      await writeQueuedPayload(filePath, {
+        orqDestination: entry.destination,
+        payload: buildBatchPayload(undelivered),
+      }).catch(() => {});
     }
     // Still unreachable. Keep the file; the next hook tries again.
     break;
+  }
+  if (skipped > 0) {
+    await debugLog(`[otlp] DRAIN skipped ${skipped} queued file(s) for another destination\n`);
   }
 }
 
@@ -268,9 +316,13 @@ export async function sendSpans(spans) {
 
   process.stderr.write(`[orq-trace] WARN: span send failed (queued for retry): ${error?.message}\n`);
   try {
-    // Queued in the same envelope the endpoint takes, so a later drain reads
-    // back exactly what was written.
-    await enqueuePayload(buildBatchPayload(undelivered));
+    // Queued in the same envelope the endpoint takes, wrapped with the
+    // destination it is owed to, so a later drain can tell whether it is the
+    // session that may deliver it.
+    await enqueuePayload({
+      orqDestination: currentDestination(),
+      payload: buildBatchPayload(undelivered),
+    });
   } catch (enqueueErr) {
     process.stderr.write(
       `[orq-trace] WARN: span data lost, send failed and enqueue failed: ${enqueueErr?.message || enqueueErr}\n`,
