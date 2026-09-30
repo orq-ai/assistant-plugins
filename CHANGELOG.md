@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.4.1] - 2026-09-29
+## [3.4.2] - 2026-09-30
 
 ### Fixed
 
@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `orq-manage-skills` skill: the same scan called `search_entities()` with no arguments, which the live MCP schema rejects now that `type` is required. It now queries `prompt`, `deployment` and `agent` separately and pages each to completion; an unpaged call stopped at 50 results per type, so a large workspace got a partial scan that could wrongly clear a Skill for hard delete. `SKILL.md` Phase 5 and `resources/governance-guide.md` described the same unpaged scan; both now point at the one procedure in `known-caveats.md`.
 - `orq-invoke-deployment` skill: four dead doc links. Invoke and Stream now point at `/reference/deployments/invoke` and `/reference/deployments/stream`; the Python and Node.js SDK pages are gone, so the SDK line links the single `/reference/client-libraries` page plus the `orq-python` and `orq-node` repos.
 - `orq-cli` skill: `orq traces thread` documented `--reasoning=false`, which CLI 11.0 removed. It now documents `-x/--exclude` (`-x reasoning` drops the thinking), the flag that replaced it.
+
+## [3.4.1] - 2026-09-30
+
+### Fixed
+
+- `evaluatorq` skill: evaluatorq 1.47 changed the `inference` default from `True` to `None`, resolved from `data` (`ExperimentInput` means `False`, anything else `True`). The skill said `ExperimentInput` "requires" `inference=False`; it now says it implies it. `tests/test_documented_api.py` asserts the new default and `tests/requirements.txt` floors evaluatorq at 1.47.0.
 
 ## [3.4.0] - 2026-09-21
 

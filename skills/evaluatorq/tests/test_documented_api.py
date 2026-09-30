@@ -38,7 +38,7 @@ def test_top_level_exports_exist():
         assert hasattr(evaluatorq, name), f"evaluatorq.{name} is gone — the skill still teaches it"
 
 
-@pytest.mark.parametrize("name,default", [("inference", True), ("print_results", True)])
+@pytest.mark.parametrize("name,default", [("inference", None), ("print_results", True)])
 def test_evaluatorq_kwarg_defaults(name, default):
     from evaluatorq import evaluatorq
 
