@@ -36,7 +36,7 @@ import fire
 from loguru import logger
 
 import _bootstrap  # noqa: F401
-from lib import content, instability, runner
+from lib import agreement, content, instability, runner
 
 _NUMERIC_TYPES = {'number', 'numeric'}
 
@@ -264,6 +264,7 @@ def _correctness(
     n_unmeasurable_labelled = 0
     wrong_indices: list[int] = []
     labelled_indices: list[int] = []
+    label_pairs: list[tuple[str, str]] = []
     for row in rows:
         idx = row.get('source_index')
         match = _reference_matches(row.get('reference'), verdicts.get(idx), output_type, tol, categorical_labels, scale)
@@ -280,6 +281,8 @@ def _correctness(
             n_unmeasurable_labelled += 1
             continue
         labelled_indices.append(idx)
+        if output_type not in _NUMERIC_TYPES:
+            label_pairs.append(_label_pair(row.get('reference'), verdicts.get(idx), output_type))
         if not match:
             wrong_indices.append(idx)
         n_labelled += 1
@@ -293,6 +296,7 @@ def _correctness(
         'n_labelled': n_labelled,
         'n_correct': n_correct,
         'accuracy': (n_correct / n_labelled) if n_labelled else None,
+        **(agreement.chance_corrected(label_pairs) if label_pairs else {}),
         'confusion': dict(confusion),
         'label_source': 'dataset_reference',
         'by_band': by_band,
@@ -303,6 +307,13 @@ def _correctness(
     if n_unmeasurable_labelled:
         result['n_unmeasurable_labelled'] = n_unmeasurable_labelled
     return result
+
+
+def _label_pair(reference: Any, verdict: Any, output_type: str) -> tuple[str, str]:
+    # Same normalization `_reference_matches` compares with, so kappa counts the rows accuracy does.
+    if output_type == 'boolean':
+        return str(_coerce_bool(reference)), str(_coerce_bool(verdict))
+    return str(reference).strip().lower(), str(verdict).strip().lower()
 
 
 def _row_bools(row: dict[str, Any]) -> list[bool]:
@@ -406,6 +417,12 @@ def _correctness_lines(c: dict[str, Any] | None) -> list[str]:
         f"  - correctness vs dataset labels: {c['n_correct']}/{c['n_labelled']} "
         f"({acc_str}) — labels are `dataset_reference`, not the user's verdict.{metadata_caveat}"
     ]
+    kappa, balanced = c.get('cohen_kappa'), c.get('balanced_accuracy')
+    if kappa is not None and balanced is not None:
+        line = f"      balanced accuracy {balanced:.0%}, Cohen's kappa {kappa:.2f}"
+        if acc is not None and acc >= 0.8 and kappa < 0.2:
+            line += ' ← skewed labels: accuracy flatters it, quote the rare label instead'
+        lines.append(line)
     if c.get('n_unmeasurable_labelled'):
         lines.append(
             f"      ({c['n_unmeasurable_labelled']} labelled rows excluded — "

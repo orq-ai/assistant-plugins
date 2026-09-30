@@ -108,7 +108,7 @@ uv run scripts/retest.py           --run_dir $RUN              # optional: did i
 ```
 
 `config.toml` holds all defaults (repetitions, temperature, backend, sample
-sizes). CLI flags override per run. `SKILL.md`'s parameter reference lists every
+sizes). CLI flags override per run. `resources/configuration.md`'s parameter reference lists every
 flag.
 
 ## Backends (recommend + rewrite)

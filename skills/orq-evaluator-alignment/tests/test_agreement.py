@@ -271,3 +271,36 @@ def test_misaligned_per_point_bands_raise():
 def test_agreement_dispatch_forwards_per_point_bands():
     r = agreement.agreement('number', [(3.0, 3.4)], tol=0.5, tols=[0.1])
     assert r['within_tolerance_rate'] == pytest.approx(0.0)
+
+
+# --- chance-corrected: accuracy flatters a judge on skewed labels (pydata-2026 v3 run) ---
+
+
+def test_always_pass_on_skewed_labels_is_accurate_but_kappa_zero():
+    # 27 human passes, 3 human fails, judge says pass every time.
+    pairs = [(True, True)] * 27 + [(False, True)] * 3
+    r = agreement.boolean_agreement(pairs)
+    assert r['accuracy'] == pytest.approx(0.9)
+    assert r['tnr'] == 0.0
+    assert r['balanced_accuracy'] == pytest.approx(0.5)
+    assert r['cohen_kappa'] == pytest.approx(0.0)
+
+
+def test_kappa_matches_hand_computation():
+    # The one aligned judge from the same run: 26/27 passes kept, 2/3 fails caught.
+    pairs = [(True, True)] * 26 + [(True, False)] + [(False, False)] * 2 + [(False, True)]
+    r = agreement.boolean_agreement(pairs)
+    assert r['balanced_accuracy'] == pytest.approx((26 / 27 + 2 / 3) / 2)
+    assert r['cohen_kappa'] == pytest.approx(0.6296, abs=1e-4)
+
+
+def test_kappa_undefined_when_both_sides_use_one_label():
+    r = agreement.boolean_agreement([(True, True)] * 5)
+    assert r['cohen_kappa'] is None
+    assert r['balanced_accuracy'] == pytest.approx(1.0)
+
+
+def test_categorical_carries_chance_corrected_metrics():
+    r = agreement.categorical_agreement([('spam', 'Spam '), ('ham', 'spam'), ('ham', 'ham')])
+    assert r['balanced_accuracy'] == pytest.approx((1.0 + 0.5) / 2)
+    assert r['cohen_kappa'] is not None

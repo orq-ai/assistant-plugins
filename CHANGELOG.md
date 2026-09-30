@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] - 2026-09-30
+
+Learnings from the PyData 2026 evaluation-flywheel run (RES-1565) folded into `orq-evaluator-alignment`.
+
+### Added
+
+- `orq-evaluator-alignment`: `lib/agreement.py` reports `balanced_accuracy` and `cohen_kappa` for boolean and categorical judges. `metrics.py`'s correctness block and `retest_metrics.json`'s `agreement` block carry both. On skewed labels (27 passes, 3 fails, judged pass every time) accuracy reads 90% while kappa is 0, so the metrics report and a new retest caveat flag high accuracy with kappa under 0.2.
+- `orq-evaluator-alignment` step 8: a "What to do with the result" gate. When the new judge got steadier but is still steadily wrong, re-run the retest with a stronger model on a copy of the run before offering another rewrite, and stop iterating if no model reproduces the user's answer. When instability rises after a rule is encoded but agreement did not regress, treat it as a sharper next question rather than a failed rewrite.
+- `orq-evaluator-alignment` rewrite meta-prompt: checks the verdict depends on are written as obligations, not permissions. In the PyData run a "you may compare claims with the tool results" rule was skipped by two of three judges.
+
+### Changed
+
+- `evaluatorq` and `orq-compare-agents`: add `TraceInput` replay guidance for `evaluatorq` 1.47.1 and cover it in the inference contract test.
+- `orq-evaluator-alignment`: `SKILL.md` is a 142-line router (was 777); each step's instructions live in `resources/` (`judge-and-examples.md`, `measure.md`, `grey-zone.md`, `rewrite-and-create.md`, `retest.md`) and are read when that step starts. Configuration and the run-directory contract moved to `resources/configuration.md` and `resources/run-directory.md`. The step text itself is unchanged apart from the additions above.
+- `orq-evaluator-alignment`: step 4, step 8 and the final summary lead with how many of the rare label the judge caught before quoting overall accuracy.
+- `orq-evaluator-alignment` annotation UI: the judge's vote spread moved into the collapsed "votes and reasoning" panel, so neither anchors a first-pass label.
+
 ## [3.5.0] - 2026-09-24
 
 ### Added

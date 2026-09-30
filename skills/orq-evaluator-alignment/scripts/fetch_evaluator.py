@@ -121,7 +121,7 @@ def main(
 
     Fetches the evaluator ONLY. Where the examples come from is the user's choice
     — a trace scan, an orq dataset, examples they bring, or generated ones — and
-    this step deliberately stops before making it for them (SKILL.md step 1a).
+    this step deliberately stops before making it for them (resources/judge-and-examples.md, step 1a).
 
     It used to chain straight into a 200-trace scan, which answered that question
     silently: the scan is the *default* source rather than the *only* one, and a

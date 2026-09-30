@@ -484,7 +484,7 @@ def foreign_rows(rows: list[dict[str, Any]]) -> dict[str, int]:
     deletes their rows — silently, because the scan has no reason to look at what
     was there and the row count afterwards looks perfectly reasonable.
 
-    Now that the input source is a menu the user picks from (SKILL.md step 1a) rather
+    Now that the input source is a menu the user picks from (resources/judge-and-examples.md, step 1a) rather
     than a scan that always ran first, mixing sources is an ordinary thing to want,
     and "scan, then add a dataset" and "add a dataset, then scan" have to stop being
     the same command in a different order with silently different results.
