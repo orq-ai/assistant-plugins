@@ -783,7 +783,8 @@ def aggregate(results: list[Any], cases: list[Case]) -> dict[str, Any]:
         if rate is None:
             status = "error" if any(r["status"] == "error" for r in runs) else "skipped"
         elif case.borderline:
-            status = "measured"
+            # A rate over part of the runs is not a measurement of the case.
+            status = "measured" if len(scored) == len(runs) else "error"
         else:
             status = "pass" if rate >= case.pass_threshold else "fail"
             if status == "pass" and len(scored) < len(runs):
