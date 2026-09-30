@@ -13,9 +13,9 @@ branch loaded as the `orq` plugin and nothing else from the user's setup, scores
 the tool calls with three local scorers, and uploads the results as one orq
 experiment.
 
-The agent runs with ORQ_SKILL_EVALS_KEY as its ORQ_API_KEY: a key scoped to the
-`skill-evals` project, so a stray create cannot land anywhere else. The experiment
-upload uses the same key: a key scoped to another project cannot write there.
+The agent runs with the caller's ORQ_API_KEY. A run can call only its case's
+allow_tools, so it writes to the workspace only if a case allows a write tool.
+The experiment upload goes to the `skill-evals` project with the same key.
 
 Usage:
     uv run tests/scripts/run_evals.py                          # all cases, all agents
@@ -26,6 +26,17 @@ Usage:
 Exit code: 0 every case passed, 1 a case fell below its threshold, 2 anything
 else: run errors, the cost cap stopped runs, or the runner could not start (bad
 case, missing key, CLI or image). On 2 before any run, no summary is written.
+
+Summary (--json) fields: cost_usd (traced where orq had the run), cost_estimated_usd
+(what the cap counted), cost_traced_runs, cost_estimated_runs, sessions, retries,
+models (per agent: model, and source = flag or orq launch default),
+runs_skipped_by_cap, exit_code, experiment_url or upload_error, results_file,
+orq_version, agents, skills (per-skill counts), and cases. Each case: case, skill,
+kind, agent, status (pass, fail, error, skipped, measured), pass_rate, threshold,
+flaky, errors, errors_by_kind, cost_usd, runs. Each run: run, status, scores (per
+scorer: pass, why), error, error_kind (model, harness, timeout, tool), thread_id,
+attempts, cost_usd, cost_source (orq traces or estimate), stopped (done, max_turns,
+error), tool_calls. A case with any errored or cost-capped run is error, not pass.
 """
 
 from __future__ import annotations
@@ -79,8 +90,8 @@ CALL_TOKENS: dict[str, dict[str, float]] = {
     "claude": {"prompt": 80_000, "cached": 0.8, "output": 1_500},
     "opencode": {"prompt": 18_000, "cached": 0.6, "output": 500},
 }
-# orq launch prints this whenever the key differs from the `orq auth login` workspace. Runs
-# always use the skill-evals key, so it is expected; left in, it hides the real failure.
+# orq launch prints this whenever the key differs from the `orq auth login` workspace. It is
+# harmless for these runs; left in, it hides the real failure.
 KEY_NOTE = re.compile(r"Note: ORQ_API_KEY may not belong to the workspace[^\n]*\n?")
 # Model errors a second attempt can clear. Any other model error (empty_response, a
 # refused request) replays on the same model and prompt, so it is not retried.
@@ -221,6 +232,20 @@ def resolve_orq() -> Path:
     if found is None:
         sys.exit("orq CLI not found on PATH")
     return Path(found)
+
+
+def check_key_used(orq: Path, key: str) -> None:
+    """Stop when an active `orq auth profile` would override the key.
+
+    orq 11 prefers a profile selected with `orq auth profile use` over ORQ_API_KEY, so
+    runs would go to that profile's workspace while the upload goes to the key's.
+    """
+    out = subprocess.run(
+        [str(orq), "launch", "claude", "--dry-run", "--no-mcp", "--no-skills"],
+        capture_output=True, text=True, timeout=60, check=False, env={**os.environ, "ORQ_API_KEY": key},
+    )
+    if "ignoring ORQ_API_KEY" in out.stdout + out.stderr:
+        sys.exit("an active orq auth profile overrides ORQ_API_KEY; run `orq auth profile clear` first")
 
 
 def check_orq_version(orq: Path, allow_stale: bool) -> str:
@@ -1108,11 +1133,13 @@ async def amain() -> int:
         print("no eval cases selected", file=sys.stderr)
         return 2
 
-    key = load_dotenv_key("ORQ_SKILL_EVALS_KEY")
+    key = load_dotenv_key("ORQ_API_KEY")
     if not key and not args.list:
-        sys.exit("ORQ_SKILL_EVALS_KEY is not set: agent runs must use the skill-evals project key, refusing to start")
+        sys.exit("ORQ_API_KEY is not set, refusing to start")
     flag_models: dict[AgentName, str | None] = {"claude": args.claude_model, "opencode": args.opencode_model}
     orq = None if args.container else resolve_orq()
+    if orq and key:
+        check_key_used(orq, key)
     models = {
         a: {"model": flag_models[a], "source": "flag"}
         if flag_models[a]
@@ -1179,7 +1206,7 @@ async def amain() -> int:
         orq_version = check_orq_version(orq, args.allow_stale_orq)
     print(
         "note: orq launch may warn that ORQ_API_KEY does not belong to your `orq auth login` workspace; "
-        "expected, every run uses the skill-evals key. It is left out of run errors."
+        "harmless here, and left out of run errors."
     )
 
     data = [
@@ -1298,9 +1325,9 @@ async def upload_results(raw_path: Path) -> str:
         # Same opt-in as the factual runner, for TLS-intercepting antivirus on Windows.
         client = httpx.AsyncClient
         httpx.AsyncClient = lambda **kw: client(verify=False, **kw)  # type: ignore[assignment]
-    key = load_dotenv_key("ORQ_SKILL_EVALS_KEY")
+    key = load_dotenv_key("ORQ_API_KEY")
     if not key:
-        sys.exit("ORQ_SKILL_EVALS_KEY is not set")
+        sys.exit("ORQ_API_KEY is not set")
     saved = json.loads(raw_path.read_text(encoding="utf-8"))
     response = await send_results.send_results_to_orq(
         key,

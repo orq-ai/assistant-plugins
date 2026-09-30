@@ -403,3 +403,14 @@ def test_report_refuses_an_unfinished_summary(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setattr(sys, "argv", ["skill_test_report.py", "--evals", str(evals)])
     with pytest.raises(SystemExit, match="not a finished"):
         report.main()
+
+
+def test_check_key_used_stops_when_a_profile_overrides_the_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake(stderr: str) -> Any:
+        return lambda *a, **kw: SimpleNamespace(stdout="", stderr=stderr)
+
+    monkeypatch.setattr(r.subprocess, "run", fake('warning: using the API key from profile "x", ignoring ORQ_API_KEY.'))
+    with pytest.raises(SystemExit, match="orq auth profile clear"):
+        r.check_key_used(Path("orq"), "k")
+    monkeypatch.setattr(r.subprocess, "run", fake(""))
+    r.check_key_used(Path("orq"), "k")
