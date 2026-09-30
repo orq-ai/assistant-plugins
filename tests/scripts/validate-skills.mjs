@@ -619,8 +619,7 @@ for (const f of factualCsvs)
 // that has them is an error).
 const REFERENCE_ONLY_SKILLS = ["orq-shared"];
 const EVALS_GRANDFATHERED = new Set([
-  "create-skill", "evaluatorq", "orq-build-agent", "orq-cli", "orq-compare-agents",
-  "orq-generate-synthetic-dataset", "orq-improve-agent", "orq-invoke-deployment",
+  "create-skill", "evaluatorq", "orq-cli",
   "orq-manage-skills", "orq-recommend-evaluators", "orq-setup-observability", "orq-simulate-agent",
 ]);
 const evalsDir = join(root, "tests", "evals");
