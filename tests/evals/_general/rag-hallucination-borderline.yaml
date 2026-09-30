@@ -4,5 +4,6 @@ kind: invocation
 # Borderline: excluded from pass/fail, the report shows which skill fired how often.
 prompt: My RAG support bot on orq keeps making stuff up. How do I catch this automatically?
 expect_skill: orq-build-evaluator
+runs: 3
 borderline: true
 max_turns: 2

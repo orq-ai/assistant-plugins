@@ -626,15 +626,19 @@ const evalsDir = join(root, "tests", "evals");
 const evalDirs = existsSync(evalsDir)
   ? readdirSync(evalsDir, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith("_")).map((d) => d.name)
   : [];
+// The folder alone is not enough: an empty one, or one holding only a behavioural
+// case, checks nothing about whether the skill fires.
+const hasFiresCase = (name) =>
+  evalDirs.includes(name) && readdirSync(join(evalsDir, name)).some((f) => f.endsWith("-fires.yaml"));
 for (const name of skillDirs) {
-  const has = evalDirs.includes(name);
+  const has = hasFiresCase(name);
   if (REFERENCE_ONLY_SKILLS.includes(name)) continue;
   if (!has && EVALS_GRANDFATHERED.has(name))
-    warn(`skills/${name} has no tests/evals/${name}/ — nothing checks that it fires or what it does first`);
+    warn(`skills/${name} has no tests/evals/${name}/*-fires.yaml — nothing checks that it fires or what it does first`);
   else if (!has)
-    err(`skills/${name} has no tests/evals/${name}/ — a new skill ships with at least one hand-written *-fires case`);
+    err(`skills/${name} has no tests/evals/${name}/*-fires.yaml — a new skill ships with at least one hand-written *-fires case`);
   else if (EVALS_GRANDFATHERED.has(name))
-    err(`skills/${name} now has eval cases — remove it from EVALS_GRANDFATHERED in validate-skills.mjs`);
+    err(`skills/${name} now has a *-fires case — remove it from EVALS_GRANDFATHERED in validate-skills.mjs`);
 }
 for (const d of evalDirs)
   if (!skillDirs.includes(d))

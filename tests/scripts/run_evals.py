@@ -157,9 +157,15 @@ def load_cases(skill_names: set[str]) -> list[Case]:
             problems.append(f"{rel}: {exc}")
             continue
         # YAML gives any type; a quoted threshold or a scalar tool list fails deep inside a paid run.
-        if wrong := [n for n, t in CASE_TYPES.items() if not isinstance(getattr(case, n), t)]:
+        # bool is an int subclass, so `runs: true` would pass isinstance as 1.
+        wrong = [n for n, t in CASE_TYPES.items() if not isinstance(v := getattr(case, n), t) or (t is not bool and isinstance(v, bool))]
+        if wrong:
             problems.append(f"{rel}: wrong type for {wrong}")
             continue
+        if case.runs < 1 or case.max_turns < 1:
+            problems.append(f"{rel}: runs and max_turns must be at least 1")
+        if not 0 <= case.pass_threshold <= 1:
+            problems.append(f"{rel}: pass_threshold must be between 0 and 1")
         if case.skill != path.parent.name:
             problems.append(f"{rel}: skill '{case.skill}' does not match its folder")
         if case.id != path.stem:
@@ -640,7 +646,7 @@ def _cost_from_stdout(agent: AgentName, case_id: str, stdout: str, budget: Budge
 
 @dataclass
 class Budget:
-    # ponytail: no lock; admit/add have no await inside, so asyncio cannot interleave them.
+    # No lock: admit/add have no await inside, so asyncio cannot interleave them.
     cap: float
     spent: float = 0.0
     breached: bool = False
@@ -755,10 +761,18 @@ def completed(call: dict[str, Any]) -> bool:
     return call.get("status") == "completed"
 
 
-def split_calls(agent: str, calls: list[dict[str, Any]]) -> tuple[set[str | None], set[str | None]]:
+def split_calls(agent: str, case: Case, calls: list[dict[str, Any]]) -> tuple[set[str | None], set[str | None]]:
     """(orq tools that completed, orq tools that ran and failed server side). A denial is neither."""
     ok = {bare_tool(agent, c["name"]) for c in calls if completed(c)}
-    failed = {bare_tool(agent, c["name"]) for c in calls if c.get("status") == "incomplete" and not is_denied(c)}
+    failed: set[str | None] = set()
+    for c in calls:
+        if c.get("status") != "incomplete":
+            continue
+        bare = bare_tool(agent, c["name"])
+        # An allowlisted tool is never denied locally, so its failure is the server's, even when
+        # the text reads like a denial (a 403 from the project-scoped key does).
+        if bare in case.allow_tools or not is_denied(c):
+            failed.add(bare)
     return ok, failed
 
 
@@ -766,7 +780,7 @@ def errored_expected_tools(agent: str, case: Case, calls: list[dict[str, Any]]) 
     """Expected tools that were only ever called with an error (a server failure, not a skill regression)."""
     if case.kind != "behavioural":
         return []
-    ok, failed = split_calls(agent, calls)
+    ok, failed = split_calls(agent, case, calls)
     return [t for t in case.expect_tools if t in failed and t not in ok]
 
 
@@ -833,7 +847,7 @@ async def tools_called(params: ScorerParameter) -> EvaluationResult:
     if case.kind != "behavioural":
         return _skip("invocation case")
     # A call that errored is not evidence the step worked (a server error scores like a pass otherwise).
-    called, failed = split_calls(out["agent"], out["tool_calls"])
+    called, failed = split_calls(out["agent"], case, out["tool_calls"])
     missing = [t for t in case.expect_tools if t not in called]
     if missing and all(t in failed for t in missing):
         # The agent took the right step and the server failed it: aggregate() makes the run an
@@ -1067,6 +1081,11 @@ async def amain() -> int:
     )
     args = parser.parse_args()
 
+    if args.json_path and not args.list:
+        # A fixed --json path outlives the run; delete it before anything can exit, so neither a
+        # bad case, an empty selection, a setup failure nor a crash leaves the previous batch's
+        # summary to pass for this one.
+        args.json_path.unlink(missing_ok=True)
     branch = args.branch.resolve()
     skill_names = {p.name for p in (branch / "skills").iterdir() if (p / "SKILL.md").exists()}
     cases = load_cases(skill_names)
@@ -1089,10 +1108,6 @@ async def amain() -> int:
         print("no eval cases selected", file=sys.stderr)
         return 2
 
-    if args.json_path and not args.list:
-        # A fixed --json path outlives the run; delete it first so neither a setup failure nor a
-        # crash leaves the previous batch's summary to pass for this one.
-        args.json_path.unlink(missing_ok=True)
     key = load_dotenv_key("ORQ_SKILL_EVALS_KEY")
     if not key and not args.list:
         sys.exit("ORQ_SKILL_EVALS_KEY is not set: agent runs must use the skill-evals project key, refusing to start")
