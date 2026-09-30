@@ -1,6 +1,6 @@
 """Offline tests for the factual tester: which CLI flags the bootstrap attributes
 to which command, that the MCP schema checks fail when they should, and that
---new only adds rows a CSV lacks.
+--new only previews rows a CSV lacks.
 
     uv run --no-project --with pytest --with jsonschema pytest tests/scripts -q
 """
