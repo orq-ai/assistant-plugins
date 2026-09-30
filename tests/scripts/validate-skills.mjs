@@ -621,7 +621,7 @@ const REFERENCE_ONLY_SKILLS = ["orq-shared"];
 const EVALS_GRANDFATHERED = new Set([
   "create-skill", "evaluatorq", "orq-build-agent", "orq-cli", "orq-compare-agents",
   "orq-generate-synthetic-dataset", "orq-improve-agent", "orq-invoke-deployment",
-  "orq-manage-skills", "orq-setup-observability", "orq-simulate-agent",
+  "orq-manage-skills", "orq-recommend-evaluators", "orq-setup-observability", "orq-simulate-agent",
 ]);
 const evalsDir = join(root, "tests", "evals");
 const evalDirs = existsSync(evalsDir)
