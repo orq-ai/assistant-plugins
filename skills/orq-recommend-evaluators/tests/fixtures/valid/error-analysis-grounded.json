@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "target": { "type": "agent", "key": "support-bot", "id": "agent_0004" },
+  "grounding": { "mode": "error-analysis", "reason": "error-analysis-support-bot-20260912-101500.md, 4 failure modes" },
+  "evaluations": [
+    {
+      "name": "declines-refund-requests",
+      "description": "The agent declines refund requests and points to the billing page.",
+      "type": "llm_eval",
+      "existing_evaluator_id": null,
+      "execute_on": "output",
+      "priority": "high",
+      "reason": "A promised refund the support team then has to honour; failure mode 1 in the error analysis, 9 of 60 traces.",
+      "caveats": []
+    }
+  ]
+}

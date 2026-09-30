@@ -38,13 +38,38 @@ def test_top_level_exports_exist():
         assert hasattr(evaluatorq, name), f"evaluatorq.{name} is gone — the skill still teaches it"
 
 
-@pytest.mark.parametrize("name,default", [("inference", None), ("print_results", True)])
+@pytest.mark.parametrize("name,default", [("print_results", True)])
 def test_evaluatorq_kwarg_defaults(name, default):
     from evaluatorq import evaluatorq
 
     p = params(evaluatorq)
     assert name in p, f"`{name}` is documented but not a parameter"
     assert p[name].default == default
+
+
+def test_inference_resolves_from_the_data_source():
+    """The signature says `None`; the validator picks the value the skill documents.
+
+    A replay source means no generation, anything else generates. Asserting the
+    literal default would pin nothing, since `None` is not what the run uses.
+    """
+    from evaluatorq import DataPoint, DatasetIdInput, ExperimentInput, evaluatorq, job
+    from evaluatorq.evaluatorq import EvaluatorParams
+
+    assert params(evaluatorq)["inference"].default is None, (
+        "`inference` no longer resolves from `data`; the skill teaches that it does"
+    )
+
+    @job("probe")
+    async def probe(data, row):
+        return ""
+
+    def resolved(data, **kwargs):
+        return EvaluatorParams(data=data, evaluators=[], **kwargs).inference
+
+    assert resolved([DataPoint(inputs={"q": "?"})], jobs=[probe]) is True
+    assert resolved(DatasetIdInput(dataset_id="d"), jobs=[probe]) is True
+    assert resolved(ExperimentInput(experiment_id="x")) is False
 
 
 def test_datapoint_parallelism_still_resolves_to_ten():

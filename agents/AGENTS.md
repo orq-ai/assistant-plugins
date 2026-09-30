@@ -20,6 +20,7 @@ These skills are:
  - orq-improve-agent -> "skills/orq-improve-agent/SKILL.md"
  - orq-invoke-deployment -> "skills/orq-invoke-deployment/SKILL.md"
  - orq-manage-skills -> "skills/orq-manage-skills/SKILL.md"
+ - orq-recommend-evaluators -> "skills/orq-recommend-evaluators/SKILL.md"
  - orq-red-team -> "skills/orq-red-team/SKILL.md"
  - orq-run-experiment -> "skills/orq-run-experiment/SKILL.md"
  - orq-setup-observability -> "skills/orq-setup-observability/SKILL.md"
@@ -39,6 +40,8 @@ orq-evaluator-alignment: `Align, calibrate, or improve an existing LLM-as-a-judg
 orq-analyze-traces: `Analyze a live agent, deployment, or local agent from its production traces — relay its configuration and terminal states, then build a failure taxonomy by open coding and axial coding, and write it to an error-analysis file other skills read. Use when debugging agent or pipeline quality, when you have traces and no idea where to start, or before building any evaluator — error analysis comes first. Do NOT use when the failure modes are already identified and you need evaluators (use orq-build-evaluator), datasets (use orq-generate-synthetic-dataset), or a fix applied (use orq-improve-agent).`
 
 orq-improve-agent: `Improve an underperforming orq agent, deployment, or local agent — rewrite its instructions against a structured prompting framework, or move a configuration knob, grounded in the error-analysis file orq-analyze-traces writes. Use when a prompt needs improvement, when a config knob is wrong (truncated answers, iteration caps, sampling), or when you have a failure taxonomy and want the fix applied. Do NOT use to re-architect a pipeline (use orq-build-agent), to align a judge that already exists (use orq-evaluator-alignment), or to build the failure taxonomy in the first place (use orq-analyze-traces).`
+
+orq-recommend-evaluators: `Use when an orq agent or deployment has no or few evaluators and someone asks which ones it should have ("what should I evaluate", "which evals does this agent need", "suggest evaluators"), including a new agent with no production traffic yet. Do NOT use to build and validate one specific judge in depth (use orq-build-evaluator), to realign a judge that already exists (use orq-evaluator-alignment), or to build a failure taxonomy (use orq-analyze-traces).`
 
 orq-invoke-deployment: `Invoke orq.ai deployments, agents, and models via the Python SDK or HTTP API — pass prompt variables, stream responses, handle multi-turn agent conversations, and generate integration code`
 

@@ -9,7 +9,7 @@ Probed against Python `evaluatorq` 1.39.0, 2026-09-20. Upstream reference (re-pr
 | `list[DataPoint]` or `list[dict]` | Inline rows. A plain dict with `inputs` / `expected_output` keys is accepted anywhere a `DataPoint` is. | no |
 | `list[Awaitable[DataPoint]]` | Rows that resolve lazily — a network fetch per row, streamed into the run instead of blocking on all of them first. | no |
 | `DatasetIdInput(dataset_id="...")` | Rows from an orq.ai dataset, fetched in pages of 50. | yes |
-| `ExperimentInput(experiment_id="...", run_id=None)` | The recorded outputs of a past orq.ai experiment run. Implies `inference=False`. | yes |
+| `ExperimentInput(experiment_id="...", run_id=None)` | The recorded outputs of a past orq.ai experiment run. `inference` resolves to `False` for this input on its own. | yes |
 
 ## A datapoint
 
@@ -47,13 +47,15 @@ await evaluatorq(
     "replay",
     data=ExperimentInput(experiment_id="<experiment_id>"),  # omit run_id for the latest run
     evaluators=[my_judge],
-    inference=False,  # optional: an unset inference resolves to False for ExperimentInput
+    inference=False,
 )
 ```
 
 - `experiment_id` — the ID in the experiment URL, `/experiments/<id>` (the REST API calls experiments "spreadsheets", so the same ID appears under `/v2/spreadsheets/<id>`).
 - `run_id` — optional; every execution of an experiment is a run. Omit it to replay the latest.
 - With `inference=False`, `jobs` is optional and ignored. A row whose recorded response is missing or blank fails loudly instead of being skipped.
+
+- `inference` left unset resolves from `data`: `False` for a replay source, `True` for a dataset or inline rows. The example passes it anyway because being explicit reads better in a script someone else will edit.
 
 `inference=False` also works with `DatasetIdInput` and inline rows when you supply the responses yourself.
 

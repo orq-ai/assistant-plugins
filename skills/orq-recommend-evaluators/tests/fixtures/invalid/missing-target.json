@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "grounding": { "mode": "config-only", "reason": "0 traces in the last 14 days" },
+  "evaluations": []
+}
