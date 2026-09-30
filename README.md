@@ -182,6 +182,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 | **orq-invoke-deployment** | Invoke orq.ai deployments, agents, and models via the Python SDK or HTTP API — pass prompt variables, stream responses, and generate integration code | [SKILL.md](skills/orq-invoke-deployment/SKILL.md) |
 | **orq-build-agent** | Design, create, and configure an orq.ai Agent with tools, instructions, knowledge bases, and memory | [SKILL.md](skills/orq-build-agent/SKILL.md) |
 | **orq-build-evaluator** | Create validated LLM-as-a-Judge evaluators following evaluation best practices | [SKILL.md](skills/orq-build-evaluator/SKILL.md) |
+| **orq-recommend-evaluators** | Recommend the evaluators an agent is missing, from its traces or (with no traffic) its instructions and config, skip ones already attached, and create each only after approval | [SKILL.md](skills/orq-recommend-evaluators/SKILL.md) |
 | **orq-evaluator-alignment** | Align an existing LLM-judge (boolean, categorical, numeric) to human judgment — measure how often it changes its mind, group the least reliable cases and ask a few questions instead of labelling every row, rewrite the judge prompt, and recreate the evaluator after approval | [SKILL.md](skills/orq-evaluator-alignment/SKILL.md) |
 | **orq-analyze-traces** | Analyze a live agent from its production traces — relay config and terminal states, build a failure taxonomy by open/axial coding, write an error-analysis file other skills read | [SKILL.md](skills/orq-analyze-traces/SKILL.md) |
 | **orq-improve-agent** | Improve an underperforming agent — rewrite instructions against a prompting framework, or move a config knob, grounded in the error-analysis file orq-analyze-traces writes | [SKILL.md](skills/orq-improve-agent/SKILL.md) |
@@ -205,6 +206,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 
 ```
 "I need a customer support agent"             → orq-build-agent
+"Which evaluators should it have?"            → orq-recommend-evaluators
 "Create test cases for it"                     → orq-generate-synthetic-dataset
 "Build an evaluator for response accuracy"     → orq-build-evaluator
 "Run an experiment to get a baseline"          → orq-run-experiment

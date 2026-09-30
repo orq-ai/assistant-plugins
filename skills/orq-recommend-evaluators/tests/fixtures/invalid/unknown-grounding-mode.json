@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "target": { "type": "agent", "key": "support-bot", "id": "agent_0004" },
+  "grounding": { "mode": "vibes", "reason": "read the instructions" },
+  "evaluations": []
+}

@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "target": { "type": "agent", "key": "support-bot", "id": "" },
+  "grounding": { "mode": "config-only", "reason": "0 traces in the last 14 days" },
+  "evaluations": []
+}
