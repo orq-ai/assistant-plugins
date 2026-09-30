@@ -295,8 +295,23 @@ export async function drainQueue() {
   }
   if (skipped > 0) {
     await debugLog(`[otlp] DRAIN skipped ${skipped} queued file(s) for another destination\n`);
+    // A file this session cannot deliver is usually another workspace's. It can
+    // also be this session's own, after the key was rotated: the fingerprint no
+    // longer matches, so the spans sit there until pruneStaleFiles removes them
+    // an hour later. Say so on stderr, like the other failure paths here, or
+    // the loss is invisible without ORQ_DEBUG. Once per process, because a
+    // drain runs on every hook and the condition lasts as long as the files do.
+    if (!warnedAboutSkipped) {
+      warnedAboutSkipped = true;
+      process.stderr.write(
+        `[orq-trace] WARN: ${skipped} queued batch(es) belong to another endpoint or API key and will not be sent; ` +
+          `they are removed an hour after they were queued\n`,
+      );
+    }
   }
 }
+
+let warnedAboutSkipped = false;
 
 export async function sendSpan(span) {
   return sendSpans([span]);

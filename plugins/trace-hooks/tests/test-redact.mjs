@@ -12,6 +12,8 @@ import { deepRedact } from "../src/redact.js";
 const SECRETS = [
   ["anthropic key", "sk-ant-api03-AbCdEf1234567890AbCdEf1234567890-AAAA"],
   ["openai project key", "sk-proj-AbCdEf1234567890AbCdEf1234567890"],
+  ["anthropic key with an underscore early in the body", "sk-ant-api03-Ab_cdEfGhIjKlMnOpQrStUvWxYz0123456789AA"],
+  ["openai project key with an underscore early in the body", "sk-proj-A_bCdEf1234567890AbCdEf1234567890"],
   ["openai classic key", "sk-abc123def456ghi789jkl012"],
   ["orq key with prefix", "sk-orq-eyJhbGciOiJIUzI1NiJ9.eyJ3b3Jrc3BhY2VfaWQiOiJ3cy0xIn0.c2ln"],
   ["orq key from the dashboard", "eyJhbGciOiJIUzI1NiJ9.eyJ3b3Jrc3BhY2VfaWQiOiJ3cy0xIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r"],
@@ -41,6 +43,7 @@ const KEEP = [
   ["a kebab-case branch name", "git checkout feature/ask-orq-assistant-refactor"],
   ["a kebab-case service name", "disk-usage-monitoring-service"],
   ["an upper-case ticket id", "TASK-1234567890123456"],
+  ["a snake_case name that holds sk-", "my_task_sk-runner_config_v2_final_build"],
 ];
 
 let failed = 0;
@@ -55,6 +58,19 @@ for (const [name, value] of KEEP) {
   if (!kept) failed++;
 }
 
-const total = SECRETS.length + KEEP.length;
+// The `sk-` lookahead scans the body run at every `sk-` start, so an unbounded
+// one costs time in the square of the run length: 240k characters of `sk-` took
+// 16.8s, past half the 30s hook timeout, and nothing truncates a string before
+// it reaches the pattern. This pins the bound rather than the measurement, so
+// it fails if the `{0,64}` is ever dropped again.
+const adversarial = "sk-".repeat(80_000);
+const startedAt = process.hrtime.bigint();
+deepRedact(adversarial);
+const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+const fastEnough = elapsedMs < 500;
+console.log(`${fastEnough ? "PASS" : "FAIL"} scans 240k characters of \`sk-\` in ${elapsedMs.toFixed(0)}ms`);
+if (!fastEnough) failed++;
+
+const total = SECRETS.length + KEEP.length + 1;
 console.log(`\n${failed === 0 ? "ALL PASS" : `${failed} FAILED`} (${total} cases)`);
 process.exit(failed === 0 ? 0 : 1);
