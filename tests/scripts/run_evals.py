@@ -362,8 +362,10 @@ def build_target(
             env=env,
             workdir=workdir,
             container=container,
-            # A container defaults Claude to bypassPermissions, which would make --allowedTools a no-op.
-            permission_mode="default" if container is not None else None,
+            # dontAsk denies every tool --allowedTools does not list. Without it, headless Claude
+            # Code runs in auto mode and its classifier approves writes like create_llm_eval, and
+            # a container defaults to bypassPermissions; either makes --allowedTools a no-op.
+            permission_mode="dontAsk",
         )
         return target
 
@@ -453,6 +455,19 @@ def _recover_max_turns(agent: AgentName, stdout: str) -> dict[str, Any] | None:
     }
 
 
+def _opencode_error(stdout: str) -> str | None:
+    """OpenCode's own error text. It nests it as error.data.message, where evaluatorq looks
+    for error.message and so reports every OpenCode failure as the bare word "error"."""
+    for event in reversed(coding_agent.parse_jsonl(stdout)):
+        error = event.get("error") if event.get("type") == "error" else None
+        if isinstance(error, dict):
+            data = error.get("data") if isinstance(error.get("data"), dict) else {}
+            message = data.get("message") or error.get("message")
+            if message:
+                return f"{error['name']}: {message}" if error.get("name") else str(message)
+    return None
+
+
 def _run_error(agent: AgentName, exc: CodingAgentError, stdout: str) -> dict[str, Any]:
     """A failed run: the agent's own error event first, then orq's stderr tail, and what kind of failure it is.
 
@@ -465,6 +480,8 @@ def _run_error(agent: AgentName, exc: CodingAgentError, stdout: str) -> dict[str
     except Exception:  # noqa: BLE001 -- a half-written stdout still leaves stderr to report
         turn = None
     agent_error = turn.agent_error if turn else None
+    if agent == "opencode" and agent_error == "error":
+        agent_error = _opencode_error(stdout) or agent_error
     stderr = KEY_NOTE.sub("", exc.message).strip()
     if re.fullmatch(r".* exited -?\d+:", stderr):  # only evaluatorq's prefix is left: stderr said nothing else
         stderr = ""
