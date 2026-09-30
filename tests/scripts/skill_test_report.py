@@ -176,7 +176,10 @@ def main() -> None:
         print(f"experiment upload failed: {evals['upload_error']}")
     if evals:
         sessions = f" ({evals['sessions']} sessions, {evals['retries']} retries)" if "sessions" in evals else ""
-        print(f"eval cost: ${evals.get('cost_usd', 0):.2f}{sessions}" + (" (cost cap stopped some runs)" if evals.get("runs_skipped_by_cap") else ""))
+        if "cost_traced_runs" in evals:
+            untraced = evals["cost_estimated_runs"]
+            sessions += f", {evals['cost_traced_runs']} run(s) traced" + (f", {untraced} estimated" if untraced else "")
+        print(f"eval cost: ${evals.get('cost_usd', 0):.4f}{sessions}" + (" (cost cap stopped some runs)" if evals.get("runs_skipped_by_cap") else ""))
 
     if args.json_path:
         args.json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")

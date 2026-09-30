@@ -44,7 +44,7 @@ import tempfile
 import time
 import traceback
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -67,9 +67,18 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 EVALS_DIR = REPO_ROOT / "tests" / "evals"
 RESULTS_DIR = REPO_ROOT / "tests" / "eval-results"
 MIN_ORQ_VERSION = (10, 3, 1)
-# Charged against --max-cost-usd for a run that reports no cost. OpenCode gets no
-# pricing for the orq provider and reports 0. A Claude run averages about $0.11 (up to ~$0.27).
+# Charged per run when the model has no price in the workspace catalogue (see run_estimates).
+# The summary replaces it with the traced cost afterwards.
 UNPRICED_RUN_COST_USD = 0.25
+# What one model call sends, per agent: the system prompt, tool definitions and skill list
+# dominate, so it barely moves with the case. Upper figures read off skill-evals traces on
+# 2026-09-30: Claude Code sends ~80k prompt tokens a call on Sonnet (~45k elsewhere), OpenCode
+# 7-17k. `cached` is the share that was a cache hit where the provider cached (Anthropic,
+# OpenAI); DeepSeek and Gemini runs had next to none, so the upper bound assumes no cache.
+CALL_TOKENS: dict[str, dict[str, float]] = {
+    "claude": {"prompt": 80_000, "cached": 0.8, "output": 1_500},
+    "opencode": {"prompt": 18_000, "cached": 0.6, "output": 500},
+}
 # orq launch prints this whenever the key differs from the `orq auth login` workspace. Runs
 # always use the skill-evals key, so it is expected; left in, it hides the real failure.
 KEY_NOTE = re.compile(r"Note: ORQ_API_KEY may not belong to the workspace[^\n]*\n?")
@@ -78,6 +87,10 @@ KEY_NOTE = re.compile(r"Note: ORQ_API_KEY may not belong to the workspace[^\n]*\
 TRANSIENT_MODEL_ERROR = re.compile(r"rate.?limit|\b429\b|\b5\d\d\b|overloaded|temporarily|unavailable", re.IGNORECASE)
 # Failures before any agent session started: there is no trace to open.
 NO_SESSION_CODES = {"cli.not_found", "cli.prompt_too_long", "cli.agent_not_found", "cli.image_missing", "cli.container_start"}
+# At its `steps` cap OpenCode appends a "MAXIMUM STEPS REACHED" notice as an assistant message,
+# so the request ends on an assistant turn. Gemini rejects that with this error: the run did
+# reach its cap, like Claude's error_max_turns, and what it called before is scored.
+OPENCODE_STEP_CAP_REJECTED = re.compile(r"Requests ending with a model turn are not supported")
 # Model tiers too small to follow the tool-calling rules; a run on one measures the model, not the skill.
 WEAK_MODEL = re.compile(r"(?:^|[-/._])(?:lite|nano)(?:$|[-/._])", re.IGNORECASE)
 AGENTS: tuple[AgentName, ...] = ("claude", "opencode")
@@ -266,6 +279,103 @@ def load_dotenv_key(name: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Actual costs, from orq traces
+# ---------------------------------------------------------------------------
+# The agents' own cost figures are guesses: OpenCode reports 0 for the orq provider, and
+# Claude Code prices every model at Anthropic rates by name, whatever the gateway served.
+# The gateway records what each call actually cost, per thread, on the traces.
+
+
+def orq_json(orq: Path, key: str, command: list[str], body: dict[str, Any] | None = None, jmespath: str | None = None) -> Any:
+    """One orq read command's JSON output. A body goes in a file: stdin mangles it on Windows."""
+    with tempfile.TemporaryDirectory() as tmp:
+        args = [str(orq), *command, "-o", "json"]
+        if body is not None:
+            path = Path(tmp) / "body.json"
+            path.write_text(json.dumps(body), encoding="utf-8")
+            args += ["--from-file", str(path)]
+        if jmespath:
+            args += ["-j", jmespath]
+        found = subprocess.run(
+            args, capture_output=True, text=True, encoding="utf-8", timeout=120, check=False,
+            env={**os.environ, "ORQ_API_KEY": key},
+        )  # fmt: skip
+    if found.returncode != 0:
+        raise RuntimeError(f"orq {' '.join(command)}: {(found.stderr or found.stdout).strip()[:300]}")
+    return json.loads(found.stdout)
+
+
+def traces_aggregate(orq: Path, key: str, body: dict[str, Any]) -> list[dict[str, Any]]:
+    return orq_json(orq, key, ["traces", "aggregate"], body).get("data") or []
+
+
+def _window(start: datetime, end: datetime) -> dict[str, str]:
+    # Traces expire after 30 days; a from past that is a 400.
+    start = max(start, datetime.now(timezone.utc) - timedelta(days=29))
+    return {"from": start.strftime("%Y-%m-%dT%H:%M:%SZ"), "to": end.strftime("%Y-%m-%dT%H:%M:%SZ")}
+
+
+async def trace_costs(orq: Path, key: str, thread_ids: list[str], start: datetime) -> dict[str, float]:
+    """Gateway cost per thread id. Waits briefly for the last runs' traces to be ingested."""
+    costs: dict[str, float] = {}
+    for attempt in range(4):
+        missing = [t for t in thread_ids if t not in costs]
+        end = datetime.now(timezone.utc) + timedelta(minutes=5)
+        for i in range(0, len(missing), 100):
+            rows = traces_aggregate(orq, key, {
+                **_window(start - timedelta(minutes=5), end), "limit": 1000, "group_by": ["session_id"],
+                "filters": [{"field": "session_id", "op": "in", "values": missing[i:i + 100]}],
+                "compute": [{"metric": "cost.total", "op": "sum"}],
+            })  # fmt: skip
+            for row in rows:
+                costs[row["group"]["session_id"]] = row["metrics"].get("cost.total.sum") or 0.0
+        if len(costs) == len(thread_ids) or attempt == 3:
+            return costs
+        await asyncio.sleep(15)
+    return costs
+
+
+def model_prices(orq: Path, key: str) -> dict[str, dict[str, float]]:
+    """USD per token (input, cache read, output) per provider/model_id in the workspace catalogue."""
+    rows = orq_json(orq, key, ["models", "list"], jmespath=(
+        "[].{p: provider, m: model_id, i: metadata.million_tokens_input_cost,"
+        " o: metadata.million_tokens_output_cost, cr: metadata.million_tokens_cache_read_cost}"
+    ))  # fmt: skip
+    prices: dict[str, dict[str, float]] = {}
+    for r in rows or []:
+        if r.get("p") and r.get("m") and r.get("i") is not None and r.get("o") is not None:
+            # A model with no cache price bills cached tokens as ordinary input.
+            cached = r["cr"] if r.get("cr") is not None else r["i"]
+            prices.setdefault(f"{r['p']}/{r['m']}", {"input": r["i"] / 1e6, "cached": cached / 1e6, "output": r["o"] / 1e6})
+    return prices
+
+
+def run_estimates(
+    prices: dict[str, dict[str, float]] | None, models: dict[AgentName, dict[str, str | None]], cases: list[Case]
+) -> dict[tuple[str, str], tuple[float, float]]:
+    """(likely, upper bound) cost of one run per (agent, case id): every turn used, at catalogue prices.
+
+    A run makes at most max_turns + 1 model calls (the last may only answer in text), each
+    about CALL_TOKENS. The likely figure assumes the provider caches the prompt, the bound
+    that nothing is cached. Runs that stop early cost less; the catalogue price can also
+    differ from the billed one (it does not apply pricing tiers).
+    """
+    estimates: dict[tuple[str, str], tuple[float, float]] = {}
+    for agent, m in models.items():
+        price = (prices or {}).get(m["model"] or "")
+        t = CALL_TOKENS[agent]
+        for case in cases:
+            if not price:
+                estimates[(agent, case.id)] = (UNPRICED_RUN_COST_USD, UNPRICED_RUN_COST_USD)
+                continue
+            calls, output = case.max_turns + 1, t["output"] * price["output"]
+            cached = t["prompt"] * ((1 - t["cached"]) * price["input"] + t["cached"] * price["cached"]) + output
+            uncached = t["prompt"] * price["input"] + output
+            estimates[(agent, case.id)] = (calls * cached, calls * uncached)
+    return estimates
+
+
+# ---------------------------------------------------------------------------
 # Agent targets
 # ---------------------------------------------------------------------------
 
@@ -440,10 +550,13 @@ def _call_dict(call: ToolCallOutputItem) -> dict[str, Any]:
 
 
 def _recover_max_turns(agent: AgentName, stdout: str) -> dict[str, Any] | None:
-    """Tool calls from a Claude run that stopped at --max-turns; None for any other failure."""
+    """Tool calls from a run that stopped at its turn cap; None for any other failure."""
     events = coding_agent.parse_jsonl(stdout)
-    result = next((e for e in reversed(events) if e.get("type") == "result"), None)
-    if agent != "claude" or not result or result.get("subtype") != "error_max_turns":
+    if agent == "claude":
+        result = next((e for e in reversed(events) if e.get("type") == "result"), None)
+        if not result or result.get("subtype") != "error_max_turns":
+            return None
+    elif not OPENCODE_STEP_CAP_REJECTED.search(_opencode_error(stdout) or ""):
         return None
     turn = coding_agent.parse_events(agent, events)
     return {
@@ -508,15 +621,17 @@ def _run_error(agent: AgentName, exc: CodingAgentError, stdout: str) -> dict[str
     }
 
 
-def _cost_from_stdout(agent: AgentName, stdout: str) -> float:
-    """The agent's own figure, else the flat estimate so the cap still binds; 0 for no output."""
+def _cost_from_stdout(agent: AgentName, case_id: str, stdout: str, budget: Budget) -> float:
+    """The agent's own figure where it can be trusted, else the estimate so the cap still binds; 0 for no output."""
+    if not stdout.strip():
+        return 0.0
+    if agent not in budget.own_cost:
+        return budget.estimate(agent, case_id)
     try:
         cost = coding_agent.parse_events(agent, coding_agent.parse_jsonl(stdout)).cost_usd
     except Exception:  # noqa: BLE001 -- cost is best effort; a parse failure must not fail the run
         cost = None
-    if not cost and stdout.strip():
-        return UNPRICED_RUN_COST_USD
-    return cost or 0.0
+    return cost or budget.estimate(agent, case_id)
 
 
 @dataclass
@@ -525,6 +640,14 @@ class Budget:
     cap: float
     spent: float = 0.0
     breached: bool = False
+    # What a run is charged when its own figure is missing or untrusted, per (agent, case id).
+    per_run: dict[tuple[str, str], float] = field(default_factory=dict)
+    # Agents whose own cost figure is right: Claude Code on an Anthropic model. On any other
+    # model it still prices at Anthropic rates, and OpenCode reports 0 for the orq provider.
+    own_cost: set[str] = field(default_factory=set)
+
+    def estimate(self, agent: str, case_id: str) -> float:
+        return self.per_run.get((agent, case_id), UNPRICED_RUN_COST_USD)
 
     def admit(self) -> bool:
         if self.spent >= self.cap:
@@ -553,7 +676,7 @@ async def run_once(
         except CodingAgentError as exc:
             # A timeout leaves no stdout but the agent ran (and billed) until it was killed.
             timed_out = exc.code == "cli.timeout"
-            cost = UNPRICED_RUN_COST_USD if timed_out else _cost_from_stdout(agent, target.last_stdout)
+            cost = budget.estimate(agent, case.id) if timed_out else _cost_from_stdout(agent, case.id, target.last_stdout, budget)
             budget.add(cost)
             recovered = _recover_max_turns(agent, target.last_stdout)
             if recovered is None:
@@ -561,7 +684,7 @@ async def run_once(
             return recovered | {"cost_usd": cost}
         finally:
             await target.close()
-        cost = _cost_from_stdout(agent, target.last_stdout)
+        cost = _cost_from_stdout(agent, case.id, target.last_stdout, budget)
         budget.add(cost)
         return {
             "tool_calls": [_call_dict(o) for o in response.output if isinstance(o, ToolCallOutputItem)],
@@ -785,6 +908,7 @@ def aggregate(results: list[Any], cases: list[Case]) -> dict[str, Any]:
                     "thread_id": out.get("thread_id"),
                     "attempts": out.get("attempts", 0),
                     "cost_usd": out.get("cost_usd"),
+                    "cost_source": out.get("cost_source"),
                     "stopped": out.get("stopped"),
                     "tool_calls": [f"{c['name']}{' (denied)' if is_denied(c) else ''}" for c in out.get("tool_calls", [])]
                     or out.get("tool_calls_before_error", []),
@@ -856,7 +980,7 @@ def print_report(report: dict[str, Any]) -> None:
         flaky = " flaky" if row["flaky"] else ""
         by_kind = ", ".join(f"{k} {n}/{len(row['runs'])}" for k, n in row["errors_by_kind"].items())
         errors = f"  errors: {by_kind}" if by_kind else ""
-        print(f"  [{icons[row['status']]}] {row['case']} [{row['agent']}] {rate} (need {row['threshold']:.0%}){flaky}  ${row['cost_usd']:.2f}{errors}")
+        print(f"  [{icons[row['status']]}] {row['case']} [{row['agent']}] {rate} (need {row['threshold']:.0%}){flaky}  ${row['cost_usd']:.4f}{errors}")
         if row["status"] in ("fail", "error", "measured"):
             for r in row["runs"]:
                 failing = {k: v["why"] for k, v in r["scores"].items() if v["pass"] is False}
@@ -866,8 +990,34 @@ def print_report(report: dict[str, Any]) -> None:
                 print(f"      run {r['run']}: {status}  {detail}  thread={r['thread_id']}{tries}")
     print("\nper skill:")
     for skill, s in sorted(report["skills"].items()):
-        print(f"  {skill}: invocation {s['invocation']}, behavioural {s['behavioural']}, errors {s['errors']}, ${s['cost_usd']:.2f}"
+        print(f"  {skill}: invocation {s['invocation']}, behavioural {s['behavioural']}, errors {s['errors']}, ${s['cost_usd']:.4f}"
               + (f", flaky: {', '.join(s['flaky'])}" if s["flaky"] else ""))
+
+
+async def apply_trace_costs(results: list[Any], orq: Path | None, key: str, started: datetime) -> int:
+    """Replace each run's estimated cost with what orq traced for its thread; returns how many were replaced.
+
+    A retried Claude run keeps its estimate: only its last attempt's session id is known, so
+    the trace would miss the first attempt. OpenCode sends one thread id for both.
+    """
+    outs = [jr.output for dp in results for jr in dp.job_results or [] if isinstance(jr.output, dict)]
+    for out in outs:
+        out["cost_source"] = "estimate" if out.get("thread_id") else None
+    traceable = [
+        out for out in outs
+        if out.get("thread_id") and not (out.get("agent") == "claude" and out.get("attempts", 1) > 1)
+    ]  # fmt: skip
+    if not traceable or orq is None:
+        return 0
+    try:
+        costs = await trace_costs(orq, key, sorted({out["thread_id"] for out in traceable}), started)
+    except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as exc:
+        print(f"warning: could not read run costs from orq traces ({exc}); costs are estimates", file=sys.stderr)
+        return 0
+    for out in traceable:
+        if out["thread_id"] in costs:
+            out["cost_usd"], out["cost_source"] = round(costs[out["thread_id"]], 6), "orq traces"
+    return sum(out["cost_source"] == "orq traces" for out in traceable)
 
 
 def exit_code(report: dict[str, Any], budget: Budget) -> int:
@@ -954,6 +1104,26 @@ async def amain() -> int:
     total_runs = sum(c.runs for c in cases) * len(agents)
     print(f"{len(cases)} case(s), {total_runs} agent run(s), agents {agents}, cap ${args.max_cost_usd:.2f}")
     print(f"models: {describe_models(models)}")
+    # Container runs need no host orq, but the traces are read from the host when it has one.
+    trace_orq = orq
+    if trace_orq is None:
+        with contextlib.suppress(SystemExit):
+            trace_orq = resolve_orq()
+    prices = None
+    if trace_orq and key:
+        try:
+            prices = model_prices(trace_orq, key)
+        except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as exc:
+            print(f"warning: could not read model prices ({exc}); estimating at the flat rate", file=sys.stderr)
+    estimates = run_estimates(prices, models, cases)
+    for a in agents:
+        priced = bool(prices and models[a]["model"] in prices)
+        likely, upper = (sum(estimates[(a, c.id)][i] * c.runs for c in cases) for i in (0, 1))
+        basis = "every turn used, catalogue price" if priced else f"flat ${UNPRICED_RUN_COST_USD}/run, model not in the catalogue"
+        print(f"  {a}: about ${likely:.4f}, up to ${upper:.4f} for {sum(c.runs for c in cases)} run(s) ({basis})")
+    likely, estimate = (sum(estimates[(a, c.id)][i] * c.runs for a in agents for c in cases) for i in (0, 1))
+    # Both attempts of a retried run are billed, and at most one retry is made.
+    print(f"estimated cost: about ${likely:.4f}, up to ${estimate:.4f} (${2 * estimate:.4f} if every run is retried)")
     for a, m in models.items():
         if m["model"] and WEAK_MODEL.search(m["model"]):
             print(
@@ -963,9 +1133,10 @@ async def amain() -> int:
             )
     if args.list:
         for c in cases:
+            per_run = ", ".join(f"{a} ~${estimates[(a, c.id)][0]:.4f} (<=${estimates[(a, c.id)][1]:.4f})" for a in agents)
             print(
                 f"  {c.skill}/{c.id} [{c.kind}] x{c.runs} threshold={c.pass_threshold:g}"
-                f"{' (measured, not scored)' if c.borderline else ''}"
+                f"{' (measured, not scored)' if c.borderline else ''}  per run: {per_run}"
             )
         return 0
 
@@ -987,7 +1158,12 @@ async def amain() -> int:
         for c in cases
         for i in range(c.runs)
     ]
-    budget = Budget(args.max_cost_usd)
+    budget = Budget(
+        args.max_cost_usd,
+        # The bound, not the likely figure: the cap should stop a batch early rather than late.
+        per_run={k: upper for k, (_, upper) in estimates.items()},
+        own_cost={"claude"} if "claude" in models and (models["claude"]["model"] or "").startswith("anthropic/") else set(),
+    )
     jobs: list[Job] = [make_job(a, branch, key, budget, container, flag_models[a]) for a in agents]
 
     started = datetime.now(timezone.utc)
@@ -1005,6 +1181,7 @@ async def amain() -> int:
         _send_results=False,
     )
     ended = datetime.now(timezone.utc)
+    traced = await apply_trace_costs(results, trace_orq, key, started)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     raw_path = out_path.with_suffix(".results.json")
@@ -1034,7 +1211,11 @@ async def amain() -> int:
         "models": models,
         "experiment_url": None,
         "results_file": str(raw_path),
-        "cost_usd": round(budget.spent, 4),
+        # Traced where orq has the run's thread; the rest keep the estimate the cap charged.
+        "cost_usd": round(sum(row["cost_usd"] for row in report["cases"]), 4),
+        "cost_estimated_usd": round(budget.spent, 4),
+        "cost_traced_runs": traced,
+        "cost_estimated_runs": sum(r["cost_source"] == "estimate" for row in report["cases"] for r in row["runs"]),
         "sessions": sessions,
         "retries": retries,
         "runs_skipped_by_cap": budget.breached,
@@ -1043,7 +1224,12 @@ async def amain() -> int:
     }
     out_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
     capped = " (cost cap hit, later runs skipped)" if budget.breached else ""
-    print(f"\nspent ${budget.spent:.2f} ({sessions} sessions, {retries} retries){capped}; summary: {out_path}")
+    untraced = summary["cost_estimated_runs"]
+    source = f"{traced} run(s) traced" + (f", {untraced} estimated" if untraced else "")
+    print(
+        f"\nspent ${summary['cost_usd']:.4f} ({source}; the cap counted ${budget.spent:.2f}) "
+        f"({sessions} sessions, {retries} retries){capped}; summary: {out_path}"
+    )
 
     if not args.no_send:
         child = await asyncio.create_subprocess_exec(

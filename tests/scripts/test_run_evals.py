@@ -213,8 +213,8 @@ def test_exit_code() -> None:
 def test_budget_and_cost() -> None:
     budget = r.Budget(0.3)
     assert budget.admit()
-    budget.add(r._cost_from_stdout("opencode", '{"type": "x"}'))  # output but no cost: the flat charge
-    budget.add(r._cost_from_stdout("claude", ""))  # no output at all: nothing ran
+    budget.add(r._cost_from_stdout("opencode", "c", '{"type": "x"}', budget))  # output but no cost: the flat charge
+    budget.add(r._cost_from_stdout("claude", "c", "", budget))  # no output at all: nothing ran
     assert budget.spent == r.UNPRICED_RUN_COST_USD and budget.admit()
     budget.add(0.1)
     assert not budget.admit() and budget.breached

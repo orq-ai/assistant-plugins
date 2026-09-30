@@ -95,10 +95,19 @@ case sets its own, and they grow as cases are added. Invocation cases usually ru
 times at 2 of 3, a smoke check that catches a skill that stopped firing, not one that
 fires unreliably; near misses usually need every run to pass. Cases marked
 `(measured, not scored)` are borderline: they report a trigger rate and ignore the
-threshold. Estimate cost as the run count x $0.25 (the flat charge for OpenCode,
-above Claude's usual cost), with a worst case of twice that: a run that errors in a
-way a retry can clear is re-run once, and both attempts are billed (see
-[Retries](#retries)). State both against the printed cap. Time: each run is a full
+threshold. Take the cost from `--list` too: it prints, per case and agent, an
+"about" figure and an "up to" figure per run, the same per agent, and an
+`estimated cost`. Both assume every run uses all its turns (`max_turns` + 1 model
+calls) at a fixed per-call token count per agent (`CALL_TOKENS` in the runner),
+priced at the model's rates in the workspace catalogue (`orq models list`). "About"
+assumes the provider caches most of the prompt; "up to" assumes nothing is cached,
+as on DeepSeek and Gemini. Give both. Actual costs have landed between 0.4x and
+1.5x the "about" figure, and under "up to". The catalogue price can differ from
+the billed one (DeepSeek billed 1.5x its listed input price). A model missing from
+the catalogue is charged a flat $0.25 per run, which says nothing about its price:
+say that figure is a placeholder. The retry figure is twice the bound: a run that errors in a way a retry can clear is
+re-run once, and both attempts are billed (see [Retries](#retries)). State both
+against the printed cap. Time: each run is a full
 agent session, so wall time is roughly runs / `--parallel` (default 2) sessions.
 
 Give the estimate per suite, then the total.
@@ -225,7 +234,10 @@ Show the merged report per skill, in its own buckets:
 
 Include the orq experiment link, the total cost with its sessions and retries, and
 the model each agent ran on. Per-case costs include every attempt, so they add up to
-the total. For a failing or errored eval run, give its thread id so the user can open
+the total. The total is what orq traced for each run's thread; the report says how
+many runs were traced and how many kept an estimate (the traces could not be read,
+or a retried Claude run, whose first session id is not kept). Name the estimated
+count; those runs are not actual costs. For a failing or errored eval run, give its thread id so the user can open
 the trace (`orq traces search --query <id>`). A Claude run's thread id is its session
 id; an OpenCode run's is the `skill-evals-<case>-opencode-<run>-<time>` id the runner
 sends as `X-ORQ-THREAD-ID`.
@@ -344,10 +356,18 @@ Each run gets at most one retry, and only for a failure a second attempt can cle
 Both attempts are billed and counted in the run's `cost_usd` and `attempts`. If the
 cost cap is reached before the retry, the first attempt's error is reported.
 
+While the batch runs, the cap counts estimates, since traces arrive after a run
+ends: Claude Code's own figure on an Anthropic model, and the "up to" figure
+from `--list` otherwise. That covers every OpenCode run, and Claude on other
+models, because Claude Code prices every model at Anthropic rates. The bound
+overstates most runs, so the cap tends to stop runs early rather than late. The
+summary replaces the estimates with traced costs afterwards.
+
 ## Eval summary fields
 
-The `--json` file `run_evals.py` writes. Top level: `cost_usd` (total spent),
-`sessions` and `retries`, `models` (per agent: `model`, and `source` = `flag` or
+The `--json` file `run_evals.py` writes. Top level: `cost_usd` (total spent, traced
+where orq had the run), `cost_estimated_usd` (what the cap counted),
+`cost_traced_runs` and `cost_estimated_runs`, `sessions` and `retries`, `models` (per agent: `model`, and `source` = `flag` or
 `orq launch default`; `model` is null when the default could not be read),
 `runs_skipped_by_cap`, `exit_code`, `experiment_url` (or `upload_error` with the retry command), `results_file`, `orq_version`, `agents`, `skills` (per skill: invocation and
 behavioural pass counts, flaky cases, errors, cost), and `cases`.
@@ -357,6 +377,7 @@ Each entry of `cases`: `case`, `skill`, `kind`, `agent`, `status` (`pass`, `fail
 `errors_by_kind`, `cost_usd`, and `runs`. Each run: `run`, `status`, `scores` (per
 scorer: `pass` and `why`), `error`, `error_kind` (`model`, `harness`, `timeout` or
 `tool`; null when the run did not error), `thread_id`, `attempts`, `cost_usd`,
+`cost_source` (`orq traces` or `estimate`; null for a run that never started),
 `stopped` (`done`, `max_turns` or `error`), `tool_calls` (names; `(denied)` when
 refused; for an errored run, the calls it made before failing). A run whose scorer
 crashed, or where no scorer gave a verdict, is `error`.
