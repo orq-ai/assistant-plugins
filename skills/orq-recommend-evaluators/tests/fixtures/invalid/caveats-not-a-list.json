@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "target": { "type": "agent", "key": "support-bot", "id": "agent_0004" },
+  "grounding": { "mode": "config-only", "reason": "0 traces in the last 14 days" },
+  "evaluations": [
+    {
+      "name": "declines-refund-requests",
+      "description": "The agent declines refund requests and points to the billing page.",
+      "type": "llm_eval",
+      "existing_evaluator_id": null,
+      "execute_on": "output",
+      "priority": "high",
+      "reason": "A promised refund the support team then has to honour; instructions: 'Never process refunds'.",
+      "caveats": "inventory incomplete"
+    }
+  ]
+}

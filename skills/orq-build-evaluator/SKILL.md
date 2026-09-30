@@ -54,6 +54,7 @@ Evaluator Build Progress:
 **Companion skills:**
 - `orq-run-experiment` — run experiments using the evaluators you build
 - `orq-analyze-traces` — identify failure modes that evaluators should target
+- `orq-recommend-evaluators` — decide which evaluators an agent should have before building one
 - `orq-generate-synthetic-dataset` — generate test data for evaluator validation
 - `orq-improve-agent` — iterate on prompts based on evaluator results
 - `orq-evaluator-alignment` — measure cross-model stability and judge-human agreement for an evaluator you already created (step 16)

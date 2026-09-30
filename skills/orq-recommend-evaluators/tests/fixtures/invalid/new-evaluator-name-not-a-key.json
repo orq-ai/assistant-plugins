@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "target": { "type": "agent", "key": "support-bot", "id": "agent_0004" },
+  "grounding": { "mode": "config-only", "reason": "0 traces in the last 14 days" },
+  "evaluations": [
+    {
+      "name": "BLEU Score",
+      "description": "A new judge whose name would be rejected as an orq evaluator key.",
+      "type": "llm_eval",
+      "existing_evaluator_id": null,
+      "execute_on": "output",
+      "priority": "medium",
+      "reason": "The key rule the create endpoint enforces allows no spaces.",
+      "caveats": []
+    }
+  ]
+}
