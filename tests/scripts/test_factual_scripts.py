@@ -1,11 +1,13 @@
 """Offline tests for the factual tester: which CLI flags the bootstrap attributes
-to which command, and that the MCP schema checks fail when they should.
+to which command, that the MCP schema checks fail when they should, and that
+--new only adds rows a CSV lacks.
 
     uv run --no-project --with pytest --with jsonschema pytest tests/scripts -q
 """
 
 from __future__ import annotations
 
+import csv
 import sys
 from pathlib import Path
 
@@ -93,8 +95,39 @@ def test_tool_args_with_an_undeclared_name_fail(monkeypatch: pytest.MonkeyPatch)
 
 def test_tool_args_with_a_wrong_type_fail(monkeypatch: pytest.MonkeyPatch) -> None:
     result = run(monkeypatch, "mcp_tool_args", "list_skills", '{"limit": "ten"}')
-    assert result.status == "failed"
+    assert (result.status, result.error) == ("failed", "'ten' is not of type 'integer'")
 
 
 def test_valid_tool_args_pass(monkeypatch: pytest.MonkeyPatch) -> None:
     assert run(monkeypatch, "mcp_tool_args", "list_skills", '{"limit": 10}').status == "passed"
+
+
+# --- bootstrap --new ---
+
+
+def test_new_dry_run_lists_only_rows_the_csv_lacks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    skill = tmp_path / "skills" / "demo"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("## Search\n\n`orq traces search`\n\n- `--limit` caps rows.\n- `--json` prints JSON.\n", encoding="utf-8")
+    monkeypatch.setattr(bootstrap, "SKILLS_DIR", tmp_path / "skills")
+    monkeypatch.setattr(bootstrap, "FACTUAL_DIR", tmp_path / "factual")
+    monkeypatch.delenv("ORQ_API_KEY", raising=False)
+    rows = bootstrap.process_skill(skill, None, set())
+    assert len(rows) >= 2
+    (tmp_path / "factual").mkdir()
+    with open(tmp_path / "factual" / "demo.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f, lineterminator="\n")
+        w.writerow(bootstrap.REQUIRED_COLUMNS)
+        w.writerow(rows[0])
+
+    monkeypatch.setattr(sys, "argv", ["bootstrap", "--new", "--dry-run", "--skill", "demo"])
+    bootstrap.main()
+
+    out = capsys.readouterr().out
+    assert f"demo: {len(rows) - 1} new tests" in out
+    lines = set(out.splitlines())
+    listed = [f"  {r[0]:20s} {r[1]}" + (f"  [{r[2]}]" if r[2] else "") for r in rows]
+    assert listed[0] not in lines
+    assert set(listed[1:]) <= lines
