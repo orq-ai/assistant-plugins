@@ -21,6 +21,9 @@ const SECRETS = [
   ["private key block", "-----BEGIN RSA PRIVATE KEY-----\nMIIE..."],
   ["slack token", "xoxb-123456789-abcdef"],
   ["stripe live key", "sk_live_abcdef123456"],
+  ["fine-grained github pat", "github_pat_11ABCDEFG0abcdefghij_KLMNOPqrstuvwxyz0123456789"],
+  ["google api key", "AIzaSyA1bC2dE3fG4hI5jK6lM7nO8pQ9rS0tU1vW"],
+  ["huggingface token", "hf_abcdefghijklmnopqrstuvwxyz0123456789"],
   ["dotenv path", "/Users/dev/project/.env"],
 ];
 
@@ -32,6 +35,12 @@ const KEEP = [
   ["a source path", "/Users/dev/orq-cli/cli/custom/launch/telemetry.go"],
   ["a long word", "internationalization and localization"],
   ["a git sha", "415edd51ddba3b10d4e3091c6d91b0cbca57566b"],
+  ["a kebab-case script name", "npm run task-runner-configuration"],
+  ["a kebab-case filename", "see risk-assessment-framework.md"],
+  ["a kebab-case css class", '<li class="task-list-item-checkbox">'],
+  ["a kebab-case branch name", "git checkout feature/ask-orq-assistant-refactor"],
+  ["a kebab-case service name", "disk-usage-monitoring-service"],
+  ["an upper-case ticket id", "TASK-1234567890123456"],
 ];
 
 let failed = 0;

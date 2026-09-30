@@ -5,7 +5,11 @@ All notable changes to the `orq-trace` plugin are documented here. Follows [Sema
 ## [0.4.1] - 2026-09-30
 
 ### Fixed
-- Free-text provider keys reach the trace redacted. Tool input and output arrive as plain strings, where only the value pattern runs, and it required an unbroken alphanumeric run after `sk-`, so every segmented key passed through: `sk-ant-api03-...`, `sk-proj-...` and orq's own `sk-orq-...`. A key issued from the orq dashboard is a bare JWT and matched nothing at all, and neither did `Authorization: Bearer <token>` in a shell command. The pattern now covers dashed `sk-` keys, JWTs and bearer tokens, and `tests/test-redact.mjs` pins all of it, including the prose it must leave alone.
+- Free-text provider keys reach the trace redacted. Tool input and output arrive as plain strings, where only the value pattern runs, and it required an unbroken alphanumeric run after `sk-`, so every segmented key passed through: `sk-ant-api03-...`, `sk-proj-...` and orq's own `sk-orq-...`. A key issued from the orq dashboard is a bare JWT and matched nothing at all, and neither did `Authorization: Bearer <token>` in a shell command. The pattern now covers dashed `sk-` keys, JWTs, bearer tokens that carry a digit, fine-grained GitHub PATs, Google `AIza` keys and HuggingFace `hf_` tokens. `tests/test-redact.mjs` pins all of it, including the prose it must leave alone.
+- The `sk-` branch is anchored on a word boundary and requires a digit in the run, so it no longer matches the `sk-` inside ordinary kebab-case text such as `task-runner-configuration`, `risk-assessment-framework` or `disk-usage-monitoring-service`. A match costs the whole string rather than the matched span, so one of those would have thrown away an entire tool output.
+
+### Known limitations
+- A hit still replaces the whole string, so a single key in a long build log redacts the log. Shapes without a distinctive prefix are still missed, and a bearer token made only of letters is not matched.
 
 ## [0.4.0] - 2026-07-28
 

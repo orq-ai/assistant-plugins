@@ -8,7 +8,13 @@ const SENSITIVE_KEY_PATTERN = /(secret|password|token|api[_-]?key|authorization|
 // a JWT stands alone, which is how an orq key issued from the dashboard looks
 // and what an `Authorization` header carries; and a bearer token is redacted
 // only when it reads like a token, so "Bearer authentication" stays legible.
-const SENSITIVE_VALUE_PATTERN = /(sk-[a-z0-9][a-z0-9-]{15,}|sk_live_[a-z0-9]+|sk_test_[a-z0-9]+|xox[baprs]-|ghp_[a-z0-9]{20,}|ghu_[a-z0-9]+|ghs_[a-z0-9]+|AKIA[A-Z0-9]{16}|eyJ[a-z0-9_=-]{8,}\.[a-z0-9_=-]{16,}|bearer\s+(?=[a-z0-9._~+\/=-]{16,})[a-z0-9._~+\/=-]*[0-9]|-----BEGIN [A-Z ]*PRIVATE KEY-----)/i;
+//
+// The `sk-` branch needs both guards it carries. Without `\b` it matches the
+// `sk-` inside `task-`, `risk-` and `disk-`, and without a digit somewhere in
+// the run it matches any long kebab-case identifier. A hit costs the whole
+// string, not the match, so a false positive throws away an entire tool
+// output.
+const SENSITIVE_VALUE_PATTERN = /(\bsk-(?=[a-z0-9-]*[0-9])[a-z0-9][a-z0-9-]{15,}|sk_live_[a-z0-9]+|sk_test_[a-z0-9]+|xox[baprs]-|ghp_[a-z0-9]{20,}|ghu_[a-z0-9]+|ghs_[a-z0-9]+|github_pat_[a-z0-9_]{22,}|AIza[a-z0-9_-]{35}|hf_[a-z0-9]{30,}|AKIA[A-Z0-9]{16}|eyJ[a-z0-9_=-]{8,}\.[a-z0-9_=-]{8,}|bearer\s+(?=[a-z0-9._~+\/=-]{16,})[a-z0-9._~+\/=-]*[0-9]|-----BEGIN [A-Z ]*PRIVATE KEY-----)/i;
 const SENSITIVE_PATH_PATTERN = /(^|\/|\\)\.env(\.|$)/i;
 
 const MAX_JSON_REDACT_LEN = 10000;
