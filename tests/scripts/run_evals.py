@@ -795,7 +795,7 @@ def split_calls(agent: str, case: Case, calls: list[dict[str, Any]]) -> tuple[se
             continue
         bare = bare_tool(agent, c["name"])
         # An allowlisted tool is never denied locally, so its failure is the server's, even when
-        # the text reads like a denial (a 403 from the project-scoped key does).
+        # the text reads like a denial (a 403 from the workspace does).
         if bare in case.allow_tools or not is_denied(c):
             failed.add(bare)
     return ok, failed
