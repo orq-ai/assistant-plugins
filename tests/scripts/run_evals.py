@@ -23,24 +23,26 @@ Usage:
     uv run tests/scripts/run_evals.py --case build-evaluator-asks-first --runs 1 --no-send
     uv run tests/scripts/run_evals.py --container                # each agent in a Docker container
 
-Exit code: 0 every case passed, 1 a case fell below its threshold, 2 errors only
-or the cost cap stopped runs from launching.
+Exit code: 0 every case passed, 1 a case fell below its threshold, 2 anything
+else: run errors, the cost cap stopped runs, or the runner could not start (bad
+case, missing key, CLI or image). On 2 before any run, no summary is written.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import fnmatch
 import json
 import os
 import re
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -110,19 +112,17 @@ class Case:
     allow_tools: list[str] = field(default_factory=list)
     runs: int = 5
     pass_threshold: float = 0.8
+    # Claude only (--max-turns). OpenCode has no turn limit: it runs until it stops or times out.
     max_turns: int = 6
-    agents: list[str] = field(default_factory=lambda: list(AGENTS))
-    expect_tools_by_agent: dict[str, list[str]] = field(default_factory=dict)
-    tags: list[str] = field(default_factory=list)
-    turns: list[Any] = field(default_factory=list)
+    # Excluded from pass/fail; reported as a trigger rate.
+    borderline: bool = False
 
-    @property
-    def borderline(self) -> bool:
-        return "borderline" in self.tags
 
-    def expected_tools(self, agent: str) -> list[str]:
-        return self.expect_tools_by_agent.get(agent, self.expect_tools)
-
+CASE_TYPES: dict[str, type | tuple[type, ...]] = {
+    "id": str, "skill": str, "kind": str, "prompt": str, "expect_skill": str,
+    "expect_tools": list, "forbid_tools": list, "allow_tools": list,
+    "runs": int, "pass_threshold": (int, float), "max_turns": int, "borderline": bool,
+}  # fmt: skip
 
 def load_cases(skill_names: set[str]) -> list[Case]:
     """Every tests/evals/<skill>/*.yaml, validated. A malformed case stops the run."""
@@ -142,6 +142,10 @@ def load_cases(skill_names: set[str]) -> list[Case]:
         except TypeError as exc:
             problems.append(f"{rel}: {exc}")
             continue
+        # YAML gives any type; a quoted threshold or a scalar tool list fails deep inside a paid run.
+        if wrong := [n for n, t in CASE_TYPES.items() if not isinstance(getattr(case, n), t)]:
+            problems.append(f"{rel}: wrong type for {wrong}")
+            continue
         if case.skill != path.parent.name:
             problems.append(f"{rel}: skill '{case.skill}' does not match its folder")
         if case.id != path.stem:
@@ -155,14 +159,13 @@ def load_cases(skill_names: set[str]) -> list[Case]:
         # An invocation case is scored by skill_fired alone, which skips `any`: no verdict, so every run fails.
         if case.kind == "invocation" and case.expect_skill == "any":
             problems.append(f"{rel}: an invocation case needs an expected skill or 'none', not 'any'")
-        if bad := set(case.agents) - set(AGENTS):
-            problems.append(f"{rel}: unknown agent(s) {sorted(bad)}")
         # Claude has no deny layer on top of --allowedTools, so an allowed tool that is also
         # forbidden would really run there. Reject the overlap instead.
         if overlap := [t for t in case.allow_tools if any(fnmatch.fnmatchcase(t, p) for p in case.forbid_tools)]:
             problems.append(f"{rel}: allow_tools {overlap} match forbid_tools")
-        if case.turns:
-            problems.append(f"{rel}: multi-turn cases (turns:) are not supported yet")
+        # A tool outside the allowlist is denied (Claude) or hidden (OpenCode): the case could never pass.
+        if missing := [t for t in case.expect_tools if t not in case.allow_tools]:
+            problems.append(f"{rel}: expect_tools {missing} are not in allow_tools")
         # Results are keyed on the id alone, so a duplicate would merge two cases' runs.
         if case.id in seen:
             problems.append(f"{rel}: id '{case.id}' is also used by {seen[case.id]}")
@@ -200,16 +203,15 @@ def resolve_orq() -> Path:
     return Path(found)
 
 
-def check_orq_version(orq: Path) -> str:
+def check_orq_version(orq: Path, allow_stale: bool) -> str:
     out = subprocess.run([str(orq), "--version"], capture_output=True, text=True, timeout=30, check=False).stdout
     m = re.search(r"(\d+)\.(\d+)\.(\d+)", out)
     version = m.group(0) if m else "unknown"
     if not m or tuple(int(p) for p in m.groups()) < MIN_ORQ_VERSION:
-        print(
-            f"warning: orq {version} is older than {'.'.join(map(str, MIN_ORQ_VERSION))}; "
-            "run `orq update` first, a stale CLI gives false results",
-            file=sys.stderr,
-        )
+        msg = f"orq {version} is older than {'.'.join(map(str, MIN_ORQ_VERSION))}; run `orq update` first, a stale CLI gives false results"
+        if not allow_stale:
+            sys.exit(f"{msg} (or pass --allow-stale-orq)")
+        print(f"warning: {msg}", file=sys.stderr)
     return version
 
 
@@ -307,24 +309,12 @@ class EvalTarget(CodingAgentTarget):
         return returncode, stdout, stderr
 
 
-def remove_tree(path: Path) -> None:
-    """rmtree that also clears Windows read-only files (git objects), and warns on what it leaves."""
-
-    def clear_readonly(func: Any, target: str, _exc: BaseException) -> None:
-        os.chmod(target, stat.S_IWRITE)
-        func(target)
-
-    try:
-        shutil.rmtree(path, onexc=clear_readonly)
-    except OSError as exc:
-        print(f"warning: could not remove temp dir {path}: {exc}", file=sys.stderr)
-
-
 def mcp_name(agent: AgentName, bare: str) -> str:
     return (CLAUDE_MCP_PREFIX if agent == "claude" else OPENCODE_MCP_PREFIX) + bare
 
 
 def build_target(
+    stack: contextlib.ExitStack,
     agent: AgentName,
     case: Case,
     branch: Path,
@@ -332,8 +322,8 @@ def build_target(
     run_id: str,
     container: DockerOptions | None = None,
     model: str | None = None,
-) -> tuple[EvalTarget, list[Path]]:
-    """One isolated target per run, plus the temp dirs to remove afterwards.
+) -> EvalTarget:
+    """One isolated target per run; its temp dirs are removed when `stack` closes.
 
     ``model`` renders `orq launch --model`; None keeps the default orq launch resolves.
 
@@ -341,17 +331,22 @@ def build_target(
     home and sees only its workdir, so those stopgaps are dropped, and anything it needs from the
     host has to be copied into the workdir: a host path does not exist inside.
     """
-    temp = [Path(tempfile.mkdtemp(prefix=f"skill-evals-{agent}-"))]
+
+    def mkdtemp(prefix: str) -> Path:
+        # 3.12's TemporaryDirectory also clears Windows read-only files (git objects) on cleanup.
+        return Path(stack.enter_context(tempfile.TemporaryDirectory(prefix=prefix, ignore_cleanup_errors=True)))
+
+    temp = mkdtemp(f"skill-evals-{agent}-")
     env = {"ORQ_API_KEY": key}
     if agent == "claude":
         allowed = CLAUDE_BUILTINS + [mcp_name("claude", t) for t in case.allow_tools]
         env |= {"CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"}
         workdir: Path | None = None
         if container is None:
-            env["CLAUDE_CONFIG_DIR"] = str(temp[0])
+            env["CLAUDE_CONFIG_DIR"] = str(temp)
             plugin_dir = str(branch)
         else:
-            workdir = temp[0] / "work"
+            workdir = temp / "work"
             shutil.copytree(branch, workdir / "plugin", ignore=PLUGIN_COPY_IGNORE)
             plugin_dir = f"{container.workdir}/plugin"
         target = EvalTarget(
@@ -370,12 +365,12 @@ def build_target(
             # A container defaults Claude to bypassPermissions, which would make --allowedTools a no-op.
             permission_mode="default" if container is not None else None,
         )
-        return target, temp
+        return target
 
     if container is None:
         # OpenCode: empty XDG dirs hide the user's config, skills and sessions.
         for var in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "OPENCODE_CONFIG_DIR"):
-            d = temp[0] / var.lower()
+            d = temp / var.lower()
             d.mkdir()
             env[var] = str(d)
     env |= {
@@ -384,21 +379,17 @@ def build_target(
         "OPENCODE_DISABLE_AUTOUPDATE": "1",
         "OPENCODE_DISABLE_SHARE": "1",
     }
-    workdir = Path(tempfile.mkdtemp(prefix="skill-evals-opencode-wd-"))
-    temp.append(workdir)
+    workdir = mkdtemp("skill-evals-opencode-wd-")
     subprocess.run(["git", "init", "-q"], cwd=workdir, check=True)
     skills_dst = workdir / ".opencode" / "skills"
     skills_dst.mkdir(parents=True)
     for skill in (branch / "skills").iterdir():
         if (skill / "SKILL.md").exists():
             shutil.copytree(skill, skills_dst / skill.name)
-    # --auto grants every permission, so anything not allowed is denied here instead.
-    # Shell and file writes stay off as for Claude: there is no sandbox on Windows, and
-    # an unscoped shell reaches orq through curl, around every MCP-level check.
-    # The last matching rule wins, which mirrors Claude's --allowedTools: every orq tool is
-    # denied and allow_tools are let back in (load_cases rejects an allow that is also
-    # forbidden, so the forbid rules below only restate that). OpenCode
-    # hides a denied tool from the model, so unlike Claude a forbidden call is never attempted.
+    # --auto grants everything, so deny shell, writes, webfetch (a shell reaches orq through curl,
+    # around every MCP-level check) and all orq tools, then allow allow_tools back in: the last
+    # matching rule wins, mirroring Claude's --allowedTools. OpenCode hides a denied tool from
+    # the model, so unlike Claude a forbidden call is never attempted.
     permission = {"bash": "deny", "edit": "deny", "write": "deny", "webfetch": "deny", mcp_name("opencode", "*"): "deny"}
     permission |= {mcp_name("opencode", t): "allow" for t in case.allow_tools}
     permission |= {mcp_name("opencode", p): "deny" for p in case.forbid_tools}
@@ -426,7 +417,7 @@ def build_target(
         env=env,
         container=container,
     )
-    return target, temp
+    return target
 
 
 # ---------------------------------------------------------------------------
@@ -496,34 +487,32 @@ def _run_error(agent: AgentName, exc: CodingAgentError, stdout: str) -> dict[str
     }
 
 
-def _cost_from_stdout(agent: AgentName, stdout: str) -> tuple[float, bool]:
-    """(cost, estimated): the agent's own figure, else the flat estimate so the cap still binds."""
+def _cost_from_stdout(agent: AgentName, stdout: str) -> float:
+    """The agent's own figure, else the flat estimate so the cap still binds; 0 for no output."""
     try:
         cost = coding_agent.parse_events(agent, coding_agent.parse_jsonl(stdout)).cost_usd
     except Exception:  # noqa: BLE001 -- cost is best effort; a parse failure must not fail the run
         cost = None
     if not cost and stdout.strip():
-        return UNPRICED_RUN_COST_USD, True
-    return cost or 0.0, False
+        return UNPRICED_RUN_COST_USD
+    return cost or 0.0
 
 
+@dataclass
 class Budget:
-    def __init__(self, cap: float) -> None:
-        self.cap = cap
-        self.spent = 0.0
-        self.breached = False
-        self._lock = asyncio.Lock()
+    # ponytail: no lock; admit/add have no await inside, so asyncio cannot interleave them.
+    cap: float
+    spent: float = 0.0
+    breached: bool = False
 
-    async def admit(self) -> bool:
-        async with self._lock:
-            if self.spent >= self.cap:
-                self.breached = True
-                return False
-            return True
+    def admit(self) -> bool:
+        if self.spent >= self.cap:
+            self.breached = True
+            return False
+        return True
 
-    async def add(self, cost: float | None) -> None:
-        async with self._lock:
-            self.spent += cost or 0.0
+    def add(self, cost: float | None) -> None:
+        self.spent += cost or 0.0
 
 
 async def run_once(
@@ -536,33 +525,30 @@ async def run_once(
     container: DockerOptions | None,
     model: str | None,
 ) -> dict[str, Any]:
-    target, temp = build_target(agent, case, branch, key, run_id, container, model)
-    try:
+    with contextlib.ExitStack() as stack:
+        target = build_target(stack, agent, case, branch, key, run_id, container, model)
         try:
             response = await target.respond([Message(role="user", content=case.prompt)])
         except CodingAgentError as exc:
             # A timeout leaves no stdout but the agent ran (and billed) until it was killed.
             timed_out = exc.code == "cli.timeout"
-            cost = UNPRICED_RUN_COST_USD if timed_out else _cost_from_stdout(agent, target.last_stdout)[0]
-            await budget.add(cost)
+            cost = UNPRICED_RUN_COST_USD if timed_out else _cost_from_stdout(agent, target.last_stdout)
+            budget.add(cost)
             recovered = _recover_max_turns(agent, target.last_stdout)
             if recovered is None:
                 return _run_error(agent, exc, target.last_stdout) | {"cost_usd": cost}
             return recovered | {"cost_usd": cost}
-        cost, estimated = _cost_from_stdout(agent, target.last_stdout)
-        await budget.add(cost)
+        finally:
+            await target.close()
+        cost = _cost_from_stdout(agent, target.last_stdout)
+        budget.add(cost)
         return {
             "tool_calls": [_call_dict(o) for o in response.output if isinstance(o, ToolCallOutputItem)],
             "text": next((o.text for o in response.output if isinstance(o, TextOutputItem)), ""),
             "session_id": response.response_id,
             "cost_usd": cost,
-            "cost_estimated": estimated,
             "stopped": "done",
         }
-    finally:
-        await target.close()
-        for d in temp:
-            remove_tree(d)
 
 
 def make_job(
@@ -571,29 +557,30 @@ def make_job(
     async def run(data: DataPoint, row: int) -> dict[str, Any]:
         case = Case(**data.inputs["case"])
         base = {"agent": agent, "case_id": case.id, "run": data.inputs["run"]}
-        if agent not in case.agents:
-            return {"name": agent, "output": base | {"skipped": "agent not enabled for this case"}, "error": None}
         run_id = f"skill-evals-{case.id}-{agent}-{data.inputs['run']}-{int(time.time())}"
         spent = 0.0
         out: dict[str, Any] = {}
         for attempt in (1, 2):  # a retryable error is re-run once, then reported as an error
-            if not await budget.admit():
+            if not budget.admit():
                 if attempt == 1:
                     return {"name": agent, "output": base | {"skipped": "cost cap reached"}, "error": None}
                 break  # the cap stopped the retry: report the first attempt's error
-            out = await run_once(agent, case, branch, key, run_id, budget, container, model)
+            try:
+                out = await run_once(agent, case, branch, key, run_id, budget, container, model)
+            except Exception as exc:  # noqa: BLE001 -- setup (copy, git init) failed; keep the agent's row
+                out = {"error": f"setup: {type(exc).__name__}: {exc}", "error_kind": "harness", "retryable": False,
+                       "launched": False, "cost_usd": 0.0}  # fmt: skip
             spent += out["cost_usd"] or 0.0
             # OpenCode's thread is the run_id sent as X-ORQ-THREAD-ID; Claude's is its session id.
             thread_id = (out.get("session_id") if agent == "claude" else run_id) if out.pop("launched", True) else None
             # Every attempt is billed, so the run carries the cost of all of them.
             out |= base | {"attempts": attempt, "thread_id": thread_id, "cost_usd": round(spent, 4)}
             if "error" not in out:
-                if failed := errored_expected_tools(agent, case, out["tool_calls"]):
-                    # The agent took the right step and the server failed it: not a verdict on the skill.
-                    out |= {"error": f"expected tool(s) {failed} were called but errored", "error_kind": "tool"}
+                # An expected tool that errored server side is judged in aggregate(), next to the scorers.
                 return {"name": agent, "output": out, "error": None}
             if not out.pop("retryable"):
                 break
+        out.pop("retryable", None)
         return {"name": agent, "output": out, "error": out["error"]}
 
     # Not wrapped in evaluatorq's job(): that would nest our JobReturn inside `output`,
@@ -614,25 +601,32 @@ def bare_tool(agent: str, name: str) -> str | None:
     return None
 
 
-def errored(call: dict[str, Any]) -> bool:
-    """The call ran and failed (Claude marks an is_error result `incomplete`); a denial counts too."""
-    return call.get("status") == "incomplete"
+def completed(call: dict[str, Any]) -> bool:
+    """Only a completed call counts: `incomplete` is an error or a denial, `in_progress` never returned
+    (a Claude run cut off at --max-turns can end on one)."""
+    return call.get("status") == "completed"
+
+
+def split_calls(agent: str, calls: list[dict[str, Any]]) -> tuple[set[str | None], set[str | None]]:
+    """(orq tools that completed, orq tools that ran and failed server side). A denial is neither."""
+    ok = {bare_tool(agent, c["name"]) for c in calls if completed(c)}
+    failed = {bare_tool(agent, c["name"]) for c in calls if c.get("status") == "incomplete" and not is_denied(c)}
+    return ok, failed
 
 
 def errored_expected_tools(agent: str, case: Case, calls: list[dict[str, Any]]) -> list[str]:
     """Expected tools that were only ever called with an error (a server failure, not a skill regression)."""
     if case.kind != "behavioural":
         return []
-    ok = {bare_tool(agent, c["name"]) for c in calls if not errored(c)}
-    failed = {bare_tool(agent, c["name"]) for c in calls if errored(c)}
-    return [t for t in case.expected_tools(agent) if t in failed and t not in ok]
+    ok, failed = split_calls(agent, calls)
+    return [t for t in case.expect_tools if t in failed and t not in ok]
 
 
 def fired_skills(agent: str, calls: list[dict[str, Any]]) -> list[str]:
     """Skills that loaded. A Skill call that errored (unknown skill, load failure) did not fire one."""
     fired: list[str] = []
     for c in calls:
-        if errored(c):
+        if not completed(c):
             continue
         args = c["arguments"] if isinstance(c["arguments"], dict) else {}
         if agent == "claude" and c["name"] == "Skill":
@@ -691,9 +685,12 @@ async def tools_called(params: ScorerParameter) -> EvaluationResult:
     if case.kind != "behavioural":
         return _skip("invocation case")
     # A call that errored is not evidence the step worked (a server error scores like a pass otherwise).
-    called = {bare_tool(out["agent"], c["name"]) for c in out["tool_calls"] if not errored(c)}
-    failed = {bare_tool(out["agent"], c["name"]) for c in out["tool_calls"] if errored(c)}
-    missing = [t for t in case.expected_tools(out["agent"]) if t not in called]
+    called, failed = split_calls(out["agent"], out["tool_calls"])
+    missing = [t for t in case.expect_tools if t not in called]
+    if missing and all(t in failed for t in missing):
+        # The agent took the right step and the server failed it: aggregate() makes the run an
+        # error, unless another scorer found a real regression.
+        return _skip(f"{missing} called but errored server side")
     why = "; ".join(f"{t} (called but errored)" if t in failed else t for t in missing)
     return _verdict(not missing, not missing, f"missing {why}" if missing else "all expected tools called")
 
@@ -737,33 +734,39 @@ def aggregate(results: list[Any], cases: list[Case]) -> dict[str, Any]:
         case_id = dp.data_point.inputs["case"]["id"]
         for jr in dp.job_results or []:
             out = jr.output if isinstance(jr.output, dict) else {}
-            if out.get("skipped") == "agent not enabled for this case":
-                continue
-            scores = {s.evaluator_name: s.score.pass_ for s in jr.evaluator_scores or []}
-            verdicts = [v for v in scores.values() if v is not None]
+            scores = jr.evaluator_scores or []
+            verdicts = [sc.score.pass_ for sc in scores if sc.score.pass_ is not None]
+            # evaluatorq turns a crashed scorer into an n/a score; it must not read as "nothing to check".
+            scorer_errors = [f"scorer {sc.evaluator_name}: {sc.error}" for sc in scores if getattr(sc, "error", None)]
+            server_errored = errored_expected_tools(out.get("agent", ""), by_case[case_id], out.get("tool_calls", []))
+            error = jr.error or out.get("error") or dp.error or "; ".join(scorer_errors) or None
+            error_kind = out.get("error_kind")
             if out.get("skipped"):
                 status = "skipped"
-            elif jr.error or out.get("error") or dp.error:
+            elif error:
                 status = "error"
+            elif False in verdicts:
+                # Checked before the server error: a forbidden attempt or wrong skill in the same run is still a regression.
+                status = "fail"
+            elif server_errored:
+                status, error, error_kind = "error", f"expected tool(s) {server_errored} were called but errored", "tool"
+            elif verdicts:
+                status = "pass"
             else:
-                status = "pass" if verdicts and all(verdicts) else "fail"
+                status, error = "error", "no scorer returned a verdict"
             groups.setdefault((case_id, jr.job_name), []).append(
                 {
                     "run": out.get("run"),
                     "status": status,
-                    "scores": {s.evaluator_name: {"pass": s.score.pass_, "why": s.score.explanation} for s in jr.evaluator_scores or []},
-                    "error": jr.error or out.get("error") or dp.error,
-                    "error_kind": out.get("error_kind") or ("harness" if status == "error" else None),
+                    "scores": {sc.evaluator_name: {"pass": sc.score.pass_, "why": sc.score.explanation} for sc in scores},
+                    "error": error,
+                    "error_kind": error_kind or ("harness" if status == "error" else None),
                     "thread_id": out.get("thread_id"),
                     "attempts": out.get("attempts", 0),
                     "cost_usd": out.get("cost_usd"),
                     "stopped": out.get("stopped"),
                     "tool_calls": [f"{c['name']}{' (denied)' if is_denied(c) else ''}" for c in out.get("tool_calls", [])]
                     or out.get("tool_calls_before_error", []),
-                    "tool_call_details": [
-                        {"name": c["name"], "denied": is_denied(c), "arguments": json.dumps(c["arguments"])[:400]}
-                        for c in out.get("tool_calls", [])
-                    ],
                 }
             )
 
@@ -845,43 +848,6 @@ def print_report(report: dict[str, Any]) -> None:
               + (f", flaky: {', '.join(s['flaky'])}" if s["flaky"] else ""))
 
 
-# Everything an agent could create through the MCP server; experiments are left out
-# because the runner's own upload is one.
-ENTITY_TYPES = ("dataset", "prompt", "agent", "knowledge", "memory_store", "deployment", "evaluator", "skill")
-
-
-def report_project_entities(key: str, since: datetime) -> dict[str, Any] | None:
-    """What the agents' key can see in skill-evals: totals per type, and what appeared during this batch.
-
-    search_entities keeps showing a deleted dataset for a while, so this is a
-    pointer for a human, not a verdict. It is advisory: failures only warn.
-    """
-    sys.path.insert(0, str(Path(__file__).parent))
-    from run_factual_tests import MCPClient  # sibling script, not a package
-
-    client = MCPClient(MCP_URL, key)
-    totals: dict[str, int] = {}
-    new: list[str] = []
-    for entity_type in ENTITY_TYPES:
-        try:
-            result = client.call_tool("search_entities", {"type": entity_type, "limit": 100})
-        except Exception as exc:  # noqa: BLE001 -- the entity listing is advisory
-            print(f"warning: could not list skill-evals {entity_type}s: {exc}", file=sys.stderr)
-            return None
-        rows = (result.get("structuredContent") or {}).get("data") or []
-        totals[entity_type] = len(rows)
-        for row in rows:
-            try:
-                created = datetime.fromisoformat(str(row.get("created_at")).replace("Z", "+00:00"))
-            except ValueError:
-                continue
-            if created.tzinfo is None:
-                created = created.replace(tzinfo=timezone.utc)
-            if created >= since:
-                new.append(f"{entity_type} {row.get('key') or row.get('display_name')} ({row.get('_id')})")
-    return {"totals": {t: n for t, n in totals.items() if n}, "created_during_batch": new}
-
-
 def exit_code(report: dict[str, Any], budget: Budget) -> int:
     statuses = {row["status"] for row in report["cases"]}
     if "fail" in statuses:
@@ -915,9 +881,9 @@ async def amain() -> int:
     parser.add_argument("--no-send", action="store_true", help="Do not upload the experiment to orq")
     parser.add_argument("--json", dest="json_path", type=Path, help="Write the summary here (default tests/eval-results/<timestamp>.json)")
     parser.add_argument("--branch", type=Path, default=REPO_ROOT, help="Plugin root under test (default: this checkout)")
-    # Fits a full run of the v1 cases on both agents; OpenCode runs are unpriced and charged at $0.25 each.
     parser.add_argument("--max-cost-usd", type=float, default=20.0, help="Stop launching runs once this much is spent")
     parser.add_argument("--list", action="store_true", help="List the selected cases and the run count, then exit")
+    parser.add_argument("--allow-stale-orq", action="store_true", help="Run even when orq is older than the minimum")
     parser.add_argument(
         "--container",
         action="store_true",
@@ -947,6 +913,10 @@ async def amain() -> int:
         print("no eval cases selected", file=sys.stderr)
         return 2
 
+    if args.json_path and not args.list:
+        # A fixed --json path outlives the run; delete it first so neither a setup failure nor a
+        # crash leaves the previous batch's summary to pass for this one.
+        args.json_path.unlink(missing_ok=True)
     key = load_dotenv_key("ORQ_SKILL_EVALS_KEY")
     if not key and not args.list:
         sys.exit("ORQ_SKILL_EVALS_KEY is not set: agent runs must use the skill-evals project key, refusing to start")
@@ -959,7 +929,7 @@ async def amain() -> int:
         for a in agents
     }
 
-    total_runs = sum(c.runs * len(set(c.agents) & set(agents)) for c in cases)
+    total_runs = sum(c.runs for c in cases) * len(agents)
     print(f"{len(cases)} case(s), {total_runs} agent run(s), agents {agents}, cap ${args.max_cost_usd:.2f}")
     print(f"models: {describe_models(models)}")
     for a, m in models.items():
@@ -973,7 +943,7 @@ async def amain() -> int:
         for c in cases:
             print(
                 f"  {c.skill}/{c.id} [{c.kind}] x{c.runs} threshold={c.pass_threshold:g}"
-                f"{' (measured, not scored)' if c.borderline else ''} agents={sorted(set(c.agents) & set(agents))}"
+                f"{' (measured, not scored)' if c.borderline else ''}"
             )
         return 0
 
@@ -983,13 +953,14 @@ async def amain() -> int:
         check_container_image(container.image)
         orq_version = f"from image {container.image}"
     else:
-        orq_version = check_orq_version(orq)
+        orq_version = check_orq_version(orq, args.allow_stale_orq)
     print(
         "note: orq launch may warn that ORQ_API_KEY does not belong to your `orq auth login` workspace; "
         "expected, every run uses the skill-evals key. It is left out of run errors."
     )
 
     data = [
+        # `prompt` duplicates case.prompt on purpose: it is the readable column in the orq experiment.
         DataPoint(inputs={"case": c.__dict__, "run": i + 1, "orq_skills": sorted(skill_names), "prompt": c.prompt})
         for c in cases
         for i in range(c.runs)
@@ -998,6 +969,7 @@ async def amain() -> int:
     jobs: list[Job] = [make_job(a, branch, key, budget, container, flag_models[a]) for a in agents]
 
     started = datetime.now(timezone.utc)
+    out_path = args.json_path or RESULTS_DIR / f"{started.strftime('%Y%m%dT%H%M%SZ')}.json"
     # Upload later, from disk and in a child process: evaluatorq uploads at the very end,
     # and on Windows its default-SSL httpx client can abort the whole process
     # (OPENSSL_Applink), which would take every result of a paid batch with it.
@@ -1012,7 +984,6 @@ async def amain() -> int:
     )
     ended = datetime.now(timezone.utc)
 
-    out_path = args.json_path or RESULTS_DIR / f"{started.strftime('%Y%m%dT%H%M%SZ')}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     raw_path = out_path.with_suffix(".results.json")
     raw_path.write_text(
@@ -1029,12 +1000,6 @@ async def amain() -> int:
 
     report = aggregate(results, cases)
     print_report(report)
-    entities = report_project_entities(key, started)
-    if entities:
-        print(f"\nskill-evals project: {entities['totals'] or 'empty'} (search index may lag deletes)")
-        for line in entities["created_during_batch"]:
-            print(f"  created during this batch: {line}")
-
     code = exit_code(report, budget)
     attempts = [r["attempts"] for row in report["cases"] for r in row["runs"]]
     sessions, retries = sum(attempts), sum(max(0, a - 1) for a in attempts)
@@ -1050,11 +1015,8 @@ async def amain() -> int:
         "cost_usd": round(budget.spent, 4),
         "sessions": sessions,
         "retries": retries,
-        # Reached: the cap was spent, possibly by the last run. Skipped: runs were not launched because of it.
-        "cost_cap_reached": budget.spent >= budget.cap,
         "runs_skipped_by_cap": budget.breached,
         "exit_code": code,
-        "skill_evals_project": entities,
         **report,
     }
     out_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
@@ -1071,14 +1033,13 @@ async def amain() -> int:
         url = stdout.splitlines()[-1] if child.returncode == 0 and stdout else None
         if url:
             summary["experiment_url"] = url
-            out_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
             print(f"experiment: {url}")
         else:
-            print(
-                f"warning: experiment upload failed ({stderr[-300:] or f'exit {child.returncode}'}); "
-                f"results are saved, retry with: uv run tests/scripts/run_evals.py --upload {raw_path}",
-                file=sys.stderr,
+            summary["upload_error"] = (
+                f"{stderr[-300:] or f'exit {child.returncode}'}; retry with: uv run tests/scripts/run_evals.py --upload {raw_path}"
             )
+            print(f"warning: experiment upload failed ({summary['upload_error']})", file=sys.stderr)
+        out_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
     return code
 
 
@@ -1117,7 +1078,19 @@ def main() -> None:
     if len(sys.argv) == 3 and sys.argv[1] == "--upload":
         print(asyncio.run(upload_results(Path(sys.argv[2]))))
         return
-    sys.exit(asyncio.run(amain()))
+    # Exit 1 means a regression, so a setup failure (sys.exit("msg") exits 1) or a crash
+    # (an uncaught exception exits 1) is mapped to 2.
+    try:
+        code = asyncio.run(amain())
+    except SystemExit as exc:
+        if isinstance(exc.code, str):
+            print(exc.code, file=sys.stderr)
+            sys.exit(2)
+        raise
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+        sys.exit(2)
+    sys.exit(code)
 
 
 if __name__ == "__main__":

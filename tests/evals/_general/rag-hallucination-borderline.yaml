@@ -2,9 +2,7 @@ id: rag-hallucination-borderline
 skill: _general
 kind: invocation
 # Borderline: excluded from pass/fail, the report shows which skill fired how often.
-# Fired orq-analyze-traces in 1 of 3 runs before.
 prompt: My RAG support bot on orq keeps making stuff up. How do I catch this automatically?
 expect_skill: orq-build-evaluator
-tags: [borderline]
-runs: 5
+borderline: true
 max_turns: 2

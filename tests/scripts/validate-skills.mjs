@@ -13,7 +13,7 @@
 //  11. no legacy orq template variables in skill markdown
 //  12. no hardcoded reasoning-effort value in skill markdown
 //  13. tests/factual/<skill>.csv <-> skills/ (warning only, RES-1076)
-//  14. tests/evals/<skill>/ <-> skills/ (warning only, RES-1076)
+//  14. tests/evals/<skill>/ <-> skills/ (error for new skills, RES-1076)
 // Errors fail the run; warnings don't. Run from anywhere in the repo.
 
 import { createHash } from "node:crypto";
@@ -398,7 +398,10 @@ for (const f of tracked) {
     let text = "";
     try { text = readFileSync(join(root, f), "utf8"); } catch { /* reported as missing by section 6 */ }
     const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
-    if (!/^metadata:[ \t]*\r?\n(?:[ \t]+.*\r?\n)*?[ \t]+internal:[ \t]*true[ \t]*$/m.test(fm))
+    // Block form (comment lines allowed) or flow form; a trailing comment after `true` is fine.
+    const block = /^metadata:[ \t]*\r?\n(?:[ \t]+.*\r?\n)*?[ \t]+internal:[ \t]*true[ \t]*(?:#.*)?\r?$/m;
+    const flow = /^metadata:[ \t]*\{[^}\n]*\binternal:[ \t]*true[ \t]*[,}]/m;
+    if (!block.test(fm) && !flow.test(fm))
       err(`${f} lacks \`metadata: internal: true\` — installers will ship this maintainer-only skill`);
   } else if (!f.startsWith("skills/"))
     err(`stray tracked skill outside skills/: ${f} — installers will ship it`);
@@ -609,17 +612,31 @@ for (const f of factualCsvs)
 
 // ---------- 14. tests/evals/<skill>/ <-> skills/ ----------
 // Invocation and behavioural cases per skill, run by tests/scripts/run_evals.py.
-// Folders starting with _ hold cross-skill cases (_no-skill, _general). A warning
-// until every skill has cases (RES-1076). Reference bundles are read by other skills
-// and never invoked on their own, so no case could fire them.
+// Folders starting with _ hold cross-skill cases (_no-skill, _general). Reference
+// bundles are read by other skills and never invoked on their own, so no case could
+// fire them. Skills that predate the evals are grandfathered with a warning; a new
+// skill without cases fails. Remove a skill from the list once it has cases (an entry
+// that has them is an error).
 const REFERENCE_ONLY_SKILLS = ["orq-shared"];
+const EVALS_GRANDFATHERED = new Set([
+  "create-skill", "evaluatorq", "orq-build-agent", "orq-cli", "orq-compare-agents",
+  "orq-generate-synthetic-dataset", "orq-improve-agent", "orq-invoke-deployment",
+  "orq-manage-skills", "orq-setup-observability", "orq-simulate-agent",
+]);
 const evalsDir = join(root, "tests", "evals");
 const evalDirs = existsSync(evalsDir)
   ? readdirSync(evalsDir, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith("_")).map((d) => d.name)
   : [];
-for (const name of skillDirs)
-  if (!evalDirs.includes(name) && !REFERENCE_ONLY_SKILLS.includes(name))
+for (const name of skillDirs) {
+  const has = evalDirs.includes(name);
+  if (REFERENCE_ONLY_SKILLS.includes(name)) continue;
+  if (!has && EVALS_GRANDFATHERED.has(name))
     warn(`skills/${name} has no tests/evals/${name}/ — nothing checks that it fires or what it does first`);
+  else if (!has)
+    err(`skills/${name} has no tests/evals/${name}/ — a new skill ships with at least one hand-written *-fires case`);
+  else if (EVALS_GRANDFATHERED.has(name))
+    err(`skills/${name} now has eval cases — remove it from EVALS_GRANDFATHERED in validate-skills.mjs`);
+}
 for (const d of evalDirs)
   if (!skillDirs.includes(d))
     warn(`tests/evals/${d}/ names no skill in skills/`);

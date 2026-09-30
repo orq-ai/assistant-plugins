@@ -11,7 +11,8 @@ does. The skill-tests skill launches the runners and presents this; it does not
 reinterpret the results.
 
 Buckets:
-  drift       factual check failed: the skill names a tool, command or URL that is gone
+  drift       factual check failed: the skill names a tool, command or SDK call that is gone
+  advisory    a doc URL the skill links failed (non-gating, as in run_factual_tests.py)
   regression  eval case below its pass threshold
   flaky       eval case that passed some runs and failed others
   error       factual or eval run that could not complete (not a verdict)
@@ -23,20 +24,23 @@ Usage:
     uv run tests/scripts/run_evals.py --json evals.json
     uv run tests/scripts/skill_test_report.py --factual factual.json --evals evals.json [--json out.json]
 
-Either input may be omitted. Exit code: 1 when any skill has drift or a regression, else 0.
+Either input may be omitted. Exit code: 1 when any skill has drift or a regression,
+2 when there is none but something errored or was skipped (not clean), else 0.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 import re
 import sys
 from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-BUCKETS = ("drift", "regression", "flaky", "error", "measured", "skipped")
+BUCKETS = ("drift", "regression", "flaky", "error", "measured", "skipped", "advisory")
+EVAL_BUCKET = {"fail": "regression", "error": "error", "measured": "measured", "skipped": "skipped"}
 
 
 def skill_line(skill: str, needle: str) -> str | None:
@@ -62,8 +66,8 @@ def skill_line(skill: str, needle: str) -> str | None:
 def factual_findings(data: dict[str, Any]) -> list[dict[str, Any]]:
     findings = []
     for r in data.get("results", []):
-        if r["status"] == "failed" and r["test_type"] != "doc_url":
-            bucket = "drift"
+        if r["status"] == "failed":
+            bucket = "advisory" if r["test_type"] == "doc_url" else "drift"
         elif r["status"] == "error":
             bucket = "error"
         else:
@@ -82,7 +86,7 @@ def factual_findings(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _eval_pointer(skill: str, row: dict[str, Any]) -> str | None:
-    """The SKILL.md line naming a tool the failing runs called or were forbidden to call."""
+    """The SKILL.md line naming an orq tool in a failing scorer's explanation (forbidden, outside allow_tools, or expected but missing)."""
     for run in row["runs"]:
         for score in run["scores"].values():
             if score["pass"] is False:
@@ -95,22 +99,14 @@ def _eval_pointer(skill: str, row: dict[str, Any]) -> str | None:
 def eval_findings(data: dict[str, Any]) -> list[dict[str, Any]]:
     findings = []
     for row in data.get("cases", []):
-        buckets = []
-        if row["status"] == "fail":
-            buckets.append("regression")
-        elif row["status"] == "error":
-            buckets.append("error")
-        elif row["status"] == "measured":
-            buckets.append("measured")
-        elif row["status"] == "skipped":
-            buckets.append("skipped")
+        buckets = [b] if (b := EVAL_BUCKET.get(row["status"])) else []
         if row["flaky"] and row["status"] != "measured":
             buckets.append("flaky")
         rate = "-" if row["pass_rate"] is None else f"{row['pass_rate']:.0%}"
-        by_kind = ", ".join(f"{k} {n}/{len(row['runs'])}" for k, n in row.get("errors_by_kind", {}).items())
+        # The scorer's own explanation: for a forbidden attempt it carries the call's arguments.
         failing = sorted(
-            {k for r in row["runs"] for k, v in r["scores"].items() if v["pass"] is False}
-            | ({f"run error ({by_kind})" if by_kind else "run error"} if row["errors"] else set())
+            {f"{k}: {v['why']}" for r in row["runs"] for k, v in r["scores"].items() if v["pass"] is False}
+            | {f"run error ({r.get('error_kind') or 'harness'}): {r['error']}" for r in row["runs"] if r.get("error")}
         )
         for bucket in buckets:
             findings.append(
@@ -119,7 +115,7 @@ def eval_findings(data: dict[str, Any]) -> list[dict[str, Any]]:
                     "bucket": bucket,
                     "source": "evals",
                     "what": f"{row['case']} [{row['agent']}] {rate} (need {row['threshold']:.0%})",
-                    "detail": ", ".join(failing) or None,
+                    "detail": "; ".join(failing) or None,
                     "where": _eval_pointer(row["skill"], row) if bucket in ("regression", "flaky") else None,
                     "threads": [r["thread_id"] for r in row["runs"] if r["status"] != "pass" and r.get("thread_id")],
                 }
@@ -140,17 +136,17 @@ def main() -> None:
     skills: set[str] = set()
     # Skipped rows measured nothing (no ORQ_API_KEY, a host outage); a skill whose checks
     # were all skipped must not read as clean.
-    skipped: dict[str, int] = {}
+    skipped: Counter[str] = Counter()
     if args.factual:
         factual = json.loads(args.factual.read_text(encoding="utf-8"))
         findings += factual_findings(factual)
         skills |= {r["skill"] for r in factual.get("results", [])}
-        for r in factual.get("results", []):
-            if r["status"] == "skipped":
-                skipped[r["skill"]] = skipped.get(r["skill"], 0) + 1
+        skipped = Counter(r["skill"] for r in factual.get("results", []) if r["status"] == "skipped")
     evals: dict[str, Any] = {}
     if args.evals:
         evals = json.loads(args.evals.read_text(encoding="utf-8"))
+        if "exit_code" not in evals:
+            sys.exit(f"{args.evals} is not a finished run_evals.py summary")
         findings += eval_findings(evals)
         skills |= {row["skill"] for row in evals.get("cases", [])}
 
@@ -158,9 +154,7 @@ def main() -> None:
     for skill in sorted(skills):
         mine = [f for f in findings if f["skill"] == skill]
         report[skill] = {b: [f for f in mine if f["bucket"] == b] for b in BUCKETS}
-        report[skill]["factual_skipped"] = skipped.get(skill, 0)
-        if skill in evals.get("skills", {}):
-            report[skill]["eval_summary"] = evals["skills"][skill]
+        report[skill]["factual_skipped"] = skipped[skill]
 
     for skill, buckets in report.items():
         parts = [f"{len(buckets[b])} {b}" for b in BUCKETS if buckets[b]]
@@ -174,16 +168,22 @@ def main() -> None:
                 print(f"  [{b}] {f['what']}: {f['detail']}{where}")
                 for t in f.get("threads", [])[:3]:
                     print(f"      thread {t}")
+    if evals:
+        print(f"\neval run started {evals['started']}")
     if evals.get("experiment_url"):
-        print(f"\nexperiment: {evals['experiment_url']}")
+        print(f"experiment: {evals['experiment_url']}")
+    if evals.get("upload_error"):
+        print(f"experiment upload failed: {evals['upload_error']}")
     if evals:
         sessions = f" ({evals['sessions']} sessions, {evals['retries']} retries)" if "sessions" in evals else ""
         print(f"eval cost: ${evals.get('cost_usd', 0):.2f}{sessions}" + (" (cost cap stopped some runs)" if evals.get("runs_skipped_by_cap") else ""))
 
     if args.json_path:
         args.json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    bad = any(buckets["drift"] or buckets["regression"] for buckets in report.values())
-    sys.exit(1 if bad else 0)
+    if any(b["drift"] or b["regression"] for b in report.values()):
+        sys.exit(1)
+    not_clean = any(b["error"] or b["skipped"] or b["factual_skipped"] for b in report.values())
+    sys.exit(2 if not_clean or evals.get("runs_skipped_by_cap") else 0)
 
 
 if __name__ == "__main__":

@@ -144,7 +144,8 @@ The factual suite needs no confirmation when it is the only suite run.
 ## 5. Preconditions
 
 - `orq --version` is 10.3.1 or newer; if not, tell the user to run `orq update`
-  first. A stale CLI reports false drift.
+  first. A stale CLI reports false drift, and the eval runner refuses to start on
+  one unless `--allow-stale-orq` is passed.
 - `ORQ_SKILL_EVALS_KEY` is set. It is the `skill-evals` project key; the eval
   runner refuses to start without it. Never substitute another key.
   The experiment upload uses the same key; pass `--no-send` to skip it.
@@ -186,11 +187,16 @@ background and report when it finishes. A non-zero exit code from a runner is a
 result, not a failure of this skill: go on to the report. Exit codes:
 
 - `run_evals.py`: 0 all cases passed; 1 at least one case failed (a regression);
-  2 no failure, but at least one case errored or the cost cap stopped runs. It stops
-  before running with `invalid eval cases:` when a case file is malformed, and with
-  a message naming the missing key, orq binary or Docker image.
+  2 anything else: no failure but a case errored or the cost cap stopped runs, or it
+  never ran. It stops before running, with exit 2 and no summary, on `invalid eval
+  cases:` (a malformed case) or a message naming the missing key, orq binary or
+  Docker image, or a stale orq; report that stderr instead of running the merger.
+  It deletes the `--json` file at start, and the merger refuses a summary without
+  `exit_code`, so a previous batch cannot pass for this one.
 - `run_factual_tests.py`: 0 all rows passed or skipped; 1 at least one row failed or
   errored, `--skill` names a skill with no CSV, or no rows loaded at all.
+- `skill_test_report.py`: 1 a skill has drift or a regression; 2 none, but something
+  errored or was skipped (not clean); else 0.
 
 `skill_test_report.py` prints the merged report; present it as step 7 describes. The
 eval summary JSON is described in [Eval summary fields](#eval-summary-fields) if you
@@ -201,16 +207,17 @@ need a detail the printed report leaves out.
 Show the merged report per skill, in its own buckets:
 
 - **drift**: a factual check failed; the skill names something that no longer exists. Point to the SKILL.md line the report gives.
-- **regression**: an eval case fell below its pass threshold. Name the failing scorer and, for an attempted forbidden call, the arguments it was called with.
+- **regression**: an eval case fell below its pass threshold. Name the failing scorer and give its explanation from the report's detail; for an attempted forbidden call that includes the arguments.
 - **flaky**: passed some runs, failed others. Flag it; do not call it a pass.
 - **error**: a run could not complete, or the cost cap stopped some of a case's runs. Not a verdict on the skill. Group by the `error_kind` the report gives per run:
   - `model`: the gateway or model failed (empty_response, rate limit, provider 5xx); the run shows the agent's own error message.
   - `harness`: orq or the agent CLI exited without an agent error (a launch or parse failure).
   - `timeout`: the agent was killed at the time limit.
-  - `tool`: the agent called the expected orq tool and the server failed it.
+  - `tool`: the agent called the expected orq tool and the server failed it. A forbidden attempt or wrong skill in the same run still makes it a regression.
 
   If most of a case's runs are `model` errors, say the skill is **untested** on that model and suggest re-running on a stronger one. Never call the skill failing. Give each errored run's thread id: errored runs have one too.
 - **measured**: borderline cases, reported as a trigger rate only.
+- **advisory**: a doc URL the skill links failed. Non-gating; mention it.
 - **skipped**: an eval case with no scored run, usually because the cost cap stopped it. It measured nothing; say so, do not call the skill clean.
 - **factual skipped**: rows that could not run (usually no `ORQ_API_KEY`). Say how many; a skill with skipped rows is not clean.
 
@@ -270,17 +277,14 @@ prefix (`list_models`, not `mcp__plugin_orq_orq-workspace__list_models`).
 | `prompt` | yes | | The single user message, sent exactly as written. |
 | `expect_skill` | yes | | A skill name in `skills/`, `none` (no orq skill may fire), or `any` (behavioural only: do not score which skill fires). |
 | `expect_tools` | no | `[]` | Behavioural: every one must be called, and succeed, within `max_turns`. Each must also be in `allow_tools`, or the agent cannot call it. |
-| `expect_tools_by_agent` | no | `{}` | Per-agent override of `expect_tools`, e.g. `{opencode: [...]}`. |
 | `allow_tools` | no | `[]` | orq tools the agent may run. Everything else from orq is denied; Claude also always gets `Read`, `Glob`, `Grep` and `Skill`. |
 | `forbid_tools` | no | `[create_*, update_*, delete_*, invoke_*]` | Glob patterns; attempting one fails a behavioural case, denied or not. Must not overlap `allow_tools`. |
 | `runs` | no | 5 | Runs per agent. Invocation cases usually set 3. |
 | `pass_threshold` | no | 0.8 | Fraction of scored runs that must pass. Invocation cases usually set 0.66; near misses 1.0. |
-| `max_turns` | no | 6 | Agent turns before the run is stopped. Invocation cases usually set 2. |
-| `agents` | no | `[claude, opencode]` | Agents the case runs on. |
-| `tags` | no | `[]` | `borderline` makes the case measured only: a trigger rate, no pass or fail. |
-| `turns` | no | | Not supported yet; a case that sets it is rejected. |
+| `max_turns` | no | 6 | Claude turns before the run is stopped. Invocation cases usually set 2. OpenCode has no turn limit: it runs until it stops or times out, and is charged a flat $0.25 per run. |
+| `borderline` | no | `false` | `true` makes the case measured only: a trigger rate, no pass or fail. |
 
-Any other field is rejected. Scoring:
+Any other field, or a field of the wrong type, is rejected. Scoring:
 
 - **Invocation:** passes when the first orq skill that fires is `expect_skill`, or,
   for `none`, when no orq skill fires. Nothing else is scored.
@@ -343,9 +347,7 @@ cost cap is reached before the retry, the first attempt's error is reported.
 The `--json` file `run_evals.py` writes. Top level: `cost_usd` (total spent),
 `sessions` and `retries`, `models` (per agent: `model`, and `source` = `flag` or
 `orq launch default`; `model` is null when the default could not be read),
-`cost_cap_reached`, `runs_skipped_by_cap`, `exit_code`, `experiment_url`,
-`results_file`, `orq_version`, `agents`, `skill_evals_project` (entities the agents'
-key can see, and any created during the batch), `skills` (per skill: invocation and
+`runs_skipped_by_cap`, `exit_code`, `experiment_url` (or `upload_error` with the retry command), `results_file`, `orq_version`, `agents`, `skills` (per skill: invocation and
 behavioural pass counts, flaky cases, errors, cost), and `cases`.
 
 Each entry of `cases`: `case`, `skill`, `kind`, `agent`, `status` (`pass`, `fail`,
@@ -354,8 +356,8 @@ Each entry of `cases`: `case`, `skill`, `kind`, `agent`, `status` (`pass`, `fail
 scorer: `pass` and `why`), `error`, `error_kind` (`model`, `harness`, `timeout` or
 `tool`; null when the run did not error), `thread_id`, `attempts`, `cost_usd`,
 `stopped` (`done`, `max_turns` or `error`), `tool_calls` (names; `(denied)` when
-refused; for an errored run, the calls it made before failing) and
-`tool_call_details` (name, denied, arguments).
+refused; for an errored run, the calls it made before failing). A run whose scorer
+crashed, or where no scorer gave a verdict, is `error`.
 
 A case whose runs passed but where some errored or were cost-capped is `error`, not
 `pass`: a pass on part of the runs is not a pass.
@@ -377,6 +379,7 @@ Complete for each script; run all of them from the repo root.
 | `--opencode-model <id>` | `orq launch` default (see `--list`) | Gateway model for OpenCode runs, as `provider/model_id`. |
 | `--parallel <n>` | 2 | Concurrent agent runs; each is a full agent process. |
 | `--max-cost-usd <x>` | 20.0 | Stop launching runs once this much is spent. |
+| `--allow-stale-orq` | off | Run even when orq is older than 10.3.1. |
 | `--list` | off | Print the selected cases, run count, models and thresholds, then exit. Spends nothing. |
 | `--json <path>` | `tests/eval-results/<timestamp>.json` | Write the summary here. |
 | `--no-send` | off (uploads) | Do not upload the experiment to orq. |

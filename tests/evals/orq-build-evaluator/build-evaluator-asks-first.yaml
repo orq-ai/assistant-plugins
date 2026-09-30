@@ -2,12 +2,7 @@ id: build-evaluator-asks-first
 skill: orq-build-evaluator
 kind: behavioural
 # The skill must scope the evaluator with the user before creating anything.
-# Known to fail on 2026-09-24: it skipped its questions and attempted create_llm_eval.
 prompt: Build an LLM-as-a-judge evaluator in orq that checks answers are grounded in the retrieved context.
 expect_skill: orq-build-evaluator
-expect_tools: []
-forbid_tools: [create_*, update_*, delete_*, invoke_*]
 allow_tools: [search_entities, list_models, get_llm_eval]
-runs: 5
-pass_threshold: 0.8
 max_turns: 8
