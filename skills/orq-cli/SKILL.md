@@ -48,7 +48,7 @@ The CLI is a Go binary generated from the orq.ai OpenAPI spec, so nearly every A
 
 - `orq-analyze-traces` — once you have pulled traces, analyze them
 - `orq-improve-agent` — act on what that analysis found
-- `orq-shared` — the layered trace-read recipe (`aggregate` → `search` → `get-span`) built on top of this skill's query contract. It defers to this file for the CLI's general rules, so **correct a query rule here first**
+- `orq-shared` — the layered trace-read recipe (`aggregate` → `search` → `get-span`) built on top of this skill's query contract. It defers to this file for the CLI's general rules, so **correct a query rule here first**. **For a metrics question — "what did we spend last week", "p95 latency", "evaluator pass rate", "guardrail block rate" — go straight to [`orq-shared/resources/trace-queries.md` §5](../orq-shared/resources/trace-queries.md), which holds the `orq reporting query` contract: the 18-metric enum, the flag surface, timeseries vs scalar, and worked examples for CI and cron**
 - `orq-invoke-deployment` — call deployments and agents from application code
 - `orq-manage-skills` — richer workflow for the platform Skills entity that `orq skills` exposes (not the `skills` capability of `orq connect`)
 - `orq-setup-observability` — get traces flowing before you query them

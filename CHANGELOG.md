@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.1] - 2026-10-01
+
+### Changed
+
+- `orq-shared/resources/trace-queries.md` §5: the `orq reporting query` contract now carries the full flag surface (`--metric`, `--from`/`--to`, `--grain`, `--mode`, `--group-by`, `--filters`, `--sort`, `--time-zone`, `--include-totals`, `--limit`, `-o json`), the timeseries-vs-scalar split, and worked examples for CI and cron. Read from the generated command surface at CLI 10.3.0.
+- `orq-shared/resources/trace-queries.md` §2: `--from` / `--to` are no longer described as RFC3339-only. The flag form accepts relative values (`7d`, `now-24h`, `now`); a body read from `--from-file` or stdin is sent as written and must be RFC3339, so the window belongs on the flags.
+- `orq-cli` skill: its `orq-shared` companion entry now routes metrics questions ("what did we spend last week", "p95 latency", "evaluator pass rate") straight to §5, so the reporting contract is reachable from the CLI skill without a second skill.
+- `orq-shared` skill: `orq-cli` added to the consumer list for `resources/trace-queries.md`.
+
+### Fixed
+
+- `orq-shared/resources/trace-queries.md`: `--limit` on `orq reporting query` is documented with its real bounds — maximum bucket rows returned, default 1000, capped at 5000 — rather than as a top-N group cap.
+- `orq-shared/resources/trace-queries.md`: records that the reporting `filters[].field` is a closed 35-value enum with `op` limited to `eq`/`neq`/`in`/`not_in`, and that `TraceFilter.field` is free-form from `orq traces list-fields`. The two share the JSON shape, not the vocabulary — a filter copied across matches zero rows and raises no error.
+- `orq-shared/resources/trace-queries.md`: `help-input` is registered on the root command; `orq reporting query help-input` is parsed as a shorthand body fragment, not a subcommand. Use `orq help-input` or `orq reporting query --help`.
+- `orq-shared/resources/trace-queries.md`: `POST /v3/telemetry/query` and `orq telemetry` are recorded as rc-only. Rechecked against the stable CLI `v11.0.2` tag on 2026-10-01: no `telemetry` registration or `/v3/telemetry/*` path in the stable spec; both remain under `packages/orq-rc`.
+- `orq reporting query` was re-probed live on CLI 8.7.0-rc.15 (API 4.15.0-rc.52): the scalar cost path is `.data[0].metrics["genai.cost"]`, omitted window flags default to the last seven days, and `--include-totals` returns top-level `.totals.metrics`.
+
 ## [3.7.0] - 2026-10-01
 
 ### Added
