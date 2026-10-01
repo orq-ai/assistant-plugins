@@ -10,7 +10,7 @@ Each case in tests/evals/<skill>/<case>.yaml is a prompt plus what should happen
 which skill fires, which orq tools get called, which must not. Every run starts a
 fresh coding agent through `orq launch` (evaluatorq CodingAgentTarget) with this
 branch loaded as the `orq` plugin and nothing else from the user's setup, scores
-the tool calls with three local scorers, and uploads the results as one orq
+the tool calls with four local scorers, and uploads the results as one orq
 experiment.
 
 The agent runs with the caller's ORQ_API_KEY. A run can call only its case's
