@@ -92,11 +92,46 @@ def _is_confuser(e: dict[str, Any]) -> bool:
     return isinstance(inst, (int, float)) and inst > 0.0
 
 
+def _is_jury_confuser(e: dict[str, Any]) -> bool:
+    # With a panel (RES-1638) a row is also a confuser when the models land on
+    # different sides, or any one of them wobbles, even if the aligned judge is steady.
+    # An off-contract panel verdict is a typed abstention and gets priority;
+    # provider failures are mechanical errors and never become questions.
+    if e.get('panel_abstained_models'):
+        return True
+    if not isinstance(e.get('instability'), (int, float)):
+        return False
+    return _is_confuser(e) or e.get('panel_disagreement') is True or bool(e.get('panel_unstable_models'))
+
+
+def _jury_rank(e: dict[str, Any]) -> tuple:
+    # Tiers: panel abstention, unresolved tie, disagreement + wobble,
+    # disagreement, wobble.
+    # Provider failures never create a tier: metrics excludes unmeasurable votes.
+    disagree = e.get('panel_disagreement') is True
+    wobble = bool(e.get('panel_unstable_models')) or _is_confuser(e)
+    tier = (0 if e.get('panel_abstained_models') else 1 if e.get('panel_tied')
+            else 2 if disagree and wobble else 3 if disagree else 4)
+    agreement = e.get('panel_agreement')
+    return (
+        tier,
+        -max(e.get('panel_max_instability') or 0.0, e.get('instability') or 0.0),
+        1.0 if agreement is None else agreement,
+        e.get('source_index') if isinstance(e.get('source_index'), int) else 0,
+    )
+
+
 def _is_low_instability(e: dict[str, Any]) -> bool:
     # Measurable AND perfectly consistent (instability 0) — exactly the bucket
     # that can hide a *consistent* bias and never surfaces in the ranking, so it
     # feeds the low-instability sanity sample.
-    return e.get('instability') == 0.0 and (e.get('n_successful_repeats') or 0) >= 2
+    return (
+        e.get('instability') == 0.0 and (e.get('n_successful_repeats') or 0) >= 2
+        and ('panel_disagreement' not in e or e.get('panel_disagreement') is False)
+        and not e.get('panel_unstable_models')
+        and ('panel_n_models_measured' not in e
+             or e['panel_n_models_measured'] == len(e.get('panel_votes') or {}))
+    )
 
 
 def _verdict_space(output_type: str, labels: list[str], scale: tuple[float, float] | None) -> dict[str, Any]:
@@ -125,7 +160,9 @@ def _display_item(
         'low_flip_sample': low_flip,
         # Why this datapoint is in the queue: 'instability' (self-inconsistent),
         # 'cross_model' (two models disagree — §11.3 opt 4), 'wrong_vs_reference'
-        # (stable, and disagrees with the dataset's ground truth), or 'low_flip'.
+        # (stable, and disagrees with the dataset's ground truth), 'panel_disagreement'
+        # (the jury's models landed on different sides), 'panel_abstention'
+        # (a panel model returned only off-contract answers), or 'low_flip'.
         'reason': reason,
         # Ground truth and whether the judge matched it, when the dataset carried a
         # label. Lets the conductor group by HOW the judge is wrong (systematically
@@ -162,6 +199,12 @@ def _display_item(
             'stdev': e.get('stdev'),          # numeric
             'representative_explanation': e.get('representative_explanation'),
         },
+        # Each panel model's aggregate verdict ({model: value}), None for a judge-only run.
+        'panel_votes': e.get('panel_votes'),
+        'panel_tied': e.get('panel_tied'),
+        'panel_abstained_models': e.get('panel_abstained_models'),
+        'panel_unstable_models': e.get('panel_unstable_models'),
+        'panel_agreement': e.get('panel_agreement'),
     }
 
 
@@ -276,7 +319,11 @@ def main(
     scale = tuple(scale_raw) if isinstance(scale_raw, (list, tuple)) and len(scale_raw) == 2 else None
     verdict_space = _verdict_space(output_type, labels, scale)
 
-    flipped = [e for e in per_row if _is_confuser(e)]  # already most-unstable-first
+    jury = any('panel_disagreement' in e for e in per_row)
+    if jury:
+        flipped = sorted((e for e in per_row if _is_jury_confuser(e)), key=_jury_rank)
+    else:
+        flipped = [e for e in per_row if _is_confuser(e)]  # already most-unstable-first
     # Uncapped: cross-model/wrong-vs-reference dedup and the "no confusers" check
     # both need the FULL flipped set, not whatever --count later keeps. The cap
     # applies once, to the combined confuser list, below.
@@ -303,7 +350,8 @@ def main(
     ]
 
     all_confusers = (
-        [(e, 'instability') for e in flipped]
+        [(e, 'panel_abstention' if e.get('panel_abstained_models') else
+          'panel_disagreement' if e.get('panel_disagreement') is True else 'instability') for e in flipped]
         + [(e, 'cross_model') for e in cross_only]
         + [(e, 'wrong_vs_reference') for e in wrong_only]
     )
@@ -356,6 +404,8 @@ def main(
     # source lists, so these agree with `len(items)` even when --count trimmed
     # the confuser list.
     n_flipped_in_queue = sum(1 for _, reason in confusers if reason == 'instability')
+    n_panel_in_queue = sum(1 for _, reason in confusers if reason == 'panel_disagreement')
+    n_abstained_in_queue = sum(1 for _, reason in confusers if reason == 'panel_abstention')
     n_cross_in_queue = sum(1 for _, reason in confusers if reason == 'cross_model')
     n_wrong_in_queue = sum(1 for _, reason in confusers if reason == 'wrong_vs_reference')
 
@@ -364,6 +414,7 @@ def main(
             'evaluator_id': metrics.get('metadata', {}).get('evaluator_id'),
             'evaluator_key': metrics.get('metadata', {}).get('evaluator_key'),
             'judge_model': metrics.get('metadata', {}).get('judge_model'),
+            'panel_models': (metrics.get('panel') or {}).get('models') or [],
             # Identity of the traces.jsonl these source_index values index into.
             # Preferred from the metrics/stability metadata (the file as it was when
             # the run was judged); recomputed only for older run dirs that predate it.
@@ -372,6 +423,8 @@ def main(
             'eval_prompt': template,  # shown in the UI for context on how variables are used
             'n_flipped_items': n_flipped_in_queue,
             'n_cross_model': n_cross_in_queue,
+            'n_panel_disagreement': n_panel_in_queue,
+            'n_panel_abstention': n_abstained_in_queue,
             'n_wrong_vs_reference': n_wrong_in_queue,
             'n_dropped_by_count': n_dropped_by_count,
             'n_low_flip_sample': len(sampled_low),
@@ -383,7 +436,8 @@ def main(
     runner.write_json(out_dir / 'queue.json', queue)
     logger.info(
         f'✓ Wrote {out_dir / "queue.json"}: {n_flipped_in_queue} flipped + '
-        f'{n_cross_in_queue} cross-model + {n_wrong_in_queue} wrong-vs-reference + '
+        + (f'{n_abstained_in_queue} panel-abstention + {n_panel_in_queue} panel-disagreement + ' if jury else '')
+        + f'{n_cross_in_queue} cross-model + {n_wrong_in_queue} wrong-vs-reference + '
         f'{len(sampled_low)} low-flip sanity items = {len(items)} to annotate'
     )
     _log_projection(queue['meta']['grey_zone_projection'], len(items))

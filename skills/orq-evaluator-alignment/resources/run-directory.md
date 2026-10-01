@@ -9,9 +9,11 @@ the **printed** path rather than assuming the renamed form. It holds: `evaluator
 the trace scan covered, and whether it hit its cap), `hollow_debug.json` (a sample of
 the raw span shape, written only when the hollow ratio trips the abort — the
 extraction shape-gap diagnostic), `stability.json` (rows carry `reference` when the
-source supplied ground truth), `metrics.json` (+ a `correctness` block when labels
-were present), `queue.json` (each confuser carries its `verdict_space` + a `reason` of
-instability/cross_model/wrong_vs_reference/low_flip),
+source supplied ground truth, plus every model's repetitions and errors in a panel
+run), `metrics.json` (+ a `correctness` block when labels were present and a `panel`
+block when several models judged), `queue.json` (each confuser carries its
+`verdict_space` + a `reason` of
+instability/panel_disagreement/panel_abstention/cross_model/wrong_vs_reference/low_flip),
 `dataset_inventory.json` + `input_mapping.json` (what a dataset held and how its
 fields were mapped, written only when rows were skipped or `--map` was used),
 `synthetic_datapoints.json`
@@ -28,6 +30,10 @@ sub-runs `retest/` (+ `retest_baseline/` with `--baseline_rerun`), each holding 
 filtered `traces.jsonl` and the `index_map.json` that pairs its positional
 `source_index` back to the parent's. Any step is re-runnable in isolation against an
 existing run directory.
+
+In a panel run, `metrics.json.per_row` separates model disagreement from within-model
+wobble, and `retest_metrics.json.agreement` reports each model against the human
+labels. The evaluator being changed remains the single audited judge.
 
 **`source_index` is a position in `traces.jsonl`, and that file is the run's spine.**
 `stability.json` and `queue.json` record a `traces_fingerprint` of it; `fetch_traces`

@@ -2,7 +2,8 @@
 
 A standalone, human-in-the-loop skill that realigns an existing **LLM-judge
 evaluator** (boolean, categorical, or numeric) to human judgment. Given an orq evaluator id and its production traces, it measures the
-judge's self-consistency, finds the examples it is least sure about, works out
+judge's self-consistency and optional disagreement across several models, finds the
+examples it is least sure about, works out
 *why* those examples are hard, asks the user a handful of questions that each
 settle a whole group of them, turns the answers into a rewritten judge prompt,
 and — only after the human approves — creates a new evaluator.
@@ -20,10 +21,11 @@ required.
 The expensive part of aligning a judge is human attention, so the flow spends it
 as late and as narrowly as possible:
 
-1. **Measure, don't ask.** Re-judge each datapoint N times and score the judge's
+1. **Measure, don't ask.** Re-judge each datapoint N times per selected model and score the judge's
    self-inconsistency on one 0..1 *instability* scale, whatever its output type —
-   boolean flip-rate, categorical label entropy, numeric score spread, string
-   exact-match entropy. Instability ranks the queue; nobody labels anything yet.
+   boolean flip-rate, categorical label entropy, numeric score spread. With several
+   models, cross-model disagreement is a separate signal that also ranks the queue;
+   nobody labels anything yet.
    When the examples arrived with ground truth (a dataset's `expected_output`),
    the same pass also scores **correctness** — and reports accuracy *by band*,
    because accuracy on the rows the judge was steady about is the one measurement
@@ -62,10 +64,10 @@ is re-runnable in isolation against an existing run directory.
 | 1a | `dataset_inputs.py list\|pull` | orq dataset | **input source 2** — appends to `traces.jsonl` |
 | 1a | `seed_inputs.py convert\|save` | datapoints | **input sources 3 + 4** (bring your own / generated) — appends; `save` writes back to orq |
 | 2 | `estimate_cost.py` | `traces.jsonl` | _(prints call + token projection; gate)_ |
-| 3 | `stability.py` | `traces.jsonl`, `evaluator.json` | `stability.json` (carries `reference` when the source had ground truth) |
-| 4 | `metrics.py` | `stability.json` | `metrics.json` (auto-run by `stability.py`) — instability, plus a `correctness` block when rows carried labels |
+| 3 | `stability.py` | `traces.jsonl`, `evaluator.json` | `stability.json` (all model votes; carries `reference` when the source had ground truth) |
+| 4 | `metrics.py` | `stability.json` | `metrics.json` (auto-run by `stability.py`) — instability, panel disagreement, and correctness when rows carried labels |
 | 4 | `cross_model.py` | `stability.json` (+ `traces.jsonl`) | `cross_model.json` — second-judge disagreers; a step-4 remedy for a judge that never wavers, not an input source |
-| 5 | `build_queue.py` | `metrics.json` | `queue.json` — confusers by `reason`: instability / cross_model / wrong_vs_reference |
+| 5 | `build_queue.py` | `metrics.json` | `queue.json` — confusers by `reason`: panel_abstention / panel_disagreement / instability / cross_model / wrong_vs_reference |
 | 6 | `grey_zone.py assemble` | `queue.json` | `grey_zone_payload.json` — the bounded confuser payload |
 | 6 | `grey_zone.py apply` | `grey_zone_policy.json` (already carries the per-point labels) | `aggregated.md` — rewrite guidance |
 | 6 | `serve_annotation.py` | `queue.json` | `annotations.json` — the per-row UI fallback |
@@ -106,6 +108,12 @@ uv run scripts/create_eval.py      --run_dir $RUN              # presents the di
 uv run scripts/create_eval.py      --run_dir $RUN --approve    # after human OK
 uv run scripts/retest.py           --run_dir $RUN              # optional: did it move?
 ```
+
+For jury mode, choose two extra provider-qualified model slugs, then pass the same
+`--panel_models model-b,model-c` flag to `estimate_cost.py` and `stability.py`. The
+audited judge remains the first model; with a panel, each model gets three repeats
+by default. Omitting the flag keeps the one-model path. See
+`resources/measure.md` for the cost and human approval gate.
 
 `config.toml` holds all defaults (repetitions, temperature, backend, sample
 sizes). CLI flags override per run. `resources/configuration.md`'s parameter reference lists every

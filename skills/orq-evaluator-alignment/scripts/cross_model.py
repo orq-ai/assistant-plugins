@@ -90,7 +90,10 @@ def main(
     probe = _build_probe_dir(out_dir, model)
     from stability import main as stability_main  # noqa: PLC0415 — heavy import guarded
 
-    stability_main(run_dir=str(probe), config=config, num_samples=num_samples, n_repeats=n_repeats, metrics=False)
+    stability_main(
+        run_dir=str(probe), config=config, num_samples=num_samples,
+        n_repeats=n_repeats, panel_models=[], metrics=False,
+    )
     b_by_idx = _verdicts_by_index(runner.read_json(probe / 'stability.json'))
 
     # Same band, same key, same derivation as retest's signal (b) — a judge-vs-judge
