@@ -37,9 +37,9 @@ def case(**overrides: Any) -> r.Case:
     return r.Case(**(fields | overrides))
 
 
-def score(scorer: Any, c: r.Case, calls: list[dict[str, Any]], agent: str = "claude") -> Any:
+def score(scorer: Any, c: r.Case, calls: list[dict[str, Any]], agent: str = "claude", text: str = "") -> Any:
     data = DataPoint(inputs={"case": c.__dict__, "run": 1, "orq_skills": ORQ_SKILLS})
-    return asyncio.run(scorer({"data": data, "output": {"agent": agent, "tool_calls": calls}}))
+    return asyncio.run(scorer({"data": data, "output": {"agent": agent, "tool_calls": calls, "text": text}}))
 
 
 # -- tool call parsing ---------------------------------------------------------
@@ -91,6 +91,16 @@ def test_tools_called_counts_only_completed_calls() -> None:
     assert score(r.tools_called, c, [call(CLAUDE + "list_models", status="in_progress")]).pass_ is False
     # only a server error on the expected tool: no verdict here, aggregate() makes the run an error
     assert score(r.tools_called, c, [call(CLAUDE + "list_models", result="ECONNREFUSED", status="incomplete")]).pass_ is None
+    assert score(r.tools_called, case(), []).pass_ is None
+
+
+def test_asks_user_requires_a_relevant_question_in_assistant_text() -> None:
+    c = case(expect_question_about=["ground", "label"])
+    assert score(r.asks_user, c, [], text="What counts as a grounded answer?").pass_ is True
+    assert score(r.asks_user, c, [], text="What time is it?").pass_ is False
+    assert score(r.asks_user, c, [], text="I will check grounding.").pass_ is False
+    assert score(r.asks_user, c, [call("AskUserQuestion", {"question": "What counts as grounded?"})]).pass_ is False
+    assert score(r.asks_user, case(), [], text="What counts as grounded?").pass_ is None
 
 
 def test_no_forbidden_tools() -> None:
@@ -139,15 +149,26 @@ def aggregate_one(c: r.Case, outcomes: list[str]) -> dict[str, Any]:
     return r.aggregate(run_result(c, outcomes), [c])["cases"][0]
 
 
-def scored_run(c: r.Case, calls: list[dict[str, Any]], agent: str = "claude") -> dict[str, Any]:
+def scored_run(c: r.Case, calls: list[dict[str, Any]], agent: str = "claude", text: str = "") -> dict[str, Any]:
     """Run the real scorers on one run's calls and aggregate it, as evaluatorq would."""
-    names = ("skill_fired", "tools_called", "no_forbidden_tools")
+    names = ("skill_fired", "tools_called", "asks_user", "no_forbidden_tools")
     scores = [
-        SimpleNamespace(evaluator_name=n, score=score(getattr(r, n), c, calls, agent), error=None) for n in names
+        SimpleNamespace(evaluator_name=n, score=score(getattr(r, n), c, calls, agent, text), error=None) for n in names
     ]
-    job = SimpleNamespace(job_name=agent, output={"agent": agent, "run": 1, "tool_calls": calls}, error=None, evaluator_scores=scores)
+    job = SimpleNamespace(job_name=agent, output={"agent": agent, "run": 1, "tool_calls": calls, "text": text}, error=None, evaluator_scores=scores)
     dp = SimpleNamespace(data_point=SimpleNamespace(inputs={"case": c.__dict__}), job_results=[job], error=None)
     return r.aggregate([dp], [c])["cases"][0]["runs"][0]
+
+
+def test_asks_first_needs_a_question_and_no_forbidden_attempt() -> None:
+    c = case(expect_question_about=["ground"])
+    fired = call("Skill", {"skill": "orq-build-evaluator"})
+    assert scored_run(c, [fired])["status"] == "fail"
+    assert scored_run(c, [fired], text="What counts as grounded?")["status"] == "pass"
+    create = call(CLAUDE + "create_llm_eval", result="[denied by claude]", status="incomplete")
+    run = scored_run(c, [fired, create], text="What counts as grounded?")
+    assert run["status"] == "fail"
+    assert run["scores"]["no_forbidden_tools"]["pass"] is False
 
 
 def test_a_regression_outranks_a_server_error_in_the_same_run() -> None:
@@ -332,6 +353,11 @@ def test_load_cases_rejects_duplicate_ids(tmp_path: Path, monkeypatch: pytest.Mo
         ("kind: invocation\nexpect_skill: any\n", "not 'any'"),
         ("kind: invocation\npass_threshold: '0.8'\n", "wrong type for ['pass_threshold']"),
         ("kind: invocation\nexpect_tools: list_models\n", "wrong type for ['expect_tools']"),
+        ("kind: invocation\nruns: true\n", "wrong type for ['runs']"),
+        ("kind: invocation\nmax_turns: 0\n", "runs and max_turns must be at least 1"),
+        ("kind: invocation\npass_threshold: 1.1\n", "pass_threshold must be between 0 and 1"),
+        ("kind: invocation\nexpect_question_about: [ground]\n", "expect_question_about needs a behavioural case"),
+        ("kind: behavioural\nexpect_question_about: [42]\n", "expect_question_about must contain non-empty strings"),
         ("kind: invocation\nturns: [a]\n", "unknown field"),
     ],
 )
@@ -406,11 +432,17 @@ def test_report_refuses_an_unfinished_summary(tmp_path: Path, monkeypatch: pytes
 
 
 def test_check_key_used_stops_when_a_profile_overrides_the_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake(stderr: str) -> Any:
-        return lambda *a, **kw: SimpleNamespace(stdout="", stderr=stderr)
+    def fake(stderr: str, returncode: int = 0, stdout: str = "") -> Any:
+        return lambda *a, **kw: SimpleNamespace(stdout=stdout, stderr=stderr, returncode=returncode)
 
     monkeypatch.setattr(r.subprocess, "run", fake('warning: using the API key from profile "x", ignoring ORQ_API_KEY.'))
     with pytest.raises(SystemExit, match="orq auth profile clear"):
         r.check_key_used(Path("orq"), "k")
-    monkeypatch.setattr(r.subprocess, "run", fake(""))
+    monkeypatch.setattr(r.subprocess, "run", fake("", stdout="dry-run configuration"))
     r.check_key_used(Path("orq"), "k")
+    monkeypatch.setattr(r.subprocess, "run", fake("", returncode=1))
+    with pytest.raises(SystemExit, match="could not verify ORQ_API_KEY use"):
+        r.check_key_used(Path("orq"), "k")
+    monkeypatch.setattr(r.subprocess, "run", fake(""))
+    with pytest.raises(SystemExit, match="produced no output"):
+        r.check_key_used(Path("orq"), "k")

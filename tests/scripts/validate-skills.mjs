@@ -13,7 +13,7 @@
 //  11. no legacy orq template variables in skill markdown
 //  12. no hardcoded reasoning-effort value in skill markdown
 //  13. tests/factual/<skill>.csv <-> skills/ (warning only, RES-1076)
-//  14. tests/evals/<skill>/ <-> skills/ (error for new skills, RES-1076)
+//  14. tests/evals/<skill>/*-fires.yaml <-> skills/ (error for new skills, RES-1076)
 // Errors fail the run; warnings don't. Run from anywhere in the repo.
 
 import { createHash } from "node:crypto";
@@ -610,7 +610,7 @@ for (const f of factualCsvs)
   if (!skillDirs.includes(f.slice(0, -4)))
     warn(`tests/factual/${f} names no skill in skills/`);
 
-// ---------- 14. tests/evals/<skill>/ <-> skills/ ----------
+// ---------- 14. tests/evals/<skill>/*-fires.yaml <-> skills/ ----------
 // Invocation and behavioural cases per skill, run by tests/scripts/run_evals.py.
 // Folders starting with _ hold cross-skill cases (_no-skill, _general). Reference
 // bundles are read by other skills and never invoked on their own, so no case could

@@ -1,6 +1,6 @@
 ---
 name: skill-tests
-description: Test the orq skills in this assistant-plugins checkout, or set up tests for a skill that has none. Runs factual drift checks (do the tools, CLI commands, SDK calls and URLs a SKILL.md names still exist) and invocation and behavioural evals (does the right skill fire, and are its first actions right) in real Claude Code and OpenCode sessions through `orq launch`, then reports per skill with the limits of what a pass shows. Scope is chosen up front (all skills, a selection or one; factual, invocation or behavioural) and agents, the model each one runs on, repeats, pass thresholds and cost are chosen and confirmed before anything runs. New cases are drafted with the user and saved only after they approve them. Use when a maintainer asks to "test the skills", "run the skill evals", "add tests for a skill", "did my SKILL.md change break anything", or before merging a skill change. Do NOT use to grade the full workflow a skill runs (these tests stop at the first turn), or to test code outside skills/. Maintainer-only; lives in .claude/skills so it never ships to users.
+description: Test orq skills in this checkout, or set up tests for a skill that has none. Runs factual drift checks for tools, CLI commands, SDK calls and URLs named in SKILL.md, plus invocation and behavioural evals in real Claude Code and OpenCode sessions through `orq launch`. Reports whether the right skill fired and whether its first actions followed the case, with the limits of what a pass shows. Scope, agents, models, repeats, thresholds and cost are chosen and confirmed before a run. New cases are drafted with the user and saved only after approval. Use when a maintainer asks to "test the skills", "run the skill evals", "add tests for a skill", "did my SKILL.md change break anything", or before merging a skill change. These tests stop at the first turn and cover skills/ only. Maintainer-only; lives in .claude/skills so it never ships to users.
 metadata:
   # Boolean on purpose: `npx skills` skips a skill only on `internal === true`, which keeps
   # this out of every install (CI install-sanity checks the installed set).
@@ -133,7 +133,7 @@ spending anything. The factual suite needs no confirmation when it is the only s
   one unless `--allow-stale-orq` is passed.
 - `ORQ_API_KEY` is set, in the environment or a gitignored `.env` at the repo root.
   The eval runner refuses to start without it, or when an active `orq auth profile`
-  would override it (`orq auth profile clear` fixes that); the factual suite skips
+  on the host would override it (`orq auth profile clear` fixes that); the factual suite skips
   its MCP checks without it. Every command in this skill loads `.env` first.
 - The key's workspace needs a `skill-evals` project (the experiment lands there) and
   the fixture agent `support-bot` the `orq-improve-agent` cases read; without it,

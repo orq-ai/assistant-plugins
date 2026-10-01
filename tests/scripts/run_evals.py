@@ -133,6 +133,7 @@ class Case:
     prompt: str
     expect_skill: str
     expect_tools: list[str] = field(default_factory=list)
+    expect_question_about: list[str] = field(default_factory=list)
     forbid_tools: list[str] = field(default_factory=lambda: list(DEFAULT_FORBID))
     allow_tools: list[str] = field(default_factory=list)
     runs: int = 5
@@ -145,7 +146,7 @@ class Case:
 
 CASE_TYPES: dict[str, type | tuple[type, ...]] = {
     "id": str, "skill": str, "kind": str, "prompt": str, "expect_skill": str,
-    "expect_tools": list, "forbid_tools": list, "allow_tools": list,
+    "expect_tools": list, "expect_question_about": list, "forbid_tools": list, "allow_tools": list,
     "runs": int, "pass_threshold": (int, float), "max_turns": int, "borderline": bool,
 }  # fmt: skip
 
@@ -190,6 +191,10 @@ def load_cases(skill_names: set[str]) -> list[Case]:
         # An invocation case is scored by skill_fired alone, which skips `any`: no verdict, so every run fails.
         if case.kind == "invocation" and case.expect_skill == "any":
             problems.append(f"{rel}: an invocation case needs an expected skill or 'none', not 'any'")
+        if case.kind != "behavioural" and case.expect_question_about:
+            problems.append(f"{rel}: expect_question_about needs a behavioural case")
+        if any(not isinstance(term, str) or not term.strip() for term in case.expect_question_about):
+            problems.append(f"{rel}: expect_question_about must contain non-empty strings")
         # Claude has no deny layer on top of --allowedTools, so an allowed tool that is also
         # forbidden would really run there. Reject the overlap instead.
         if overlap := [t for t in case.allow_tools if any(fnmatch.fnmatchcase(t, p) for p in case.forbid_tools)]:
@@ -246,6 +251,11 @@ def check_key_used(orq: Path, key: str) -> None:
     )
     if "ignoring ORQ_API_KEY" in out.stdout + out.stderr:
         sys.exit("an active orq auth profile overrides ORQ_API_KEY; run `orq auth profile clear` first")
+    if out.returncode != 0:
+        sys.exit(f"could not verify ORQ_API_KEY use: orq launch --dry-run exited {out.returncode}: "
+                 f"{(out.stderr or out.stdout).strip() or 'no output'}")
+    if not (out.stdout + out.stderr).strip():
+        sys.exit("could not verify ORQ_API_KEY use: orq launch --dry-run produced no output")
 
 
 def check_orq_version(orq: Path, allow_stale: bool) -> str:
@@ -723,7 +733,7 @@ async def run_once(
         budget.add(cost)
         return {
             "tool_calls": [_call_dict(o) for o in response.output if isinstance(o, ToolCallOutputItem)],
-            "text": next((o.text for o in response.output if isinstance(o, TextOutputItem)), ""),
+            "text": next((o.text for o in reversed(response.output) if isinstance(o, TextOutputItem)), ""),
             "session_id": response.response_id,
             "cost_usd": cost,
             "stopped": "done",
@@ -871,6 +881,8 @@ async def tools_called(params: ScorerParameter) -> EvaluationResult:
     case, out = usable
     if case.kind != "behavioural":
         return _skip("invocation case")
+    if not case.expect_tools:
+        return _skip("no expected tools")
     # A call that errored is not evidence the step worked (a server error scores like a pass otherwise).
     called, failed = split_calls(out["agent"], case, out["tool_calls"])
     missing = [t for t in case.expect_tools if t not in called]
@@ -880,6 +892,23 @@ async def tools_called(params: ScorerParameter) -> EvaluationResult:
         return _skip(f"{missing} called but errored server side")
     why = "; ".join(f"{t} (called but errored)" if t in failed else t for t in missing)
     return _verdict(not missing, not missing, f"missing {why}" if missing else "all expected tools called")
+
+
+async def asks_user(params: ScorerParameter) -> EvaluationResult:
+    usable = _usable(params)
+    if usable is None:
+        return _skip("no run output")
+    case, out = usable
+    if not case.expect_question_about:
+        return _skip("no question expected")
+    # The final assistant text is user-facing; prompts and tool arguments are not evidence.
+    # A relevant interrogative sentence checks the case's requested clarification.
+    questions = re.findall(
+        r"\b(?:what|which|who|when|where|why|how|would|could|can|do|does|is|are|should|will)\b[^.!?\n]*\?",
+        out.get("text", ""), re.IGNORECASE,
+    )
+    relevant = any(term.lower() in question.lower() for question in questions for term in case.expect_question_about)
+    return _verdict(relevant, relevant, "asked a relevant question" if relevant else "no user-facing question about the expected topic")
 
 
 async def no_forbidden_tools(params: ScorerParameter) -> EvaluationResult:
@@ -905,6 +934,7 @@ async def no_forbidden_tools(params: ScorerParameter) -> EvaluationResult:
 SCORERS: list[Evaluator] = [
     {"name": "skill_fired", "scorer": skill_fired},
     {"name": "tools_called", "scorer": tools_called},
+    {"name": "asks_user", "scorer": asks_user},
     {"name": "no_forbidden_tools", "scorer": no_forbidden_tools},
 ]
 
