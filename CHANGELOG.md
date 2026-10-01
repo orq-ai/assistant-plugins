@@ -16,8 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `orq-shared/resources/trace-queries.md`: `--limit` on `orq reporting query` is documented with its real bounds — maximum bucket rows returned, default 1000, capped at 5000 — rather than as a top-N group cap.
-- `orq-shared/resources/trace-queries.md`: records that the reporting `filters[].field` is a closed 35-value enum with `op` limited to `eq`/`neq`/`in`/`not_in`, and that `TraceFilter.field` is free-form from `orq traces list-fields`. The two share the JSON shape, not the vocabulary — a filter copied across matches zero rows and raises no error.
+- `orq-shared/resources/trace-queries.md`: `--limit` on `orq reporting query` is documented as a row bound in both modes, with a generated-help default of 1000 and a maximum of 5000. A larger value returns HTTP 400.
+- `orq-shared/resources/trace-queries.md`: records that the reporting `filters[].field` is a closed 35-value enum with `op` limited to `eq`/`neq`/`in`/`not_in`, and that `TraceFilter.field` is free-form from `orq traces list-fields`. The two share the JSON shape, not guaranteed field names; invalid cross-dialect fields return HTTP 400.
+- `orq-shared/resources/trace-queries.md`: corrects the `pipefail` rationale: the CLI exits 1 on rejection, while `jq` exits 0 on empty input and masks it without `pipefail`.
 - `orq-shared/resources/trace-queries.md`: `help-input` is registered on the root command; `orq reporting query help-input` is parsed as a shorthand body fragment, not a subcommand. Use `orq help-input` or `orq reporting query --help`.
 - `orq-shared/resources/trace-queries.md`: `POST /v3/telemetry/query` and `orq telemetry` are recorded as rc-only. Rechecked against the stable CLI `v11.0.2` tag on 2026-10-01: no `telemetry` registration or `/v3/telemetry/*` path in the stable spec; both remain under `packages/orq-rc`.
 - `orq reporting query` was re-probed live on CLI 8.7.0-rc.15 (API 4.15.0-rc.52): the scalar cost path is `.data[0].metrics["genai.cost"]`, omitted window flags default to the last seven days, and `--include-totals` returns top-level `.totals.metrics`.

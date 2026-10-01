@@ -552,7 +552,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: reaches `orq-shared/resources/trace-queries.md` §5 rather than guessing the flag surface
 - Verify: uses `orq reporting query --metric genai.cost --from 7d --to now --mode scalar -o json`
 - Verify: reads the value at `.metrics["genai.cost"]` — there is no `.value` field on the row
-- Verify: sets `pipefail` before piping into `jq`, knowing a rejected request emits nothing at exit 0
+- Verify: sets `pipefail` before piping into `jq`, knowing the CLI exits non-zero on rejection but `jq` exits 0 on empty input
 - Verify: does NOT pass `--json` (not a flag) and does NOT reach for `orq telemetry` (rc-only, not in the stable binary)
 - Verify: does NOT invent a metric name outside the 18-value enum
 
@@ -598,7 +598,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Simulate a `traces search` whose `--from` is more than 30 days back
 - Ask: "Get me trace ids since <31+ days ago>"
 - Verify: knows trace retention is 30 days and that an older window is a hard 400, not a clamp
-- Verify: any `| jq` pipeline it writes sets `pipefail` — the CLI writes errors to stderr and leaves stdout empty, so `jq` emits nothing at exit 0
+- Verify: any `| jq` pipeline it writes sets `pipefail` — the CLI exits non-zero and writes errors to stderr, but `jq` exits 0 on empty stdout
 - Verify: does NOT report "no traces found" when the request was rejected
 
 ### Scenario 9: Per-trace drill-down

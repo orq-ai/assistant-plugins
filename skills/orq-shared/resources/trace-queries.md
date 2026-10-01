@@ -280,12 +280,12 @@ The body fields above are also flags, so a metrics question needs no body file a
 | `--sort` | `sort` | `desc` or `asc` |
 | `--time-zone` | `time_zone` | IANA zone for bucketing |
 | `--include-totals` | `include_totals` | add a window-wide `.totals.metrics` object alongside `.data` |
-| `--limit` | `limit` | **maximum bucket rows returned — defaults to 1000, capped at 5000.** It bounds rows in both modes, not only top-N groups; pass 10000 and you silently get 5000 |
+| `--limit` | `limit` | Maximum bucket rows returned in either mode. The generated help says the default is 1000; the maximum is 5000. Passing 10000 returns HTTP 400, rather than clamping the value. |
 | `-o json` | — | machine output. **There is no `--json` flag** — `orq --json …` exits non-zero with `unknown flag: --json` (`cli/custom/register_test.go`, `TestJSONFlagIsGone`) |
 
 **Relative `from` / `to` work in the flag form only.** The CLI normalizes `7d` / `now` to RFC3339 for a generated flag and for shorthand args, but **a body read from `--from-file` or stdin is sent as written** — `bartolo/cli/input.go`, `normalizeShorthandDateTimes`: *"a body from --from-file or stdin is machine-written, so it is sent as given rather than silently rewritten."* `from`/`to` are `format: date-time`, so `"from": "7d"` inside a body file is rejected by the server. Since §2 requires the body in a file, **put the window on `--from` / `--to` flags and leave it out of the body.** This is also why "never hard-code a `--from`" costs nothing here: `--from 7d` is already relative.
 
-**`filters[].field` is a closed enum here, and it is not the trace vocabulary.** The reporting `Filter.field` enum holds 35 reporting dimensions (`project`, `identity`, `provider`, `model`, `product`, `api_key`, `status_code`, `http_status_code`, `credential_type`, `billing_billable`, `dimension`, `dimension_type`, `tag`, `agent`, `tool`, `deployment`, `evaluator`, `dataset`, `prompt`, `policy`, `conversation`, `thread`, `memory_store`, `knowledge`, `sheet`, `guardrail_origin`, `evaluator_name`, `evaluator_type`, `evaluator_version`, `result_type`, `evaluation_stage`, `guardrail_stage`, `evaluator_stage`, `guardrail_action`, `result_label`), and `op` is limited to `eq` / `neq` / `in` / `not_in`. `TraceFilter.field` (§1) is a free-form name resolved from `orq traces list-fields`. **The two share the JSON shape, not the vocabulary** — a filter copied from one to the other matches zero rows and raises no error. Do not assume a cross-mapping; resolve each side at runtime (§0).
+**`filters[].field` is a closed enum here, and it is not the trace vocabulary.** The reporting `Filter.field` enum holds 35 reporting dimensions (`project`, `identity`, `provider`, `model`, `product`, `api_key`, `status_code`, `http_status_code`, `credential_type`, `billing_billable`, `dimension`, `dimension_type`, `tag`, `agent`, `tool`, `deployment`, `evaluator`, `dataset`, `prompt`, `policy`, `conversation`, `thread`, `memory_store`, `knowledge`, `sheet`, `guardrail_origin`, `evaluator_name`, `evaluator_type`, `evaluator_version`, `result_type`, `evaluation_stage`, `guardrail_stage`, `evaluator_stage`, `guardrail_action`, `result_label`), and `op` is limited to `eq` / `neq` / `in` / `not_in`. `TraceFilter.field` (§1) is a free-form name resolved from `orq traces list-fields`. **The two share the JSON shape, not guaranteed field names.** In a live check, reporting rejected the trace field `deployment_environment` with HTTP 400, and trace search rejected the reporting field `deployment` with HTTP 400. Resolve each side at runtime (§0); do not assume a cross-mapping.
 
 ### 5.2 `timeseries` vs `scalar`
 
@@ -294,7 +294,7 @@ The body fields above are also flags, so a metrics question needs no body file a
 
 ### 5.3 Worked examples
 
-**Guard every `jq` pipeline with `pipefail`.** A rejected request writes to stderr and leaves stdout empty at exit 0, so without it a 400 becomes an empty string and the script carries on.
+**Guard every `jq` pipeline with `pipefail`.** On a rejected request the CLI exits 1, writes the error to stderr, and leaves stdout empty. Without `pipefail`, `jq` reads the empty input and exits 0, so the pipeline appears successful.
 
 ```bash
 set -o pipefail
@@ -319,7 +319,7 @@ orq reporting query --metric genai.latency.p95 --from now-24h --to now \
 
 Each scalar data row has the shape `{dimensions:{…}, metrics:{…}, timestamp:null}` (§5), so its value is under `.metrics["<metric name>"]` — there is no `.value`. With `--include-totals`, the window-wide value is under `.totals.metrics["<metric name>"]`.
 
-Live re-probed on 2026-10-01 with CLI 8.7.0-rc.15 (API 4.15.0-rc.52): the scalar cost example returned a numeric value at `.data[0].metrics["genai.cost"]`; the grouped scalar and daily timeseries examples returned data rows; a query with no window flags returned a seven-day request window; and `--include-totals` returned `.totals.metrics` beside `.data`.
+Live re-probed on 2026-10-01 with CLI 8.7.0-rc.15 (API 4.15.0-rc.52): the scalar cost example returned a numeric value at `.data[0].metrics["genai.cost"]`; the grouped scalar and daily timeseries examples returned data rows; a query with no window flags returned a seven-day request window; and `--include-totals` returned `.totals.metrics` beside `.data`. `--limit 10000` returned HTTP 400 with CLI exit 1; without `pipefail`, piping that rejected query into `jq` exited 0. Cross-dialect `deployment` / `deployment_environment` filters each returned HTTP 400.
 
 > From PowerShell, `--filters` inline JSON is mangled before it reaches the CLI (§2). Put the whole body in a file there and pass `--from-file`, keeping `--from` / `--to` as flags for the reason above.
 
