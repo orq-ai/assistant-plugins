@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The alignment workflow asks for panel models before the cost gate and diagnoses model capability from the panel before another prompt rewrite. Failed judge calls are excluded from annotation priority.
 
+### Fixed
+
+- `orq-evaluator-alignment` converts evaluatorq's per-repetition objects to primitive verdicts before writing stability artifacts and counting off-contract answers; fresh evaluatorq releases no longer break live jury runs.
+
 ## [3.6.0] - 2026-09-30
 
 Learnings from the PyData 2026 evaluation-flywheel run (RES-1565) folded into `orq-evaluator-alignment`.

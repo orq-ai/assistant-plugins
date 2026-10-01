@@ -525,8 +525,8 @@ def _count_off_contract(repetitions: list[Any], repetitions_failed: int) -> int:
     """Off-contract (wrong_output_type) repetition count.
 
     Abstained reps surface as `None` in the jury's `repetitions` list but are NOT
-    in `repetitions_failed` (which counts errored calls only). So the off-contract
-    tally is the `None` count minus the failures. Never negative.
+    in `repetitions_failed` (which counts errors and unusable non-abstained passes).
+    So the off-contract tally is the `None` count minus the failures. Never negative.
     """
     n_none = sum(1 for r in repetitions if r is None)
     return max(0, n_none - repetitions_failed)
@@ -545,7 +545,7 @@ async def run_jury_for_row(
     """Run the single-judge panel `repetitions` times over one datapoint.
 
     Returns the raw per-repetition verdicts (`repetitions` — bool/str/float for
-    the type, `None` for a failed or off-contract rep), the count that errored
+    the type, `None` for a failed or off-contract rep), the count evaluatorq marked failed
     (`repetitions_failed`), the off-contract count split out of the Nones
     (`n_wrong_output_type`, §4a), and evaluatorq's aggregated verdict (`value`).
     `propagate_errors=False` keeps a transient judge outage on one repetition
@@ -562,7 +562,10 @@ async def run_jury_for_row(
         propagate_errors=False,
     )
     vote = deliberation.jury.votes[0]
-    reps = list(vote.repetitions)
+    # evaluatorq now returns JuryRepetition objects; older releases returned
+    # raw verdicts. Keep the run artifact primitive and the off-contract tally
+    # based on the verdict value in either shape.
+    reps = [getattr(rep, 'value', rep) for rep in vote.repetitions]
     return {
         # evaluatorq marks an all-failed vote success=False and carries the
         # underlying judge error (e.g. a router 500) on vote.error. Propagate

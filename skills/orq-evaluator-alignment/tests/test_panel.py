@@ -35,6 +35,7 @@ def test_three_model_jury_flows_through_metrics_and_queue(tmp_path, monkeypatch,
         {'output': 'abstain', 'reference': False},
         {'output': 'provider_failure', 'reference': False},
         {'output': 'peer_abstain', 'reference': True},
+        {'output': 'mixed_failure', 'reference': True},
     ])
     calls = []
     votes = {
@@ -45,6 +46,7 @@ def test_three_model_jury_flows_through_metrics_and_queue(tmp_path, monkeypatch,
         'abstain': {'judge': 'off_contract', 'other-a': [False] * 3, 'other-b': [False] * 3},
         'provider_failure': {'judge': None, 'other-a': [False] * 3, 'other-b': [False] * 3},
         'peer_abstain': {'judge': [True] * 3, 'other-a': [True] * 3, 'other-b': 'off_contract'},
+        'mixed_failure': {'judge': [True] * 3, 'other-a': [True] * 3, 'other-b': 'off_contract_and_error'},
     }
 
     async def fake_jury(spec, model, *, client, repetitions, output_type, labels, scale):
@@ -59,6 +61,10 @@ def test_three_model_jury_flows_through_metrics_and_queue(tmp_path, monkeypatch,
             return {'success': True, 'error': None, 'repetitions': [None] * repetitions,
                     'repetitions_failed': 0, 'n_wrong_output_type': repetitions,
                     'value': None, 'explanation': None}
+        if reps == 'off_contract_and_error':
+            return {'success': True, 'error': None, 'repetitions': [None] * repetitions,
+                    'repetitions_failed': 1, 'n_wrong_output_type': repetitions - 1,
+                    'value': None, 'explanation': None}
         value = max(set(reps), key=reps.count)
         return {'success': True, 'error': None, 'repetitions': reps,
                 'repetitions_failed': 0, 'n_wrong_output_type': 0,
@@ -67,16 +73,17 @@ def test_three_model_jury_flows_through_metrics_and_queue(tmp_path, monkeypatch,
     monkeypatch.setattr(stability, 'make_judge_client', lambda: object())
     monkeypatch.setattr(stability, 'run_jury_for_row', fake_jury)
     estimate_cost.main(run_dir=str(tmp_path), config=CONFIG, panel_models='other-a,other-b')
-    assert '63 judge calls (7 datapoints × 3 repeats × 3 models)' in capsys.readouterr().out
+    assert '72 judge calls (8 datapoints × 3 repeats × 3 models)' in capsys.readouterr().out
     stability.main(run_dir=str(tmp_path), config=CONFIG, panel_models='other-a,other-b')
     build_queue.main(run_dir=str(tmp_path), config=CONFIG, count=-1, low_flip_sample_size=1)
 
-    assert len(calls) == 21
+    assert len(calls) == 24
     assert {n for _, _, n in calls} == {3}  # 3 repeats/model is the panel default
     stab = runner.read_json(tmp_path / 'stability.json')
     assert stab['metadata']['panel_models'] == ['judge', 'other-a', 'other-b']
     assert stab['rows'][4]['success'] is True
     assert stab['rows'][6]['panel'][2]['n_wrong_output_type'] == 3
+    assert stab['rows'][7]['panel'][2]['repetitions_failed'] == 1
     assert len(stab['rows'][0]['panel']) == 3
     m = runner.read_json(tmp_path / 'metrics.json')
     assert m['panel']['n_panel_disagreement'] == 2
@@ -95,7 +102,7 @@ def test_three_model_jury_flows_through_metrics_and_queue(tmp_path, monkeypatch,
     assert queue['items'][2]['panel_votes'] == {'judge': True, 'other-a': False, 'other-b': False}
     assert queue['meta']['n_panel_disagreement'] == 2
     assert queue['meta']['n_panel_abstention'] == 2
-    assert all(x['source_index'] != 5 for x in queue['items'])
+    assert all(x['source_index'] not in (5, 7) for x in queue['items'])
     assert len([x for x in queue['items'] if x['low_flip_sample']]) == 1
 
     # A capped queue must not relabel a peer abstention or provider failure as
@@ -105,9 +112,9 @@ def test_three_model_jury_flows_through_metrics_and_queue(tmp_path, monkeypatch,
     assert [(x['source_index'], x['reason']) for x in capped['items']] == [(2, 'low_flip')]
 
 
-def test_tie_precedes_disagreement_and_failed_primary_is_not_queued(tmp_path):
+def test_abstention_precedes_tie_and_failed_primary_is_not_queued(tmp_path):
     runner.write_json(tmp_path / 'evaluator.json', {'id': 'e', 'prompt': 'judge', 'output_type': 'boolean'})
-    runner.write_jsonl(tmp_path / 'traces.jsonl', [{'output': str(i)} for i in range(3)])
+    runner.write_jsonl(tmp_path / 'traces.jsonl', [{'output': str(i)} for i in range(4)])
     rows = [
         {'source_index': 0, 'instability': 0.0, 'band': 'stable', 'n_successful_repeats': 3,
          'panel_disagreement': True, 'panel_tied': False, 'panel_agreement': 2 / 3,
@@ -118,24 +125,29 @@ def test_tie_precedes_disagreement_and_failed_primary_is_not_queued(tmp_path):
         {'source_index': 2, 'instability': None, 'band': 'unmeasurable', 'n_successful_repeats': 0,
          'panel_disagreement': True, 'panel_tied': False, 'panel_agreement': 0.5,
          'panel_unstable_models': ['other'], 'panel_max_instability': 0.5},
+        {'source_index': 3, 'instability': None, 'band': 'unmeasurable', 'n_successful_repeats': 0,
+         'panel_abstained_models': ['judge'], 'panel_disagreement': None, 'panel_tied': False,
+         'panel_agreement': 1.0, 'panel_unstable_models': [], 'panel_max_instability': 0.0},
     ]
     runner.write_json(tmp_path / 'metrics.json', {'metadata': {}, 'per_row': rows})
-    runner.write_json(tmp_path / 'stability.json', {'rows': [{'source_index': i} for i in range(3)]})
+    runner.write_json(tmp_path / 'stability.json', {'rows': [{'source_index': i} for i in range(4)]})
     build_queue.main(run_dir=str(tmp_path), config=CONFIG, count=-1, low_flip_sample_size=0)
     queue = runner.read_json(tmp_path / 'queue.json')
-    assert [x['source_index'] for x in queue['items']] == [1, 0]
+    assert [x['source_index'] for x in queue['items']] == [3, 1, 0]
 
 
 def test_panel_ignores_failed_repetitions_and_reports_unmeasurable():
     votes = [
         {'model': 'judge', 'success': True, 'repetitions': [True, True, True]},
-        {'model': 'outage', 'success': False, 'repetitions': [None, None, None]},
+        {'model': 'outage', 'success': False, 'repetitions': [False, False, False]},
+        {'model': 'under_floor', 'success': True, 'repetitions': [False, None, None]},
     ]
     sig = panel.row_signals(votes, 'boolean', clean=lambda r: metrics._clean_verdicts(r, 'boolean'), floor=2)
     assert sig['n_models_measured'] == 1
     assert sig['disagreement'] is None
     assert sig['unstable_models'] == []
     assert sig['per_model']['outage']['value'] is None
+    assert sig['per_model']['under_floor']['value'] is None
 
 
 @pytest.mark.parametrize('output_type, primary, peer, reference, scale, tol', [
