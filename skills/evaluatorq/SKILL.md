@@ -105,24 +105,25 @@ For orq.ai targets, use `search_entities` MCP tool to **browse** available keys 
 
 ## Phase 2: Pick the Input
 
-`data` accepts four shapes. Full detail — field-by-field, plus the result object you get back — in [resources/inputs-and-data.md](resources/inputs-and-data.md).
+`data` accepts five shapes. Full detail — field-by-field, plus the result object you get back — in [resources/inputs-and-data.md](resources/inputs-and-data.md).
 
 | Input | Use it for | Needs `ORQ_API_KEY` |
 |---|---|---|
 | `list[DataPoint]` / `list[dict]` | Inline rows, smoke tests | no |
 | `list[Awaitable[DataPoint]]` | Rows streamed in from a slow source | no |
 | `DatasetIdInput(dataset_id=..., include_messages=False)` | A platform dataset. `include_messages=True` also copies the row's stored `messages` into `inputs["messages"]` | yes |
-| `ExperimentInput(experiment_id=..., run_id=None)` | Re-scoring a past experiment run's recorded outputs. Requires `inference=False` | yes |
+| `ExperimentInput(experiment_id=..., run_id=None)` | Re-scoring a past experiment run's recorded outputs. Defaults to replay mode (`inference=False`) | yes |
+| `TraceInput(trace_id=...)` | Re-scoring recorded trace outputs. Defaults to replay mode (`inference=False`) | yes |
 
 ```python
-from evaluatorq import DataPoint, DatasetIdInput, ExperimentInput
+from evaluatorq import DataPoint, DatasetIdInput, ExperimentInput, TraceInput
 
 DataPoint(inputs={"question": "..."}, expected_output="...")   # inputs is free-form; the job and judge read it
 ```
 
-**Production traces are not a `data` shape.** Convert them to datapoints first with the simulation helpers — `fetch_trace_conversations()`, then `datapoints_from_traces()` (one datapoint per trace) or `extend_from_traces()` (new cases matching real traffic distribution) — and pass the resulting list as `data`. From the CLI that is `eq sim from-traces … --extend N`. For the whole trace workflow use `orq-simulate-agent` / `orq-analyze-traces`.
+**For a recorded trace,** pass `TraceInput(trace_id="...")` directly to re-score its output. To build or extend a dataset from production traffic, use the simulation helpers — `fetch_trace_conversations()`, then `datapoints_from_traces()` (one datapoint per trace) or `extend_from_traces()` (new cases matching real traffic distribution) — and pass the resulting list as `data`. From the CLI that is `eq sim from-traces … --extend N`. For the whole trace workflow use `orq-simulate-agent` / `orq-analyze-traces`.
 
-**Re-scoring without re-generating:** `inference=False` skips the jobs entirely and runs evaluators against the response already in each row. That is how you try a new judge against an old run without paying for generation twice.
+**Re-scoring without re-generating:** Leave `inference` unset for `ExperimentInput` or `TraceInput`: it resolves to `False`, skips the jobs entirely, and runs evaluators against the response already in each row. Inline rows and datasets resolve to `True`; pass `inference=False` explicitly to replay their recorded responses. This is how you try a new judge against an old run without paying for generation twice.
 
 Check whether a dataset exists (MCP `search_entities` with `type: "dataset"`, or ask the user). If none exists, delegate to `orq-generate-synthetic-dataset`. Target 10–30 datapoints for meaningful scores. 1–4 rows are fine to prove the script runs, but report that run as a smoke test, not as a score.
 

@@ -2,7 +2,7 @@
 
 Quick reference for the evaluatorq library. Python package: [evaluatorq](https://github.com/orq-ai/evaluatorq). TypeScript package: [@orq-ai/evaluatorq](https://github.com/orq-ai/orqkit) (`packages/evaluatorq`).
 
-Probed 2026-09-20 against **Python `evaluatorq` 1.39.0**, **`@orq-ai/evaluatorq` 1.3.2** and **`orq-ai-sdk` / `@orq-ai/node` 4.15.6**. The two language packages are **not** at parity — see [Python vs TypeScript](#python-vs-typescript).
+Probed 2026-09-20 against **Python `evaluatorq` 1.39.0**, **`@orq-ai/evaluatorq` 1.3.2** and **`orq-ai-sdk` / `@orq-ai/node` 4.15.6**; Python inference behavior re-probed 2026-09-29 against `evaluatorq` 1.47.1. The two language packages are **not** at parity — see [Python vs TypeScript](#python-vs-typescript).
 
 For judges and juries (`llm_jury`, `llm_jury_pairwise`), input shapes, experiment replay and reasoning-effort tuning, see the **`evaluatorq` skill** and its resources; this file is the shared job/scorer surface `orq-compare-agents` needs.
 
@@ -187,7 +187,7 @@ async def evaluatorq(
     name: str,
     params: EvaluatorParams | dict | None = None,
     *,
-    data: DatasetIdInput | ExperimentInput | Sequence[Awaitable[DataPoint] | DataPointInput] | None = None,
+    data: DatasetIdInput | ExperimentInput | TraceInput | Sequence[Awaitable[DataPoint] | DataPointInput] | None = None,
     jobs: list[Job] | None = None,
     evaluators: list[Evaluator] | None = None,
     datapoint_parallelism: int = 10,     # `parallelism` still accepted, deprecated
@@ -195,11 +195,11 @@ async def evaluatorq(
     print_results: bool = True,
     description: str | None = None,
     path: str | None = None,             # e.g. "Project/Folder" on the orq dashboard
-    inference: bool = True,              # False = score recorded outputs, skip the jobs
+    inference: bool | None = None,       # ExperimentInput/TraceInput replay; other data runs jobs
 ) -> EvaluatorqResult
 ```
 
-> **Platform data:** `DatasetIdInput(dataset_id="...", include_messages=False)` — snake_case `dataset_id`, NOT `datasetId`. The bare dict `{"dataset_id": "..."}` still parses. `ExperimentInput(experiment_id=..., run_id=None)` replays a past experiment run and requires `inference=False`.
+> **Platform data:** `DatasetIdInput(dataset_id="...", include_messages=False)` — snake_case `dataset_id`, NOT `datasetId`. The bare dict `{"dataset_id": "..."}` still parses. `ExperimentInput(experiment_id=..., run_id=None)` and `TraceInput(trace_id="...")` replay recorded outputs by default (`inference` resolves to `False`). Pass `inference=False` explicitly to score recorded outputs from a dataset or inline rows.
 
 ### TypeScript
 

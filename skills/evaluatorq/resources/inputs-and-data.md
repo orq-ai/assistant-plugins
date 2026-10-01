@@ -1,15 +1,16 @@
 # Inputs: what `data` accepts
 
-Probed against Python `evaluatorq` 1.39.0, 2026-09-20. Upstream reference (re-probe against it when evaluatorq releases): [evaluation-reference](https://orq-ai.github.io/evaluatorq/evaluation-reference/).
+Originally probed against Python `evaluatorq` 1.39.0, 2026-09-20; inference and `TraceInput` re-probed against 1.47.1, 2026-09-29. Upstream reference (re-probe against it when evaluatorq releases): [evaluation-reference](https://orq-ai.github.io/evaluatorq/evaluation-reference/).
 
-`evaluatorq(name, data=..., jobs=..., evaluators=...)` takes one of four input shapes. Everything else — traces, production logs, a CSV — is converted into one of them first.
+`evaluatorq(name, data=..., jobs=..., evaluators=...)` takes one of five input shapes. For new cases derived from traces or a CSV, convert the source to datapoints first.
 
 | `data` value | What it is | Needs `ORQ_API_KEY` |
 |---|---|---|
 | `list[DataPoint]` or `list[dict]` | Inline rows. A plain dict with `inputs` / `expected_output` keys is accepted anywhere a `DataPoint` is. | no |
 | `list[Awaitable[DataPoint]]` | Rows that resolve lazily — a network fetch per row, streamed into the run instead of blocking on all of them first. | no |
 | `DatasetIdInput(dataset_id="...")` | Rows from an orq.ai dataset, fetched in pages of 50. | yes |
-| `ExperimentInput(experiment_id="...", run_id=None)` | The recorded outputs of a past orq.ai experiment run. Requires `inference=False`. | yes |
+| `ExperimentInput(experiment_id="...", run_id=None)` | The recorded outputs of a past orq.ai experiment run. Defaults to replay mode (`inference=False`). | yes |
+| `TraceInput(trace_id="...")` | The recorded output of a trace. Defaults to replay mode (`inference=False`). | yes |
 
 ## A datapoint
 
@@ -47,19 +48,20 @@ await evaluatorq(
     "replay",
     data=ExperimentInput(experiment_id="<experiment_id>"),  # omit run_id for the latest run
     evaluators=[my_judge],
-    inference=False,
 )
 ```
 
 - `experiment_id` — the ID in the experiment URL, `/experiments/<id>` (the REST API calls experiments "spreadsheets", so the same ID appears under `/v2/spreadsheets/<id>`).
 - `run_id` — optional; every execution of an experiment is a run. Omit it to replay the latest.
-- With `inference=False`, `jobs` is optional and ignored. A row whose recorded response is missing or blank fails loudly instead of being skipped.
+- `inference=None` is the default: it resolves to `False` for `ExperimentInput` or `TraceInput`, and `True` for inline rows or `DatasetIdInput`. In replay mode, `jobs` is optional and ignored. A row whose recorded response is missing or blank fails loudly instead of being skipped.
+
+- `inference` left unset resolves from `data`: `False` for a replay source, `True` for a dataset or inline rows. The example passes it anyway because being explicit reads better in a script someone else will edit.
 
 `inference=False` also works with `DatasetIdInput` and inline rows when you supply the responses yourself.
 
 ## Production traces
 
-Core `evaluatorq()` has **no trace input** — traces are turned into datapoints by the simulation helpers first, and the result is a normal datapoint list you can hand to `evaluatorq()` or to `simulate()`.
+Core `evaluatorq()` accepts `TraceInput(trace_id="...")` to re-score a recorded trace. For new or extended cases based on production traffic, the simulation helpers turn traces into datapoints that you can hand to `evaluatorq()` or to `simulate()`.
 
 ```python
 from evaluatorq.simulation import (
