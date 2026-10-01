@@ -304,9 +304,9 @@ export async function drainQueue() {
     // here, or the loss is invisible without ORQ_DEBUG. Rate limited through
     // the state directory rather than a module flag, because every hook is its
     // own process and the condition lasts as long as the files do.
-    if (await shouldWarnUndeliverable()) {
+    if (await shouldWarnUndeliverable(destination)) {
       process.stderr.write(
-        `[orq-trace] WARN: ${skipped} queued batch(es) were queued for a different endpoint or API key, ` +
+        `[orq-trace] WARN: ${skipped} queued batch(es) have no recorded destination or belong to a different endpoint or API key, ` +
           `so this session cannot deliver them; a later session start removes them once they are an hour old\n`,
       );
     }

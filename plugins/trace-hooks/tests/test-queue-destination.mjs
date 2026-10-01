@@ -145,7 +145,7 @@ await test("a batch queued for one workspace is not drained by another", async (
   // this the only trace of the skip is an ORQ_DEBUG log nobody has on.
   assert.match(
     bDrain.stderr,
-    /1 queued batch\(es\) were queued for a different endpoint or API key, so this session cannot deliver them; a later session start removes them once they are an hour old/,
+    /1 queued batch\(es\) have no recorded destination or belong to a different endpoint or API key, so this session cannot deliver them; a later session start removes them once they are an hour old/,
     "workspace B's drain said nothing about the batch it could not deliver",
   );
 
@@ -164,6 +164,31 @@ await test("a batch queued for one workspace is not drained by another", async (
     "the warning repeated on the next hook in the same hour",
   );
   assert.equal(queuedFiles(dir).length, 1, "the second drain consumed the batch");
+
+  // Another workspace needs its own warning even though B just saw this queue.
+  const cDrain = await runInChild(drain, {
+    ORQ_CLAUDE_STATE_DIR: dir,
+    ORQ_API_KEY: "key-workspace-c",
+    OTEL_EXPORTER_OTLP_ENDPOINT: endpoint,
+  });
+  ranCleanly(cDrain, "workspace C's drain");
+  assert.match(cDrain.stderr, /cannot deliver them/, "workspace C's warning was suppressed by B's marker");
+
+  // The warning resumes after the hour passes for B's destination.
+  const markers = fs.readdirSync(dir).filter((name) => name.startsWith("orq_undeliverable_warn_"));
+  assert.equal(markers.length, 2, "each destination should have its own warning marker");
+  const old = new Date(Date.now() - 61 * 60 * 1000);
+  for (const marker of markers) {
+    fs.utimesSync(path.join(dir, marker), old, old);
+  }
+  const bAfterHour = await runInChild(drain, {
+    ORQ_CLAUDE_STATE_DIR: dir,
+    ORQ_API_KEY: "key-workspace-b",
+    OTEL_EXPORTER_OTLP_ENDPOINT: endpoint,
+  });
+  ranCleanly(bAfterHour, "workspace B's drain after an hour");
+  assert.match(bAfterHour.stderr, /cannot deliver them/, "workspace B was not warned after an hour");
+  assert.equal(queuedFiles(dir).length, 1, "the warning test consumed the batch");
 
   // Its own workspace comes back and collects it.
   ranCleanly(
@@ -272,14 +297,13 @@ await test("a file written before destinations were recorded is left alone", asy
   );
   assert.equal(queuedFiles(dir).length, 2, "the bound control file was not written");
 
-  ranCleanly(
-    await runInChild(drain, {
-      ORQ_CLAUDE_STATE_DIR: dir,
-      ORQ_API_KEY: "any-key",
-      OTEL_EXPORTER_OTLP_ENDPOINT: endpoint,
-    }),
-    "the drain",
-  );
+  const legacyDrain = await runInChild(drain, {
+    ORQ_CLAUDE_STATE_DIR: dir,
+    ORQ_API_KEY: "any-key",
+    OTEL_EXPORTER_OTLP_ENDPOINT: endpoint,
+  });
+  ranCleanly(legacyDrain, "the drain");
+  assert.match(legacyDrain.stderr, /have no recorded destination/, "the legacy warning described the wrong reason");
   assert.deepEqual(
     delivered.map((d) => d.name),
     ["chat bound"],
