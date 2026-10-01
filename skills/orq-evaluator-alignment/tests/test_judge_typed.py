@@ -9,6 +9,7 @@ completion becomes an ABSTAINED prediction (not an error, not a scored verdict).
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import types
 from pathlib import Path
@@ -51,6 +52,29 @@ def test_count_off_contract_splits_none_from_failures():
 
 def test_count_off_contract_zero_when_all_none_are_failures():
     assert judge._count_off_contract([None, None], repetitions_failed=2) == 0
+
+
+def test_run_jury_for_row_normalizes_real_jury_repetitions(monkeypatch):
+    predictions = iter([
+        judge.Prediction(value=True),
+        judge.Prediction(abstained=True),
+        judge.Prediction(error='provider outage'),
+    ])
+
+    async def fake_judge_fn(model):
+        return next(predictions)
+
+    monkeypatch.setattr(judge, 'build_judge_fn', lambda *args, **kwargs: fake_judge_fn)
+    result = asyncio.run(judge.run_jury_for_row(
+        judge.JudgeSpec(prompt_template='rate it', replacements={}, temperature=0.0),
+        'some-model', client=object(), repetitions=3,
+    ))
+
+    assert result['repetitions'] == [True, None, None]
+    assert result['repetitions_failed'] == 1
+    assert result['n_wrong_output_type'] == 1
+    assert result['value'] is True
+    json.dumps(result)
 
 
 # --- build_judge_fn routing: ok → value, off-contract → abstained ---

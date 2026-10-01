@@ -5,7 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.5.1] - 2026-09-30
+## [3.7.1] - 2026-10-01
+
+### Added
+
+- A factual drift tester for documented MCP tools and arguments, SDK imports and methods, CLI commands and flags, documentation URLs, repositories, and packages across the skills. Reviewed CSV fixtures, a nightly and pull request workflow, and a warning for skills without a fixture make drift visible without making the check required.
 
 ### Fixed
 
@@ -13,6 +17,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `orq-manage-skills` skill: the same scan called `search_entities()` with no arguments, which the live MCP schema rejects now that `type` is required. It now queries `prompt`, `deployment` and `agent` separately and pages each to completion; an unpaged call stopped at 50 results per type, so a large workspace got a partial scan that could wrongly clear a Skill for hard delete. `SKILL.md` Phase 5 and `resources/governance-guide.md` described the same unpaged scan; both now point at the one procedure in `known-caveats.md`. Both paging loops (this scan and the `SKILL.md` Pagination loop) now stop on an empty page instead of reading a cursor from it, and the `_id` cursor field names where it was read from, since the factual tester cannot check response fields. The scan now reads each prompt's body with `orq prompts retrieve <id>` instead of from the `search_entities` result, so it needs the orq CLI; a `cli_subcommand` row checks the command.
 - `orq-invoke-deployment` skill: four dead doc links. Invoke and Stream now point at `/reference/deployments/invoke` and `/reference/deployments/stream`; the Python and Node.js SDK pages are gone, so the SDK line links the single `/reference/client-libraries` page plus the `orq-python` and `orq-node` repos.
 - `orq-cli` skill: `orq traces thread` documented `--reasoning=false`, which CLI 11.0 removed. It now documents `-x/--exclude` (`-x reasoning` drops the thinking), the flag that replaced it.
+
+## [3.7.0] - 2026-10-01
+
+### Added
+
+- `orq-evaluator-alignment` jury mode (RES-1638): the audited judge and any extra `panel_models` score the same rows with independent repetitions. A three-model panel defaults to three repetitions per model; one-model runs retain their existing repeat count. The cost estimate includes every model call.
+- `metrics.json` records per-model wobble, cross-model disagreement, ties, typed abstentions, failed or unmeasurable votes, and per-model correctness where dataset labels are valid. The review queue ranks abstentions, ties, disagreement with wobble, disagreement, then wobble, with stable controls held separately.
+- `retest_metrics.json` reports each panel model's agreement with human labels on its scored rows, including per-example numeric tolerance bands, allowing rare-label recall and balanced accuracy to expose a useful model hidden by majority voting.
+
+### Changed
+
+- The alignment workflow asks for panel models before the cost gate and diagnoses model capability from the panel before another prompt rewrite. Failed judge calls are excluded from annotation priority.
+
+### Fixed
+
+- `orq-evaluator-alignment` converts evaluatorq's per-repetition objects to primitive verdicts before writing stability artifacts and counting off-contract answers; fresh evaluatorq releases no longer break live jury runs.
+
+## [3.6.0] - 2026-09-30
+
+Learnings from the PyData 2026 evaluation-flywheel run (RES-1565) folded into `orq-evaluator-alignment`.
+
+### Added
+
+- `orq-evaluator-alignment`: `lib/agreement.py` reports `balanced_accuracy` and `cohen_kappa` for boolean and categorical judges. `metrics.py`'s correctness block and `retest_metrics.json`'s `agreement` block carry both. On skewed labels (27 passes, 3 fails, judged pass every time) accuracy reads 90% while kappa is 0, so the metrics report and a new retest caveat flag high accuracy with kappa under 0.2.
+- `orq-evaluator-alignment` step 8: a "What to do with the result" gate. When the new judge got steadier but is still steadily wrong, re-run the retest with a stronger model on a copy of the run before offering another rewrite, and stop iterating if no model reproduces the user's answer. When instability rises after a rule is encoded but agreement did not regress, treat it as a sharper next question rather than a failed rewrite.
+- `orq-evaluator-alignment` rewrite meta-prompt: checks the verdict depends on are written as obligations, not permissions. In the PyData run a "you may compare claims with the tool results" rule was skipped by two of three judges.
+
+### Changed
+
+- `evaluatorq` and `orq-compare-agents`: add `TraceInput` replay guidance for `evaluatorq` 1.47.1 and cover it in the inference contract test.
+- `orq-evaluator-alignment`: `SKILL.md` is a 142-line router (was 777); each step's instructions live in `resources/` (`judge-and-examples.md`, `measure.md`, `grey-zone.md`, `rewrite-and-create.md`, `retest.md`) and are read when that step starts. Configuration and the run-directory contract moved to `resources/configuration.md` and `resources/run-directory.md`. The step text itself is unchanged apart from the additions above.
+- `orq-evaluator-alignment`: step 4, step 8 and the final summary lead with how many of the rare label the judge caught before quoting overall accuracy.
+- `orq-evaluator-alignment` annotation UI: the judge's vote spread moved into the collapsed "votes and reasoning" panel, so neither anchors a first-pass label.
 
 ## [3.5.0] - 2026-09-24
 

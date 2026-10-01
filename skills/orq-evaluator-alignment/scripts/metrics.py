@@ -36,7 +36,8 @@ import fire
 from loguru import logger
 
 import _bootstrap  # noqa: F401
-from lib import content, instability, runner
+from lib import agreement, content, instability, runner
+from lib import panel as panel_lib
 
 _NUMERIC_TYPES = {'number', 'numeric'}
 
@@ -264,6 +265,7 @@ def _correctness(
     n_unmeasurable_labelled = 0
     wrong_indices: list[int] = []
     labelled_indices: list[int] = []
+    label_pairs: list[tuple[str, str]] = []
     for row in rows:
         idx = row.get('source_index')
         match = _reference_matches(row.get('reference'), verdicts.get(idx), output_type, tol, categorical_labels, scale)
@@ -280,6 +282,8 @@ def _correctness(
             n_unmeasurable_labelled += 1
             continue
         labelled_indices.append(idx)
+        if output_type not in _NUMERIC_TYPES:
+            label_pairs.append(_label_pair(row.get('reference'), verdicts.get(idx), output_type))
         if not match:
             wrong_indices.append(idx)
         n_labelled += 1
@@ -293,6 +297,7 @@ def _correctness(
         'n_labelled': n_labelled,
         'n_correct': n_correct,
         'accuracy': (n_correct / n_labelled) if n_labelled else None,
+        **(agreement.chance_corrected(label_pairs) if label_pairs else {}),
         'confusion': dict(confusion),
         'label_source': 'dataset_reference',
         'by_band': by_band,
@@ -303,6 +308,13 @@ def _correctness(
     if n_unmeasurable_labelled:
         result['n_unmeasurable_labelled'] = n_unmeasurable_labelled
     return result
+
+
+def _label_pair(reference: Any, verdict: Any, output_type: str) -> tuple[str, str]:
+    # Same normalization `_reference_matches` compares with, so kappa counts the rows accuracy does.
+    if output_type == 'boolean':
+        return str(_coerce_bool(reference)), str(_coerce_bool(verdict))
+    return str(reference).strip().lower(), str(verdict).strip().lower()
 
 
 def _row_bools(row: dict[str, Any]) -> list[bool]:
@@ -346,6 +358,106 @@ def _panel_agreement(rows: list[dict[str, Any]]) -> dict[str, Any]:
         'prevalence_true': pi_true,
         'one_flip_consistency': p_bar,
     }
+
+
+def _jury(
+    rows: list[dict[str, Any]], per_row: list[dict[str, Any]], output_type: str,
+    k: int | None, scale: tuple[float, float] | None, floor: int, tol: float,
+    correctness: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Panel signals (RES-1638): per-row disagreement and wobble, per-model summary.
+
+    Writes the per-row signals onto the matching `per_row` entries so build_queue can
+    rank on them, and returns the run-level block, or None for a judge-only run.
+    """
+    if not any(r.get('panel') for r in rows):
+        return None
+    clean = lambda reps: _clean_verdicts(reps, output_type)  # noqa: E731
+    by_idx = {e['source_index']: e for e in per_row}
+    model_values: dict[str, dict[int, Any]] = {}
+    model_insts: dict[str, list[float]] = {}
+    n_disagree = n_wobble = n_unmeasurable = n_abstained = 0
+    for row in rows:
+        if not row.get('panel'):
+            continue
+        sig = panel_lib.row_signals(row['panel'], output_type, clean=clean, floor=floor, k=k, scale=scale, tol=tol)
+        # Off-contract answers are typed abstentions only when no call failed
+        # and no usable verdict remains. A provider error stays diagnostic.
+        abstained_models = [
+            vote['model'] for vote in row['panel']
+            if vote.get('success')
+            and int(vote.get('n_wrong_output_type') or 0) > 0
+            and int(vote.get('repetitions_failed') or 0) == 0
+            and not clean(vote.get('repetitions') or [])
+        ]
+        entry = by_idx.get(row.get('source_index'))
+        if entry is not None:
+            entry.update({
+                'panel_abstained_models': abstained_models,
+                'panel_disagreement': sig['disagreement'],
+                'panel_tied': sig['tied'],
+                'panel_agreement': sig['panel_agreement'],
+                'panel_n_models_measured': sig['n_models_measured'],
+                'panel_unstable_models': sig['unstable_models'],
+                'panel_max_instability': sig['max_instability'],
+                'panel_votes': {m: e['value'] for m, e in sig['per_model'].items()},
+            })
+            n_abstained += int(bool(abstained_models))
+        n_disagree += int(sig['disagreement'] is True)
+        n_wobble += int(bool(sig['unstable_models']))
+        n_unmeasurable += int(sig['disagreement'] is None)
+        for model, e in sig['per_model'].items():
+            model_values.setdefault(model, {})[row.get('source_index')] = e['value']
+            if e['instability'] is not None:
+                model_insts.setdefault(model, []).append(e['instability'])
+    models = list(model_values)
+    block: dict[str, Any] = {
+        'models': models,
+        'n_panel_disagreement': n_disagree,
+        'n_panel_abstention': n_abstained,
+        'n_any_model_unstable': n_wobble,
+        'n_panel_unmeasurable': n_unmeasurable,
+        'mean_instability_by_model': {m: (fmean(model_insts[m]) if model_insts.get(m) else None) for m in models},
+    }
+    if correctness and correctness.get('n_labelled'):
+        labelled = set(correctness.get('labelled_source_indices') or [])
+        labels = {r.get('source_index'): r.get('reference') for r in rows if r.get('source_index') in labelled}
+        block['correctness_by_model'] = panel_lib.per_model_agreement(output_type, labels, model_values, tol=tol)
+    return block
+
+
+def _jury_lines(j: dict[str, Any] | None) -> list[str]:
+    if not j:
+        return []
+    lines = [
+        f"  - panel of {len(j['models'])} models: models disagreed on {j['n_panel_disagreement']} row(s); "
+        f"at least one model wobbled on {j['n_any_model_unstable']}"
+        + (f"; at least one model abstained on {j['n_panel_abstention']} row(s)" if j['n_panel_abstention'] else '')
+        + (f"; {j['n_panel_unmeasurable']} row(s) had fewer than 2 usable models" if j['n_panel_unmeasurable'] else '')
+        + '.',
+    ]
+    for m in j['models']:
+        inst = j['mean_instability_by_model'].get(m)
+        line = f"      {m}: mean instability {inst:.3f}" if inst is not None else f"      {m}: unmeasurable"
+        acc = (j.get('correctness_by_model') or {}).get(m)
+        if acc:
+            if 'accuracy' in acc:
+                kappa = acc.get('cohen_kappa')
+                if 'tp' in acc and 'tn' in acc and acc['tp'] + acc['fn'] and acc['tn'] + acc['fp']:
+                    n_pos, n_neg = acc['tp'] + acc['fn'], acc['tn'] + acc['fp']
+                    rare = 'true' if n_pos <= n_neg else 'false'
+                    caught = acc['tp'] if rare == 'true' else acc['tn']
+                    total = n_pos if rare == 'true' else n_neg
+                    line += f', caught {caught}/{total} rare {rare} labels'
+                if acc.get('balanced_accuracy') is not None:
+                    line += f", balanced accuracy {acc['balanced_accuracy']:.0%}"
+                line += f", accuracy {acc['accuracy']:.0%}"
+                if kappa is not None:
+                    line += f' (kappa {kappa:.2f})'
+            else:
+                line += f", within tolerance {acc['within_tolerance_rate']:.0%}, MAE {acc['mae']:.3f}"
+        lines.append(line)
+    return lines
 
 
 def _detail_str(output_type: str, e: dict[str, Any]) -> str:
@@ -406,6 +518,12 @@ def _correctness_lines(c: dict[str, Any] | None) -> list[str]:
         f"  - correctness vs dataset labels: {c['n_correct']}/{c['n_labelled']} "
         f"({acc_str}) — labels are `dataset_reference`, not the user's verdict.{metadata_caveat}"
     ]
+    kappa, balanced = c.get('cohen_kappa'), c.get('balanced_accuracy')
+    if kappa is not None and balanced is not None:
+        line = f"      balanced accuracy {balanced:.0%}, Cohen's kappa {kappa:.2f}"
+        if acc is not None and acc >= 0.8 and kappa < 0.2:
+            line += ' ← skewed labels: accuracy flatters it, quote the rare label instead'
+        lines.append(line)
     if c.get('n_unmeasurable_labelled'):
         lines.append(
             f"      ({c['n_unmeasurable_labelled']} labelled rows excluded — "
@@ -434,6 +552,7 @@ def _report(
     per_row: list[dict[str, Any]], output_type: str, mean_inst: float | None,
     bands: Counter, n_rows: int, n_measurable: int, total_wrong: int, total_failed: int,
     correctness: dict[str, Any] | None = None,
+    jury: dict[str, Any] | None = None,
 ) -> str:
     def _fmt(v: Any) -> str:
         return f'{v:.3f}' if isinstance(v, (int, float)) else 'n/a'
@@ -447,6 +566,7 @@ def _report(
         f'  - mean instability: {_fmt(mean_inst)} {inst_annotation}',
         f'  - bands: {hist}.',
         *_correctness_lines(correctness),
+        *_jury_lines(jury),
     ]
     if total_wrong or total_failed:
         lines.append(f'  - {total_wrong} off-contract (wrong_output_type) reps, {total_failed} failed reps.')
@@ -534,9 +654,10 @@ def main(run_dir: str | None = None, config: str = 'config.toml') -> str:
     panel = _panel_agreement(rows) if output_type == 'boolean' else {
         'fleiss_kappa': None, 'gwet_ac1': None, 'prevalence_true': None, 'one_flip_consistency': None
     }
+    jury = _jury(rows, per_row, output_type, k, scale, floor, _numeric_tol(cfg, scale), correctness)
     report = _report(
         per_row, output_type, mean_inst, bands, len(rows), len(measurable),
-        total_wrong, total_failed, correctness,
+        total_wrong, total_failed, correctness, jury,
     )
 
     metrics = {
@@ -562,6 +683,8 @@ def main(run_dir: str | None = None, config: str = 'config.toml') -> str:
         # Present only when rows carried a readable ground-truth label. Absent means
         # "not measured", never "nothing wrong found".
         'correctness': correctness,
+        # Present only when stability ran a panel (`panel_models`). Absent = judge alone.
+        'panel': jury,
         'report': report,
         'per_row': per_row,
     }

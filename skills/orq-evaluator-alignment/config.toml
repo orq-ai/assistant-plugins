@@ -28,9 +28,18 @@ trace_limit = 200
 hollow_abort_ratio = 0.2
 
 # ── Step 3: stability run (evaluatorq, repetitions=N) ────────────────────────
-# Repeated judge invocations per datapoint. The whole flip analysis rests on
-# this; >= 5 is the floor for a stable per-row flip-rate, 8 is the default.
+# Repeated judge invocations per datapoint in a one-model run. The flip analysis
+# rests on this; >= 5 is the preferred floor, and 8 is the default.
 n_repeats = 8
+# Jury panel (RES-1638): extra judge models that re-judge the same rows with the
+# same prompt, `<provider>/<model>` slugs. Empty = the judge alone. With a panel,
+# 3 models x 3 repeats is the recommended shape: disagreement between models and
+# wobble within one are separate signals, and each extra model costs as much as
+# the judge. The aligned judge stays evaluator.json's judge_model.
+panel_models = []
+# When panel_models is nonempty, use 3 repeats per model by default.
+# A --n_repeats flag still overrides this for either mode.
+panel_repeats = 3
 # Cap on datapoints the stability run covers. -1 / null = all fetched traces.
 num_samples = -1
 # Parallel judge calls across all (row, repeat) pairs.

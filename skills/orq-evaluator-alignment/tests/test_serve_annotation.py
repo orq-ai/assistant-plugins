@@ -202,3 +202,12 @@ def test_source_index_is_stringified_key(tmp_path: Path):
     sa.upsert_annotation(store, source_index=5, record=rec)
     sa.write_annotations(path, store)
     assert '5' in sa.read_annotations(path)
+
+
+def test_judge_votes_render_only_inside_the_collapsed_details():
+    # The vote spread anchors a first-pass label as much as the reasoning does, so it
+    # sits in the same collapsed <details>, never in the always-visible badge row.
+    html = (Path(__file__).resolve().parents[1] / 'annotation' / 'annotate.html').read_text(encoding='utf-8')
+    call = html.index('${judgeSpread(it)}')
+    assert html.count('${judgeSpread(it)}') == 1
+    assert html.rfind('<details>', 0, call) > html.rfind('</details>', 0, call)
