@@ -581,17 +581,22 @@ await test("queue: an oversized payload is split and still lands as one trace", 
   // 6 spans of 3 MB: ~18 MB total, over the single-request limit, but every
   // individual span is sendable. Nothing here may be lost.
   const big = wrap(Array.from({ length: 6 }, (_, i) => makeSpan(`SPLIT-${i}`, 3 * 1024 * 1024, i)));
-  fs.writeFileSync(path.join(queueDir, "1000-oversized.json"), JSON.stringify(big));
-  fs.writeFileSync(path.join(queueDir, "2000-good.json"), JSON.stringify(wrap([makeSpan("BEHIND-IT", 0, 99)])));
 
   // state.js resolves the queue directory at module load, so the environment
   // has to be in place before the first import of it.
   process.env.ORQ_CLAUDE_STATE_DIR = dir;
   process.env.ORQ_API_KEY = "test-key";
   process.env.OTEL_EXPORTER_OTLP_ENDPOINT = endpoint;
-  const { drainQueue } = await import(
+  const { drainQueue, currentDestination } = await import(
     `file://${path.join(repoRoot, "src/otlp.js").replaceAll("\\", "/")}`
   );
+
+  // Queued batches carry the destination they were meant for, so these two are
+  // written the way sendSpans writes them: a drain only takes its own.
+  const queued = (payload) => JSON.stringify({ orqDestination: currentDestination(), payload });
+  fs.writeFileSync(path.join(queueDir, "1000-oversized.json"), queued(big));
+  fs.writeFileSync(path.join(queueDir, "2000-good.json"), queued(wrap([makeSpan("BEHIND-IT", 0, 99)])));
+
   await drainQueue();
 
   assert.equal(fs.readdirSync(queueDir).length, 0, "queue should be fully drained");
@@ -1216,8 +1221,8 @@ await test("queue: a drain that fails halfway does not re-send delivered spans",
     endTimeUnixNano: "1700000001000000000",
     attributes: [{ key: "pad", value: { stringValue: "z".repeat(pad) } }],
   });
-  // 3 spans of 3 MB: one legacy-style file that re-chunks into three requests.
-  fs.writeFileSync(path.join(queueDir, "1.json"), JSON.stringify({
+  // 3 spans of 3 MB: one queued file that re-chunks into three requests.
+  const payload = {
     resourceSpans: [{
       resource: { attributes: [] },
       scopeSpans: [{
@@ -1225,7 +1230,9 @@ await test("queue: a drain that fails halfway does not re-send delivered spans",
         spans: [span("A", 3 * 1024 * 1024, 0), span("B", 3 * 1024 * 1024, 1), span("C", 3 * 1024 * 1024, 2)],
       }],
     }],
-  }));
+  };
+  const payloadPath = path.join(dir, "payload.json");
+  fs.writeFileSync(payloadPath, JSON.stringify(payload));
 
   // Fail every request after the first, so exactly one batch lands.
   let requests = 0;
@@ -1247,8 +1254,15 @@ await test("queue: a drain that fails halfway does not re-send delivered spans",
   // different one, and a synchronous spawn would block this process's event
   // loop, leaving the server above unable to answer the child.
   await new Promise((resolve) => {
+    // The file is written in the child, because the destination it has to carry
+    // is the one the child resolves from its own environment.
     const child = spawn("node", ["--input-type=module", "-e", `
-      const { drainQueue } = await import(${JSON.stringify(`file://${path.join(repoRoot, "src/otlp.js").replaceAll("\\", "/")}`)});
+      import fs from "node:fs";
+      const { drainQueue, currentDestination } = await import(${JSON.stringify(`file://${path.join(repoRoot, "src/otlp.js").replaceAll("\\", "/")}`)});
+      fs.writeFileSync(${JSON.stringify(path.join(queueDir, "1.json"))}, JSON.stringify({
+        orqDestination: currentDestination(),
+        payload: JSON.parse(fs.readFileSync(${JSON.stringify(payloadPath)}, "utf8")),
+      }));
       await drainQueue();
     `], {
       env: {
@@ -1266,7 +1280,8 @@ await test("queue: a drain that fails halfway does not re-send delivered spans",
   assert.equal(left.length, 1, "the file should be kept while the endpoint is down");
 
   const remaining = JSON.parse(fs.readFileSync(path.join(queueDir, left[0]), "utf8"));
-  const names = remaining.resourceSpans
+  assert.ok(remaining.orqDestination, "a partial rewrite must keep the destination it was queued for");
+  const names = remaining.payload.resourceSpans
     .flatMap((r) => r.scopeSpans.flatMap((s) => s.spans))
     .map((s) => s.name);
   assert.deepEqual(names, ["B", "C"], "the delivered span is still queued and would be re-sent");
