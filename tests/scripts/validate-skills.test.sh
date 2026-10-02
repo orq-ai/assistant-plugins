@@ -10,7 +10,7 @@ failures=0
 skipped=0
 run_count=0
 # Derived from the script itself so adding a case can't silently desync.
-expected_count=$(grep -cE '^\s*expect_(fail|pass) ' "${BASH_SOURCE[0]}")
+expected_count=$(grep -cE '^\s*expect_(fail|pass|warn) ' "${BASH_SOURCE[0]}")
 
 cleanup_and_report() {
   rm -rf "$tmp_root"
@@ -130,6 +130,26 @@ expect_pass() {
   out=$(node "$validator" "$dir" 2>&1) || rc=$?
   if [ "$rc" -ne 0 ]; then
     echo "FAIL [$label]: expected exit 0, got $rc"
+    echo "$out" | sed 's/^/    /'
+    failures=$((failures + 1))
+    return
+  fi
+  echo "PASS [$label]"
+}
+
+# expect_warn <label> <dir> <pattern> — exit 0 AND matching message (warning-only checks).
+expect_warn() {
+  local label="$1" dir="$2" pattern="$3" rc=0 out
+  run_count=$((run_count + 1))
+  out=$(node "$validator" "$dir" 2>&1) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "FAIL [$label]: expected exit 0 (warning only), got $rc"
+    echo "$out" | sed 's/^/    /'
+    failures=$((failures + 1))
+    return
+  fi
+  if ! grep -q "$pattern" <<<"$out"; then
+    echo "FAIL [$label]: expected a warning matching '$pattern', got:"
     echo "$out" | sed 's/^/    /'
     failures=$((failures + 1))
     return
@@ -668,6 +688,16 @@ git -C "$d" add -A
 node "$validator" "$d" --fix >/dev/null 2>&1
 git -C "$d" add -A
 expect_pass "a quoted value on a line that is not about reasoning effort is allowed" "$d"
+
+# --- 13. tests/factual/<skill>.csv <-> skills/ (warning only) ---
+d=$(build_fixture factual-missing)
+expect_warn "skill with no factual CSV" "$d" "skills/example-skill has no tests/factual/example-skill.csv"
+
+d=$(build_fixture factual-orphan)
+mkdir -p "$d/tests/factual"
+printf 'test_type,target,assertion,description\n' > "$d/tests/factual/example-skill.csv"
+printf 'test_type,target,assertion,description\n' > "$d/tests/factual/gone-skill.csv"
+expect_warn "factual CSV that names no skill" "$d" "tests/factual/gone-skill.csv names no skill"
 
 # --- git-failure paths ---
 d=$(build_fixture no-git)
