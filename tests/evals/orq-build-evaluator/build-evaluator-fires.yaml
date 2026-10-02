@@ -1,0 +1,8 @@
+id: build-evaluator-fires
+skill: orq-build-evaluator
+kind: invocation
+prompt: I need an automated pass/fail check on my orq agent's replies for whether it stays polite. Can you set up a judge for that?
+expect_skill: orq-build-evaluator
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 2

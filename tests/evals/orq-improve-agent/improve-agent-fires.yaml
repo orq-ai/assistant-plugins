@@ -1,0 +1,9 @@
+id: improve-agent-fires
+skill: orq-improve-agent
+kind: invocation
+# The agent tends to look up support-bot before choosing a skill; 4 turns leaves room for that.
+prompt: The answers from my orq agent support-bot keep getting cut off halfway through. Can you fix its config?
+expect_skill: orq-improve-agent
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 4

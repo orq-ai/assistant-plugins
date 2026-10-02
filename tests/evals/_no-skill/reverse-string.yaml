@@ -1,0 +1,8 @@
+id: reverse-string
+skill: _no-skill
+kind: invocation
+prompt: Write a Python function that reverses a string.
+expect_skill: none
+runs: 3
+pass_threshold: 1.0
+max_turns: 2

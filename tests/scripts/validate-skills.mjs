@@ -13,6 +13,7 @@
 //  11. no legacy orq template variables in skill markdown
 //  12. no hardcoded reasoning-effort value in skill markdown
 //  13. tests/factual/<skill>.csv <-> skills/ (warning only, RES-1076)
+//  14. tests/evals/<skill>/*-fires.yaml <-> skills/ (error for new skills, RES-1076)
 // Errors fail the run; warnings don't. Run from anywhere in the repo.
 
 import { createHash } from "node:crypto";
@@ -388,9 +389,21 @@ for (const file of lintTargets) {
 
 // ---------- 5. no stray tracked skills ----------
 // Tracked SKILL.md outside skills/ ships to every consumer via skill installers.
+// .claude/skills/ holds maintainer-only skills (the skill-tests runner). `npx skills
+// add` does scan it, so each one must set `metadata: internal: true` (a YAML boolean)
+// to stay out of installs; install-sanity in CI fails if one leaks.
 for (const f of tracked) {
   if (!f.endsWith("/SKILL.md")) continue;
-  if (!f.startsWith("skills/"))
+  if (f.startsWith(".claude/skills/")) {
+    let text = "";
+    try { text = readFileSync(join(root, f), "utf8"); } catch { /* reported as missing by section 6 */ }
+    const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+    // Block form (comment lines allowed) or flow form; a trailing comment after `true` is fine.
+    const block = /^metadata:[ \t]*\r?\n(?:[ \t]+.*\r?\n)*?[ \t]+internal:[ \t]*true[ \t]*(?:#.*)?\r?$/m;
+    const flow = /^metadata:[ \t]*\{[^}\n]*\binternal:[ \t]*true[ \t]*[,}]/m;
+    if (!block.test(fm) && !flow.test(fm))
+      err(`${f} lacks \`metadata: internal: true\` — installers will ship this maintainer-only skill`);
+  } else if (!f.startsWith("skills/"))
     err(`stray tracked skill outside skills/: ${f} — installers will ship it`);
 }
 
@@ -596,6 +609,40 @@ for (const name of skillDirs)
 for (const f of factualCsvs)
   if (!skillDirs.includes(f.slice(0, -4)))
     warn(`tests/factual/${f} names no skill in skills/`);
+
+// ---------- 14. tests/evals/<skill>/*-fires.yaml <-> skills/ ----------
+// Invocation and behavioural cases per skill, run by tests/scripts/run_evals.py.
+// Folders starting with _ hold cross-skill cases (_no-skill, _general). Reference
+// bundles are read by other skills and never invoked on their own, so no case could
+// fire them. Skills that predate the evals are grandfathered with a warning; a new
+// skill without cases fails. Remove a skill from the list once it has cases (an entry
+// that has them is an error).
+const REFERENCE_ONLY_SKILLS = ["orq-shared"];
+const EVALS_GRANDFATHERED = new Set([
+  "create-skill", "evaluatorq", "orq-cli",
+  "orq-manage-skills", "orq-recommend-evaluators", "orq-setup-observability", "orq-simulate-agent",
+]);
+const evalsDir = join(root, "tests", "evals");
+const evalDirs = existsSync(evalsDir)
+  ? readdirSync(evalsDir, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith("_")).map((d) => d.name)
+  : [];
+// The folder alone is not enough: an empty one, or one holding only a behavioural
+// case, checks nothing about whether the skill fires.
+const hasFiresCase = (name) =>
+  evalDirs.includes(name) && readdirSync(join(evalsDir, name)).some((f) => f.endsWith("-fires.yaml"));
+for (const name of skillDirs) {
+  const has = hasFiresCase(name);
+  if (REFERENCE_ONLY_SKILLS.includes(name)) continue;
+  if (!has && EVALS_GRANDFATHERED.has(name))
+    warn(`skills/${name} has no tests/evals/${name}/*-fires.yaml — nothing checks that it fires or what it does first`);
+  else if (!has)
+    err(`skills/${name} has no tests/evals/${name}/*-fires.yaml — a new skill ships with at least one hand-written *-fires case`);
+  else if (EVALS_GRANDFATHERED.has(name))
+    err(`skills/${name} now has a *-fires case — remove it from EVALS_GRANDFATHERED in validate-skills.mjs`);
+}
+for (const d of evalDirs)
+  if (!skillDirs.includes(d))
+    warn(`tests/evals/${d}/ names no skill in skills/`);
 
 if (errors > 0) {
   console.error(`\nSkill validation failed with ${errors} error(s).`);
