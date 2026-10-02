@@ -298,12 +298,13 @@ export async function drainQueue() {
     await debugLog(`[otlp] DRAIN skipped ${skipped} queued file(s) for another destination\n`);
     // A file this session cannot deliver is usually another workspace's. It can
     // also be this session's own, after the key was rotated: the fingerprint no
-    // longer matches. Either way the spans sit there until a later session
-    // start prunes them, which is why the line says that rather than promising
-    // they expire on a timer. Say it on stderr, like the other failure paths
-    // here, or the loss is invisible without ORQ_DEBUG. Rate limited through
-    // the state directory rather than a module flag, because every hook is its
-    // own process and the condition lasts as long as the files do.
+    // longer matches, or it can be a legacy file with no recorded destination.
+    // Either way the spans sit there until a later session start prunes them,
+    // which is why the line says that rather than promising they expire on a
+    // timer. Say it on stderr, like the other failure paths here, or the loss is
+    // invisible without ORQ_DEBUG. The warning is rate limited per draining
+    // destination through the state directory, because every hook is its own
+    // process and the condition lasts as long as the files do.
     if (await shouldWarnUndeliverable(destination)) {
       process.stderr.write(
         `[orq-trace] WARN: ${skipped} queued batch(es) have no recorded destination or belong to a different endpoint or API key, ` +

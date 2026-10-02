@@ -114,6 +114,10 @@ const drain = `
   const { drainQueue } = await import(${otlpUrl});
   await drainQueue();
 `;
+const pruneStale = `
+  const { pruneStaleFiles } = await import(${stateUrl});
+  await pruneStaleFiles();
+`;
 
 await test("a batch queued for one workspace is not drained by another", async () => {
   const dir = makeTempDir();
@@ -148,10 +152,13 @@ await test("a batch queued for one workspace is not drained by another", async (
     /1 queued batch\(es\) have no recorded destination or belong to a different endpoint or API key, so this session cannot deliver them; a later session start removes them once they are an hour old/,
     "workspace B's drain said nothing about the batch it could not deliver",
   );
+  const bMarkers = fs.readdirSync(dir).filter((name) => name.startsWith("orq_undeliverable_warn_"));
+  assert.equal(bMarkers.length, 1, "workspace B should create its own warning marker");
+  const bMarker = bMarkers[0];
 
-  // Said once an hour, not once per hook. The rate limit lives in the state
-  // directory because each hook is a new process, so a repeat drain from the
-  // same workspace must stay quiet about the same files.
+  // Said once an hour per destination, not once per hook. The rate limit lives
+  // in the state directory because each hook is a new process, so a repeat
+  // drain from the same workspace must stay quiet about the same files.
   const bAgain = await runInChild(drain, {
     ORQ_CLAUDE_STATE_DIR: dir,
     ORQ_API_KEY: "key-workspace-b",
@@ -174,13 +181,29 @@ await test("a batch queued for one workspace is not drained by another", async (
   ranCleanly(cDrain, "workspace C's drain");
   assert.match(cDrain.stderr, /cannot deliver them/, "workspace C's warning was suppressed by B's marker");
 
-  // The warning resumes after the hour passes for B's destination.
+  // A different endpoint with the same API key is a distinct destination too.
+  const otherEndpoint = await startEndpoint();
+  const dDrain = await runInChild(drain, {
+    ORQ_CLAUDE_STATE_DIR: dir,
+    ORQ_API_KEY: "key-workspace-b",
+    OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${otherEndpoint.port}/v1/traces`,
+  });
+  ranCleanly(dDrain, "workspace B's other-endpoint drain");
+  assert.match(dDrain.stderr, /cannot deliver them/, "a fresh marker for the first endpoint suppressed this warning");
+
+  // The warning resumes after the hour passes for B's destination alone.
   const markers = fs.readdirSync(dir).filter((name) => name.startsWith("orq_undeliverable_warn_"));
-  assert.equal(markers.length, 2, "each destination should have its own warning marker");
+  assert.equal(markers.length, 3, "each endpoint and key pair should have its own warning marker");
+  assert.ok(markers.includes(bMarker), "workspace B's marker was not found");
   const old = new Date(Date.now() - 61 * 60 * 1000);
-  for (const marker of markers) {
-    fs.utimesSync(path.join(dir, marker), old, old);
-  }
+  fs.utimesSync(path.join(dir, bMarker), old, old);
+  const cAgain = await runInChild(drain, {
+    ORQ_CLAUDE_STATE_DIR: dir,
+    ORQ_API_KEY: "key-workspace-c",
+    OTEL_EXPORTER_OTLP_ENDPOINT: endpoint,
+  });
+  ranCleanly(cAgain, "workspace C's second drain");
+  assert.doesNotMatch(cAgain.stderr, /cannot deliver them/, "aging B's marker made C's fresh warning repeat");
   const bAfterHour = await runInChild(drain, {
     ORQ_CLAUDE_STATE_DIR: dir,
     ORQ_API_KEY: "key-workspace-b",
@@ -189,6 +212,8 @@ await test("a batch queued for one workspace is not drained by another", async (
   ranCleanly(bAfterHour, "workspace B's drain after an hour");
   assert.match(bAfterHour.stderr, /cannot deliver them/, "workspace B was not warned after an hour");
   assert.equal(queuedFiles(dir).length, 1, "the warning test consumed the batch");
+
+  otherEndpoint.server.close();
 
   // Its own workspace comes back and collects it.
   ranCleanly(
@@ -208,6 +233,30 @@ await test("a batch queued for one workspace is not drained by another", async (
   assert.equal(queuedFiles(dir).length, 0, "a delivered file should be removed");
 
   server.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+await test("stale warning markers, including the legacy marker, are pruned", async () => {
+  const dir = makeTempDir();
+  const old = new Date(Date.now() - 61 * 60 * 1000);
+  const staleMarkers = ["orq_undeliverable_warn", "orq_undeliverable_warn_0123456789abcdef"];
+  for (const name of staleMarkers) {
+    const markerPath = path.join(dir, name);
+    fs.writeFileSync(markerPath, "old\n");
+    fs.utimesSync(markerPath, old, old);
+  }
+  const freshPath = path.join(dir, "orq_undeliverable_warn_fedcba9876543210");
+  fs.writeFileSync(freshPath, "fresh\n");
+  const unrelatedPath = path.join(dir, "orq_undeliverable_warn_notes");
+  fs.writeFileSync(unrelatedPath, "keep\n");
+
+  const result = await runInChild(pruneStale, { ORQ_CLAUDE_STATE_DIR: dir });
+  ranCleanly(result, "stale-marker pruning");
+  assert.deepEqual(
+    fs.readdirSync(dir).filter((name) => name.startsWith("orq_undeliverable_warn")),
+    ["orq_undeliverable_warn_fedcba9876543210", "orq_undeliverable_warn_notes"],
+    "pruning should remove old markers while retaining fresh markers and unrelated prefix matches",
+  );
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -315,7 +364,7 @@ await test("a file written before destinations were recorded is left alone", asy
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-const total = 3;
+const total = 4;
 console.log("");
 console.log(failed === 0 ? `ALL PASS (${total} cases)` : `${failed} FAILED (${total} cases)`);
 process.exit(failed === 0 ? 0 : 1);

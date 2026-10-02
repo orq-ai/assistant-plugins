@@ -196,8 +196,10 @@ const UNDELIVERABLE_WARN_MS = 60 * 60 * 1000;
 
 // True at most once an hour per destination, across processes. Every hook is
 // its own node process, so the marker's mtime is the shared rate limit. Hashing
-// the destination keeps endpoint details out of the filename. If the marker
-// cannot be written, warn again rather than lose the spans in silence.
+// the endpoint and key fingerprint creates a safe, unique filename. Keep this
+// marker in STATE_ROOT, outside the queue: queued-file listing and pruning
+// operate on .json batches. If the marker cannot be written, warn again rather
+// than lose the spans in silence.
 export async function shouldWarnUndeliverable(destination, now = Date.now()) {
   const fingerprint = createHash("sha256")
     .update(JSON.stringify([destination.endpoint, destination.key]))
@@ -219,6 +221,27 @@ export async function shouldWarnUndeliverable(destination, now = Date.now()) {
 
 export async function pruneStaleFiles() {
   const now = Date.now();
+
+  // Prune old warning markers, including the unsuffixed marker used by older
+  // versions. Marker names are scoped by destination, so each one can expire
+  // independently after the warning interval.
+  try {
+    const stateNames = await fs.readdir(STATE_ROOT);
+    for (const name of stateNames) {
+      if (!/^orq_undeliverable_warn(?:_[a-f0-9]{16})?$/.test(name)) continue;
+      const filePath = path.join(STATE_ROOT, name);
+      try {
+        const stat = await fs.stat(filePath);
+        if (now - stat.mtimeMs > UNDELIVERABLE_WARN_MS) {
+          await fs.unlink(filePath);
+        }
+      } catch {
+        // Ignore individual file errors
+      }
+    }
+  } catch {
+    // Ignore if directory doesn't exist
+  }
 
   // Prune orphaned session files (mtime > 24h ago)
   try {
