@@ -103,17 +103,19 @@ function getHeaders() {
   return headers;
 }
 
-// A queued batch belongs to the workspace and endpoint it was meant for. The
-// queue is one directory shared by every traced session, launcher-started or
-// not, so draining a file against whatever key the current session happens to
-// hold posts one workspace's session content to another. The key itself is
-// never written to disk: a fingerprint is all that is needed to tell two
-// destinations apart.
+// A queued batch belongs to the endpoint and the credentials the request will
+// actually use. OTEL_EXPORTER_OTLP_HEADERS may override Authorization or
+// supply another auth header, so getApiKey() alone does not identify the
+// workspace that receives the spans. Hash normalized outgoing headers without
+// Content-Type: the credential values never reach disk. This intentionally
+// gives older key-only queue entries a different fingerprint; their actual
+// authorization cannot be known after an update, so they must not be replayed.
 export function currentDestination() {
-  const apiKey = getApiKey();
+  const headers = new Headers(getHeaders());
+  headers.delete("Content-Type");
   return {
     endpoint: getEndpoint(),
-    key: apiKey ? createHash("sha256").update(apiKey).digest("hex").slice(0, 16) : null,
+    key: createHash("sha256").update(JSON.stringify([...headers])).digest("hex").slice(0, 16),
   };
 }
 

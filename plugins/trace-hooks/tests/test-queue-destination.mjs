@@ -236,6 +236,49 @@ await test("a batch queued for one workspace is not drained by another", async (
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+await test("a queued batch follows the actual Authorization header, not the fallback key", async () => {
+  const dir = makeTempDir();
+  const { server, state, delivered, port } = await startEndpoint();
+  const endpoint = `http://127.0.0.1:${port}/v1/traces`;
+  const env = {
+    ORQ_CLAUDE_STATE_DIR: dir,
+    ORQ_API_KEY: "shared-fallback-key",
+    OTEL_EXPORTER_OTLP_ENDPOINT: endpoint,
+  };
+
+  ranCleanly(
+    await runInChild(queue("chat workspace A"), {
+      ...env,
+      OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Bearer workspace-a",
+    }),
+    "the overridden-auth queueing child",
+  );
+  assert.equal(queuedFiles(dir).length, 1, "the failed send should be queued");
+  state.reachable = true;
+
+  ranCleanly(
+    await runInChild(drain, {
+      ...env,
+      OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Bearer workspace-b",
+    }),
+    "workspace B's overridden-auth drain",
+  );
+  assert.deepEqual(delivered, [], "workspace B received a batch queued under workspace A's header");
+  assert.equal(queuedFiles(dir).length, 1, "workspace B consumed workspace A's batch");
+
+  ranCleanly(
+    await runInChild(drain, {
+      ...env,
+      OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Bearer workspace-a",
+    }),
+    "workspace A's overridden-auth drain",
+  );
+  assert.deepEqual(delivered, [{ name: "chat workspace A", auth: "Bearer workspace-a" }]);
+  assert.equal(queuedFiles(dir).length, 0);
+  server.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 await test("stale warning markers, including the legacy marker, are pruned", async () => {
   const dir = makeTempDir();
   const old = new Date(Date.now() - 61 * 60 * 1000);
@@ -312,7 +355,7 @@ await test("a batch queued for one endpoint is not drained against another", asy
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-await test("a file written before destinations were recorded is left alone", async () => {
+await test("older queue files without effective authentication are left alone", async () => {
   const dir = makeTempDir();
   const { server, state, delivered, port } = await startEndpoint();
   state.reachable = true;
@@ -325,10 +368,27 @@ await test("a file written before destinations were recorded is left alone", asy
     })}\n`,
   );
 
+  // The intermediate build recorded a destination, but only fingerprinted
+  // getApiKey(). An OTLP header override could have changed the actual
+  // workspace, so those files cannot safely be replayed after this upgrade.
+  const { createHash } = await import("node:crypto");
+  const endpoint = `http://127.0.0.1:${port}/v1/traces`;
+  fs.writeFileSync(
+    path.join(dir, "orq_queue", "1700000000500-key-only.json"),
+    `${JSON.stringify({
+      orqDestination: {
+        endpoint,
+        key: createHash("sha256").update("any-key").digest("hex").slice(0, 16),
+      },
+      payload: {
+        resourceSpans: [{ resource: { attributes: [] }, scopeSpans: [{ scope: {}, spans: [span("chat key only")] }] }],
+      },
+    })}\n`,
+  );
+
   // Positive control in the same drain: a bound file for this very destination.
   // It must be delivered while the legacy one is left, so the case cannot pass
   // by the drain doing nothing at all.
-  const endpoint = `http://127.0.0.1:${port}/v1/traces`;
   ranCleanly(
     await runInChild(
       `
@@ -344,7 +404,7 @@ await test("a file written before destinations were recorded is left alone", asy
     ),
     "the child that queues a bound file",
   );
-  assert.equal(queuedFiles(dir).length, 2, "the bound control file was not written");
+  assert.equal(queuedFiles(dir).length, 3, "the bound control file was not written");
 
   const legacyDrain = await runInChild(drain, {
     ORQ_CLAUDE_STATE_DIR: dir,
@@ -358,13 +418,17 @@ await test("a file written before destinations were recorded is left alone", asy
     ["chat bound"],
     "the bound file was not delivered, so this case proves nothing about the legacy one",
   );
-  assert.deepEqual(queuedFiles(dir), ["1700000000000-legacy.json"], "the legacy file should be the one left behind");
+  assert.deepEqual(
+    queuedFiles(dir),
+    ["1700000000000-legacy.json", "1700000000500-key-only.json"],
+    "older files should remain for pruning rather than be sent under an unknown credential",
+  );
 
   server.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-const total = 4;
+const total = 5;
 console.log("");
 console.log(failed === 0 ? `ALL PASS (${total} cases)` : `${failed} FAILED (${total} cases)`);
 process.exit(failed === 0 ? 0 : 1);
