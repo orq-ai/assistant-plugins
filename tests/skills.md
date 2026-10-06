@@ -218,6 +218,14 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: the prompt uses `{{input.*}}` / `{{output.*}}` variables, not `{{log.*}}` and not bare `{{input}}` / `{{output}}`
 - Verify: after creating an LLM evaluator, recommends `orq-evaluator-alignment`
 
+## `orq-build-benchmark`
+
+- Ask: "Build a benchmark from my codebase to find which model is best at our task"
+- Verify: interviews the user and stages real task instances with established answers before building anything
+- Verify: builds an orq dataset and evaluators, then runs candidate models with evaluatorq
+- Verify: grades against known answers (reported to orq Experiments), or runs a pairwise win-rate arena when there is no single right answer
+- Verify: validates a staged bundle with `scripts/check_bundle.py` before upload
+
 ## `orq-evaluator-alignment`
 
 - Ask: "Align my evaluator — it disagrees with my labels"

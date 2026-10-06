@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.0] - 2026-10-06
+
+### Added
+
+- `orq-build-benchmark` skill: turn a team's own work into a custom orq benchmark. Interviews the user, stages real task instances, then builds an orq dataset and evaluators and runs candidate models with evaluatorq, either graded against known answers (reported to orq Experiments) or as a pairwise win-rate arena when there is no single right answer. Ships `scripts/check_bundle.py` to validate a staged bundle before upload.
+
 ## [3.7.1] - 2026-10-01
 
 ### Added
