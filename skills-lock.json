@@ -9,12 +9,12 @@
     "evaluatorq": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "55bd39ff72b2076d160a9f39e0d347666682ec427aa306b5c077c766e904805a"
+      "computedHash": "2fed1be1e11c15cec4a7035f836660d0e9dcb612b0c3a0d9e1223d15c6af0830"
     },
     "orq-analyze-traces": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "e12df69266f67170873aa3370095acdcd08f1e7b4a38dcedc4fe2e1652f3047a"
+      "computedHash": "503e43bfeb17eddcd62cc8b1b45ee57692efcafa41c7aa1fb762a62cfd929ec9"
     },
     "orq-build-agent": {
       "source": "orq-ai/assistant-plugins",
@@ -29,7 +29,7 @@
     "orq-cli": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "a54df28fd9c196584344af8ade50ac93dbd98479a1b6356b33d96c79c23dd71f"
+      "computedHash": "9533c8f32e55e01d54660396b5614b697b6f3bd95de0735d1baa5f82efc2861d"
     },
     "orq-compare-agents": {
       "source": "orq-ai/assistant-plugins",
@@ -49,7 +49,7 @@
     "orq-improve-agent": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "dcfe993bbada2743a61088f9aefde6075bb81b01d9b16645f6aa8286b40657e3"
+      "computedHash": "a9123d31f23c15a9732b12155579d13a84b1f410f2934da8bdd7fc573f33bb6f"
     },
     "orq-invoke-deployment": {
       "source": "orq-ai/assistant-plugins",
@@ -64,7 +64,7 @@
     "orq-recommend-evaluators": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "ca2b69b166c27da812606b1a3bffc7ffa821210c41597c94ac5459bb47ca8170"
+      "computedHash": "89925d57d8c0e5a0ff9c48d0449ab79acd73ca6a9e363c9bb31a5da96bc56727"
     },
     "orq-red-team": {
       "source": "orq-ai/assistant-plugins",
@@ -84,7 +84,7 @@
     "orq-shared": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "b12fa27497a32df39b2d95d11f53e084fcb9b4dfdea6107e5c2b8b9d744de402"
+      "computedHash": "2cef3feda845c0caf2acdf40894c5a2a731a1bdb562edfd3b286ed89c46080f5"
     },
     "orq-simulate-agent": {
       "source": "orq-ai/assistant-plugins",

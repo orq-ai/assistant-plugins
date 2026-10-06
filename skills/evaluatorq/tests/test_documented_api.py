@@ -77,8 +77,9 @@ def test_inference_resolves_from_the_data_source():
 def test_datapoint_parallelism_still_resolves_to_ten():
     """The signature says `None`; `evaluatorq()` picks the default the skill documents.
 
-    Asserting the resolver with our own `default=10` would pin nothing — the value
-    that matters is the literal `evaluatorq()` hands it.
+    `evaluatorq()` either passes `default=` to the resolver or leaves it to the
+    resolver's own default (`DEFAULT_DATAPOINT_PARALLELISM` since 1.57). Check the
+    value that path actually lands on, not one we hand the resolver ourselves.
     """
     import re
 
@@ -89,9 +90,13 @@ def test_datapoint_parallelism_still_resolves_to_ten():
         r"resolve_datapoint_parallelism\((.*?)\)", inspect.getsource(evaluatorq), re.S
     )
     assert call, "evaluatorq() no longer resolves its datapoint parallelism through the helper"
-    assert "default=10" in call.group(1), (
-        f"the skill documents a default of 10; evaluatorq() now passes {call.group(1).strip()}"
+    passed = re.search(r"default\s*=\s*(\d+)", call.group(1))
+    effective = (
+        int(passed.group(1))
+        if passed
+        else resolve_datapoint_parallelism(None, None, caller="test")
     )
+    assert effective == 10, f"the skill documents a default of 10; evaluatorq() now resolves {effective}"
     assert resolve_datapoint_parallelism(None, 3, default=10, caller="test") == 3, (
         "`parallelism` must still be honoured as the deprecated alias"
     )
