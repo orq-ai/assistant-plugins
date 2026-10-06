@@ -1,0 +1,5 @@
+test_type,target,assertion,description
+mcp_tool_exists,list_skills,,list_skills listed on MCP server
+mcp_tool_param,list_skills,starting_after,list_skills takes starting_after
+cli_subcommand,models list,,orq models list exists
+cli_subcommand,auth whoami,,orq auth whoami exists

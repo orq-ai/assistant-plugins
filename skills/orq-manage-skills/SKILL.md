@@ -106,7 +106,7 @@ all_skills = []
 while True:
     page = list_skills(limit=200, starting_after=cursor)
     all_skills.extend(page.data)
-    if not page.has_more:
+    if not page.has_more or not page.data:
         break
     cursor = page.data[-1].id  # the response uses "id", not "skill_id" (it's the same value)
 ```
@@ -219,9 +219,9 @@ Use when the user wants to edit an existing Skill.
 Use when the user wants to permanently retire a Skill. **`delete_skill` is irreversible** and does not scrub `{{skill.<display_name>}}` / `{{snippet.<display_name>}}` references elsewhere — those references silently fail to resolve after delete. Always offer tagging the Skill with `retired` first (Phase 4 step 4) and only proceed to delete when the user is sure.
 
 1. **Reference scan.** Find places that may reference the Skill by its `display_name`:
-   - Run `search_entities` with `type='prompt'`, `type='deployment'`, and `type='agent'` to enumerate non-skill candidates. You can also use `type='skill'` to enumerate sibling Skills — but note that `search_entities` only matches **metadata** (`display_name`, `key`, `description`) not body text, so it cannot find `{{skill.X}}` / `{{snippet.X}}` references inside instructions.
-   - Therefore, for any candidate returned by `search_entities`, and for all sibling Skills (paginate `list_skills`), fetch the full body and grep it yourself.
-   - For each candidate, fetch its full body (`get_deployment` for deployments; `get_agent` for agents; `get_skill` for sibling Skills' `instructions`; prompt bodies come back from `search_entities`/the prompt-fetch tool) and grep the body for both `{{skill.<display_name>}}` and `{{snippet.<display_name>}}` (case-sensitive — match the Skill's exact `display_name`).
+   - Enumerate candidates exactly as in the [known-caveats.md](resources/known-caveats.md) `delete_skill` workaround: `search_entities` once per `type` (`prompt`, `deployment`, `agent`), each paged to completion, plus every sibling Skill from a paginated `list_skills`. An unpaged `search_entities` call stops at 50 results per type, and a partial scan can wrongly clear a Skill for delete.
+   - `search_entities` only matches **metadata** (`display_name`, `key`, `description`), not body text, so it cannot find `{{skill.X}}` / `{{snippet.X}}` references inside instructions. Fetch every candidate's full body and grep it yourself.
+   - For each candidate, fetch its full body (`get_deployment` for deployments; `get_agent` for agents; `get_skill` for sibling Skills' `instructions`; `orq prompts retrieve <id>` for prompts, since `search_entities` returns metadata only) and grep the body for both `{{skill.<display_name>}}` and `{{snippet.<display_name>}}` (case-sensitive — match the Skill's exact `display_name`).
    - Note: this scan can be expensive in large workspaces. Cache results within the session.
    - If the user has a faster way to grep their workspace (e.g., a synced repo of prompts), prefer that.
 2. **Warn and confirm.** Show the user:

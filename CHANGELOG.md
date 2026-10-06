@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.7.1] - 2026-10-01
+## [3.8.0] - 2026-10-06
 
 ### Changed
 
@@ -22,6 +22,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `orq-shared/resources/trace-queries.md`: `help-input` is registered on the root command; `orq reporting query help-input` is parsed as a shorthand body fragment, not a subcommand. Use `orq help-input` or `orq reporting query --help`.
 - `orq-shared/resources/trace-queries.md`: `POST /v3/telemetry/query` and `orq telemetry` are recorded as rc-only. Rechecked against the stable CLI `v11.0.2` tag on 2026-10-01: no `telemetry` registration or `/v3/telemetry/*` path in the stable spec; both remain under `packages/orq-rc`.
 - `orq reporting query` was re-probed live on CLI 8.7.0-rc.15 (API 4.15.0-rc.52): the scalar cost path is `.data[0].metrics["genai.cost"]`, omitted window flags default to the last seven days, and `--include-totals` returns top-level `.totals.metrics`.
+
+## [3.7.1] - 2026-10-01
+
+### Added
+
+- A factual drift tester for documented MCP tools and arguments, SDK imports and methods, CLI commands and flags, documentation URLs, repositories, and packages across the skills. Reviewed CSV fixtures, a nightly and pull request workflow, and a warning for skills without a fixture make drift visible without making the check required.
+
+### Fixed
+
+- `orq-manage-skills` skill: the delete-safety reference scan in `resources/known-caveats.md` called `list_skills(paginated=True)`, a parameter the MCP tool does not have (it takes only `limit`, `starting_after`, `ending_before`). It is now the explicit cursor loop the skill's Pagination section already documents.
+- `orq-manage-skills` skill: the same scan called `search_entities()` with no arguments, which the live MCP schema rejects now that `type` is required. It now queries `prompt`, `deployment` and `agent` separately and pages each to completion; an unpaged call stopped at 50 results per type, so a large workspace got a partial scan that could wrongly clear a Skill for hard delete. `SKILL.md` Phase 5 and `resources/governance-guide.md` described the same unpaged scan; both now point at the one procedure in `known-caveats.md`. Both paging loops (this scan and the `SKILL.md` Pagination loop) now stop on an empty page instead of reading a cursor from it, and the `_id` cursor field names where it was read from, since the factual tester cannot check response fields. The scan now reads each prompt's body with `orq prompts retrieve <id>` instead of from the `search_entities` result, so it needs the orq CLI; a `cli_subcommand` row checks the command.
+- `orq-invoke-deployment` skill: four dead doc links. Invoke and Stream now point at `/reference/deployments/invoke` and `/reference/deployments/stream`; the Python and Node.js SDK pages are gone, so the SDK line links the single `/reference/client-libraries` page plus the `orq-python` and `orq-node` repos.
+- `orq-cli` skill: `orq traces thread` documented `--reasoning=false`, which CLI 11.0 removed. It now documents `-x/--exclude` (`-x reasoning` drops the thinking), the flag that replaced it.
 
 ## [3.7.0] - 2026-10-01
 

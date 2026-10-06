@@ -1,0 +1,23 @@
+test_type,target,assertion,description
+mcp_tool_exists,list_skills,,list_skills listed on MCP server
+mcp_tool_exists,get_skill,,get_skill listed on MCP server
+mcp_tool_exists,search_entities,,search_entities listed on MCP server
+mcp_tool_exists,get_deployment,,get_deployment listed on MCP server
+mcp_tool_exists,get_agent,,get_agent listed on MCP server
+mcp_tool_exists,create_skill,,create_skill listed on MCP server
+mcp_tool_exists,update_skill,,update_skill listed on MCP server
+mcp_tool_exists,delete_skill,,delete_skill listed on MCP server
+mcp_tool_exists,search_directories,,search_directories listed on MCP server
+mcp_tool_param,list_skills,limit,list_skills takes limit
+mcp_tool_param,list_skills,starting_after,list_skills takes starting_after
+cli_subcommand,skills,,orq skills exists
+cli_subcommand,prompts retrieve,,orq prompts retrieve exists
+doc_url,https://docs.orq.ai/docs/integrations/code-assistants/skills,,skills page reachable
+doc_url,https://docs.orq.ai/docs/prompt-snippets/overview,,overview page reachable
+doc_url,https://docs.orq.ai/docs/agents/agent-studio,,agent-studio page reachable
+mcp_tool_args,search_entities,"{""type"": ""agent""}",search_entities(type=agent) matches the schema
+mcp_tool_args,search_entities,"{""type"": ""deployment""}",search_entities(type=deployment) matches the schema
+mcp_tool_args,search_entities,"{""type"": ""prompt""}",search_entities(type=prompt) matches the schema
+mcp_tool_args,search_entities,"{""type"": ""skill""}",search_entities(type=skill) matches the schema
+mcp_tool_args,list_skills,"{""limit"": 200}",list_skills(limit=200) matches the schema
+mcp_tool_args,search_entities,"{""type"": ""prompt"", ""limit"": 100, ""starting_after"": ""x""}","search_entities(type, limit=100, starting_after) matches the schema"

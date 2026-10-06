@@ -77,13 +77,13 @@ Invoke Progress:
 
 ## orq.ai Documentation
 
-**Deployments:** [Overview](https://docs.orq.ai/docs/deployments/overview) · [Invoke API](https://docs.orq.ai/reference/deployments/orq-invoke-deployment) · [Stream API](https://docs.orq.ai/reference/deployments/stream-deployment) · [Get Config](https://docs.orq.ai/reference/deployments/get-config)
+**Deployments:** [Overview](https://docs.orq.ai/docs/deployments/overview) · [Invoke API](https://docs.orq.ai/reference/deployments/invoke) · [Stream API](https://docs.orq.ai/reference/deployments/stream) · [Get Config](https://docs.orq.ai/reference/deployments/get-config)
 
 **Agents:** [Agent API](https://docs.orq.ai/docs/agents/agent-api) · [Create Response](https://docs.orq.ai/reference/agents/create-response)
 
 **Models (AI Router):** [Getting Started](https://docs.orq.ai/docs/router/getting-started) · [OpenAI-Compatible API](https://docs.orq.ai/docs/proxy/openai-compatible-api) · [Supported Models](https://docs.orq.ai/docs/proxy/supported-models)
 
-**SDKs:** [Python SDK](https://docs.orq.ai/docs/sdk/python) · [Node.js SDK](https://docs.orq.ai/docs/sdk/node)
+**SDKs:** [Install and usage](https://docs.orq.ai/reference/client-libraries) · [Python SDK](https://github.com/orq-ai/orq-python) · [Node.js SDK](https://github.com/orq-ai/orq-node)
 
 ### Key Concepts
 
