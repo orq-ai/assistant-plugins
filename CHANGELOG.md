@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.2] - 2026-10-06
+
+### Changed
+
+- `orq-cli`, `orq-shared`, `orq-analyze-traces`, `orq-improve-agent`, `orq-recommend-evaluators`, tests: `orq traces thread` is `orq traces conversation` again, short alias `conv`, to match orq CLI 12.0.0. That release drops `thread` with no hidden alias, and its `xml` render frames the turns in `<conversation …>`; flags and the `-o json` schema are unchanged. Every call site moved: the "Reading a conversation" section in `orq-cli/SKILL.md`, the command tree, global `-o` and `ORQ_OUTPUT_FORMAT` rows and per-trace read list in `orq-cli/resources/command-map.md`, the full-content bullet and layer 3b in `orq-shared/resources/trace-queries.md`, the trace-reading steps in `orq-recommend-evaluators`, scenario 9a in `tests/skills.md`, the factual CSV rows, and the `allowed-tools` entries, which carry both `Bash(orq traces conversation:*)` and `Bash(orq traces conv:*)`. `orq-cli/SKILL.md` now says which release has which name: `conversation` from 12.0.0, `thread` on 10.0.0 through 11.x.
+
+### Fixed
+
+- `orq-cli` skill: the conversation command's flags now match CLI 11.0.0+. `--tool-max-chars` is documented; the `[omitted: N characters]` stub is listed with the other markers, with its `-o json` shape; `-i` and `-x` are stated as not combinable; and `--max-chars`'s 4000 default is scoped to the `xml` and `markdown` renders, since `-o json|yaml|toon` are uncut unless a cap is passed. `orq-recommend-evaluators`' `reading-traces.md` said the same 4000 default applied to its `-o json` read.
+
 ## [3.7.1] - 2026-10-01
 
 ### Added

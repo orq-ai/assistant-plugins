@@ -47,7 +47,7 @@ curl -fsSL https://raw.githubusercontent.com/orq-ai/orq-cli/main/openapi.yaml -o
 
 | Flag | Effect |
 |---|---|
-| `-o, --output-format` | `json`, `yaml`, `toon` or `table`; `--help` says the default is `table`, and a piped call printed TOON (a real terminal was not probed). This is the only way to ask for JSON. `traces thread` takes its own set and refuses `table` |
+| `-o, --output-format` | `json`, `yaml`, `toon` or `table`; `--help` says the default is `table`, and a piped call printed TOON (a real terminal was not probed). This is the only way to ask for JSON. `traces conversation` takes its own set and refuses `table` |
 | `-j, --jmespath` | JMESPath expression applied to the response |
 | `--raw` | Emit a string or scalar-list result unquoted, one item per line, instead of serializing it |
 | `--columns` | Comma-separated columns for `table` output |
@@ -138,7 +138,7 @@ key`), and a bare `ORQ_KEY=` line changed nothing.
 | Variable | Purpose |
 |---|---|
 | `ORQ_API_KEY` | API key for headless / CI auth. **Resource commands only** — `whoami` / `workspace` exit 1 with `you are not logged in` |
-| `ORQ_OUTPUT_FORMAT` | Default `-o`. Verified on `projects list`; `traces thread` states it does not read it |
+| `ORQ_OUTPUT_FORMAT` | Default `-o`. Verified on `projects list`; `traces conversation` states it does not read it |
 | `ORQ_PROJECT` | Project for the invocation (twin of `--project`) |
 | `ORQ_PROFILE` | Default profile |
 | `ORQ_SERVER` | Base URL for **every** command, built-in and generated. The one host name |
@@ -429,9 +429,9 @@ knowing by heart.
   smart-routers      create delete get list update
   speech             create
   tools              create delete get-version list list-versions retrieve update
-→ traces             aggregate create delete get get-span list-facet-values
-                     list-facets list-fields list-spans query-oql search
-                     thread
+→ traces             aggregate conversation create delete get get-span
+                     list-facet-values list-facets list-fields list-spans
+                     query-oql search
                      insights-service-* (15 subcommands, see below)
   transcriptions     create
   translations       create
@@ -443,8 +443,9 @@ knowing by heart.
   workspace-settings get update
 ```
 
-New since 5.1.0: `models list-preview`, `projects use`, `traces thread` and the
-`workspace` built-in now shown in the tree. The top-level `status`, `switch` and `orqi` are in the built-ins table.
+New since 5.1.0: `models list-preview`, `projects use`, `traces conversation`
+(`traces thread` before 12.0.0, see below) and the `workspace` built-in now
+shown in the tree. The top-level `status`, `switch` and `orqi` are in the built-ins table.
 
 There is no `experiments` group — experiments are MCP/evaluatorq-only.
 `annotation-queues` is the CLI surface for the eval-corrections /
@@ -690,14 +691,15 @@ orq traces list-facet-values <field> -o json \
 orq traces get <trace_id>
 orq traces list-spans <trace_id>
 orq traces get-span <trace_id> <span>
-orq traces thread <trace_id> [<span>]
+orq traces conversation <trace_id> [<span>]    # alias `conv`; `thread` on 10.x-11.x
 ```
 
-`thread` (7.4.0+) is the one to reach for when the question is *what was said*:
-it picks the conversational span itself and normalizes Chat Completions, OpenAI
+`conversation` (added in 7.4.0; spelled `thread` on 7.4.0 through 8.x and on
+10.0.0 through 11.x) is the one to reach for when the question is *what was
+said*: it picks the conversational span itself and normalizes Chat Completions, OpenAI
 Responses and OpenTelemetry GenAI payloads into one message list. Its `-o` is
 its own — `xml` (default), `markdown`, `json`, `yaml`, `toon` — and it neither
-reads `ORQ_OUTPUT_FORMAT` nor accepts `table`. See the `traces thread` section
+reads `ORQ_OUTPUT_FORMAT` nor accepts `table`. See the `traces conversation` section
 of SKILL.md for span selection and the full flag set. `get-span` remains the
 path for span *config* — temperature, tool definitions, `finish_reasons`.
 
