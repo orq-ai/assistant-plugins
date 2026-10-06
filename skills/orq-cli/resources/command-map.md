@@ -444,7 +444,7 @@ knowing by heart.
 ```
 
 New since 5.1.0: `models list-preview`, `projects use`, `traces conversation`
-(`traces thread` before 12.0.0, see below) and the `workspace` built-in now
+(`traces thread` before 11.4.0, see below) and the `workspace` built-in now
 shown in the tree. The top-level `status`, `switch` and `orqi` are in the built-ins table.
 
 There is no `experiments` group — experiments are MCP/evaluatorq-only.
@@ -691,11 +691,11 @@ orq traces list-facet-values <field> -o json \
 orq traces get <trace_id>
 orq traces list-spans <trace_id>
 orq traces get-span <trace_id> <span>
-orq traces conversation <trace_id> [<span>]    # alias `conv`; `thread` on 10.x-11.x
+orq traces conversation <trace_id> [<span>]    # alias `conv`; `thread` before 11.4.0
 ```
 
 `conversation` (added in 7.4.0; spelled `thread` on 7.4.0 through 8.x and on
-10.0.0 through 11.x) is the one to reach for when the question is *what was
+10.0.0 through 11.3.x, deprecated from 11.4.0) is the one to reach for when the question is *what was
 said*: it picks the conversational span itself and normalizes Chat Completions, OpenAI
 Responses and OpenTelemetry GenAI payloads into one message list. Its `-o` is
 its own — `xml` (default), `markdown`, `json`, `yaml`, `toon` — and it neither
