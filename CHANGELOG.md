@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.0] - 2026-10-06
+
+### Added
+
+- Skill invocation and first-step behavioural evals through `orq launch`, with reviewed YAML cases, a maintainer `skill-tests` workflow, per-run costs, and merged factual/eval reports.
+
+### Fixed
+
+- Eval runs require container isolation unless host-file access is explicitly accepted; container copies preserve symlinks instead of copying host targets. Missing agent results cannot report a clean batch, concurrent runs reserve their estimated cost, and documentation URL errors stay advisory in merged reports.
+
 ## [3.7.1] - 2026-10-01
 
 ### Added
