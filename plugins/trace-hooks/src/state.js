@@ -1,10 +1,16 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
+// os.homedir(), not HOME || USERPROFILE: on Windows a shell such as Git Bash
+// sets HOME to a different directory than USERPROFILE, so the two launches
+// used to keep separate session state and replay queues. os.homedir() reads
+// HOME on POSIX and USERPROFILE on Windows, which is where Claude Code itself
+// resolves ~/.claude.
 const STATE_ROOT =
   process.env.ORQ_CLAUDE_STATE_DIR ||
-  path.join(process.env.HOME || process.env.USERPROFILE || "", ".claude", "state");
+  path.join(os.homedir(), ".claude", "state");
 
 const BASE_STATE_DIR = path.join(STATE_ROOT, "orq_sessions");
 const BASE_QUEUE_DIR = path.join(STATE_ROOT, "orq_queue");
