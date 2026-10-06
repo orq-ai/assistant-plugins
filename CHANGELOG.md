@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `orq-cli` skill: the conversation command's flags now match CLI 11.0.0+. `--tool-max-chars` is documented; the `[omitted: N characters]` stub is listed with the other markers, with its `-o json` shape; `-i` and `-x` are stated as not combinable; and `--max-chars`'s 4000 default is scoped to the `xml` and `markdown` renders, since `-o json|yaml|toon` are uncut unless a cap is passed. `orq-recommend-evaluators`' `reading-traces.md` said the same 4000 default applied to its `-o json` read.
+- `evaluatorq` contract test: `test_datapoint_parallelism_still_resolves_to_ten` read `default=10` from the source of `evaluatorq()`. evaluatorq 1.57.0 moved that value into `DEFAULT_DATAPOINT_PARALLELISM`, so the test failed while the default was still 10. It now checks the value the call actually resolves to.
 
 ## [3.7.1] - 2026-10-01
 
