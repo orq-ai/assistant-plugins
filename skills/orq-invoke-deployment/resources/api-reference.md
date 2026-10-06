@@ -253,7 +253,7 @@ curl -s https://api.orq.ai/v2/agents/<agent-key> \
 
 ### Create Chat Completion
 
-**Endpoint:** `POST https://api.orq.ai/v2/router/chat/completions`
+**Endpoint:** `POST https://api.orq.ai/v3/router/chat/completions`
 
 **Required fields:** `messages`, `model`
 
@@ -286,7 +286,7 @@ curl -s https://api.orq.ai/v2/agents/<agent-key> \
 
 ```bash
 # Basic call
-curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
+curl -s -X POST https://api.orq.ai/v3/router/chat/completions \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -298,7 +298,7 @@ curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
   }' | jq '.choices[0].message.content'
 
 # With variables (template substitution)
-curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
+curl -s -X POST https://api.orq.ai/v3/router/chat/completions \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -311,7 +311,7 @@ curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
   }' | jq
 
 # With reliability features (fallback + retry)
-curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
+curl -s -X POST https://api.orq.ai/v3/router/chat/completions \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -323,7 +323,7 @@ curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
   }' | jq
 
 # Structured JSON output
-curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
+curl -s -X POST https://api.orq.ai/v3/router/chat/completions \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -344,7 +344,7 @@ curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
   }' | jq
 
 # Streaming
-curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
+curl -s -X POST https://api.orq.ai/v3/router/chat/completions \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
