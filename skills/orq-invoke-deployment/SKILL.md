@@ -368,7 +368,7 @@ from openai import OpenAI
 
 client = OpenAI(
     api_key=os.environ["ORQ_API_KEY"],
-    base_url="https://api.orq.ai/v2/router",
+    base_url="https://api.orq.ai/v3/router",
 )
 
 response = client.chat.completions.create(
@@ -384,7 +384,7 @@ print(response.choices[0].message.content)
 ### Model (AI Router) — curl
 
 ```bash
-curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
+curl -s -X POST https://api.orq.ai/v3/router/chat/completions \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
