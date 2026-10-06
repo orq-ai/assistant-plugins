@@ -60,12 +60,12 @@ cli_subcommand,traces list-fields,,orq traces list-fields exists
 cli_flag,traces list-fields,-o,orq traces list-fields accepts -o
 cli_subcommand,traces list-facets,,orq traces list-facets exists
 cli_flag,traces list-facets,-o,orq traces list-facets accepts -o
-cli_subcommand,traces thread,,orq traces thread exists
-cli_flag,traces thread,--spans,orq traces thread accepts --spans
-cli_flag,traces thread,-o,orq traces thread accepts -o
-cli_flag,traces thread,--slice,orq traces thread accepts --slice
-cli_flag,traces thread,--match,orq traces thread accepts --match
-cli_flag,traces thread,-i,orq traces thread accepts -i
+cli_subcommand,traces conversation,,orq traces conversation exists
+cli_flag,traces conversation,--spans,orq traces conversation accepts --spans
+cli_flag,traces conversation,-o,orq traces conversation accepts -o
+cli_flag,traces conversation,--slice,orq traces conversation accepts --slice
+cli_flag,traces conversation,--match,orq traces conversation accepts --match
+cli_flag,traces conversation,-i,orq traces conversation accepts -i
 cli_subcommand,traces query-oql,,orq traces query-oql exists
 cli_subcommand,logs query,,orq logs query exists
 cli_flag,logs query,-j,orq logs query accepts -j
@@ -135,12 +135,14 @@ doc_url,https://github.com/orq-ai/orq-cli.git,,orq-cli.git page reachable
 github_repo,orq-ai/orq-cli,,orq-ai/orq-cli exists
 github_repo,orq-ai/bartolo,,orq-ai/bartolo exists
 npm_package,@orq-ai/cli,,@orq-ai/cli on npm
-cli_flag,traces thread,--include,orq traces thread accepts --include
-cli_flag,traces thread,--max-chars,orq traces thread accepts --max-chars
+cli_flag,traces conversation,--include,orq traces conversation accepts --include
+cli_flag,traces conversation,--max-chars,orq traces conversation accepts --max-chars
 cli_flag,traces search,-j,orq traces search accepts -j
 cli_flag,traces search,--jmespath,orq traces search accepts --jmespath
 cli_flag,traces search,--profile,orq traces search accepts --profile
 cli_flag,request,--profile,orq request accepts --profile
 cli_flag,request,--server,orq request accepts --server
-cli_flag,traces thread,-x,orq traces thread accepts -x
-cli_flag,traces thread,--exclude,orq traces thread accepts --exclude
+cli_flag,traces conversation,-x,orq traces conversation accepts -x
+cli_flag,traces conversation,--exclude,orq traces conversation accepts --exclude
+cli_subcommand,traces conv,,orq traces conv exists
+cli_flag,traces conversation,--tool-max-chars,orq traces conversation accepts --tool-max-chars
