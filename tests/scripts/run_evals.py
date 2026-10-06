@@ -18,10 +18,13 @@ allow_tools, so it writes to the workspace only if a case allows a write tool.
 The experiment upload goes to the `skill-evals` project with the same key.
 
 Usage:
-    uv run tests/scripts/run_evals.py                          # all cases, all agents
-    uv run tests/scripts/run_evals.py --skill orq-build-evaluator --agent claude
-    uv run tests/scripts/run_evals.py --case build-evaluator-asks-first --runs 1 --no-send
-    uv run tests/scripts/run_evals.py --container                # each agent in a Docker container
+    uv run tests/scripts/run_evals.py --container                          # all cases, all agents
+    uv run tests/scripts/run_evals.py --container --skill orq-build-evaluator --agent claude
+    uv run tests/scripts/run_evals.py --container --case build-evaluator-asks-first --runs 1 --no-send
+    uv run tests/scripts/run_evals.py --unsafe-host --case build-evaluator-fires --runs 1
+
+Agent runs require a container unless --unsafe-host explicitly permits the agent to
+read host files. The MCP allowlist does not restrict local Read/Glob/Grep tools.
 
 Exit code: 0 every case passed, 1 a case fell below its threshold, 2 anything
 else: run errors, the cost cap stopped runs, or the runner could not start (bad
@@ -191,6 +194,8 @@ def load_cases(skill_names: set[str]) -> list[Case]:
         # An invocation case is scored by skill_fired alone, which skips `any`: no verdict, so every run fails.
         if case.kind == "invocation" and case.expect_skill == "any":
             problems.append(f"{rel}: an invocation case needs an expected skill or 'none', not 'any'")
+        if path.name.endswith("-fires.yaml") and (case.kind != "invocation" or case.expect_skill != case.skill):
+            problems.append(f"{rel}: a fires case must assert invocation of its own skill")
         if case.kind != "behavioural" and case.expect_question_about:
             problems.append(f"{rel}: expect_question_about needs a behavioural case")
         if any(not isinstance(term, str) or not term.strip() for term in case.expect_question_about):
@@ -502,7 +507,7 @@ def build_target(
             plugin_dir = str(branch)
         else:
             workdir = temp / "work"
-            shutil.copytree(branch, workdir / "plugin", ignore=PLUGIN_COPY_IGNORE)
+            shutil.copytree(branch, workdir / "plugin", ignore=PLUGIN_COPY_IGNORE, symlinks=True)
             plugin_dir = f"{container.workdir}/plugin"
         target = EvalTarget(
             "claude",
@@ -542,7 +547,7 @@ def build_target(
     skills_dst.mkdir(parents=True)
     for skill in (branch / "skills").iterdir():
         if (skill / "SKILL.md").exists():
-            shutil.copytree(skill, skills_dst / skill.name)
+            shutil.copytree(skill, skills_dst / skill.name, symlinks=True)
     # --auto grants everything, so deny shell, writes, webfetch (a shell reaches orq through curl,
     # around every MCP-level check) and all orq tools, then allow allow_tools back in: the last
     # matching rule wins, mirroring Claude's --allowedTools. OpenCode hides a denied tool from
@@ -684,6 +689,7 @@ class Budget:
     # No lock: admit/add have no await inside, so asyncio cannot interleave them.
     cap: float
     spent: float = 0.0
+    reserved: float = 0.0
     breached: bool = False
     # What a run is charged when its own figure is missing or untrusted, per (agent, case id).
     per_run: dict[tuple[str, str], float] = field(default_factory=dict)
@@ -694,14 +700,19 @@ class Budget:
     def estimate(self, agent: str, case_id: str) -> float:
         return self.per_run.get((agent, case_id), UNPRICED_RUN_COST_USD)
 
-    def admit(self) -> bool:
-        if self.spent >= self.cap:
+    def admit(self, agent: str, case_id: str) -> bool:
+        estimate = self.estimate(agent, case_id)
+        if self.spent + self.reserved + estimate > self.cap:
             self.breached = True
             return False
+        self.reserved += estimate
         return True
 
-    def add(self, cost: float | None) -> None:
+    def add(self, cost: float | None, agent: str, case_id: str) -> None:
+        self.reserved -= self.estimate(agent, case_id)
         self.spent += cost or 0.0
+        if self.spent > self.cap:
+            self.breached = True
 
 
 async def run_once(
@@ -722,7 +733,7 @@ async def run_once(
             # A timeout leaves no stdout but the agent ran (and billed) until it was killed.
             timed_out = exc.code == "cli.timeout"
             cost = budget.estimate(agent, case.id) if timed_out else _cost_from_stdout(agent, case.id, target.last_stdout, budget)
-            budget.add(cost)
+            # The caller reconciles the reservation even when setup fails.
             recovered = _recover_max_turns(agent, target.last_stdout)
             if recovered is None:
                 return _run_error(agent, exc, target.last_stdout) | {"cost_usd": cost}
@@ -730,7 +741,6 @@ async def run_once(
         finally:
             await target.close()
         cost = _cost_from_stdout(agent, case.id, target.last_stdout, budget)
-        budget.add(cost)
         return {
             "tool_calls": [_call_dict(o) for o in response.output if isinstance(o, ToolCallOutputItem)],
             "text": next((o.text for o in reversed(response.output) if isinstance(o, TextOutputItem)), ""),
@@ -750,7 +760,7 @@ def make_job(
         spent = 0.0
         out: dict[str, Any] = {}
         for attempt in (1, 2):  # a retryable error is re-run once, then reported as an error
-            if not budget.admit():
+            if not budget.admit(agent, case.id):
                 if attempt == 1:
                     return {"name": agent, "output": base | {"skipped": "cost cap reached"}, "error": None}
                 break  # the cap stopped the retry: report the first attempt's error
@@ -759,6 +769,7 @@ def make_job(
             except Exception as exc:  # noqa: BLE001 -- setup (copy, git init) failed; keep the agent's row
                 out = {"error": f"setup: {type(exc).__name__}: {exc}", "error_kind": "harness", "retryable": False,
                        "launched": False, "cost_usd": 0.0}  # fmt: skip
+            budget.add(out["cost_usd"], agent, case.id)
             spent += out["cost_usd"] or 0.0
             # OpenCode's thread is the run_id sent as X-ORQ-THREAD-ID; Claude's is its session id.
             thread_id = (out.get("session_id") if agent == "claude" else run_id) if out.pop("launched", True) else None
@@ -907,7 +918,8 @@ async def asks_user(params: ScorerParameter) -> EvaluationResult:
         r"\b(?:what|which|who|when|where|why|how|would|could|can|do|does|is|are|should|will)\b[^.!?\n]*\?",
         out.get("text", ""), re.IGNORECASE,
     )
-    relevant = any(term.lower() in question.lower() for question in questions for term in case.expect_question_about)
+    relevant = any(re.search(rf"(?<!\w){re.escape(term)}\w*", question, re.IGNORECASE)
+                   for question in questions for term in case.expect_question_about)
     return _verdict(relevant, relevant, "asked a relevant question" if relevant else "no user-facing question about the expected topic")
 
 
@@ -944,7 +956,7 @@ SCORERS: list[Evaluator] = [
 # ---------------------------------------------------------------------------
 
 
-def aggregate(results: list[Any], cases: list[Case]) -> dict[str, Any]:
+def aggregate(results: list[Any], cases: list[Case], expected_agents: list[AgentName] | None = None) -> dict[str, Any]:
     by_case = {c.id: c for c in cases}
     groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for dp in results:
@@ -987,6 +999,25 @@ def aggregate(results: list[Any], cases: list[Case]) -> dict[str, Any]:
                     or out.get("tool_calls_before_error", []),
                 }
             )
+    if expected_agents is not None:
+        datapoint_errors = {
+            (dp.data_point.inputs["case"]["id"], dp.data_point.inputs["run"]): dp.error
+            for dp in results if dp.error
+        }
+        for case in cases:
+            for agent in expected_agents:
+                runs = groups.setdefault((case.id, agent), [])
+                present = {r["run"] for r in runs}
+                for run in range(1, case.runs + 1):
+                    if run in present:
+                        continue
+                    runs.append({
+                        "run": run, "status": "error", "scores": {},
+                        "error": datapoint_errors.get((case.id, run)) or "missing agent result",
+                        "error_kind": "harness", "thread_id": None, "attempts": 0,
+                        "cost_usd": None, "cost_source": None, "stopped": None, "tool_calls": [],
+                    })
+                runs.sort(key=lambda r: r["run"])
 
     case_rows: list[dict[str, Any]] = []
     for (case_id, agent), runs in sorted(groups.items()):
@@ -1095,6 +1126,8 @@ async def apply_trace_costs(results: list[Any], orq: Path | None, key: str, star
 
 def exit_code(report: dict[str, Any], budget: Budget) -> int:
     statuses = {row["status"] for row in report["cases"]}
+    if not report["cases"]:
+        return 2
     if "fail" in statuses:
         return 1
     if "error" in statuses or budget.breached:
@@ -1134,6 +1167,7 @@ async def amain() -> int:
         action="store_true",
         help="Run each agent in a Docker container (evaluatorq's image; build it once with `eq coding-agent build-image`)",
     )
+    parser.add_argument("--unsafe-host", action="store_true", help="Opt in to running agents on the host with access to host files")
     args = parser.parse_args()
 
     if args.json_path and not args.list:
@@ -1162,6 +1196,8 @@ async def amain() -> int:
     if not cases:
         print("no eval cases selected", file=sys.stderr)
         return 2
+    if not args.list and not args.container and not args.unsafe_host:
+        sys.exit("agent runs require --container; --unsafe-host explicitly permits access to host files")
 
     key = load_dotenv_key("ORQ_API_KEY")
     if not key and not args.list:
@@ -1290,7 +1326,7 @@ async def amain() -> int:
     if traced:
         save_raw()
 
-    report = aggregate(results, cases)
+    report = aggregate(results, cases, agents)
     print_report(report)
     code = exit_code(report, budget)
     attempts = [r["attempts"] for row in report["cases"] for r in row["runs"]]

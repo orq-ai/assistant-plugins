@@ -32,9 +32,9 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections import Counter
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -66,12 +66,12 @@ def skill_line(skill: str, needle: str) -> str | None:
 def factual_findings(data: dict[str, Any]) -> list[dict[str, Any]]:
     findings = []
     for r in data.get("results", []):
-        if r["status"] == "failed":
-            bucket = "advisory" if r["test_type"] == "doc_url" else "drift"
-        elif r["status"] == "error":
-            bucket = "error"
-        else:
+        if r["status"] not in ("failed", "error"):
             continue
+        if r["test_type"] == "doc_url":
+            bucket = "advisory"
+        else:
+            bucket = "drift" if r["status"] == "failed" else "error"
         findings.append(
             {
                 "skill": r["skill"],

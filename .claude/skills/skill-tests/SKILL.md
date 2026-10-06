@@ -110,7 +110,9 @@ Before running anything, state the config and wait for the user to confirm it:
   (`--pass-threshold <0..1>`). The override also loosens near misses that normally
   need every run to pass, so say which cases it changes; to give kinds different
   thresholds, run them separately with `--case`.
-- **Coding agents:** which ones, and in which mode (host, or `--container`).
+- **Coding agents:** which ones, and whether the run uses `--container`. Host mode
+  requires an explicit `--unsafe-host` opt-in: agents can read local files outside
+  the plugin checkout even when MCP tools are allowlisted.
 - **Model per agent:** ask which model each selected agent runs on. The default is
   what `--list` prints as `(orq launch default)` (`unresolved` in container mode: the
   image's orq picks it); it is not pinned, so a later run may resolve another model.
@@ -145,13 +147,13 @@ spending anything. The factual suite needs no confirmation when it is the only s
 - On Windows, set `SSL_VERIFY=0` if Python's TLS setup aborts (`OPENSSL_Applink`) or
   TLS interception breaks verification. The eval runner saves results before
   uploading and prints the `--upload <file>` command if the upload fails.
-- **Container mode (recommended when Docker is available):** `--container` runs each
-  agent in a Docker container that sees only its own workdir. It needs Docker and the
-  evaluatorq image, built once per evaluatorq version with
-  `uv run --with evaluatorq==<pinned version> eq coding-agent build-image` (the runner
-  prints the exact command if the image is missing). Ask before building: a few
-  minutes and about 2 GB. Behind TLS-intercepting antivirus, add its root CA to a copy
-  of the Dockerfile and set `NODE_EXTRA_CA_CERTS`.
+- **Container mode (required unless the user explicitly accepts unsafe host access):**
+  `--container` runs each agent in a Docker container that sees only its own
+  workdir. It needs Docker and the evaluatorq image, built once per evaluatorq
+  version with `uv run --with evaluatorq==<pinned version> eq coding-agent build-image`
+  (the runner prints the exact command if the image is missing). Ask before
+  building: a few minutes and about 2 GB. Behind TLS-intercepting antivirus,
+  add its root CA to a copy of the Dockerfile and set `NODE_EXTRA_CA_CERTS`.
 
 ## 6. Run
 
@@ -163,7 +165,7 @@ Each Bash call starts a fresh shell, so load `.env` in the same call as the runn
 [ -f .env ] && { set -a; . ./.env; set +a; }
 mkdir -p tests/eval-results
 uv run tests/scripts/run_factual_tests.py --json [--skill <name>] > tests/eval-results/factual.json
-uv run tests/scripts/run_evals.py --json tests/eval-results/evals.json [--skill <name>] [--case <id>] [--agent <agent>] [--runs <n>] [--pass-threshold <x>] [--claude-model <id>] [--opencode-model <id>]
+uv run tests/scripts/run_evals.py --container --json tests/eval-results/evals.json [--skill <name>] [--case <id>] [--agent <agent>] [--runs <n>] [--pass-threshold <x>] [--claude-model <id>] [--opencode-model <id>]
 uv run tests/scripts/skill_test_report.py [--factual tests/eval-results/factual.json] [--evals tests/eval-results/evals.json]
 ```
 
@@ -296,6 +298,8 @@ A run is retried at most once, and only for a `harness` error or a `model` error
 naming a rate limit, 429, a 5xx, "overloaded", "temporarily" or "unavailable". Other
 errors (`empty_response`, `timeout`, `tool`, a launch that never started) replay the
 same way and are not retried. Both attempts are billed and counted in the run's
-`cost_usd` and `attempts`. While the batch runs, the cap counts estimates (Claude
-Code's own figure on an Anthropic model, else the "up to" figure), so it tends to
-stop runs early rather than late; the summary replaces them with traced costs.
+`cost_usd` and `attempts`. The cap reserves each pending run's upper estimate
+before launch, then reconciles it with the agent's own cost where trustworthy
+(Claude Code on Anthropic models) or the estimate elsewhere. A run that costs
+more than its reservation can exceed the cap; it is flagged and no later run
+starts. The summary replaces estimates with traced costs when available.

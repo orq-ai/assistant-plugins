@@ -36,6 +36,12 @@ def case(**overrides: Any) -> r.Case:
     fields = {"id": "c", "skill": "orq-build-evaluator", "kind": "behavioural", "prompt": "p", "expect_skill": "orq-build-evaluator"}
     return r.Case(**(fields | overrides))
 
+def test_host_mode_requires_explicit_unsafe_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["run_evals.py", "--case", "build-evaluator-fires"])
+    with pytest.raises(SystemExit, match="--container"):
+        asyncio.run(r.amain())
+
+
 
 def score(scorer: Any, c: r.Case, calls: list[dict[str, Any]], agent: str = "claude", text: str = "") -> Any:
     data = DataPoint(inputs={"case": c.__dict__, "run": 1, "orq_skills": ORQ_SKILLS})
@@ -101,6 +107,11 @@ def test_asks_user_requires_a_relevant_question_in_assistant_text() -> None:
     assert score(r.asks_user, c, [], text="I will check grounding.").pass_ is False
     assert score(r.asks_user, c, [call("AskUserQuestion", {"question": "What counts as grounded?"})]).pass_ is False
     assert score(r.asks_user, case(), [], text="What counts as grounded?").pass_ is None
+
+def test_asks_user_does_not_match_topic_inside_an_unrelated_word() -> None:
+    c = case(expect_question_about=["ground", "label"])
+    assert score(r.asks_user, c, [], text="What is your background color?").pass_ is False
+
 
 
 def test_no_forbidden_tools() -> None:
@@ -191,6 +202,15 @@ def test_aggregate_scorer_crash_and_no_verdict_are_errors() -> None:
     crashed.error = None
     assert r.aggregate([dp], [c])["cases"][0]["runs"][0]["status"] == "error"  # nothing scored is not a fail
 
+def test_aggregate_reports_missing_jobs_and_datapoints() -> None:
+    c = case(kind="invocation", runs=2)
+    missing_job = SimpleNamespace(data_point=SimpleNamespace(inputs={"case": c.__dict__, "run": 1}), job_results=[], error="network failure")
+    report = r.aggregate([missing_job], [c], ["claude", "opencode"])
+    assert len(report["cases"]) == 2
+    assert all(row["status"] == "error" and len(row["runs"]) == 2 for row in report["cases"])
+    assert r.exit_code(report, r.Budget(10)) == 2
+
+
 
 def test_aggregate_threshold_partial_and_skipped() -> None:
     c = case(pass_threshold=0.66)
@@ -232,13 +252,21 @@ def test_exit_code() -> None:
 
 
 def test_budget_and_cost() -> None:
-    budget = r.Budget(0.3)
-    assert budget.admit()
-    budget.add(r._cost_from_stdout("opencode", "c", '{"type": "x"}', budget))  # output but no cost: the flat charge
-    budget.add(r._cost_from_stdout("claude", "c", "", budget))  # no output at all: nothing ran
-    assert budget.spent == r.UNPRICED_RUN_COST_USD and budget.admit()
-    budget.add(0.1)
-    assert not budget.admit() and budget.breached
+    budget = r.Budget(0.55)
+    assert budget.admit("opencode", "c")
+    budget.add(r._cost_from_stdout("opencode", "c", '{"type": "x"}', budget), "opencode", "c")
+    assert r._cost_from_stdout("claude", "c", "", budget) == 0  # no output: no charge
+    assert budget.spent == r.UNPRICED_RUN_COST_USD and budget.admit("claude", "c")
+    budget.add(0.1, "claude", "c")
+    assert not budget.admit("opencode", "c") and budget.breached
+
+def test_budget_reserves_parallel_runs_and_detects_last_run_overrun() -> None:
+    budget = r.Budget(0.30, per_run={("claude", "c"): 0.20})
+    assert budget.admit("claude", "c")
+    assert not budget.admit("claude", "c")
+    budget.add(0.35, "claude", "c")
+    assert budget.breached and r.exit_code(rows("pass"), budget) == 2
+
 
 
 CLAUDE_MAX_TURNS = [
@@ -305,13 +333,8 @@ def test_make_job_keeps_the_agent_row_on_a_setup_crash(monkeypatch: pytest.Monke
 
 
 def test_make_job_cost_cap_after_an_error_keeps_the_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    budget = r.Budget(0.1)
-
-    def spend_then_fail() -> dict[str, Any]:
-        budget.add(1.0)  # the failed attempt used up the cap
-        return failed_run("boom")
-
-    result, calls = run_job(monkeypatch, [spend_then_fail], budget)
+    budget = r.Budget(0.1, per_run={("claude", "c"): 0.05})
+    result, calls = run_job(monkeypatch, [failed_run("boom", cost=1.0)], budget)
     assert calls == 1 and result["error"] == "boom"
     result, calls = run_job(monkeypatch, [], budget)
     assert calls == 0 and result["output"]["skipped"] == "cost cap reached"
@@ -328,6 +351,20 @@ def test_opencode_config_mirrors_the_claude_limits() -> None:
     assert perm[r.OPENCODE_MCP_PREFIX + "search_entities"] == "allow"
     assert perm[r.OPENCODE_MCP_PREFIX + "create_*"] == "deny"
     assert not target._source_workdir.exists()  # the stack removed the temp dirs
+
+
+def test_container_copy_never_dereferences_host_symlinks(tmp_path: Path) -> None:
+    branch = tmp_path / "branch"
+    skill = branch / "skills" / "example"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("test", encoding="utf-8")
+    secret = tmp_path / "host-secret"
+    secret.write_text("private", encoding="utf-8")
+    (skill / "outside").symlink_to(secret)
+    with contextlib.ExitStack() as stack:
+        target = r.build_target(stack, "claude", case(), branch, "key", "run-1", r.DockerOptions())
+        copied = target._source_workdir / "plugin" / "skills" / "example" / "outside"
+        assert copied.is_symlink()
 
 
 # -- case loading ----------------------------------------------------------------
@@ -373,6 +410,19 @@ def test_load_cases_rejects(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ext
         r.load_cases(set(ORQ_SKILLS))
 
 
+def test_load_cases_rejects_fires_filename_without_invocation_assertion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    folder = tmp_path / "orq-build-evaluator"
+    folder.mkdir()
+    (folder / "build-evaluator-fires.yaml").write_text(
+        "id: build-evaluator-fires\nskill: orq-build-evaluator\nkind: behavioural\n"
+        "prompt: p\nexpect_skill: any\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(r, "EVALS_DIR", tmp_path)
+    monkeypatch.setattr(r, "REPO_ROOT", tmp_path)
+    with pytest.raises(SystemExit, match="a fires case must assert invocation of its own skill"):
+        r.load_cases(set(ORQ_SKILLS))
+
+
 def test_the_shipped_cases_load() -> None:
     skills = {p.name for p in (r.REPO_ROOT / "skills").iterdir() if (p / "SKILL.md").exists()}
     assert r.load_cases(skills)
@@ -410,6 +460,9 @@ def test_report_buckets_and_detail() -> None:
     assert [f["bucket"] for f in findings] == ["regression", "flaky", "error", "measured"]
     assert '{"key": "k"}' in findings[0]["detail"]  # the arguments of the forbidden attempt
     doc = {"skill": "orq-build-evaluator", "status": "failed", "test_type": "doc_url", "target": "https://x"}
+    assert [f["bucket"] for f in report.factual_findings({"results": [doc]})] == ["advisory"]
+    doc["status"] = "error"
+    doc["error"] = "curl timed out"
     assert [f["bucket"] for f in report.factual_findings({"results": [doc]})] == ["advisory"]
 
 
