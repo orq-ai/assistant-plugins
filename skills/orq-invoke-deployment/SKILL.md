@@ -19,7 +19,7 @@ You are an **orq.ai integration engineer**. Your job is to help users invoke orq
 - **NEVER** invoke a deployment without confirming all `{{variable}}` inputs are populated — missing inputs silently omit prompt content with no error.
 - **NEVER** skip `identity.id` in production calls — it links requests to contacts in orq.ai and enables per-user analytics and cost attribution.
 - **ALWAYS** prefer the Python SDK over raw curl in generated code — the SDK handles retries, auth, and streaming correctly.
-- **ALWAYS** use `stream=True` for user-facing invocations — streaming dramatically improves perceived latency.
+- **Prefer streaming for user-facing invocations** — it dramatically improves perceived latency. Stream deployments with `client.deployments.stream(...)` (an `EventStream`), not `invoke(stream=True)`, which is not iterable.
 - **ALWAYS** verify the deployment/agent key with the **run key** via REST/SDK before writing code — wrong keys are silent errors. Use `search_entities` to **browse** for keys, then verify with the run key (see [run-key preflight](../orq-shared/resources/run-key-preflight.md)).
 
 **Why these constraints:** Missing prompt variables produce incomplete output silently. Hardcoded API keys are a security risk. Wrong keys waste budget. Skipping identity makes traces unattributable.
@@ -244,15 +244,18 @@ response = client.deployments.invoke(
 )
 print(response.choices[0].message.content)
 
-# Streaming (works with any pattern above)
-response = client.deployments.invoke(
+# Streaming (works with any pattern above) — use deployments.stream(),
+# not invoke(stream=True). invoke(stream=True) returns a single response body,
+# not an iterator, so `for chunk in response` raises. stream() returns an
+# EventStream: a context manager you iterate, each event's payload under .data.
+with client.deployments.stream(
     key="<deployment-key>",
     inputs={"variable_name": "value"},
     identity={"id": "user_<unique_id>"},
-    stream=True,
-)
-for chunk in response:
-    print(chunk, end="", flush=True)
+) as stream:
+    for event in stream:
+        if event.data and event.data.choices:
+            print(event.data.choices[0].message.content, end="", flush=True)
 ```
 
 ### Deployment — curl
