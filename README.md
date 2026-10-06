@@ -196,6 +196,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 | **create-skill** | Build or update an agent skill from an API, CLI, or MCP surface — probe the surface, verify every claim, write a tested contract, and register it | [SKILL.md](skills/create-skill/SKILL.md) |
 | **orq-shared** | Reference bundle the other skills read — the verified `orq` CLI trace query contract and the run-key preflight; not invoked on its own | [SKILL.md](skills/orq-shared/SKILL.md) |
 | **orq-cli** | Drive the `orq` command-line interface — install check, auth, workspace selection, `orq doctor` troubleshooting, and read/write commands with JSON output and JMESPath queries | [SKILL.md](skills/orq-cli/SKILL.md) |
+| **orq-build-benchmark** | Turn a team's own work into a custom orq benchmark — interview the user, stage real task instances, build an orq dataset and evaluators, and run candidate models with evaluatorq, graded against known answers or as a pairwise win-rate arena | [SKILL.md](skills/orq-build-benchmark/SKILL.md) |
 <!-- END_SKILLS_TABLE -->
 
 ---
