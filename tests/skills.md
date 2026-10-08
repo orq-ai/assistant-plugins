@@ -546,6 +546,23 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: pipes to `jq` rather than passing `-q` to `traces search`
 - Verify: if it does hit `invalid filter: "status" expects exactly one value`, it wraps the value in an array rather than removing the array
 
+### Scenario 6c: A metrics question routes to the reporting contract
+
+- Ask: "What did we spend on genai in the last 7 days, and what's the p95 latency?"
+- Verify: reaches `orq-shared/resources/trace-queries.md` §5 rather than guessing the flag surface
+- Verify: uses `orq reporting query --metric genai.cost --from 7d --to now --mode scalar -o json`, or — only after `orq telemetry --help` succeeds — `orq telemetry query --source TELEMETRY_SOURCE_TRACES --compute '[{"metric":"genai.cost","op":"sum"}]' --from 7d --to now --mode scalar -o json` (§5.4)
+- Verify: reads the value at `.metrics["genai.cost"]` (reporting) or `.metrics["genai.cost:sum"]` (telemetry) — there is no `.value` field on the row
+- Verify: sets `pipefail` before piping into `jq`, knowing the CLI exits non-zero on rejection but `jq` exits 0 on empty input
+- Verify: does NOT pass `--json` (not a flag), and does NOT call `orq telemetry` without probing it first — 11.4.0 and earlier have no `telemetry` command
+- Verify: does NOT invent a metric name outside the 18-value enum
+
+### Scenario 6d: Relative window in a body file
+
+- Ask: "Aggregate error traces by model for the last week using a body file"
+- Verify: keeps `from`/`to` on `--from` / `--to` flags, or writes RFC3339 into the body — does NOT put `"from": "7d"` in the body
+- Verify: explains that a `--from-file` or stdin body is sent as written and is not normalized
+- Verify: does NOT copy a reporting `filters[].field` into a trace filter — the two share the shape, not the vocabulary
+
 ### Scenario 7: Unknown flag
 
 - Ask: "Search traces from the last day for errors"
@@ -581,7 +598,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Simulate a `traces search` whose `--from` is more than 30 days back
 - Ask: "Get me trace ids since <31+ days ago>"
 - Verify: knows trace retention is 30 days and that an older window is a hard 400, not a clamp
-- Verify: any `| jq` pipeline it writes sets `pipefail` — the CLI writes errors to stderr and leaves stdout empty, so `jq` emits nothing at exit 0
+- Verify: any `| jq` pipeline it writes sets `pipefail` — the CLI exits non-zero and writes errors to stderr, but `jq` exits 0 on empty stdout
 - Verify: does NOT report "no traces found" when the request was rejected
 
 ### Scenario 9: Per-trace drill-down
