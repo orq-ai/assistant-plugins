@@ -472,21 +472,25 @@ orq traces list-facets -o json     # facetable fields
 
 The registry **grows and renames between releases**: 56 → 57 fields in one afternoon when `attr.*` became `attributes.*`, 66 on 5.1.0, **168 on 8.6.9** (and 50 facets). Each entry now carries `name`, `type`, `operators`, `sortable`, `facet`, `groupable`, `scope` and an `aliases` list, and 108 of the 168 have aliases (for example `operation` is also `attributes.gen_ai.operation.name`), so a renamed field can stay reachable under its old spelling. A name that resolves to nothing now **fails loudly**: `HTTP 400: invalid filter: unknown field "attr.nonexistent_zzz"`. On 5.1.0 it returned zero rows without erroring, which looked exactly like "no matching traces", so a script written for 5.1.0 may carry a workaround it no longer needs. Resolve names at call time; never hard-code one from this document.
 
-### Reading a conversation: `traces thread`
+### Reading a conversation: `traces conversation`
 
-> **Probed against 8.6.9 (API 4.14.20), 2026-09-21,** on a live trace with a 3-message conversation (first probed on 8.5.2, RES-1507): `--spans` (marks the chosen span, `NOTE` says why others were skipped), the default `xml` and `markdown` renders, `--slice`, `--max-chars`, `-o json` (keys `messages`, `source`), and the exits below all behaved as documented. `--include` was not re-run.
+> **Probed against 8.6.9 (API 4.14.20), 2026-09-21,** on a live trace with a 3-message conversation (first probed on 8.5.2, RES-1507), under the `traces thread` name that release used: `--spans` (marks the chosen span, `NOTE` says why others were skipped), the default `xml` and `markdown` renders, `--slice`, `--max-chars`, `-o json` (keys `messages`, `source`), and the exits below all behaved as documented. `--include` was not re-run. The 11.0.0 flags (`-x/--exclude`, `--tool-max-chars`, the `[omitted: N characters]` stubs) are from the 11.0.0 changelog and help, not probed live. The 11.4.0 rename is from orq-cli#122, not probed.
 
-`orq traces thread <trace-id> [span-id]` renders a trace's conversation instead of its span JSON. Added in 7.4.0 (RES-1507) and substantially extended by 8.5.2. **Do not reconstruct a conversation out of `get-span` attributes** — the payload shapes differ per dialect (Chat Completions, OpenAI Responses, the flattened OpenTelemetry GenAI shape orq collectors emit) and `thread` normalizes all three into one model. It is also far cheaper to read: on one live Responses span the default render was roughly an order of magnitude smaller than the raw `get-span -o json`, and `-o json` about a quarter of it.
+**The name depends on the CLI version.** From **11.4.0** it is `orq traces conversation`, short alias `conv`; `thread` still runs there as a hidden, deprecated spelling (same output, one warning on stderr) and will be removed later. **10.0.0 through 11.3.x** and 7.4.0 through 8.x have only `thread`; 9.0.0 briefly had `conversation`. Flags and the `-o json` schema are the same under every name. The `xml` render wraps turns in `<conversation …>` from 11.4.0 (either spelling) and `<thread …>` before. `orq traces --help` lists the name you have.
+
+`orq traces conversation <trace-id> [span-id]` renders a trace's conversation instead of its span JSON. Added in 7.4.0 (RES-1507) and substantially extended by 8.5.2. **Do not reconstruct a conversation out of `get-span` attributes** — the payload shapes differ per dialect (Chat Completions, OpenAI Responses, the flattened OpenTelemetry GenAI shape orq collectors emit) and `conversation` normalizes all three into one model. It is also far cheaper to read: on one live Responses span the default render was roughly an order of magnitude smaller than the raw `get-span -o json`, and `-o json` about a quarter of it.
 
 ```sh
-orq traces thread <trace-id>                     # picks the span, names it in the output
-orq traces thread <trace-id> <span-id>           # that span, nothing else
-orq traces thread <trace-id> --spans             # which span it picks, and the alternatives
-orq traces thread <trace-id> -o markdown         # to paste into a ticket or chat
-orq traces thread <trace-id> -o json             # canonical thread, not the raw span
-orq traces thread <trace-id> --slice -1          # last message; also 2, 2:, :-1, 1:3
-orq traces thread <trace-id> --match get_weather # only turns matching a regexp
-orq traces thread <trace-id> -i user,assistant   # only these parts
+orq traces conversation <trace-id>                     # picks the span, names it in the output
+orq traces conversation <trace-id> <span-id>           # that span, nothing else
+orq traces conversation <trace-id> --spans             # which span it picks, and the alternatives
+orq traces conversation <trace-id> -o markdown         # to paste into a ticket or chat
+orq traces conversation <trace-id> -o json             # canonical conversation, not the raw span
+orq traces conversation <trace-id> --slice -1          # last message; also 2, 2:, :-1, 1:3
+orq traces conversation <trace-id> --match get_weather # only turns matching a regexp
+orq traces conversation <trace-id> -i user,assistant   # only these parts
+orq traces conversation <trace-id> -x reasoning        # every part but these
+orq traces conv <trace-id> --tool-max-chars 200        # short tool results; `conv` is the alias
 ```
 
 **Its `-o` is its own, not the CLI-wide one.** The enum is `[xml, markdown, json, yaml, toon]`, default `xml`; `ORQ_OUTPUT_FORMAT` and the config file are not read, so the workspace default never reaches this command. `-o table` is refused outright (exit 1, before any request):
@@ -498,21 +502,24 @@ This command takes [xml, markdown, json, yaml, toon]; xml is what it renders whe
 
 Two human renders, and the difference is a security property, not taste. **`xml`** (default) frames turns as `<message index=… role=…>` elements and escapes its own tag names where they appear in recorded content, so a span body cannot forge a turn or desync the indices `--slice` refers to. **`markdown`** uses `## USER [1]` headings and fenced JSON for tool arguments — readable, pasteable, and forgeable by content. Default to `xml` for anything you will act on; reach for `markdown` when a human is reading it.
 
-In both, the `index` is the `--slice` index and the system message is `0`, so `--slice 0` is the system prompt. Missing content is named rather than invented: `[content unavailable]`, `[content unavailable: N items]`, `[truncated: N more characters]`, `[unsupported content: <type>]`, `[redacted thinking]`.
+In both, the `index` is the `--slice` index and the system message is `0`, so `--slice 0` is the system prompt. Missing content is named rather than invented: `[content unavailable]`, `[content unavailable: N items]`, `[truncated: N more characters]`, `[omitted: N characters]` (a turn `-i`/`-x` left out, 11.0.0+), `[unsupported content: <type>]`, `[redacted thinking]`.
 
 Flags beyond `-o`, verified live on 8.5.2 unless marked:
 
-- `--spans` prints the span table instead of a thread: `TRY` (read order, not a ranking), `SPAN`, `TYPE`, `STARTED`, `TURNS` (messages found, blank when not read), `NAME`, `NOTE` (why a span was passed over), with `*` on the one selected. Run it when you doubt the selection — `TURNS` is what tells you the right span was picked.
+- `--spans` prints the span table instead of a conversation: `TRY` (read order, not a ranking), `SPAN`, `TYPE`, `STARTED`, `TURNS` (messages found, blank when not read), `NAME`, `NOTE` (why a span was passed over), with `*` on the one selected. Run it when you doubt the selection — `TURNS` is what tells you the right span was picked.
 - `--match <regexp>` keeps messages whose recorded text matches, searching message text, reasoning, JSON values, and tool calls by name, id and arguments. Case-insensitive; `(?-i)` inline to respect case. Surviving messages **keep their original indices**, so a filtered render can read `0, 2, 4`.
 - `-i/--include` renders only the named parts: `system` (covers developer), `user`, `assistant`, `tool`, `reasoning`. Naming no role keeps every role, so `-i reasoning` is the thinking from all of them and `-i user,assistant` is the turns without it.
-- `--max-chars` (default **4000**) cuts each rendered block and appends `[truncated: N more characters]`; `--max-chars 0` lifts the cap. Applied last, so `--match` still searches the full text. Only text inside elements is cut, so the XML stays well-formed.
-- `-x/--exclude` renders everything but the named parts, from the same list as `--include`: `-x reasoning` is every turn without the thinking, `-x tool` the conversation without tool payloads. `--include` and `--exclude` select the same parts two ways; pass one. It replaces `--reasoning=false`: 11.0.0 is the first release with `-x` and without `--reasoning`; 10.3.1 has only `--reasoning`. On 11.0.1 a turn left out by either flag still renders as its role and an `[omitted: N characters]` stub; left-out reasoning in a turn that keeps its body goes without a stub. From the 11.0.1 help, not probed live, so its effect on `-o json` is untested.
+- `-x/--exclude` (11.0.0+) is the complement: it renders everything but the named parts, from the same list. `-x reasoning` is every turn without the thinking, `-x tool` the conversation without tool payloads. `--include` and `--exclude` cannot be combined; pass one or the other.
+- **A left-out turn is stubbed, not deleted** (11.0.0+, either flag). It keeps its place and its role, with `[omitted: N characters]` instead of its content, so the reader still sees that, say, a tool returned something; N counts the characters the span recorded. Under `-i reasoning` every message's body is that stub. Reasoning left out of a turn that still shows its body is dropped without a stub. In `-o json` a stub is a content part `{"type": "omitted", "omitted_chars": N}`, and a stubbed assistant turn keeps its tool calls' `id` and `name` with `arguments` null, so a result still pairs with its call.
+- `--reasoning` is gone (removed in 11.0.0; 10.3.1 and earlier have it and no `-x`). Use `-x reasoning` where `--reasoning=false` was; the old flag now fails with an unknown-flag error.
+- `--max-chars` (default **4000**) cuts each rendered block and appends `[truncated: N more characters]`; `--max-chars 0` lifts the cap. Applied last, so `--match` still searches the full text. Only text inside elements is cut, so the XML stays well-formed. The default applies to `xml` and `markdown`: `-o json|yaml|toon` emit the conversation **uncut** unless `--max-chars` or `--tool-max-chars` is passed explicitly (11.0.0+; before that they ignored both). A cut there keeps the marker in the text and reports the count in `truncated_chars`.
+- `--tool-max-chars` (11.0.0+) is the same cap for what tool calls returned, and nothing else; `0` is no cap. Unset, it follows `--max-chars`. The arguments of an assistant's tool call stay as `--max-chars` cuts them.
 
-Filters compose in a fixed order: `--slice`, then `--match`, then `--include` or `--exclude`, then `--max-chars`.
+Filters compose in a fixed order: `--slice`, then `--match`, then `--include` or `--exclude`, then `--max-chars` / `--tool-max-chars`.
 
 Three exit-code facts, each from a recorded call on 8.5.2:
 
-- **An empty selection is exit 0, not an error.** `--slice 99:` on a 5-message thread, and `-i reasoning` on a thread with none, both printed the `<thread …>` header with no messages and exited **0**. Bounds clamp like Python; check for messages rather than trusting the exit code.
+- **An empty selection is exit 0, not an error.** `--slice 99:` on a 5-message conversation, and `-i reasoning` on one with none, both printed the header (`<thread …>` on that release, `<conversation …>` from 11.4.0) with no messages and exited **0**. Bounds clamp like Python; check for messages rather than trusting the exit code.
 - **A bad slice expression exits 1** and names the grammar: `invalid slice expression "nonsense": expected an index or a range, for example 2, 2:, :-1 or 1:3`.
 - **A trace with no conversational span exits 1**: `no supported conversation found in trace "<id>"`. That is a real answer (evaluator-only traces do this), not a bug to work around — and it is distinct from a bad id, which is `HTTP 404: trace not found`.
 

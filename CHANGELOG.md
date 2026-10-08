@@ -5,13 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.8.0] - 2026-10-06
+## [3.9.0] - 2026-10-08
+
+### Added
+
+- `orq-shared/resources/trace-queries.md` §5.4: `orq telemetry query | list-capabilities | list-facet-values`, served by API 4.16 and exposed by the CLI 11.5.0 line (verified on 11.5.0-rc.6; 11.4.0 has no `telemetry` command). Covers the required `--source` and window, the `--compute` metric/op pairs, `<metric>:<op>` result keys, the `--limit` semantics, `list-capabilities` as the discovery probe, and worked examples, with a fallback to `orq reporting query` on older binaries. Live-probed against production API 4.16 on 2026-10-08.
 
 ### Changed
 
-- `orq-shared/resources/trace-queries.md` §5: the `orq reporting query` contract now carries the full flag surface (`--metric`, `--from`/`--to`, `--grain`, `--mode`, `--group-by`, `--filters`, `--sort`, `--time-zone`, `--include-totals`, `--limit`, `-o json`), the timeseries-vs-scalar split, and worked examples for CI and cron. Read from the generated command surface at CLI 10.3.0.
+- `orq-shared/resources/trace-queries.md` §5: the `orq reporting query` contract now carries the full flag surface (`--metric`, `--from`/`--to`, `--grain`, `--mode`, `--group-by`, `--filters`, `--sort`, `--time-zone`, `--include-totals`, `--limit`, `-o json`), the timeseries-vs-scalar split, and worked examples for CI and cron. Read from the generated command surface at CLI 10.3.0 and re-probed on CLI 11.5.0-rc.6 against API 4.16.
 - `orq-shared/resources/trace-queries.md` §2: `--from` / `--to` are no longer described as RFC3339-only. The flag form accepts relative values (`7d`, `now-24h`, `now`); a body read from `--from-file` or stdin is sent as written and must be RFC3339, so the window belongs on the flags.
-- `orq-cli` skill: its `orq-shared` companion entry now routes metrics questions ("what did we spend last week", "p95 latency", "evaluator pass rate") straight to §5, so the reporting contract is reachable from the CLI skill without a second skill.
+- `orq-cli` skill: its `orq-shared` companion entry now routes metrics questions ("what did we spend last week", "p95 latency", "evaluator pass rate") straight to §5, so the reporting contract is reachable from the CLI skill without a second skill. `resources/command-map.md` no longer says there is no `telemetry` group.
 - `orq-shared` skill: `orq-cli` added to the consumer list for `resources/trace-queries.md`.
 
 ### Fixed
@@ -20,8 +24,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `orq-shared/resources/trace-queries.md`: records that the reporting `filters[].field` is a closed 35-value enum with `op` limited to `eq`/`neq`/`in`/`not_in`, and that `TraceFilter.field` is free-form from `orq traces list-fields`. The two share the JSON shape, not guaranteed field names; invalid cross-dialect fields return HTTP 400.
 - `orq-shared/resources/trace-queries.md`: corrects the `pipefail` rationale: the CLI exits 1 on rejection, while `jq` exits 0 on empty input and masks it without `pipefail`.
 - `orq-shared/resources/trace-queries.md`: `help-input` is registered on the root command; `orq reporting query help-input` is parsed as a shorthand body fragment, not a subcommand. Use `orq help-input` or `orq reporting query --help`.
-- `orq-shared/resources/trace-queries.md`: `POST /v3/telemetry/query` and `orq telemetry` are recorded as rc-only. Rechecked against the stable CLI `v11.0.2` tag on 2026-10-01: no `telemetry` registration or `/v3/telemetry/*` path in the stable spec; both remain under `packages/orq-rc`.
-- `orq reporting query` was re-probed live on CLI 8.7.0-rc.15 (API 4.15.0-rc.52): the scalar cost path is `.data[0].metrics["genai.cost"]`, omitted window flags default to the last seven days, and `--include-totals` returns top-level `.totals.metrics`.
+
+## [3.8.0] - 2026-10-06
+
+### Added
+
+- Skill invocation and first-step behavioural evals through `orq launch`, with reviewed YAML cases, a maintainer `skill-tests` workflow, per-run costs, and merged factual/eval reports.
+
+### Fixed
+
+- Eval runs require container isolation unless host-file access is explicitly accepted; container copies preserve symlinks instead of copying host targets. Missing agent results and empty merged reports cannot report a clean batch, concurrent runs reserve their estimated cost, documentation URL errors stay advisory, and server permission errors cannot mask out-of-allowlist tool calls.
+
+## [3.7.2] - 2026-10-06
+
+### Changed
+
+- `orq-cli`, `orq-shared`, `orq-analyze-traces`, `orq-improve-agent`, `orq-recommend-evaluators`, tests: `orq traces thread` is `orq traces conversation` again, short alias `conv`, to match orq CLI 11.4.0 ([orq-cli#122](https://github.com/orq-ai/orq-cli/pull/122)). That release keeps `thread` as a hidden, deprecated spelling that warns on stderr, and its `xml` render frames the turns in `<conversation …>` under either name; flags and the `-o json` schema are unchanged. Every call site moved: the "Reading a conversation" section in `orq-cli/SKILL.md`, the command tree, global `-o` and `ORQ_OUTPUT_FORMAT` rows and per-trace read list in `orq-cli/resources/command-map.md`, the full-content bullet and layer 3b in `orq-shared/resources/trace-queries.md`, the trace-reading steps in `orq-recommend-evaluators`, scenario 9a in `tests/skills.md`, the factual CSV rows, and the `allowed-tools` entries, which carry both `Bash(orq traces conversation:*)` and `Bash(orq traces conv:*)`. `orq-cli/SKILL.md` now says which release has which name: `conversation` from 11.4.0 (`thread` deprecated there), `thread` only on 10.0.0 through 11.3.x.
+
+### Fixed
+
+- `orq-cli` skill: the conversation command's flags now match CLI 11.0.0+. `--tool-max-chars` is documented; the `[omitted: N characters]` stub is listed with the other markers, with its `-o json` shape; `-i` and `-x` are stated as not combinable; and `--max-chars`'s 4000 default is scoped to the `xml` and `markdown` renders, since `-o json|yaml|toon` are uncut unless a cap is passed. `orq-recommend-evaluators`' `reading-traces.md` said the same 4000 default applied to its `-o json` read.
+- `evaluatorq` contract test: `test_datapoint_parallelism_still_resolves_to_ten` read `default=10` from the source of `evaluatorq()`. evaluatorq 1.57.0 moved that value into `DEFAULT_DATAPOINT_PARALLELISM`, so the test failed while the default was still 10. It now checks the value the call actually resolves to.
 
 ## [3.7.1] - 2026-10-01
 
