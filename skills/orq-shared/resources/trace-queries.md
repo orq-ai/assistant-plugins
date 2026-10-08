@@ -110,7 +110,7 @@ The same applies to `orq reporting query`: inline `--filters` JSON from PowerShe
 
 **Delete `body.json` when the run is done.**
 
-**`--from` / `--to` are required and bounded by 30-day retention** (`skills/orq-cli/SKILL.md`, "Traces expire after 30 days"). **NEVER hard-code a `--from`** — it ages past the boundary and starts erroring. Compute the window at call time, or use the relative form. **In a body file it must be RFC3339**; only the *flag* form accepts `7d` / `now-24h` / `now`, because the CLI sends a `--from-file` body as written (§5.1).
+**`from` / `to` are required in a body file and bounded by 30-day retention** (`skills/orq-cli/SKILL.md`, "Traces expire after 30 days"). A `traces aggregate` body without them returns HTTP 400; only omitted *flags* on `orq reporting query` fall back to seven days (§5.1). **NEVER hard-code a `--from`** — it ages past the boundary and starts erroring. Compute the window at call time, or use the relative form. **In a body file it must be RFC3339**; only the *flag* form accepts `7d` / `now-24h` / `now`, because the CLI sends a `--from-file` body as written (§5.1).
 
 **`filters[].values` must be an array of STRINGS, even for a numeric field.** `values: [0]` is rejected with `HTTP 400: invalid value for string field values: 0`; `values: ["0"]` is accepted. A field's declared `type: "number"` in `list-fields` does not change this.
 
@@ -269,6 +269,8 @@ A catalogue API over analytics rollups. It carries three signals the trace regis
 
 The body fields above are also flags, so a metrics question needs no body file at all. Read from the generated command surface at CLI 10.3.0 (`cli/generated/reporting_commands.go`); `orq reporting query --help` prints the same list.
 
+> `help-input` is registered on the **root** command, not per subcommand. `orq help-input` prints the body-and-shorthand syntax; `orq reporting query help-input` does not — `reporting query` takes trailing args as a shorthand body fragment, so it is parsed as input, not as a subcommand. Use `orq reporting query --help` for that command's own flags.
+
 | Flag | Body field | Meaning |
 |---|---|---|
 | `--metric` | `metric` | **required**, exactly one of the 18 above |
@@ -323,7 +325,7 @@ Live re-probed on 2026-10-01 with CLI 8.7.0-rc.15 (API 4.15.0-rc.52): the scalar
 
 > From PowerShell, `--filters` inline JSON is mangled before it reaches the CLI (§2). Put the whole body in a file there and pass `--from-file`, keeping `--from` / `--to` as flags for the reason above.
 
-### 5.4 `orq telemetry` — the unified envelope (CLI 11.5.0+)
+### 5.4 `orq telemetry` — the unified envelope (11.5.0 line, probe first)
 
 API 4.16 serves `POST /v3/telemetry/query`, `GET /v3/telemetry/capabilities` and `GET /v3/telemetry/facet-values` in production. The CLI exposes them as `orq telemetry query | list-capabilities | list-facet-values` in the 11.5.0 line (verified on `11.5.0-rc.6`, built against API 4.16.0-rc.58; on 2026-10-08 npm `latest` was still 11.4.0). **The 11.4.0 binary has no `telemetry` command** (`unknown command "telemetry"`); run `orq telemetry --help` once and fall back to `orq reporting query` when it fails. `orq telemetry query --help` states that `ReportingService.QueryReport` and `TraceQueryService.AggregateTraces` "remain supported compatibility contracts", so §5.1–5.3 still hold.
 
@@ -332,8 +334,8 @@ What changes against `orq reporting query`:
 | | `orq reporting query` | `orq telemetry query` |
 |---|---|---|
 | Source | reporting rollups only | `--source TELEMETRY_SOURCE_TRACES` \| `_METRICS` \| `_LOGS` — **required**; omitted it is `UNSPECIFIED` and returns HTTP 400 |
-| Metric | `--metric <name>` | `--compute '[{"metric":"<name>","op":"<op>"}]'`, several per query. Each metric takes exactly one op (`genai.cost` → `sum`, `genai.requests` → `count`, `genai.latency.p95` → `p95`); a wrong op is HTTP 400 naming the right one |
-| Window | defaults to the last seven days | `--from` / `--to` **required** (HTTP 400 without them); 90-day maximum |
+| Metric | `--metric <name>` | `--compute '[{"metric":"<name>","op":"<op>"}]'`, several per query. The allowed ops are each metric's `operations` in `list-capabilities`: every `genai.*` metric takes exactly one (`genai.cost` → `sum`, `genai.requests` → `count`, `genai.latency.p95` → `p95`), while `duration_ms` takes six and `cost.total` two. A wrong op is HTTP 400 naming the allowed one |
+| Window | defaults to the last seven days | `--from` / `--to` **required** (HTTP 400 without them); the 30-day workspace retention (§2) rejects older windows with HTTP 400 before the 90-day engine cap applies |
 | Row shape | `{dimensions, metrics:{"genai.cost":…}}` | `{group, metrics:{"genai.cost:sum":…}}` — the key is `<metric>:<op>` |
 | Totals | `.totals.metrics["genai.cost"]` | `.totals.metrics["genai.cost:sum"]` (`.totals` is itself a row) |
 | `--limit` | rows, default 1000, max 5000 | scalar: rows, default 100. Timeseries: max distinct groups, and exceeding it fails the query rather than truncating |
@@ -355,9 +357,7 @@ orq telemetry query --source TELEMETRY_SOURCE_TRACES --from now-24h --to now --m
   --compute '[{"metric":"genai.cost","op":"sum"}]' -o json
 ```
 
-Live-probed 2026-10-08 with CLI 11.5.0-rc.6 against production API 4.16: the seven-day scalar cost returned `356.03784829` through both `orq telemetry query` and `orq reporting query`; the grouped query returned `has_more: true` with a truncation warning at `--limit 3`; a daily timeseries returned one row per day with an RFC3339 `timestamp`; omitting `--from`/`--to` and passing `op: "avg"` for `genai.cost` each returned HTTP 400.
-
-> `help-input` is registered on the **root** command, not per subcommand. `orq help-input` prints the body-and-shorthand syntax; `orq reporting query help-input` does not — `reporting query` takes trailing args as a shorthand body fragment, so it is parsed as input, not as a subcommand. Use `orq reporting query --help` for that command's own flags.
+Live-probed 2026-10-08 with CLI 11.5.0-rc.6 against production API 4.16: the seven-day scalar cost returned `356.03784829` through both `orq telemetry query` and `orq reporting query`; the grouped query returned `has_more: true` with a truncation warning at `--limit 3`; a daily timeseries returned one row per day with an RFC3339 `timestamp`; omitting `--from`/`--to`, passing `op: "avg"` for `genai.cost`, and `--from 60d` (workspace retention) each returned HTTP 400.
 
 ---
 
@@ -450,7 +450,7 @@ orq traces list-spans <trace> -o json -j "data[].{id:span_id,name:name,type:type
 orq traces get-span   <trace> <span> -o json -j '{temp:span.attributes.gen_ai.request.temperature}'
 
 orq reporting query   --from-file body.json -o json       # same file, overwritten
-orq telemetry list-capabilities -o json                # CLI 11.5.0+ only (§5.4)
+orq telemetry list-capabilities -o json                # only when `orq telemetry --help` succeeds (§5.4)
 orq agents retrieve   <key> -o json
 orq agents update     <key> --from-file patch.json --version-increment patch --version-description "..."
 # clean up: delete body.json and patch.json when done

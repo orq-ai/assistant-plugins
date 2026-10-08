@@ -13,17 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `orq-shared/resources/trace-queries.md` §5: the `orq reporting query` contract now carries the full flag surface (`--metric`, `--from`/`--to`, `--grain`, `--mode`, `--group-by`, `--filters`, `--sort`, `--time-zone`, `--include-totals`, `--limit`, `-o json`), the timeseries-vs-scalar split, and worked examples for CI and cron. Read from the generated command surface at CLI 10.3.0 and re-probed on CLI 11.5.0-rc.6 against API 4.16.
-- `orq-shared/resources/trace-queries.md` §2: `--from` / `--to` are no longer described as RFC3339-only. The flag form accepts relative values (`7d`, `now-24h`, `now`); a body read from `--from-file` or stdin is sent as written and must be RFC3339, so the window belongs on the flags.
-- `orq-cli` skill: its `orq-shared` companion entry now routes metrics questions ("what did we spend last week", "p95 latency", "evaluator pass rate") straight to §5, so the reporting contract is reachable from the CLI skill without a second skill. `resources/command-map.md` no longer says there is no `telemetry` group.
+- `orq-shared/resources/trace-queries.md` §5: the `orq reporting query` contract now carries the full flag surface (`--metric`, `--from`/`--to`, `--grain`, `--mode`, `--group-by`, `--filters`, `--sort`, `--time-zone`, `--include-totals`, `--limit`, `-o json`), the timeseries-vs-scalar split, and worked examples for CI and cron. It also records that `--limit` bounds rows in both modes (default 1000, maximum 5000, larger values return HTTP 400), that reporting `filters[].field` is a closed 35-value enum with `op` limited to `eq`/`neq`/`in`/`not_in` and does not share the trace field vocabulary, that `jq` masks a rejected request unless `pipefail` is set, and that `help-input` is a root command (`orq reporting query help-input` is parsed as a body fragment). Read from the generated command surface at CLI 10.3.0 and re-probed on CLI 11.5.0-rc.6 against API 4.16.
+- `orq-shared/resources/trace-queries.md` §2: `--from` / `--to` are no longer described as RFC3339-only. The flag form accepts relative values (`7d`, `now-24h`, `now`); a body read from `--from-file` or stdin is sent as written and must carry RFC3339 `from`/`to`, so the window belongs on the flags.
+- `orq-cli` skill: its `orq-shared` companion entry now routes metrics questions ("what did we spend last week", "p95 latency", "evaluator pass rate") straight to §5, including §5.4 for `orq telemetry`. `resources/command-map.md` no longer says there is no `telemetry` group.
 - `orq-shared` skill: `orq-cli` added to the consumer list for `resources/trace-queries.md`.
-
-### Fixed
-
-- `orq-shared/resources/trace-queries.md`: `--limit` on `orq reporting query` is documented as a row bound in both modes, with a generated-help default of 1000 and a maximum of 5000. A larger value returns HTTP 400.
-- `orq-shared/resources/trace-queries.md`: records that the reporting `filters[].field` is a closed 35-value enum with `op` limited to `eq`/`neq`/`in`/`not_in`, and that `TraceFilter.field` is free-form from `orq traces list-fields`. The two share the JSON shape, not guaranteed field names; invalid cross-dialect fields return HTTP 400.
-- `orq-shared/resources/trace-queries.md`: corrects the `pipefail` rationale: the CLI exits 1 on rejection, while `jq` exits 0 on empty input and masks it without `pipefail`.
-- `orq-shared/resources/trace-queries.md`: `help-input` is registered on the root command; `orq reporting query help-input` is parsed as a shorthand body fragment, not a subcommand. Use `orq help-input` or `orq reporting query --help`.
+- `tests/skills.md`: smoke scenario 6c accepts either `orq reporting query` or a probed `orq telemetry query`, and scenario 8 states the `pipefail` rationale correctly (the CLI exits 1 on rejection; `jq` exits 0 on empty input).
 
 ## [3.8.0] - 2026-10-06
 

@@ -550,10 +550,10 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 - Ask: "What did we spend on genai in the last 7 days, and what's the p95 latency?"
 - Verify: reaches `orq-shared/resources/trace-queries.md` §5 rather than guessing the flag surface
-- Verify: uses `orq reporting query --metric genai.cost --from 7d --to now --mode scalar -o json`
-- Verify: reads the value at `.metrics["genai.cost"]` — there is no `.value` field on the row
+- Verify: uses `orq reporting query --metric genai.cost --from 7d --to now --mode scalar -o json`, or — only after `orq telemetry --help` succeeds — `orq telemetry query --source TELEMETRY_SOURCE_TRACES --compute '[{"metric":"genai.cost","op":"sum"}]' --from 7d --to now --mode scalar -o json` (§5.4)
+- Verify: reads the value at `.metrics["genai.cost"]` (reporting) or `.metrics["genai.cost:sum"]` (telemetry) — there is no `.value` field on the row
 - Verify: sets `pipefail` before piping into `jq`, knowing the CLI exits non-zero on rejection but `jq` exits 0 on empty input
-- Verify: does NOT pass `--json` (not a flag) and does NOT reach for `orq telemetry` (rc-only, not in the stable binary)
+- Verify: does NOT pass `--json` (not a flag), and does NOT call `orq telemetry` without probing it first — 11.4.0 and earlier have no `telemetry` command
 - Verify: does NOT invent a metric name outside the 18-value enum
 
 ### Scenario 6d: Relative window in a body file
