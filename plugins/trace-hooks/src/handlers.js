@@ -71,7 +71,15 @@ function getSessionId(payload) {
   );
 }
 
+// A session declines tracing through the environment, because that is the only
+// channel a launcher has. `orq launch claude --no-otel` cannot uninstall the
+// plugin that an earlier `orq connect claude otel` put in the user's own config,
+// so without this the flag would promise something it cannot deliver. Read
+// before the key, so it holds whether or not one is configured.
 function enabledTracing() {
+  if (boolEnv("ORQ_TRACE_DISABLED")) {
+    return false;
+  }
   return Boolean(getApiKey());
 }
 

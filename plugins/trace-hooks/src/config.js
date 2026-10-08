@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 // Single source of truth for the orqi CLI config location. The orqi CLI
@@ -6,9 +7,11 @@ import path from "node:path";
 // ORQ_CONFIG_PATH (tests rely on this; users can redirect it if the CLI ever
 // moves the file). Note: the homebrew `orq` binary is a different tool and
 // does not manage these profiles.
+// os.homedir() rather than HOME || USERPROFILE, for the reason given at
+// STATE_ROOT in state.js: the orq CLI resolves ~/.orq the same way.
 export const ORQ_CONFIG_PATH =
   process.env.ORQ_CONFIG_PATH ||
-  path.join(process.env.HOME || process.env.USERPROFILE || "", ".orq", "config.json");
+  path.join(os.homedir(), ".orq", "config.json");
 
 let _cached = null;
 

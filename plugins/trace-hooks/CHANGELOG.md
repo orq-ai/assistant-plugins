@@ -2,6 +2,26 @@
 
 All notable changes to the `orq-trace` plugin are documented here. Follows [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-09-30
+
+### Added
+- `ORQ_TRACE_DISABLED` switches tracing off for one session, on `1`, `true`, `yes` or `on`, matched without regard to case. Once the plugin is installed in a user's own config, a launcher has no way to decline a session, so `orq launch claude --no-otel` could promise something it could not deliver. The gate sits in `runSafely`, so every hook honours it.
+
+### Fixed
+- The `sk-` branch covers key bodies that hold `_`, and its lookahead is bounded. Provider key bodies are base64url, which includes `_`, and both character classes allowed only `[a-z0-9-]`, so an underscore early in the body ended the run before the 16-character minimum and the key reached the span in plaintext: measured over 20000 generated keys of each shape, 8.8% of `sk-ant-api03-`, 16.9% of `sk-proj-` and 17.9% of `sk-orq-` keys. Bounding the lookahead to 64 characters fixes a second problem in the same expression: unbounded, it rescanned and backtracked over the run at every `sk-` start, which took 16.8s on 240k characters of `sk-` against a 30s hook timeout, and nothing shortens a string before the pattern sees it. It now takes 0.02s. `tests/test-redact.mjs` pins both, including the time bound.
+- A queued batch is only delivered to the endpoint and authentication headers it was meant for. The replay queue is shared by traced sessions, so a drain previously posted another workspace's content under the current session's credentials. Each file now carries the endpoint and a fingerprint of the effective outgoing headers (not raw credentials), including any `OTEL_EXPORTER_OTLP_HEADERS` override. A drain skips files bound to another destination. Earlier files without a destination, and files from builds that fingerprinted only `getApiKey()`, cannot be safely attributed and are skipped; the hourly prune on a later `SessionStart` removes them, with the 100-file cap as backstop. Expired warning markers are pruned too. Skipped files are reported on stderr at most once an hour per current destination.
+- Hook commands in the manifest quote `${CLAUDE_PLUGIN_ROOT}`. On Windows, a plugin root holding a space (a username with one, or `%TEMP%` under such a user) made `node` receive a truncated path and every hook failed, which showed up only as a session with metrics and no trace.
+- The state directory and the orq config path come from `os.homedir()` instead of `HOME || USERPROFILE`. On Windows a shell such as Git Bash sets `HOME` to a different directory from `USERPROFILE`, so a session started there and one started from PowerShell kept separate session state and replay queues, and read different `~/.orq/config.json` files. `os.homedir()` resolves the same home Claude Code and the orq CLI use. With neither variable set, the old fallback was a path relative to the working directory; it is now the account's home directory.
+
+## [0.4.1] - 2026-09-30
+
+### Fixed
+- Free-text provider keys reach the trace redacted. Tool input and output arrive as plain strings, where only the value pattern runs, and it required an unbroken alphanumeric run after `sk-`, so every segmented key passed through: `sk-ant-api03-...`, `sk-proj-...` and orq's own `sk-orq-...`. A key issued from the orq dashboard is a bare JWT and matched nothing at all, and neither did `Authorization: Bearer <token>` in a shell command. The pattern now covers dashed `sk-` keys, JWTs, bearer tokens that carry a digit, fine-grained GitHub PATs, Google `AIza` keys and HuggingFace `hf_` tokens. `tests/test-redact.mjs` pins all of it, including the prose it must leave alone.
+- The `sk-` branch is anchored on a word boundary and requires a digit in the run, so it no longer matches the `sk-` inside ordinary kebab-case text such as `task-runner-configuration`, `risk-assessment-framework` or `disk-usage-monitoring-service`. A match costs the whole string rather than the matched span, so one of those would have thrown away an entire tool output.
+
+### Known limitations
+- A hit still replaces the whole string, so a single key in a long build log redacts the log. Shapes without a distinctive prefix are still missed, and a bearer token made only of letters is not matched. A key whose first 64 body characters hold no digit at all is also kept, which the digit guard is the price of: without it, every long kebab-case identifier would redact its whole tool output.
+
 ## [0.4.0] - 2026-07-28
 
 ### Removed
