@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Eval runs require container isolation unless host-file access is explicitly accepted; container copies preserve symlinks instead of copying host targets. Missing agent results cannot report a clean batch, concurrent runs reserve their estimated cost, and documentation URL errors stay advisory in merged reports.
+- Eval runs require container isolation unless host-file access is explicitly accepted; container copies preserve symlinks instead of copying host targets. Missing agent results and empty merged reports cannot report a clean batch, concurrent runs reserve their estimated cost, documentation URL errors stay advisory, and server permission errors cannot mask out-of-allowlist tool calls.
 
 ## [3.7.2] - 2026-10-06
 

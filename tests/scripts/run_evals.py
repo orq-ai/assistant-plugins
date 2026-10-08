@@ -849,7 +849,7 @@ def fired_skills(agent: str, calls: list[dict[str, Any]]) -> list[str]:
 
 def is_denied(call: dict[str, Any]) -> bool:
     result = (call.get("result") or "").lower()
-    return result == "[denied by claude]" or ("permission" in result and ("denied" in result or "rejected" in result))
+    return result in {"[denied by claude]", "error: permission rejected by user"}
 
 
 def _verdict(value: str | bool, ok: bool | None, why: str) -> EvaluationResult:

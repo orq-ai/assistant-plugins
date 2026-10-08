@@ -183,6 +183,8 @@ def main() -> None:
 
     if args.json_path:
         args.json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    if not report:
+        sys.exit(2)
     if any(b["drift"] or b["regression"] for b in report.values()):
         sys.exit(1)
     not_clean = any(b["error"] or b["skipped"] or b["factual_skipped"] for b in report.values())

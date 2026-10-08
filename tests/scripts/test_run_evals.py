@@ -122,6 +122,8 @@ def test_no_forbidden_tools() -> None:
     assert score(r.no_forbidden_tools, c, [call(CLAUDE + "list_models")]).pass_ is False  # outside allow_tools
     denied_read = call(CLAUDE + "list_models", result="[denied by claude]", status="incomplete")
     assert score(r.no_forbidden_tools, c, [denied_read]).pass_ is True
+    server_forbidden = call(CLAUDE + "list_models", result="403 Permission denied", status="incomplete")
+    assert score(r.no_forbidden_tools, c, [server_forbidden]).pass_ is False
 
 
 def test_no_forbidden_tools_on_opencode() -> None:
@@ -474,6 +476,17 @@ def test_report_exit_code(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, statu
     with pytest.raises(SystemExit) as exc:
         report.main()
     assert exc.value.code == code
+
+
+@pytest.mark.parametrize("source", ["factual", "evals"])
+def test_merged_report_with_no_results_is_not_clean(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str) -> None:
+    results = tmp_path / f"{source}.json"
+    payload = {"results": []} if source == "factual" else {"started": "now", "exit_code": 2, "cases": []}
+    results.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["skill_test_report.py", f"--{source}", str(results)])
+    with pytest.raises(SystemExit) as exc:
+        report.main()
+    assert exc.value.code == 2
 
 
 def test_report_refuses_an_unfinished_summary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
