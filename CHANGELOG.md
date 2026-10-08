@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `orq-shared` skill: `orq-cli` added to the consumer list for `resources/trace-queries.md`.
 - `tests/skills.md`: smoke scenario 6c accepts either `orq reporting query` or a probed `orq telemetry query`, and scenario 8 states the `pipefail` rationale correctly (the CLI exits 1 on rejection; `jq` exits 0 on empty input).
 
+### Fixed
+
+- `skills-factual` workflow: the offline step collected all of `tests/scripts`, including `test_run_evals.py` from 3.8.0, which imports `evaluatorq` and failed with `ModuleNotFoundError`. It now runs `test_factual_scripts.py` only; `skills-ci.yml` already runs `test_run_evals.py` with its pinned `evaluatorq`.
+
 ## [3.8.0] - 2026-10-06
 
 ### Added
