@@ -1,0 +1,9 @@
+id: improve-agent-near-miss-restructure
+skill: orq-improve-agent
+kind: invocation
+# Near miss: re-architecture is build-agent's job, even on an existing underperforming agent.
+prompt: My orq agent support-bot handles billing and tech questions badly. I want to split it into a router agent with two specialist sub-agents.
+expect_skill: orq-build-agent
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 2

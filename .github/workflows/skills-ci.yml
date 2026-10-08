@@ -87,6 +87,12 @@ jobs:
           fi
       - name: Self-test the validator (each invariant must fail the run when violated)
         run: bash tests/scripts/validate-skills.test.sh
+      - name: Test the eval scoring (run_evals.py, skill_test_report.py)
+        # Pure functions on fake run outputs. test_run_evals.py fails if this pin and
+        # run_evals.py's inline pin drift apart.
+        run: |
+          uv run --no-project --python 3.12 --with evaluatorq==1.47.1 --with pyyaml --with pytest \
+            python -m pytest tests/scripts/test_run_evals.py -q
       - name: PR title pattern lint
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}

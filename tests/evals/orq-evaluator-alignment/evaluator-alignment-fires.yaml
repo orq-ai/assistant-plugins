@@ -1,0 +1,8 @@
+id: evaluator-alignment-fires
+skill: orq-evaluator-alignment
+kind: invocation
+prompt: My orq LLM judge keeps disagreeing with my team's labels and flips its verdict on the same input. Help me align it.
+expect_skill: orq-evaluator-alignment
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 2

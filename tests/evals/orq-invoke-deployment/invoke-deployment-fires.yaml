@@ -1,0 +1,8 @@
+id: invoke-deployment-fires
+skill: orq-invoke-deployment
+kind: invocation
+prompt: How do I call my orq deployment email-summarizer from my Python backend? It takes the email body as a variable.
+expect_skill: orq-invoke-deployment
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 2
