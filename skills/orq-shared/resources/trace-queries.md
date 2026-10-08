@@ -319,13 +319,43 @@ orq reporting query --metric genai.latency.p95 --from now-24h --to now \
 
 Each scalar data row has the shape `{dimensions:{…}, metrics:{…}, timestamp:null}` (§5), so its value is under `.metrics["<metric name>"]` — there is no `.value`. With `--include-totals`, the window-wide value is under `.totals.metrics["<metric name>"]`.
 
-Live re-probed on 2026-10-01 with CLI 8.7.0-rc.15 (API 4.15.0-rc.52): the scalar cost example returned a numeric value at `.data[0].metrics["genai.cost"]`; the grouped scalar and daily timeseries examples returned data rows; a query with no window flags returned a seven-day request window; and `--include-totals` returned `.totals.metrics` beside `.data`. `--limit 10000` returned HTTP 400 with CLI exit 1; without `pipefail`, piping that rejected query into `jq` exited 0. Cross-dialect `deployment` / `deployment_environment` filters each returned HTTP 400.
+Live re-probed on 2026-10-01 with CLI 8.7.0-rc.15 (API 4.15.0-rc.52): the scalar cost example returned a numeric value at `.data[0].metrics["genai.cost"]`; the grouped scalar and daily timeseries examples returned data rows; a query with no window flags returned a seven-day request window; and `--include-totals` returned `.totals.metrics` beside `.data`. `--limit 10000` returned HTTP 400 with CLI exit 1; without `pipefail`, piping that rejected query into `jq` exited 0. Cross-dialect `deployment` / `deployment_environment` filters each returned HTTP 400. Re-run on 2026-10-08 with CLI 11.5.0-rc.6 against production API 4.16: the scalar cost path, the seven-day default, `.totals.metrics` and the `--limit 10000` HTTP 400 were unchanged.
 
 > From PowerShell, `--filters` inline JSON is mangled before it reaches the CLI (§2). Put the whole body in a file there and pass `--from-file`, keeping `--from` / `--to` as flags for the reason above.
 
-### 5.4 Not the same thing as `orq telemetry`
+### 5.4 `orq telemetry` — the unified envelope (CLI 11.5.0+)
 
-`POST /v3/telemetry/query` is a neutral multi-signal envelope meant to supersede this surface. **It is rc-only.** Rechecked on 2026-10-01: npm dist-tags were `latest: 11.0.2`, `rc: 11.1.0-rc.21`; the `v11.0.2` stable tag has no `telemetry` registration or `/v3/telemetry/*` path in its root `openapi.yaml`, while `packages/orq-rc` registers `orq telemetry query|list-capabilities|list-facet-values` and carries those paths. Until it lands on the stable channel, `orq reporting query` is the surface — do not reach for `orq telemetry` against a released binary.
+API 4.16 serves `POST /v3/telemetry/query`, `GET /v3/telemetry/capabilities` and `GET /v3/telemetry/facet-values` in production. The CLI exposes them as `orq telemetry query | list-capabilities | list-facet-values` in the 11.5.0 line (verified on `11.5.0-rc.6`, built against API 4.16.0-rc.58; on 2026-10-08 npm `latest` was still 11.4.0). **The 11.4.0 binary has no `telemetry` command** (`unknown command "telemetry"`); run `orq telemetry --help` once and fall back to `orq reporting query` when it fails. `orq telemetry query --help` states that `ReportingService.QueryReport` and `TraceQueryService.AggregateTraces` "remain supported compatibility contracts", so §5.1–5.3 still hold.
+
+What changes against `orq reporting query`:
+
+| | `orq reporting query` | `orq telemetry query` |
+|---|---|---|
+| Source | reporting rollups only | `--source TELEMETRY_SOURCE_TRACES` \| `_METRICS` \| `_LOGS` — **required**; omitted it is `UNSPECIFIED` and returns HTTP 400 |
+| Metric | `--metric <name>` | `--compute '[{"metric":"<name>","op":"<op>"}]'`, several per query. Each metric takes exactly one op (`genai.cost` → `sum`, `genai.requests` → `count`, `genai.latency.p95` → `p95`); a wrong op is HTTP 400 naming the right one |
+| Window | defaults to the last seven days | `--from` / `--to` **required** (HTTP 400 without them); 90-day maximum |
+| Row shape | `{dimensions, metrics:{"genai.cost":…}}` | `{group, metrics:{"genai.cost:sum":…}}` — the key is `<metric>:<op>` |
+| Totals | `.totals.metrics["genai.cost"]` | `.totals.metrics["genai.cost:sum"]` (`.totals` is itself a row) |
+| `--limit` | rows, default 1000, max 5000 | scalar: rows, default 100. Timeseries: max distinct groups, and exceeding it fails the query rather than truncating |
+| Truncation | `has_more: true`, empty `.meta.warnings` | `has_more: true` plus a `.meta.warnings[]` entry |
+| Extra | — | `--oql` and `--query` trace selection (TRACES source only), `--project-id`, `--interval-seconds` |
+
+**Discover before you query.** `orq telemetry list-capabilities -o json` lists every source with its metrics, each metric's allowed `operations`, `modes` and groupable `dimensions` — the probe this file otherwise asks you to do by reading 400s. On 2026-10-08 it returned 33 TRACES metrics (22 of them `genai.*`, plus `cost.*`, `duration_ms`, `error_count` and others), 40 METRICS metrics and 3 LOGS metrics. The `genai.*` set is not the §5 list: it adds `genai.latency.avg`, `genai.ttft.runs` and evaluator error/fail rates, and has no `genai.usage`. Re-read it; do not trust those counts.
+
+```bash
+set -o pipefail
+# total genai cost, last 7 days — same number as the §5.3 reporting example
+orq telemetry query --source TELEMETRY_SOURCE_TRACES --from 7d --to now --mode scalar \
+  --compute '[{"metric":"genai.cost","op":"sum"}]' -o json \
+  | jq -r '.data[0].metrics["genai.cost:sum"]'
+
+# cost per model, top 10, last 24h, with a window total
+orq telemetry query --source TELEMETRY_SOURCE_TRACES --from now-24h --to now --mode scalar \
+  --group-by model --limit 10 --include-totals \
+  --compute '[{"metric":"genai.cost","op":"sum"}]' -o json
+```
+
+Live-probed 2026-10-08 with CLI 11.5.0-rc.6 against production API 4.16: the seven-day scalar cost returned `356.03784829` through both `orq telemetry query` and `orq reporting query`; the grouped query returned `has_more: true` with a truncation warning at `--limit 3`; a daily timeseries returned one row per day with an RFC3339 `timestamp`; omitting `--from`/`--to` and passing `op: "avg"` for `genai.cost` each returned HTTP 400.
 
 > `help-input` is registered on the **root** command, not per subcommand. `orq help-input` prints the body-and-shorthand syntax; `orq reporting query help-input` does not — `reporting query` takes trailing args as a shorthand body fragment, so it is parsed as input, not as a subcommand. Use `orq reporting query --help` for that command's own flags.
 
@@ -420,6 +450,7 @@ orq traces list-spans <trace> -o json -j "data[].{id:span_id,name:name,type:type
 orq traces get-span   <trace> <span> -o json -j '{temp:span.attributes.gen_ai.request.temperature}'
 
 orq reporting query   --from-file body.json -o json       # same file, overwritten
+orq telemetry list-capabilities -o json                # CLI 11.5.0+ only (§5.4)
 orq agents retrieve   <key> -o json
 orq agents update     <key> --from-file patch.json --version-increment patch --version-description "..."
 # clean up: delete body.json and patch.json when done

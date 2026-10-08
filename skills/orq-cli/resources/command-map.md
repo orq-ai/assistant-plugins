@@ -712,9 +712,11 @@ Quick probe: `orq traces get <trace_id> -o json` with an id taken from a
 
 ### Aggregation
 
-`traces aggregate` handles per-window trace aggregation. There is no
-`telemetry` group — for cross-trace analysis use `orq reporting query`
-(start from `orq reporting query --help`).
+`traces aggregate` handles per-window trace aggregation. For metrics across
+traces, use `orq reporting query` (start from `orq reporting query --help`).
+The `telemetry` group (`query`, `list-capabilities`, `list-facet-values`)
+exists from the 11.5.0 line against API 4.16+, and is absent on 11.4.0 and
+earlier; see `orq-shared/resources/trace-queries.md` §5.4.
 
 ---
 
