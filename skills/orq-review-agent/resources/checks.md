@@ -23,21 +23,24 @@ Reads the list in [`config-context.md`](../../orq-shared/resources/config-contex
 
 **Terminal states.** Try the aggregate first with `group_by: ["attributes.gen_ai.response.finish_reasons"]` if `list-fields` lists it. When it is missing, or only the null bucket comes back (Gotcha 4), read every run in up to 20 recent traces.
 
-**One trace can hold several runs** (gotcha 12): a conversation of 5 turns was one trace id with 5 `span.agent` spans. Read each `span.agent` and the last `span.responses` (model call) after it: `list-spans` returns spans in run order with no parent link, so the last call before the next `span.agent` belongs to that run. The agent span's `error.type` was only `*errors.errorString`; the cause is on that last call.
+**One trace can hold several runs** (gotcha 12): a conversation of 5 turns was one trace id with 5 `span.agent` spans. Read each `span.agent` and the last `span.responses` (model call) after it: `list-spans` returns spans in run order with no parent link, so the last call before the next `span.agent` belongs to that run. Stop at the first `span.evaluator` after the agent span: an attached LLM judge's own `span.responses` follows it (gotcha 11), and reading that one reports the judge's error, truncation and tokens as the agent's [unverified: no trace with an LLM judge and a per-run read was probed]. The agent span's `error.type` was only `*errors.errorString`; the cause is on that last call.
+
+These snippets are bash (`tr`, `awk`, `while read`); on Windows run them in Git Bash.
 
 ```bash
 # ids, newest first; deduplicate (Gotcha 8)
 # body: {"from":..,"to":..,"filters":[agent filter],"sort":[{"field":"end_time","order":"desc"}],"limit":40}
 orq traces search --from-file body.json -o json -j 'data[].trace_id'
 
-# per trace: each run's agent span and its last model call, then their terminal facts
+# per trace: each run's agent span and its last model call before any evaluator, then their terminal facts
 orq traces list-spans <trace_id> -o json \
-  -j "data[?type=='span.agent' || type=='span.responses'].join(' ', [type,span_id])" \
+  -j "data[?type=='span.agent' || type=='span.responses' || type=='span.evaluator'].join(' ', [type,span_id])" \
   | tr -d '",[]' \
-  | awk 'NF==2 { if ($1=="span.agent") { if (a) print a, l; a=$2; l="" } else l=$2 } END { if (a) print a, l }' \
+  | awk 'NF==2 { if ($1=="span.agent") { if (a) print a, l; a=$2; l=""; e=0 } else if ($1=="span.evaluator") e=1; else if (!e) l=$2 } END { if (a) print a, l }' \
   | while read A L; do
       orq traces get-span <trace_id> "$A" -o json \
         -j "{finish: span.attributes.gen_ai.response.finish_reasons, iterations: span.attributes.agent.iterations.count, version: span.attributes.agent.version, dur: span.summary.duration_ms, input: span.attributes.gen_ai.input[?role=='user'] | [-1].content[0].text}"
+      [ -n "$L" ] || { echo '{"note":"no model call in this run"}'; continue; }
       orq traces get-span <trace_id> "$L" -o json \
         -j '{error: span.attributes.error.type, status: span.attributes.openresponses.status, incomplete: span.attributes.openresponses.incomplete_details, out: span.attributes.gen_ai.usage.output_tokens, max: span.attributes.gen_ai.request.max_tokens}'
     done

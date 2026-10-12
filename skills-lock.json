@@ -49,7 +49,7 @@
     "orq-improve-agent": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "9af88f97a6a3e767464b3272aa6d722a8bb8367456441f8555e5020550800dfd"
+      "computedHash": "3db999f0979505d74e904cd3b49795ad33f89c7e580987e9de89aec530e2a182"
     },
     "orq-invoke-deployment": {
       "source": "orq-ai/assistant-plugins",
@@ -74,7 +74,7 @@
     "orq-review-agent": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "bfddea5645ba94d3b616356c5dd69e9f1140647751d34a318fb63128cf2cdeed"
+      "computedHash": "0080690ee6611793fd62544b8c4352e365f33e7222b371e070f54a9410508519"
     },
     "orq-run-experiment": {
       "source": "orq-ai/assistant-plugins",

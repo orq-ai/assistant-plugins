@@ -141,7 +141,9 @@ spending anything. The factual suite needs no confirmation when it is the only s
   the fixture agent `support-bot` the `orq-improve-agent` and `orq-review-agent` cases read; without it,
   `improve-agent-reads-config-first` comes back as `tool` errors, not a regression. The review
   cases also need it to have no traces in the last 29 days, so its review runs config-only.
-  Check with `orq agents retrieve support-bot`. To recreate it: model
+  Check with `orq agents retrieve support-bot`, and before the review cases count its traces
+  with `orq traces aggregate` (agent filter, `trace_id` count, 29-day window); a count above 0
+  means those cases run in `traces` mode, so warn before reading their results. To recreate it: model
   `anthropic/claude-haiku-4-5`, role "Customer support agent", `max_iterations` 2, no
   tools, and instructions that demand three separate steps per request and an answer
   of at least 800 words, so the fault shows in the config alone.
