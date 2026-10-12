@@ -22,6 +22,7 @@ Stdlib only. Prints one JSON object; never calls the network.
 """
 
 import codecs
+import difflib
 import json
 import re
 import sys
@@ -65,6 +66,29 @@ def resolve(models: list[dict], ref: str) -> tuple[dict | None, str]:
     if dated:
         return None, "ambiguous date suffix: " + ", ".join(m["refId"] for m in dated)
     return None, "not in the catalogue"
+
+
+def closest(models: list[dict], ref: str, n: int = 5) -> list[dict]:
+    """Likely catalogue matches for an unresolved id, for the report only; never used for the check.
+
+    Ranks by similarity of the model name (the part after the last `/`, date
+    suffix stripped) to each row's refId and model_id names; the same provider
+    only breaks ties.
+    """
+    provider, _, name = ref.rpartition("/")
+    name = name.lower()
+    scored = []
+    for m in models:
+        ref_id = m.get("refId") or ""
+        names = {
+            DATE_SUFFIX.sub("", raw.rpartition("/")[2].lower())
+            for raw in (ref_id, m.get("model_id") or "")
+        }
+        ratio = max(difflib.SequenceMatcher(None, name, c).ratio() for c in names if c) if any(names) else 0
+        if ratio >= 0.6:
+            scored.append((-ratio, ref_id.split("/")[0] != provider.split("/")[0], ref_id, ratio))
+    scored.sort()
+    return [{"refId": ref_id, "similarity": round(ratio, 2)} for *_, ref_id, ratio in scored[:n]]
 
 
 def index_for(model: dict, effort: str | None) -> tuple[float | None, str]:
@@ -165,6 +189,7 @@ def check(models, agent, ref, params, role, coding):
     out = {"role": role, "declared": ref, "resolved": how}
     if cur is None:
         out["intelligence"] = {"status": "unknown", "reason": how}
+        out["closest"] = closest(models, ref)
         return out
     out["facts"] = facts(cur)
     effort = params.get("reasoning_effort")

@@ -67,7 +67,11 @@ Three mechanical comparisons, tier **config** unless noted:
 - **Variables.** Placeholders `{{name}}` in `instructions`, excluding `{{skill.*}}` and `{{snippet.*}}`, against the keys of `variables`. A placeholder not declared, or a declared variable never used, is a finding.
 - **`system_prompt` non-null.** Report it as a fact: the wrapper's relationship to `instructions` is undocumented, and `orq-improve-agent` asks before rewriting around it.
 
-A contradiction between the instructions and the config (three sequential tool steps under `max_iterations: 2`, an 800-word minimum under `max_tokens: 800`) is a finding in its own right, tier **broken** when run health confirms it and **config** when there are no traces.
+A contradiction between the instructions and the config is a finding in its own right. Label it **predicted broken** only when the arithmetic makes it certain to break every run, not just likely: more mandatory sequential steps than `max_iterations` allows (three one-at-a-time steps under `max_iterations: 2`), or a required minimum length above `max_tokens` (an 800-word minimum under `max_tokens: 800`). Then:
+
+- **No traces:** tier **config**, label `predicted broken`, sorted first in the config tier, so it leads the report unless something is broken outright. The suggestion says it will break every run once traffic arrives.
+- **Traces, and run health confirms it** (runs end on the cap): tier **broken**, no label; the traces are the evidence now.
+- **Traces, and run health does not confirm it:** tier **config**, no label. The prediction was wrong, or the model works around it; say which the sample suggests.
 
 ## 3. Tools
 
@@ -134,7 +138,7 @@ Read `model-check.json`:
 | `intelligence.status: dominated` | finding, tier **config**, with up to 5 `candidates` (refId, index, price, `price_gap`), each labelled `candidate`; fixed by `orq-run-experiment`. Say that A1 can be wrong in practice (the index is a general benchmark), which is why the hand-off is an experiment and not a switch |
 | `tau2.status: dominated` | the same, on the agentic benchmark, as a separate finding |
 | `not dominated` | "no finding" with the current index and price |
-| `unknown` | `unobservable` with the script's reason (`not in the catalogue`, `ambiguous: …`, `ambiguous date suffix: …`, `no intelligence_index or price`) |
+| `unknown` | `unobservable` with the script's reason (`not in the catalogue`, `ambiguous: …`, `ambiguous date suffix: …`, `no intelligence_index or price`). When the result has `closest`, list those names in the Model section as likely matches (they are not checked); for `deepseek/deepseek-v4-flash` it returned five `…deepseek-v4-flash-0731` rows at similarity 1.0 |
 | `resolved: date-suffix match on …` or `exact on model_id` | state the matched `refId` next to the result |
 
 Live results on 2026-10-12: `anthropic/claude-haiku-4-5` resolved by date suffix to `anthropic/claude-haiku-4-5-20251001` (index 23.7, price 2) and was dominated by 19 models; `openai/gpt-5.6-luna` (index 38.1 at effort `medium`, price 0.45) was not dominated; `cerebras/qwen-3.8-27b` had no index or price; `deepseek/deepseek-v4-flash` was not in the catalogue.
