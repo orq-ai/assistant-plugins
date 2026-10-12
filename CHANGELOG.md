@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.0] - 2026-10-12
+
+### Added
+
+- `orq-review-agent` skill (RES-887): a read-only review of one orq agent. It checks run health, instructions, tools, `{{skill.X}}` references, evaluators and model choice against the suite's rubrics, writes one HTML report (`agent-review-<key>-<timestamp>.html`), posts the top finding in chat and offers the skill that fixes it. `allowed-tools` grants read verbs only. The model check (`scripts/model_check.py`, stdlib only) applies the RES-1338 A1 rule: another enabled model with the same capabilities scores at least as high at a blended price at least 20% lower, repeated on tau2 for agents with tools. Probed live on CLI 11.0.2; untested paths are marked `[unverified]`.
+- `orq-shared/resources/config-context.md`, `prompting-guidelines.md` and `tool-description-guide.md`: the Phase 0 relay list, the 11 prompting guidelines and the tool description guide, now shared by the skills that build, review and improve an agent.
+- `tests/factual/orq-review-agent.csv` and `tests/evals/orq-review-agent/` (one fires case, three near-miss cases, one read-only behavioural case on `support-bot`).
+
+### Changed
+
+- `orq-analyze-traces` Phase 0, `orq-improve-agent` Phase 3a and `orq-build-agent` link to the shared rubrics instead of keeping their own copies. `tool-description-guide.md` moved from `orq-build-agent/resources/` to `orq-shared/resources/`.
+
 ## [3.9.0] - 2026-10-08
 
 ### Added
