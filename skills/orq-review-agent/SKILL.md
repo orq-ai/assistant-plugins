@@ -57,6 +57,7 @@ Probed 2026-10-12 with `orq` CLI 11.0.2 against API 4.14.20.
 
 - **NEVER** call a create, update, delete or invoke verb, and never offer to "just apply" a finding. The fixing skill does that after its own approval gate.
 - **ALWAYS** make each finding actionable: observation + best practice + evidence + **suggestion** + fixing skill. The suggestion is one or two sentences saying what to change, at a high level ("raise `max_iterations` to at least 3, or merge the three steps into one"). **NEVER** write the change itself: no rewritten prompt, tool description, evaluator body or diff. Candidates (cheaper models, unattached evaluators, unreferenced skills) are labelled `candidate`.
+- **ALWAYS** judge the setup, not whether it happens to work. A setup error found in the config or the catalogue (a declared model not in the project's catalogue, an unresolved skill reference) stays a finding at its tier even when traces show the agent running; traces add evidence, they never clear a setup finding.
 - **ALWAYS** cite evidence on every finding: a quoted instruction line, a config field and value, or trace ids and counts.
 - **ALWAYS** put anything unread in `unobservable` with a reason. Absence never reads as healthy.
 - **ALWAYS** mark evaluator pass rates `unvalidated`.
