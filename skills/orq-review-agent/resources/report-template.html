@@ -115,10 +115,10 @@
   <h2>6. Model</h2>
   <p><!--@MODEL_SUMMARY--></p><!-- declared id, how it resolved, index at which effort, price -->
   <table>
-    <thead><tr><th>Candidate</th><th>Benchmark</th><th>Score</th><th>Price / 1M</th><th>Cheaper by</th></tr></thead>
+    <thead><tr><th>Candidate</th><th>Benchmark</th><th>Score</th><th>Current, same effort</th><th>Price / 1M</th><th>Cheaper by</th></tr></thead>
     <tbody>
-      <!-- repeat per candidate, up to 5 per benchmark; each row is a candidate, not a recommendation -->
-      <tr><td><code><!--@CANDIDATE_REF--></code> <span class="tag">candidate</span></td><td><!--@BENCHMARK--></td><td><!--@SCORE--></td><td><!--@PRICE--></td><td><!--@PRICE_GAP--></td></tr>
+      <!-- repeat per candidate, up to 5 per benchmark; each row is a candidate, not a recommendation. Score and current are from the candidate's `effort` (the agent's, or "default") -->
+      <tr><td><code><!--@CANDIDATE_REF--></code> <span class="tag">candidate</span></td><td><!--@BENCHMARK--></td><td><!--@SCORE--></td><td><!--@CURRENT_SAME_EFFORT--></td><td><!--@PRICE--></td><td><!--@PRICE_GAP--></td></tr>
     </tbody>
   </table>
   <p class="meta">Rule: <!--@MODEL_RULE--><!-- the "rule" field of model-check.json, verbatim --> Benchmarks are general; test a switch with <code>orq-run-experiment</code> when the agent has a dataset and evaluators.</p>

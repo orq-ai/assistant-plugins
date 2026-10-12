@@ -119,10 +119,10 @@ Run every check in [`resources/checks.md`](resources/checks.md). Each section li
 
 Give every finding a tier, then sort:
 
-1. **Broken** — an unresolved skill reference, a tool the instructions require but the agent lacks, a declared model that is unavailable, sampled runs whose terminal reason is a cap (`max_iterations`, `length`, `max_time`).
-2. **Trace-backed** — a finding with trace ids or counts behind it, with the sample size (N of total).
-3. **Config / catalogue** — mechanical, read from the config or the catalogue (a dominated model, an undeclared variable, an evaluator at sample rate 0). A **predicted broken** finding sorts first in this tier: a config contradiction that will break every run, with no traffic to confirm it ([`resources/checks.md`](resources/checks.md) §2).
-4. **Best practice only** — a guideline or tool-guide rule with no failure behind it.
+1. **Broken**: an unresolved skill reference, a tool the instructions require but the agent lacks, a primary model that is unavailable, sampled runs whose terminal reason is a cap (`max_iterations`, `length`, `max_time`).
+2. **Trace-backed**: a finding with trace ids or counts behind it, with the sample size (N of total).
+3. **Config / catalogue**: mechanical, read from the config or the catalogue (a dominated model, an undeclared variable, an evaluator at sample rate 0). A **predicted broken** finding sorts first in this tier: a config contradiction that will break every run, with no traffic to confirm it ([`resources/checks.md`](resources/checks.md) §2).
+4. **Best practice only**: a guideline or tool-guide rule with no failure behind it.
 
 Inside a tier, the finding that affects more traffic goes first; with no traffic data, keep check order. **While a broken or predicted-broken finding is open, a model finding's suggestion says to fix that first:** a model switch measured on a capped agent measures the cap. **Done when** every finding has a tier and the list is sorted.
 

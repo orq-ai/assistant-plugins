@@ -29,5 +29,4 @@ cli_subcommand,traces get-span,,orq traces get-span exists
 cli_flag,traces get-span,-j,orq traces get-span accepts -j
 cli_subcommand,reporting query,,orq reporting query exists
 cli_flag,reporting query,--from-file,orq reporting query accepts --from-file
-cli_flag,reporting query,--mode,orq reporting query accepts --mode
 cli_flag,reporting query,--from,orq reporting query accepts --from

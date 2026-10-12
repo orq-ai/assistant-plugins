@@ -20,6 +20,7 @@ import difflib
 import json
 import re
 import sys
+from typing import NamedTuple
 
 PRICE_GAP = 0.20  # candidate must be at least this much cheaper
 MAX_CANDIDATES = 5
@@ -32,19 +33,25 @@ RULE = (
     "price at least 20% lower, and: handles text in and out, plus image input or output "
     "where the current model has it; has tool calling where the current model has it; has "
     "structured outputs when response_format is json_schema; has a context window of at "
-    "least min(current, 300k), or the full current window for a coding agent. Both models "
-    "are scored at the agent's reasoning_effort when the current model has an index for "
-    "it, otherwise both at their default effort. Provider aliases of one model are listed "
-    "once, cheapest first. For agents with tools the comparison is repeated on tau2."
+    "least min(current, 300k), or the full current window for a coding agent. Each pair is "
+    "scored at the agent's reasoning_effort when both models have an index for it, "
+    "otherwise both at their default effort. The same model on another provider never "
+    "dominates; one 20% cheaper is listed separately. Provider aliases of one model are "
+    "listed once, cheapest first. For agents with tools the comparison is repeated on tau2."
 )
 
 
-def v2(model: dict) -> dict:
+class Needs(NamedTuple):
+    """What the agent's config requires of any replacement model."""
+
+    tools: bool
+    schema: bool
+    coding: bool
+
+
+def benchmark(model: dict) -> dict:
+    """The catalogue's benchmark block: index, price, per-effort indexes, tau2, aa_slug."""
     return ((model.get("metadata") or {}).get("autorouter") or {}).get("v2") or {}
-
-
-def meta(model: dict) -> dict:
-    return model.get("metadata") or {}
 
 
 def resolve(models: list[dict], ref: str) -> tuple[dict | None, str]:
@@ -74,11 +81,15 @@ def resolve(models: list[dict], ref: str) -> tuple[dict | None, str]:
 
 
 def model_key(model: dict) -> str:
-    """One key per underlying model, so provider aliases (azure/eu.gpt-5.6-luna, openai/...) group."""
-    return (meta(model).get("autorouter") or {}).get("id") or v2(model).get("aa_slug") or model.get("refId") or ""
+    """One key per benchmarked model, so provider aliases (azure/gpt-5.4, openai/gpt-5.4) group.
+
+    `aa_slug`, not `metadata.autorouter.id`: that one names a family, and grouped
+    gpt-5 with gpt-5.4 and gemini-3-flash-preview with gemini-3.6-flash on 2026-10-12.
+    """
+    return benchmark(model).get("aa_slug") or model.get("refId") or ""
 
 
-def closest(models: list[dict], ref: str, n: int = 5) -> list[dict]:
+def closest(models: list[dict], ref: str) -> list[dict]:
     """Likely catalogue matches for an unresolved id, for the report only; never used for the check.
 
     Ranks by similarity of the model name (the part after the last `/`, date
@@ -98,86 +109,124 @@ def closest(models: list[dict], ref: str, n: int = 5) -> list[dict]:
         if ratio >= 0.6:
             scored.append((-ratio, ref_id.split("/")[0] != provider.split("/")[0], ref_id, ratio))
     scored.sort()
-    return [{"refId": ref_id, "similarity": round(ratio, 2)} for *_, ref_id, ratio in scored[:n]]
+    return [{"refId": ref_id, "similarity": round(ratio, 2)} for *_, ref_id, ratio in scored[:MAX_CANDIDATES]]
 
 
-def index_for(model: dict, effort: str | None) -> tuple[float | None, str]:
-    """Intelligence index at the given reasoning effort when the catalogue has it, else the default."""
-    data = v2(model)
-    efforts = data.get("reasoning_efforts") or {}
-    if effort and (efforts.get(effort) or {}).get("intelligence_index") is not None:
-        return efforts[effort]["intelligence_index"], effort
+def effort_index(model: dict, effort: str | None) -> float | None:
+    """Intelligence index at this reasoning effort, or None when the catalogue has none for it."""
+    if not effort:
+        return None
+    return ((benchmark(model).get("reasoning_efforts") or {}).get(effort) or {}).get("intelligence_index")
+
+
+def default_index(model: dict) -> tuple[float | None, str]:
+    data = benchmark(model)
     return data.get("intelligence_index"), data.get("default_effort") or "default"
 
 
 def facts(model: dict) -> dict:
-    data = v2(model)
+    data = benchmark(model)
+    meta = model.get("metadata") or {}
     return {
         "refId": model.get("refId"),
         "intelligence_index": data.get("intelligence_index"),
         # Unpriced models carry price 0 (seen on nvidia/moonshotai/kimi-k3); treat as unknown.
         "price": data.get("price") or None,
         "tau2": (data.get("aa_evaluations") or {}).get("tau2"),
-        "context_window": meta(model).get("context_window"),
-        "text": bool(meta(model).get("supports_text_input")) and bool(meta(model).get("supports_text_output")),
-        "tool_calling": bool(meta(model).get("supports_tool_calling")),
-        "vision": bool(meta(model).get("supports_vision")),
-        "image_output": bool(meta(model).get("supports_image_output")),
-        "structured_outputs": bool(meta(model).get("supports_structured_outputs")),
+        "context_window": meta.get("context_window"),
+        "text": bool(meta.get("supports_text_input")) and bool(meta.get("supports_text_output")),
+        "tool_calling": bool(meta.get("supports_tool_calling")),
+        "vision": bool(meta.get("supports_vision")),
+        "image_output": bool(meta.get("supports_image_output")),
+        "structured_outputs": bool(meta.get("supports_structured_outputs")),
     }
 
 
-def eligible(cand: dict, cur: dict, needs_tools: bool, needs_schema: bool, coding: bool) -> bool:
-    c, k = facts(cand), facts(cur)
-    if cand.get("model_type") != "chat" or not cand.get("enabled") or not c["text"]:
+def eligible(cand: dict, cand_facts: dict, cur_facts: dict, needs: Needs) -> bool:
+    if cand.get("model_type") != "chat" or not cand.get("enabled") or not cand_facts["text"]:
         return False
-    if (needs_tools or k["tool_calling"]) and not c["tool_calling"]:
+    if (needs.tools or cur_facts["tool_calling"]) and not cand_facts["tool_calling"]:
         return False
-    if needs_schema and not c["structured_outputs"]:
+    if needs.schema and not cand_facts["structured_outputs"]:
         return False
-    if (k["vision"] and not c["vision"]) or (k["image_output"] and not c["image_output"]):
+    if cur_facts["vision"] and not cand_facts["vision"]:
         return False
-    if k["context_window"]:
-        floor = k["context_window"] if coding else min(k["context_window"], CONTEXT_FLOOR)
-        if (c["context_window"] or 0) < floor:
+    if cur_facts["image_output"] and not cand_facts["image_output"]:
+        return False
+    if cur_facts["context_window"]:
+        floor = cur_facts["context_window"] if needs.coding else min(cur_facts["context_window"], CONTEXT_FLOOR)
+        if (cand_facts["context_window"] or 0) < floor:
             return False
     return True
 
 
-def score(model: dict, metric: str, effort: str | None) -> tuple[float | None, str | None]:
-    if metric == "intelligence_index":
-        return index_for(model, effort)
-    return facts(model)[metric], None
+def current_score(cur: dict, metric: str, effort: str | None) -> tuple[float | None, str | None]:
+    """The current model's own number, for the report: at the agent's effort when it has one."""
+    if metric != "intelligence_index":
+        return facts(cur)[metric], None
+    at_effort = effort_index(cur, effort)
+    return (at_effort, effort) if at_effort is not None else default_index(cur)
 
 
-def compare(models, cur, metric, effort, needs_tools, needs_schema, coding):
-    """Score both sides at the same effort: the agent's, if the current model has an index for it."""
-    efforts = v2(cur).get("reasoning_efforts") or {}
-    if effort and (efforts.get(effort) or {}).get("intelligence_index") is None:
-        effort = None
-    price = facts(cur)["price"]
-    cur_value, cur_effort = score(cur, metric, effort)
+def paired_scores(cur: dict, cand: dict, metric: str, effort: str | None) -> tuple[float | None, float | None, str | None]:
+    """Current and candidate on one footing: both at the agent's effort when both have it, else both at default."""
+    if metric != "intelligence_index":
+        return facts(cur)[metric], facts(cand)[metric], None
+    cur_at, cand_at = effort_index(cur, effort), effort_index(cand, effort)
+    if cur_at is not None and cand_at is not None:
+        return cur_at, cand_at, effort
+    return default_index(cur)[0], default_index(cand)[0], "default"
+
+
+def keep_cheapest(rows: dict[str, dict], key: str, row: dict) -> None:
+    """One row per model: the cheapest, with the other providers' refIds as aliases."""
+    best = rows.get(key)
+    if best is None or row["price"] < best["price"]:
+        row["aliases"] = (best["aliases"] + [best["refId"]]) if best else []
+        rows[key] = row
+    else:
+        best["aliases"].append(row["refId"])
+
+
+def cheaper_provider(models: list[dict], cur: dict, needs: Needs) -> dict | None:
+    """The same model on another provider at least PRICE_GAP cheaper, cheapest first; it never dominates."""
+    cur_facts = facts(cur)
+    price, cur_key = cur_facts["price"], model_key(cur)
+    if price is None:
+        return None
+    rows: dict[str, dict] = {}
+    for cand in models:
+        cand_facts = facts(cand)
+        if cand is cur or model_key(cand) != cur_key or cand_facts["price"] is None:
+            continue
+        if cand_facts["price"] > price * (1 - PRICE_GAP) or not eligible(cand, cand_facts, cur_facts, needs):
+            continue
+        keep_cheapest(rows, cur_key, {**cand_facts, "price_gap": round(1 - cand_facts["price"] / price, 3), "aliases": []})
+    return rows.get(cur_key)
+
+
+def compare(models: list[dict], cur: dict, metric: str, effort: str | None, needs: Needs) -> dict:
+    cur_facts = facts(cur)
+    price = cur_facts["price"]
+    cur_value, cur_effort = current_score(cur, metric, effort)
     if cur_value is None or price is None:
         return {"status": "unknown", "reason": f"no {metric} or price for {cur.get('refId')}"}
+    cur_key = model_key(cur)
     hits: dict[str, dict] = {}
     for cand in models:
-        if cand is cur or not eligible(cand, cur, needs_tools, needs_schema, coding):
+        cand_facts = facts(cand)
+        if cand is cur or model_key(cand) == cur_key or cand_facts["price"] is None:
             continue
-        f = facts(cand)
-        value, cand_effort = score(cand, metric, effort)
-        if value is None or f["price"] is None:
+        if cand_facts["price"] > price * (1 - PRICE_GAP) or not eligible(cand, cand_facts, cur_facts, needs):
             continue
-        if value >= cur_value and f["price"] <= price * (1 - PRICE_GAP):
-            hit = {**f, metric: value, "price_gap": round(1 - f["price"] / price, 3), "aliases": []}
-            if cand_effort:
-                hit["effort"] = cand_effort
-            key = model_key(cand)
-            best = hits.get(key)
-            if best is None or hit["price"] < best["price"]:
-                hit["aliases"] = (best["aliases"] + [best["refId"]]) if best else []
-                hits[key] = hit
-            else:
-                best["aliases"].append(hit["refId"])
+        row = {**cand_facts, "price_gap": round(1 - cand_facts["price"] / price, 3), "aliases": []}
+        base, value, scored_at = paired_scores(cur, cand, metric, effort)
+        if value is None or base is None or value < base:
+            continue
+        row.update({metric: value, "current_at_same_effort": base})
+        if scored_at:
+            row["effort"] = scored_at  # the agent's effort, or "default": each model at its own default
+        keep_cheapest(hits, model_key(cand), row)
     ranked = sorted(hits.values(), key=lambda h: (-h[metric], h["price"]))
     out = {
         "status": "dominated" if hits else "not dominated",
@@ -206,7 +255,7 @@ def check(models, agent, ref, params, role, coding):
                 "intelligence": {"status": "unknown", "reason": f"{role} model has no id"}}
     tools = (agent.get("settings") or {}).get("tools") or []
     fmt = params.get("response_format") or {}
-    needs_schema = isinstance(fmt, dict) and fmt.get("type") == "json_schema"
+    needs = Needs(bool(tools), isinstance(fmt, dict) and fmt.get("type") == "json_schema", coding)
     cur, how = resolve(models, ref)
     out = {"role": role, "declared": ref, "resolved": how}
     if cur is None:
@@ -214,10 +263,11 @@ def check(models, agent, ref, params, role, coding):
         out["closest"] = closest(models, ref)
         return out
     out["facts"] = facts(cur)
+    out["cheaper_provider"] = cheaper_provider(models, cur, needs)
     effort = params.get("reasoning_effort")
-    out["intelligence"] = compare(models, cur, "intelligence_index", effort, bool(tools), needs_schema, coding)
+    out["intelligence"] = compare(models, cur, "intelligence_index", effort, needs)
     if tools:
-        out["tau2"] = compare(models, cur, "tau2", None, True, needs_schema, coding)
+        out["tau2"] = compare(models, cur, "tau2", None, needs)
     return out
 
 

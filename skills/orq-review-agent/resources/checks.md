@@ -55,11 +55,13 @@ Returns one pair per run, e.g. `{"dur":34975,"finish":["stop"],"input":"catfood"
 | Trace `status: error` | count from the sweep, 3 trace ids | Trace-backed |
 | Model served ≠ declared (a fallback serving traffic) | the `model` groups vs `model.id` | Trace-backed |
 
-**Served vs declared:** resolve both through `models.json` and compare the underlying model (`metadata.autorouter.id`), not the provider prefix. `azure/eu.gpt-5.6-luna` serving an agent declared on `openai/gpt-5.6-luna` is the same model on another provider, not a fallback. A group matching an attached LLM judge's `model` (Phase 1, resolved through `models.json`) is the judge, not a fallback (gotcha 11): `openai/gpt-4.1` appeared this way next to the agent's own model. Only a group that matches neither the agent's models nor a judge's is a fallback finding; confirm it with `orq traces list-spans <trace_id> --raw -j 'data[].{type:type,name:name,model:model}'` on one of its traces (a judge call sits after a `span.evaluator` span, named `chat <judge model>`). Sampled `version` different from the config's `version` means older runs are in the window; say so next to every trace-backed count.
+**Served vs declared:** resolve both through `models.json` and compare the benchmarked model (`metadata.autorouter.v2.aa_slug`), not the provider prefix. Not `metadata.autorouter.id`: it names a family (`openai/gpt-5` and `openai/gpt-5.4` share one). `azure/eu.gpt-5.6-luna` serving an agent declared on `openai/gpt-5.6-luna` is the same model on another provider, not a fallback. A group matching an attached LLM judge's `model` (Phase 1, resolved through `models.json`) is the judge, not a fallback (gotcha 11): `openai/gpt-4.1` appeared this way next to the agent's own model. Only a group that matches neither the agent's models nor a judge's is a fallback finding; confirm it with `orq traces list-spans <trace_id> --raw -j 'data[].{type:type,name:name,model:model}'` on one of its traces (a judge call sits after a `span.evaluator` span, named `chat <judge model>`). Sampled `version` different from the config's `version` means older runs are in the window; say so next to every trace-backed count.
 
 Always record in the report, as facts not findings: trace count, status split, cost sum, duration p50/p95, and the sample size behind the terminal-state counts.
 
-`unobservable` here: terminal states when no `span.agent` span exists; cost or latency when the aggregate errors; TTFT (not read).
+Truncation is the last call's `incomplete` above. Every other item on the `config-context.md` list that this check does not read still goes in the report, so its absence never reads as fine.
+
+`unobservable` here: terminal states when no `span.agent` span exists; cost or latency when the aggregate errors; TTFT, `billing.threshold_exceeded` and prompt-cache hit ratio (not read).
 
 ## 2. Instructions
 
@@ -151,9 +153,11 @@ Read `model-check.json`:
 
 | Result | Report as |
 |---|---|
-| `intelligence.status: dominated` | finding, tier **config**, with up to 5 `candidates` (refId, index, price, `price_gap`, the effort it was scored at, and any `aliases` of the same model), each labelled `candidate`; fixed by `orq-improve-agent`. The suggestion names the cheapest strong candidate and says to run `orq-run-experiment` first if the agent has a dataset and evaluators: the index is a general benchmark and can be wrong for this agent |
+| `intelligence.status: dominated` | finding, tier **config**, with up to 5 `candidates` (refId, index, `current_at_same_effort`, price, `price_gap`, the effort both were scored at, and any `aliases` of the same model), each labelled `candidate`; fixed by `orq-improve-agent`. The suggestion names the cheapest strong candidate and says to run `orq-run-experiment` first if the agent has a dataset and evaluators: the index is a general benchmark and can be wrong for this agent |
 | `tau2.status: dominated` | the same, on the agentic benchmark, as a separate finding |
 | `not dominated` | "no finding" with the current index and price |
-| `unknown`, reason `not in the catalogue` | finding, tier **broken**: "the declared model is not available in this project, and the agent cannot run"; fixed by `orq-improve-agent`. The `closest` names are possible replacements, listed in the suggestion; they are not checked |
+| `cheaper_provider` set (per model, next to `intelligence`) | finding, tier **config**, once per model: the same model is `price_gap` cheaper on that refId; fixed by `orq-improve-agent`. The suggestion says to check the provider's region first (an `eu.` prefix can be a data residency choice) |
+| `unknown`, reason `not in the catalogue`, role `primary` | finding, tier **broken**: "the declared model is not available in this project, and the agent cannot run"; fixed by `orq-improve-agent`. The `closest` names are possible replacements, listed in the suggestion; they are not checked |
+| `unknown`, reason `not in the catalogue`, role `fallback` | finding, tier **config**: "this fallback is not available in this project, so it cannot take over when the primary fails"; the same fixing skill and `closest` list |
 | `unknown`, any other reason (`ambiguous: …`, `no intelligence_index or price`, …) | `unobservable` with the script's `reason` |
 | `resolved: date-suffix match on …` or `exact on model_id` | state the matched `refId` next to the result |

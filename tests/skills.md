@@ -316,8 +316,9 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ### Scenario 3: Hand-off only after a yes
 
-- Ask: "Review support-bot", then answer "stop here" to the closing question
-- Verify Phase 6: the chat message names the top finding, its evidence and the report path, then asks before running the fixing skill
+- Ask: "Review support-bot", answer "show the findings" to the first question, then "stop here" to the fix question
+- Verify Phase 6: the summary gives the counts per tier, the top 3 findings and the report path, then asks before showing the findings
+- Verify Phase 6: the findings step lists findings grouped by fixing skill and runs nothing; the fix question comes after it
 - Verify: on "stop here", no other skill is invoked
 
 ## `orq-recommend-evaluators`
