@@ -1,21 +1,19 @@
 ---
 name: orq-review-agent
 description: >
-  Health-check an orq agent's setup without changing it: run health,
-  instructions, tools, skill references, evaluators and model choice checked
-  against the suite's best practices, each finding with an actionable
-  suggestion, written to one HTML report, summarised in chat with a link, the
-  findings shown, then the skill that fixes them offered. Use when someone asks
-  to "review my agent", "is my agent set up well", "audit support-bot", or
-  "give my agent a health check". Do NOT use
-  to apply a fix (use orq-improve-agent), to find out what is failing in
-  production from its conversations (use orq-analyze-traces), to pick
-  evaluators to add (use orq-recommend-evaluators), or to hill-climb a metric.
+  Health-check an orq agent's setup without changing it, with or without
+  production traffic: instructions, tools, skill references, evaluators, model
+  choice and run health, checked against the suite's best practices, each
+  finding with a suggestion, in one HTML report. Use when someone asks to
+  "review my agent", "is my agent set up well", "audit support-bot before
+  launch", or "give my agent a health check". Do NOT use to find out why
+  conversations fail or to build a failure taxonomy (use orq-analyze-traces),
+  to apply a fix (use orq-improve-agent), to pick evaluators to add (use
+  orq-recommend-evaluators), or to hill-climb a metric.
 allowed-tools: Read, Write, Grep, Glob, Task, AskUserQuestion, Skill, Bash(orq agents retrieve:*), Bash(orq agents list:*), Bash(orq tools retrieve:*), Bash(orq knowledge-bases retrieve:*), Bash(orq memory-stores retrieve:*), Bash(orq evals get:*), Bash(orq evals all:*), Bash(orq skills list:*), Bash(orq models list:*), Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq reporting query:*), mcp__orq-workspace__search_entities, mcp__orq-workspace__search_docs
 metadata:
   verified: "2026-10-12"
   surface: cli
-  source: "docs/specs/orq-review-agent.md"
 ---
 
 # Review Agent
