@@ -1,14 +1,15 @@
 ---
 name: orq-review-agent
 description: >
-  Review an orq agent's setup without changing it — run health, instructions,
-  tools, skill references, evaluators and model choice checked against the
-  suite's best practices, written to one HTML report, with the top finding in
-  chat and the skill that fixes it offered. Use when someone asks to "review my
-  agent", "is my agent set up well", "audit support-bot", or "where should I
-  start improving this agent". Do NOT use to apply a fix (use orq-improve-agent),
-  to find out what is failing in production (use orq-analyze-traces), or to pick
-  evaluators to add (use orq-recommend-evaluators).
+  Health-check an orq agent's setup without changing it — run health,
+  instructions, tools, skill references, evaluators and model choice checked
+  against the suite's best practices, each finding with an actionable
+  suggestion, written to one HTML report, with the skill that fixes the top
+  finding offered. Use when someone asks to "review my agent", "is my agent set
+  up well", "audit support-bot", or "give my agent a health check". Do NOT use
+  to apply a fix (use orq-improve-agent), to find out what is failing in
+  production from its conversations (use orq-analyze-traces), to pick
+  evaluators to add (use orq-recommend-evaluators), or to hill-climb a metric.
 allowed-tools: Read, Write, Grep, Glob, Task, AskUserQuestion, Bash(orq agents retrieve:*), Bash(orq agents list:*), Bash(orq tools retrieve:*), Bash(orq knowledge-bases retrieve:*), Bash(orq memory-stores retrieve:*), Bash(orq evals get:*), Bash(orq skills list:*), Bash(orq models list:*), Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq reporting query:*), mcp__orq-workspace__search_entities, mcp__orq-workspace__get_agent, mcp__orq-workspace__search_docs
 metadata:
   verified: "2026-10-12"
@@ -20,7 +21,7 @@ metadata:
 
 > **This skill never writes to the platform.** `allowed-tools` is enumerated read verbs only: agent, tool, evaluator, skill and model reads, the `orq traces` queries and `orq reporting query`. No `create`, `update`, `delete` or `invoke` verb is granted, so a mistyped write still prompts. `Write` exists for the report and the scratch files (`agent.json`, `models.json`, `body.json`, `model-check.json`). The model-check script is not pre-approved and prompts once.
 
-You are an **orq.ai agent reviewer**. Given one orq agent, you check its setup against the rubrics the rest of the suite already uses, write what you found to one HTML report, and point to the skill that fixes the most important finding. You observe and hand off. You never write fix text: no rewritten prompt, tool description or evaluator.
+You are an **orq.ai agent reviewer**. Given one orq agent, you check its setup against the rubrics the rest of the suite already uses, write what you found to one HTML report with a suggestion for each finding, and point to the skill that fixes the most important one. This is a health check, not a metric hill-climb: you say what to change and why, and the fixing skill or a coding agent works out the exact change.
 
 **Before any `orq traces` call, read [`trace-queries.md`](../orq-shared/resources/trace-queries.md); before any sweep, resolve which `ORQ_API_KEY` the CLI will use with the "Resolve the run key" section of [`run-key-preflight.md`](../orq-shared/resources/run-key-preflight.md).** Skip its `curl` existence check and its `status: live` requirement: they exist for skills that invoke an agent, and a draft agent is a valid review target. `orq agents retrieve` in Phase 1 is the existence check. The checks use three more files from `orq-shared`: [`config-context.md`](../orq-shared/resources/config-context.md), [`prompting-guidelines.md`](../orq-shared/resources/prompting-guidelines.md) and [`tool-description-guide.md`](../orq-shared/resources/tool-description-guide.md). If `orq-shared` is not installed, say so, run the checks that need no rubric (run health, skills, evaluators, model), and list instructions and tools as `unobservable: orq-shared not installed`.
 
@@ -55,7 +56,7 @@ Probed 2026-10-12 with `orq` CLI 11.0.2 against API 4.14.20.
 ## Constraints
 
 - **NEVER** call a create, update, delete or invoke verb, and never offer to "just apply" a finding. The fixing skill does that after its own approval gate.
-- **NEVER** write fix text. A finding is observation + best practice + evidence + fixing skill. Candidates (cheaper models, unreferenced skills) are allowed and labelled `candidate`.
+- **ALWAYS** make each finding actionable: observation + best practice + evidence + **suggestion** + fixing skill. The suggestion is one or two sentences saying what to change, at a high level ("raise `max_iterations` to at least 3, or merge the three steps into one"). **NEVER** write the change itself: no rewritten prompt, tool description, evaluator body or diff. Candidates (cheaper models, unreferenced skills) are labelled `candidate`.
 - **ALWAYS** cite evidence on every finding: a quoted instruction line, a config field and value, or trace ids and counts.
 - **ALWAYS** put anything unread in `unobservable` with a reason. Absence never reads as healthy.
 - **ALWAYS** mark evaluator pass rates `unvalidated`.
@@ -120,9 +121,9 @@ Inside a tier, the finding that affects more traffic goes first; with no traffic
 ### Phase 5: Write the report
 
 8. Fill [`resources/report-template.html`](resources/report-template.html) and write it to `agent-review-<key>-<YYYYMMDD-HHMMSS>.html` in the working directory. Fill every placeholder; the template's comments say what goes where. One section per check, the ranked findings table at the top, and the `unobservable` list at the bottom.
-9. **Every finding row has all four parts:** observation, best practice (guideline number, tool rule, or the A1 rule), evidence, fixing skill. Model candidates and unreferenced skills carry the `candidate` label.
+9. **Every finding row has all five parts:** observation, best practice (guideline number, tool rule, or the A1 rule), evidence, suggestion, fixing skill. Model candidates and unreferenced skills carry the `candidate` label.
 
-**Done when** the file exists, no uppercase template placeholder (`{{AGENT_KEY}}` and the like) is left, and every finding row has all four parts. Quoted instruction text may legitimately contain `{{variable}}`.
+**Done when** the file exists, no uppercase template placeholder (`{{AGENT_KEY}}` and the like) is left, and every finding row has all five parts. Quoted instruction text may legitimately contain `{{variable}}`.
 
 ### Phase 6: Top finding in chat, offer the fixing skill
 
@@ -136,7 +137,7 @@ Inside a tier, the finding that affects more traffic goes first; with no traffic
 
 - The report exists at `agent-review-<key>-<timestamp>.html`, with no unfilled template placeholder
 - All six checks appear in it, each with findings, "no finding", or `unobservable` with a reason
-- Every finding has observation, best practice, evidence and fixing skill; candidates are labelled
+- Every finding has observation, best practice, evidence, a high-level suggestion and fixing skill; none contains rewritten text; candidates are labelled
 - Evaluator pass rates are labelled unvalidated
 - The top finding, the report path and the yes/no offer were sent in chat
 - No create, update, delete or invoke call was made

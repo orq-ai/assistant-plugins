@@ -117,15 +117,15 @@ Every evaluator gap is fixed by `orq-recommend-evaluators`. Do not suggest which
 
 ## 6. Model
 
-Run the script on the two files from Phases 1 and 2:
+Decide first whether this is a **coding agent** (its instructions or tools are about writing, editing or running code). Coding agents need long context, so pass `--coding` to keep the full current window as the floor; say which you chose and why in the report. Then run the script on the two files from Phases 1 and 2:
 
 ```bash
-uv run --no-project <skill-dir>/scripts/model_check.py models.json agent.json > model-check.json
+uv run --no-project <skill-dir>/scripts/model_check.py models.json agent.json [--coding] > model-check.json
 ```
 
 It checks the primary model and each entry of `fallback_models` [unverified: no agent with fallbacks was available to read their shape]. The rule, stated once here and in the script:
 
-> **Dominated** (RES-1338 A1): another enabled chat model with the same capabilities has an intelligence index at least as high, at a blended price at least 20% lower. Same capabilities means: context window at least as large, tool calling if the agent has tools, vision if the current model has it, structured outputs if `response_format` is `json_schema`. Both sides are scored at the agent's `reasoning_effort` (per fallback: that entry's own `parameters`) when the catalogue lists an index for that effort, and at their default effort otherwise; each candidate row carries the effort it was scored at. For agents with tools, the same comparison runs on `tau2`.
+> **Dominated** (RES-1338 A1, guardrails agreed with Bauke on RES-887, 2026-10-12): another enabled chat model has an intelligence index at least as high, at a blended price at least 20% lower, and the same capabilities: text in and out, plus image input or output where the current model has it (rarer modalities such as audio are out of scope); tool calling where the current model has it; structured outputs if `response_format` is `json_schema`; a context window of at least min(current, 300k), or the full current window for a coding agent. Both sides are scored at the agent's `reasoning_effort` (per fallback: that entry's own `parameters`) when the catalogue lists an index for that effort, and at their default effort otherwise; each candidate row carries the effort it was scored at. For agents with tools, the same comparison runs on `tau2`.
 
 Read `model-check.json`:
 

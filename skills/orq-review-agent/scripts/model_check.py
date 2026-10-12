@@ -4,13 +4,18 @@
 # ///
 """Model check for orq-review-agent: is the agent's model dominated on the catalogue?
 
-Rule (RES-1338 A1, with its guardrails): a model is dominated when another
-enabled chat model with at least the same capabilities has an intelligence
-index at least as high, at a blended price at least 20% lower. For agents with
-tools the same comparison is repeated on the tau2 agentic benchmark.
+Rule (RES-1338 A1, guardrails as agreed on RES-887 2026-10-12): a model is
+dominated when another enabled chat model has an intelligence index at least as
+high, at a blended price at least 20% lower, and
+  - handles text in and out, plus images in or out where the current model does,
+  - has tool calling where the current model has it,
+  - has structured outputs when the agent's response_format is json_schema,
+  - has a context window of at least min(current, 300k), or the full current
+    window with --coding (coding agents need long context).
+For agents with tools the same comparison is repeated on the tau2 agentic benchmark.
 
 Usage:
-    uv run --no-project scripts/model_check.py models.json agent.json > model-check.json
+    uv run --no-project scripts/model_check.py models.json agent.json [--coding] > model-check.json
 
 models.json is `orq models list -o json`; agent.json is `orq agents retrieve <key> -o json`.
 Stdlib only. Prints one JSON object; never calls the network.
@@ -23,6 +28,7 @@ import sys
 
 PRICE_GAP = 0.20  # candidate must be at least this much cheaper
 MAX_CANDIDATES = 5
+CONTEXT_FLOOR = 300_000  # 1M -> 300k is fine for most non-coding agents
 # Version suffixes seen on catalogue refIds that agent slugs omit: -20251001, -0731.
 DATE_SUFFIX = re.compile(r"-(\d{8}|\d{4})$")
 
@@ -79,24 +85,28 @@ def facts(model: dict) -> dict:
         "price": data.get("price") or None,
         "tau2": (data.get("aa_evaluations") or {}).get("tau2"),
         "context_window": meta(model).get("context_window"),
+        "text": bool(meta(model).get("supports_text_input")) and bool(meta(model).get("supports_text_output")),
         "tool_calling": bool(meta(model).get("supports_tool_calling")),
         "vision": bool(meta(model).get("supports_vision")),
+        "image_output": bool(meta(model).get("supports_image_output")),
         "structured_outputs": bool(meta(model).get("supports_structured_outputs")),
     }
 
 
-def eligible(cand: dict, cur: dict, needs_tools: bool, needs_schema: bool) -> bool:
+def eligible(cand: dict, cur: dict, needs_tools: bool, needs_schema: bool, coding: bool) -> bool:
     c, k = facts(cand), facts(cur)
-    if cand.get("model_type") != "chat" or not cand.get("enabled"):
+    if cand.get("model_type") != "chat" or not cand.get("enabled") or not c["text"]:
         return False
-    if needs_tools and not c["tool_calling"]:
+    if (needs_tools or k["tool_calling"]) and not c["tool_calling"]:
         return False
     if needs_schema and not c["structured_outputs"]:
         return False
-    if k["vision"] and not c["vision"]:
+    if (k["vision"] and not c["vision"]) or (k["image_output"] and not c["image_output"]):
         return False
-    if k["context_window"] and (c["context_window"] or 0) < k["context_window"]:
-        return False
+    if k["context_window"]:
+        floor = k["context_window"] if coding else min(k["context_window"], CONTEXT_FLOOR)
+        if (c["context_window"] or 0) < floor:
+            return False
     return True
 
 
@@ -106,7 +116,7 @@ def score(model: dict, metric: str, effort: str | None) -> tuple[float | None, s
     return facts(model)[metric], None
 
 
-def compare(models, cur, metric, effort, needs_tools, needs_schema):
+def compare(models, cur, metric, effort, needs_tools, needs_schema, coding):
     """Candidates are scored at the agent's effort when they have it, so both sides match."""
     price = facts(cur)["price"]
     cur_value, cur_effort = score(cur, metric, effort)
@@ -114,7 +124,7 @@ def compare(models, cur, metric, effort, needs_tools, needs_schema):
         return {"status": "unknown", "reason": f"no {metric} or price for {cur.get('refId')}"}
     hits = []
     for cand in models:
-        if cand is cur or not eligible(cand, cur, needs_tools, needs_schema):
+        if cand is cur or not eligible(cand, cur, needs_tools, needs_schema, coding):
             continue
         f = facts(cand)
         value, cand_effort = score(cand, metric, effort)
@@ -147,7 +157,7 @@ def model_ref(entry) -> tuple[str | None, dict]:
     return None, {}
 
 
-def check(models, agent, ref, params, role):
+def check(models, agent, ref, params, role, coding):
     tools = (agent.get("settings") or {}).get("tools") or []
     fmt = params.get("response_format") or {}
     needs_schema = isinstance(fmt, dict) and fmt.get("type") == "json_schema"
@@ -158,9 +168,9 @@ def check(models, agent, ref, params, role):
         return out
     out["facts"] = facts(cur)
     effort = params.get("reasoning_effort")
-    out["intelligence"] = compare(models, cur, "intelligence_index", effort, bool(tools), needs_schema)
+    out["intelligence"] = compare(models, cur, "intelligence_index", effort, bool(tools), needs_schema, coding)
     if tools:
-        out["tau2"] = compare(models, cur, "tau2", None, True, needs_schema)
+        out["tau2"] = compare(models, cur, "tau2", None, True, needs_schema, coding)
     return out
 
 
@@ -173,8 +183,10 @@ def load_json(path: str):
 
 
 def main() -> None:
-    models = load_json(sys.argv[1])
-    agent = load_json(sys.argv[2])
+    args = [a for a in sys.argv[1:] if a != "--coding"]
+    coding = "--coding" in sys.argv[1:]
+    models = load_json(args[0])
+    agent = load_json(args[1])
     ref, params = model_ref(agent.get("model"))
     entries = [("primary", ref, params)]
     for fb in agent.get("fallback_models") or []:
@@ -182,8 +194,9 @@ def main() -> None:
         entries.append(("fallback", fb_ref, fb_params))
     result = {
         "rule": "RES-1338 A1: >= index at >= 20% lower blended price, same capabilities",
+        "context_floor": "full current window (--coding)" if coding else f"min(current, {CONTEXT_FLOOR})",
         "catalogue_size": len(models),
-        "models": [check(models, agent, r, p, role) for role, r, p in entries if r],
+        "models": [check(models, agent, r, p, role, coding) for role, r, p in entries if r],
     }
     json.dump(result, sys.stdout, indent=2)
     print()

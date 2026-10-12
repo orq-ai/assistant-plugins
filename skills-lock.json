@@ -14,7 +14,7 @@
     "orq-analyze-traces": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "687492a4955d236626ce3e3431394586e87b89adbbc6a5609438e622680a509e"
+      "computedHash": "d2e9c1dbb3e9c681f3cbcaf9a29ba80a744c34a2dbbddcdb2838e7972b23e42f"
     },
     "orq-build-agent": {
       "source": "orq-ai/assistant-plugins",
@@ -74,7 +74,7 @@
     "orq-review-agent": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "aab1b80ed1bede432262136c69d91496a569de553a6925bb561b2ec5e82aeca8"
+      "computedHash": "71aa4b7e71e43ff3c789896aee80a68879d4aef7108ae23cbb46111dcc736010"
     },
     "orq-run-experiment": {
       "source": "orq-ai/assistant-plugins",

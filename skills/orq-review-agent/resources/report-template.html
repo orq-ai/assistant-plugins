@@ -56,10 +56,10 @@
   <!-- Sorted: broken, trace-backed, config/catalogue, best practice only; inside a tier, more traffic first.
        Tier classes: t-broken, t-trace, t-config, t-bp. Add <span class="tag">candidate</span> to candidate rows. -->
   <table>
-    <thead><tr><th>#</th><th>Tier</th><th>Check</th><th>Observation</th><th>Best practice</th><th>Evidence</th><th>Fixed by</th></tr></thead>
+    <thead><tr><th>#</th><th>Tier</th><th>Check</th><th>Observation</th><th>Best practice</th><th>Evidence</th><th>Suggestion</th><th>Fixed by</th></tr></thead>
     <tbody>
       <!-- repeat per finding -->
-      <tr><td>{{N}}</td><td class="tier {{TIER_CLASS}}">{{TIER}}</td><td>{{CHECK}}</td><td>{{OBSERVATION}}</td><td>{{BEST_PRACTICE}}</td><td>{{EVIDENCE}}</td><td><code>{{FIXING_SKILL}}</code></td></tr>
+      <tr><td>{{N}}</td><td class="tier {{TIER_CLASS}}">{{TIER}}</td><td>{{CHECK}}</td><td>{{OBSERVATION}}</td><td>{{BEST_PRACTICE}}</td><td>{{EVIDENCE}}</td><td>{{SUGGESTION}}</td><td><code>{{FIXING_SKILL}}</code></td></tr>
     </tbody>
   </table>
 
@@ -119,7 +119,7 @@
       <tr><td><code>{{CANDIDATE_REF}}</code> <span class="tag">candidate</span></td><td>{{BENCHMARK}}</td><td>{{SCORE}}</td><td>{{PRICE}}</td><td>{{PRICE_GAP}}</td></tr>
     </tbody>
   </table>
-  <p class="meta">Rule: RES-1338 A1. Another enabled model with the same capabilities scores at least as high at a blended price at least 20% lower. Benchmarks are general; test a switch with <code>orq-run-experiment</code> before making it.</p>
+  <p class="meta">Rule: RES-1338 A1. Another enabled model with the same capabilities (text and images, tool calling, context of at least min(current, 300k), or the full window for coding agents) scores at least as high at a blended price at least 20% lower. Benchmarks are general; test a switch with <code>orq-run-experiment</code> before making it.</p>
 
   <h2>Unobservable</h2>
   <ul>

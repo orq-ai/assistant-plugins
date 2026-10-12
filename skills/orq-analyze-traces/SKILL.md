@@ -8,7 +8,8 @@ description: >
   and no idea where to start, or before building any evaluator — error analysis
   comes first. Do NOT use when the failure modes are already identified and you
   need evaluators (use orq-build-evaluator), datasets
-  (use orq-generate-synthetic-dataset), or a fix applied (use orq-improve-agent).
+  (use orq-generate-synthetic-dataset), a fix applied (use orq-improve-agent), or
+  a setup health check that reads no conversations (use orq-review-agent).
 allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces list-facet-values:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq traces conversation:*), Bash(orq traces conv:*), Bash(orq reporting query:*), Bash(orq agents retrieve:*), Bash(orq agents get-response:*), Bash(orq deployments get-config:*), Bash(orq tools retrieve:*), Bash(orq knowledge-bases retrieve:*), Bash(orq memory-stores retrieve:*), Bash(orq evals get:*), Bash(orq skills get:*), mcp__orq-workspace__list_traces, mcp__orq-workspace__list_spans, mcp__orq-workspace__get_span, mcp__orq-workspace__get_agent, mcp__orq-workspace__get_deployment, mcp__orq-workspace__get_analytics_overview, mcp__orq-workspace__query_analytics, mcp__orq-workspace__search_entities, mcp__orq-workspace__search_docs
 ---
 

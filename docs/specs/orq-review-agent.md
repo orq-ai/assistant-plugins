@@ -18,7 +18,7 @@ A new read-only skill, `orq-review-agent`. You give it an orq agent key and it:
 6. writes one self-contained HTML report
 7. posts the top finding in chat and offers to run the assistant-plugins skill that fixes it, only after the user says yes
 
-Each finding states the observation, the best practice it relates to, the evidence, and the skill that fixes it. It never contains fix text such as a rewritten prompt, tool description or evaluator. It never writes to the platform.
+Each finding states the observation, the best practice it relates to, the evidence, a high-level suggestion of what to change, and the skill that fixes it. It never contains the change itself, such as a rewritten prompt, tool description, evaluator or diff. It never writes to the platform.
 
 | Check | Looks at | Fixed by |
 |---|---|---|
@@ -127,6 +127,7 @@ Each finding states the observation, the best practice it relates to, the eviden
 ## Further Notes
 
 - Bauke asked on 2026-08-18 to park this for RES-1338. The ticket went back to Todo on 2026-09-21. The skill uses A1's definition of a dominated model so the two cannot disagree. Before building, confirm with Arian that showing the `tau2` comparison alongside is welcome.
-- Open: is "observations plus candidates" enough, given the original ticket says "suggestions"?
+- Settled (Bauke, 2026-10-12): a finding must be actionable, "you can fix it like this or you should do this thing", high level, no diff. Each finding now carries a suggestion; rewritten text stays out.
+- Settled (Bauke, 2026-10-12): the A1 guardrails are text and images only (rarer modalities only for agents built for them), tool calling the same as the current model, and context window at least min(current, 300k), the full window for coding agents.
 - Open: no skill clearly owns editing an existing agent's tool descriptions. orq-improve-agent deliberately leaves tool definitions alone, and orq-build-agent is built for new agents. The review points to orq-build-agent for now.
-- Open: how ENG-2306 (Control Tower, no description) relates to this.
+- Settled (Bauke, 2026-10-12): ENG-2306 hill-climbs a metric; this skill is a general health check and does not.
