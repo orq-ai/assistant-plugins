@@ -16,7 +16,7 @@ A new read-only skill, `orq-review-agent`. You give it an orq agent key and it:
 4. runs six checks: run health, instructions, tools, skills, evaluators, model
 5. ranks the findings
 6. writes one self-contained HTML report into a per-run directory, next to the scratch files it read
-7. posts the top finding in chat and offers to run the assistant-plugins skill that fixes it, only after the user says yes
+7. posts a short summary of the top findings with a link to the report, shows the findings on request, and only then offers the assistant-plugins skill that fixes them, running it only after the user picks it
 
 Each finding states the observation, the best practice it relates to, the evidence, a high-level suggestion of what to change, and the skill that fixes it. It never contains the change itself, such as a rewritten prompt, tool description, evaluator or diff. It never writes to the platform.
 
@@ -104,7 +104,7 @@ Each finding states the observation, the best practice it relates to, the eviden
 
   Ties go to whichever affects more traffic. While a broken or predicted-broken finding is open, a model finding's suggestion says to fix that first.
 - **Report.** One self-contained HTML file, `report.html`, in the run directory, with one section per check plus an unobservable list. The template ships in the skill's resources; its placeholders use `<!--@NAME-->` so quoted `{{variables}}` cannot collide with them.
-- **Hand-off by ownership.** After the report, one chat message: the top finding, the run directory, and a yes/no offer to run the fixing skill. Model findings go to `orq-improve-agent`, which owns `model.id`; `orq-run-experiment` refuses agents without a dataset and evaluators. Tool findings have no owning skill yet, so no skill is offered for them. Nothing runs without a yes.
+- **Hand-off by ownership.** After the report, three steps: a short summary (top 3 findings, counts per tier, a link to the report), then the findings grouped by fixing skill, then an offer of one fixing skill per group. Model findings go to `orq-improve-agent`, which owns `model.id`; `orq-run-experiment` refuses agents without a dataset and evaluators. Tool findings have no owning skill yet, so no skill is offered for them. Nothing runs without a yes.
 - **Registration and release.** Registered on every surface validate-skills.mjs checks (skills directory, AGENTS.md, README table, the smoke-test doc, skills-lock.json). Ships a factual CSV and eval cases. MINOR version bump across the four plugin manifests, with a CHANGELOG entry.
 
 ## Testing Decisions

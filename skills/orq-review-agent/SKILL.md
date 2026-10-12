@@ -1,16 +1,17 @@
 ---
 name: orq-review-agent
 description: >
-  Health-check an orq agent's setup without changing it — run health,
+  Health-check an orq agent's setup without changing it: run health,
   instructions, tools, skill references, evaluators and model choice checked
   against the suite's best practices, each finding with an actionable
-  suggestion, written to one HTML report, with the skill that fixes the top
-  finding offered. Use when someone asks to "review my agent", "is my agent set
-  up well", "audit support-bot", or "give my agent a health check". Do NOT use
+  suggestion, written to one HTML report, summarised in chat with a link, the
+  findings shown, then the skill that fixes them offered. Use when someone asks
+  to "review my agent", "is my agent set up well", "audit support-bot", or
+  "give my agent a health check". Do NOT use
   to apply a fix (use orq-improve-agent), to find out what is failing in
   production from its conversations (use orq-analyze-traces), to pick
   evaluators to add (use orq-recommend-evaluators), or to hill-climb a metric.
-allowed-tools: Read, Write, Grep, Glob, Task, AskUserQuestion, Bash(orq agents retrieve:*), Bash(orq agents list:*), Bash(orq tools retrieve:*), Bash(orq knowledge-bases retrieve:*), Bash(orq memory-stores retrieve:*), Bash(orq evals get:*), Bash(orq evals all:*), Bash(orq skills list:*), Bash(orq models list:*), Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq reporting query:*), mcp__orq-workspace__search_entities, mcp__orq-workspace__search_docs
+allowed-tools: Read, Write, Grep, Glob, Task, AskUserQuestion, Skill, Bash(orq agents retrieve:*), Bash(orq agents list:*), Bash(orq tools retrieve:*), Bash(orq knowledge-bases retrieve:*), Bash(orq memory-stores retrieve:*), Bash(orq evals get:*), Bash(orq evals all:*), Bash(orq skills list:*), Bash(orq models list:*), Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq reporting query:*), mcp__orq-workspace__search_entities, mcp__orq-workspace__search_docs
 metadata:
   verified: "2026-10-12"
   surface: cli
@@ -73,7 +74,7 @@ Agent Review Progress:
 - [ ] Phase 3: Run the six checks
 - [ ] Phase 4: Rank the findings
 - [ ] Phase 5: Write the report
-- [ ] Phase 6: Top finding in chat, offer the fixing skill
+- [ ] Phase 6: Summary and report link, then the findings, then the fix
 ```
 
 ## Steps
@@ -131,12 +132,20 @@ Inside a tier, the finding that affects more traffic goes first; with no traffic
 
 **Done when** `report.html` exists, contains no `<!--@` placeholder, and every finding row has all five parts.
 
-### Phase 6: Top finding in chat, offer the fixing skill
+### Phase 6: Summary, then the findings, then the fix
 
-11. Send one message: the top finding in two sentences with its evidence, the run directory path, and the counts per tier. If the top finding is predicted broken, say so: it is expected to break every run, but no run has shown it yet.
-12. If the top finding has a fixing skill, ask with `AskUserQuestion` whether to run it. Options: run it now, pick a different finding from the report, or stop here. **Nothing runs without a yes**, and the fixing skill keeps its own approval gates. If it has no owning skill, say so and offer a different finding instead.
+Three steps, in this order. The user sees the findings before any fix is offered; never skip from the summary straight to a fixing skill.
 
-**Done when** the user has answered the question, and nothing was written to the platform.
+11. **Summary.** One short message:
+    - the agent key, the mode (`traces` with the count, or `config-only`) and the counts per tier;
+    - the top 3 findings, one line each: tier, what is wrong, the suggestion in a few words;
+    - a link to the full report as an absolute path, e.g. `[report.html](file:///<abs-run-dir>/report.html)`.
+
+    If a top finding is predicted broken, say so: it is expected to break every run, but no run has shown it yet. Then ask with `AskUserQuestion`: **show the findings** (recommended) or **stop here**, I'll read the report.
+12. **Findings.** On "show the findings", list the broken, predicted-broken and trace-backed findings, plus the top config finding when there are fewer than 3 of those, up to 8. Each one with its observation, evidence and suggestion, grouped under its fixing skill (or "no owning skill"). Say how many config and best-practice findings are left in the report. No fix runs in this step.
+13. **Fix.** Ask with `AskUserQuestion` which group to fix. One option per fixing skill, the group holding the top finding first and marked recommended, its label naming the skill and the findings it covers; plus **stop here**. Leave out "no owning skill" groups and say why. On a pick, invoke that skill with the report path and the chosen findings as its starting context. **Nothing runs without a pick**, and the fixing skill keeps its own approval gates.
+
+**Done when** the user has picked a fix or stopped, and nothing was written to the platform by this skill.
 
 ## Done When
 
@@ -144,7 +153,7 @@ Inside a tier, the finding that affects more traffic goes first; with no traffic
 - All six checks appear in it, each with findings, "no finding", or `unobservable` with a reason
 - Every finding has observation, best practice, evidence, a high-level suggestion and fixing skill; none contains rewritten text; candidates are labelled
 - Evaluator pass rates are labelled unvalidated
-- The top finding, the run directory and the yes/no offer were sent in chat
+- The summary (top 3 findings, counts per tier, report link) was sent first; the findings were shown before any fix was offered
 - No create, update, delete or invoke call was made
 
 ## Companion skills
