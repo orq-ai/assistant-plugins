@@ -21,24 +21,35 @@ Reads the list in [`config-context.md`](../../orq-shared/resources/config-contex
 
 **Latency percentiles:** same filter, no `group_by`, `"compute":[{"metric":"duration_ms","op":"p50"},{"metric":"duration_ms","op":"p95"}]`. Use this, not `orq reporting query` (Gotcha 7).
 
-**Terminal states.** Try the aggregate first with `group_by: ["attributes.gen_ai.response.finish_reasons"]` if `list-fields` lists it. When it is missing, or only the null bucket comes back (Gotcha 4), read the `span.agent` span of up to 20 recent traces:
+**Terminal states.** Try the aggregate first with `group_by: ["attributes.gen_ai.response.finish_reasons"]` if `list-fields` lists it. When it is missing, or only the null bucket comes back (Gotcha 4), read every run in up to 20 recent traces.
+
+**One trace can hold several runs** (gotcha 12): a conversation of 5 turns was one trace id with 5 `span.agent` spans. Read each `span.agent` and the last `span.responses` (model call) after it: `list-spans` returns spans in run order with no parent link, so the last call before the next `span.agent` belongs to that run. The agent span's `error.type` was only `*errors.errorString`; the cause is on that last call.
 
 ```bash
 # ids, newest first; deduplicate (Gotcha 8)
 # body: {"from":..,"to":..,"filters":[agent filter],"sort":[{"field":"end_time","order":"desc"}],"limit":40}
 orq traces search --from-file body.json -o json -j 'data[].trace_id'
 
-# per trace: the agent span, then its terminal facts
-A=$(orq traces list-spans <trace_id> --raw -j "data[?type=='span.agent'].span_id | [0]")
-orq traces get-span <trace_id> "$A" -o json \
-  -j "{finish: span.attributes.gen_ai.response.finish_reasons, iterations: span.attributes.agent.iterations.count, version: span.attributes.agent.version, dur: span.summary.duration_ms, input: span.attributes.gen_ai.input[?role=='user'] | [-1].content[0].text}"
+# per trace: each run's agent span and its last model call, then their terminal facts
+orq traces list-spans <trace_id> -o json \
+  -j "data[?type=='span.agent' || type=='span.responses'].join(' ', [type,span_id])" \
+  | tr -d '",[]' \
+  | awk 'NF==2 { if ($1=="span.agent") { if (a) print a, l; a=$2; l="" } else l=$2 } END { if (a) print a, l }' \
+  | while read A L; do
+      orq traces get-span <trace_id> "$A" -o json \
+        -j "{finish: span.attributes.gen_ai.response.finish_reasons, iterations: span.attributes.agent.iterations.count, version: span.attributes.agent.version, dur: span.summary.duration_ms, input: span.attributes.gen_ai.input[?role=='user'] | [-1].content[0].text}"
+      orq traces get-span <trace_id> "$L" -o json \
+        -j '{error: span.attributes.error.type, status: span.attributes.openresponses.status, incomplete: span.attributes.openresponses.incomplete_details, out: span.attributes.gen_ai.usage.output_tokens, max: span.attributes.gen_ai.request.max_tokens}'
+    done
 ```
 
-Returns e.g. `{"dur":839,"finish":["stop"],"input":"hey","iterations":1,"version":"1.0.4"}`. `input` is the run's last user message; when the sample is greetings or other non-task inputs, say so next to the mode (SKILL.md Phase 2). Delegate the per-trace reads to one subagent when the Task tool is available.
+Returns one pair per run, e.g. `{"dur":34975,"finish":["stop"],"input":"catfood","iterations":5,"version":"1.0.2"}` then `{"error":null,"incomplete":null,"max":4000,"out":3026,"status":"completed"}`. A run that hit a provider error read `{"finish":null,...}` then `{"error":"server_error","status":"in_progress","out":null,...}`; one that hit the output cap read `finish: ["length"]` then `{"status":"incomplete","incomplete":"{\"reason\":\"max_output_tokens\"}","out":4000,...}`. Use the last call's `out`, not the agent span's `gen_ai.usage.output_tokens`: that one sums every call in the run (7,234 on a 4,000 cap). `input` is the run's last user message; when the sample is greetings or other non-task inputs, say so next to the mode (SKILL.md Phase 2). Delegate the per-trace reads to one subagent when the Task tool is available.
 
 | Finding | Evidence | Tier |
 |---|---|---|
 | Sampled runs whose `finish` is `length`, `max_iterations` or `max_time` | N of the sample, trace ids | Broken |
+| Sampled runs with `finish: null` and an `error` on the last call (e.g. `server_error`) | N of the sample, the error types, trace ids | Trace-backed |
+| Runs that stopped normally with the last call's `out` at 75% or more of `max` (3,026 of 4,000) | N of the sample, the highest `out` | Trace-backed |
 | `iterations` equals `settings.max_iterations`, but `finish` does not name the cap | N of the sample, the setting | Trace-backed |
 | `dur` within 5% of `settings.max_execution_time` × 1000 | N of the sample, the setting | Trace-backed |
 | Trace `status: error` | count from the sweep, 3 trace ids | Trace-backed |
@@ -78,7 +89,9 @@ For each `settings.tools[]` entry, read `action_type`:
 
 Each broken rule is a finding: tier **best practice only**, with a suggestion naming the missing part (when to use it, what it does not do, a parameter format, the return value, an error case). No skill edits an existing agent's tool descriptions yet, so the fixing skill is "no owning skill: a coding agent or the orq UI". Two tools with overlapping trigger conditions is one finding naming both.
 
-**Calls and errors per tool:** try `group_by: ["tool_name"]` with the agent filter. When only the null bucket returns (Gotcha 6), record `unobservable: per-tool calls not emitted on agent traces`. Do not read `span.tool` spans as calls: the ones observed were `MCPConnect` and `MCPDiscoverTools`.
+**Calls and errors per tool:** try `group_by: ["tool_name"]` with the agent filter (Gotcha 6). It returned real `google_search` and `web_scraper` groups on an agent with built-in tools, and only the null bucket on an MCP agent; then record `unobservable: per-tool calls not emitted on agent traces`. The group counts traces, not calls. Count calls from the sampled traces: `span.tool` spans named after an attached tool's `display_name` are calls; `MCPConnect` and `MCPDiscoverTools` are not.
+
+**Tool errors are undercounted.** A `web_scraper` call whose page returned 403 logged its span as `ok`, and its result read `{"code":200,"data":{"title":"Access Denied",...}}`. Neither span status nor the tool's own code shows the failure, so a zero error count is not "no tool failures". Report it as `unobservable: tool failures inside an ok result` unless you read the results of the sampled calls.
 
 ## 4. Skills
 
