@@ -74,7 +74,7 @@
     "orq-review-agent": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "b1a07346fd4e5eabb76a4911b4b360e3a06677a70d2cb09279d1a25377eeb49c"
+      "computedHash": "88f09c446439f74ac51601bf59ddc07a4c4f40fb0fff7556b7152b8c26f988c3"
     },
     "orq-run-experiment": {
       "source": "orq-ai/assistant-plugins",
