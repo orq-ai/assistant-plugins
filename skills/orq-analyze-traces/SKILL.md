@@ -145,7 +145,7 @@ Runs **before** open coding. Two passes: a **sweep** over the whole window, then
 
 **Gather and relay. Do not judge.** Collect the mechanical facts, format them, hand them to the coding agent. That is the whole phase.
 
-1. **Gather the list in [`config-context.md`](../orq-shared/resources/config-context.md)** (in `orq-shared`): terminal states, declared config with every referenced entity resolved, observed behaviour, and everything unreadable named in `unobservable` with a reason. `orq-review-agent` reads the same list. If `orq-shared` is not installed, say so; at minimum relay `finish_reasons` and `status` as distributions, the declared `model`, `settings` and `tools[]`, and the evaluator rates paired with their `sample_rate`, all marked unvalidated.
+1. **Gather the list in [`config-context.md`](../orq-shared/resources/config-context.md)** (in `orq-shared`): terminal states, declared config with every referenced entity resolved, observed behaviour, and everything unreadable named in `unobservable` with a reason. `orq-review-agent` reads the same list. If `orq-shared` is not installed, say so: there is no local copy of the list.
 
 2. **Present it as one compact block above the open-coding table**, ending with a standing instruction rather than a verdict:
 

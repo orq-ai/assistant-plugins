@@ -16,4 +16,4 @@ Each guideline is a dimension to evaluate: identify what is missing or weak, the
 10. **Proper variable usage** — `{{double curly brackets}}` should appear once near the end; earlier references use XML tags
 11. **Recap** — a one-sentence recap of the task and format at the end
 
-**Ground each finding in a trace.** With an error-analysis artifact in hand, name the failure mode and the guideline together: *"Mode 1 (persona drift, 12.5%) → guideline 1: the role is stated once and never reinforced."* A guideline finding with no failing trace behind it is a **best-practice suggestion**, not a fix. Say which it is.
+**Ground each suggestion in a trace.** With an error-analysis artifact in hand, name the failure mode and the guideline together: *"Mode 1 (persona drift, 12.5%) → guideline 1: the role is stated once and never reinforced."* A guideline finding with no failing trace behind it is a **best-practice suggestion**, not a fix. Say which it is.

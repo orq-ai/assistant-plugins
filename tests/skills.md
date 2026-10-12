@@ -301,11 +301,11 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 - Provide: the fixture agent `support-bot` in the skill-evals project (`max_iterations: 2` against three-step instructions, no tools, no evaluators)
 - Ask: "Review my orq agent support-bot"
-- Verify Phase 1: runs the run-key preflight, then reads the whole config with `orq agents retrieve` or `get_agent`
+- Verify Phase 1: resolves the run key, then reads the config once with `orq agents retrieve` into the run directory
 - Verify Phase 2: reads `orq models list` and counts traces; with 0 traces, re-runs the count without the filter and states `config-only` mode
 - Verify Phase 3: reports the `max_iterations: 2` vs three-step instructions contradiction labelled `predicted broken` (no traffic), ranked first, and "no evaluators attached" → `orq-recommend-evaluators`
 - Verify Phase 3: the model check resolves `anthropic/claude-haiku-4-5` by date suffix to `anthropic/claude-haiku-4-5-20251001` and says so
-- Verify Phase 5: writes `agent-review-support-bot-<timestamp>.html` with all six checks and an `unobservable` list
+- Verify Phase 5: writes `agent-review-support-bot-<timestamp>/report.html`, with the scratch JSON in the same directory, all six checks and an `unobservable` list
 - Verify: every finding carries a one- or two-sentence suggestion of what to change (e.g. raise `max_iterations` or merge the steps)
 - Verify: makes no `create_*`, `update_*`, `delete_*` or `invoke_*` call, and writes no rewritten prompt, tool description or diff
 

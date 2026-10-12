@@ -199,7 +199,7 @@ Route on `failure_modes[].fix`:
 
 #### Prompting Guidelines Framework
 
-**The 11 guidelines and the grounding rule: [`prompting-guidelines.md`](../orq-shared/resources/prompting-guidelines.md)** (in `orq-shared`). `orq-review-agent` reports against the same file. If `orq-shared` is not installed, say so; the dimensions are role, task, stress, guidelines, output format, tool calling, reasoning, examples, unnecessary content, variable usage and recap, and every suggestion is labelled either evidence-backed (a failing trace) or best-practice.
+**The 11 guidelines and the grounding rule: [`prompting-guidelines.md`](../orq-shared/resources/prompting-guidelines.md)** (in `orq-shared`). `orq-review-agent` reports against the same file. If `orq-shared` is not installed, say so before rewriting: there is no local copy of the guidelines.
 
 Present the analysis, ask which suggestions to apply, then rewrite:
 

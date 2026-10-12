@@ -4,15 +4,9 @@
 # ///
 """Model check for orq-review-agent: is the agent's model dominated on the catalogue?
 
-Rule (RES-1338 A1, guardrails as agreed on RES-887 2026-10-12): a model is
-dominated when another enabled chat model has an intelligence index at least as
-high, at a blended price at least 20% lower, and
-  - handles text in and out, plus images in or out where the current model does,
-  - has tool calling where the current model has it,
-  - has structured outputs when the agent's response_format is json_schema,
-  - has a context window of at least min(current, 300k), or the full current
-    window with --coding (coding agents need long context).
-For agents with tools the same comparison is repeated on the tau2 agentic benchmark.
+The rule is the RULE constant below, and it is printed in every result so the
+report quotes it rather than restating it. Resolving the agent's model id to a
+catalogue row follows orq-shared/resources/model-slugs.md.
 
 Usage:
     uv run --no-project scripts/model_check.py models.json agent.json [--coding] > model-check.json
@@ -31,7 +25,18 @@ PRICE_GAP = 0.20  # candidate must be at least this much cheaper
 MAX_CANDIDATES = 5
 CONTEXT_FLOOR = 300_000  # 1M -> 300k is fine for most non-coding agents
 # Version suffixes seen on catalogue refIds that agent slugs omit: -20251001, -0731.
-DATE_SUFFIX = re.compile(r"-(\d{8}|\d{4})$")
+DATE_SUFFIX = re.compile(r"-(20\d{6}|(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01]))$")
+RULE = (
+    "RES-1338 A1, guardrails agreed on RES-887 (2026-10-12): the model is dominated when "
+    "another enabled chat model has an intelligence index at least as high at a blended "
+    "price at least 20% lower, and: handles text in and out, plus image input or output "
+    "where the current model has it; has tool calling where the current model has it; has "
+    "structured outputs when response_format is json_schema; has a context window of at "
+    "least min(current, 300k), or the full current window for a coding agent. Both models "
+    "are scored at the agent's reasoning_effort when the current model has an index for "
+    "it, otherwise both at their default effort. Provider aliases of one model are listed "
+    "once, cheapest first. For agents with tools the comparison is repeated on tau2."
+)
 
 
 def v2(model: dict) -> dict:
@@ -66,6 +71,11 @@ def resolve(models: list[dict], ref: str) -> tuple[dict | None, str]:
     if dated:
         return None, "ambiguous date suffix: " + ", ".join(m["refId"] for m in dated)
     return None, "not in the catalogue"
+
+
+def model_key(model: dict) -> str:
+    """One key per underlying model, so provider aliases (azure/eu.gpt-5.6-luna, openai/...) group."""
+    return (meta(model).get("autorouter") or {}).get("id") or v2(model).get("aa_slug") or model.get("refId") or ""
 
 
 def closest(models: list[dict], ref: str, n: int = 5) -> list[dict]:
@@ -141,12 +151,15 @@ def score(model: dict, metric: str, effort: str | None) -> tuple[float | None, s
 
 
 def compare(models, cur, metric, effort, needs_tools, needs_schema, coding):
-    """Candidates are scored at the agent's effort when they have it, so both sides match."""
+    """Score both sides at the same effort: the agent's, if the current model has an index for it."""
+    efforts = v2(cur).get("reasoning_efforts") or {}
+    if effort and (efforts.get(effort) or {}).get("intelligence_index") is None:
+        effort = None
     price = facts(cur)["price"]
     cur_value, cur_effort = score(cur, metric, effort)
     if cur_value is None or price is None:
         return {"status": "unknown", "reason": f"no {metric} or price for {cur.get('refId')}"}
-    hits = []
+    hits: dict[str, dict] = {}
     for cand in models:
         if cand is cur or not eligible(cand, cur, needs_tools, needs_schema, coding):
             continue
@@ -155,17 +168,23 @@ def compare(models, cur, metric, effort, needs_tools, needs_schema, coding):
         if value is None or f["price"] is None:
             continue
         if value >= cur_value and f["price"] <= price * (1 - PRICE_GAP):
-            hit = {**f, metric: value, "price_gap": round(1 - f["price"] / price, 3)}
+            hit = {**f, metric: value, "price_gap": round(1 - f["price"] / price, 3), "aliases": []}
             if cand_effort:
                 hit["effort"] = cand_effort
-            hits.append(hit)
-    hits.sort(key=lambda h: (-h[metric], h["price"]))
+            key = model_key(cand)
+            best = hits.get(key)
+            if best is None or hit["price"] < best["price"]:
+                hit["aliases"] = (best["aliases"] + [best["refId"]]) if best else []
+                hits[key] = hit
+            else:
+                best["aliases"].append(hit["refId"])
+    ranked = sorted(hits.values(), key=lambda h: (-h[metric], h["price"]))
     out = {
         "status": "dominated" if hits else "not dominated",
         "current": cur_value,
         "current_price": price,
-        "candidates": hits[:MAX_CANDIDATES],
-        "candidate_count": len(hits),
+        "candidates": ranked[:MAX_CANDIDATES],
+        "candidate_count": len(ranked),
     }
     if cur_effort:
         out["effort"] = cur_effort
@@ -182,6 +201,9 @@ def model_ref(entry) -> tuple[str | None, dict]:
 
 
 def check(models, agent, ref, params, role, coding):
+    if not ref:
+        return {"role": role, "declared": None, "resolved": "no model id",
+                "intelligence": {"status": "unknown", "reason": f"{role} model has no id"}}
     tools = (agent.get("settings") or {}).get("tools") or []
     fmt = params.get("response_format") or {}
     needs_schema = isinstance(fmt, dict) and fmt.get("type") == "json_schema"
@@ -201,7 +223,8 @@ def check(models, agent, ref, params, role, coding):
 
 def load_json(path: str):
     """Read UTF-8 with or without a BOM, or the UTF-16 that PowerShell 5.1 `>` writes."""
-    raw = open(path, "rb").read()
+    with open(path, "rb") as fh:
+        raw = fh.read()
     if raw[:2] in (codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE):
         return json.loads(raw.decode("utf-16"))
     return json.loads(raw.decode("utf-8-sig"))
@@ -210,6 +233,8 @@ def load_json(path: str):
 def main() -> None:
     args = [a for a in sys.argv[1:] if a != "--coding"]
     coding = "--coding" in sys.argv[1:]
+    if len(args) != 2:
+        sys.exit("usage: model_check.py models.json agent.json [--coding]")
     models = load_json(args[0])
     agent = load_json(args[1])
     ref, params = model_ref(agent.get("model"))
@@ -218,10 +243,10 @@ def main() -> None:
         fb_ref, fb_params = model_ref(fb)
         entries.append(("fallback", fb_ref, fb_params))
     result = {
-        "rule": "RES-1338 A1: >= index at >= 20% lower blended price, same capabilities",
+        "rule": RULE,
         "context_floor": "full current window (--coding)" if coding else f"min(current, {CONTEXT_FLOOR})",
         "catalogue_size": len(models),
-        "models": [check(models, agent, r, p, role, coding) for role, r, p in entries if r],
+        "models": [check(models, agent, r, p, role, coding) for role, r, p in entries],
     }
     json.dump(result, sys.stdout, indent=2)
     print()

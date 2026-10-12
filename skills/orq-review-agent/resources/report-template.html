@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <!--
-  orq-review-agent report template. Copy, fill every uppercase double-brace placeholder, delete this comment, and write to
-  agent-review-<key>-<YYYYMMDD-HHMMSS>.html. Self-contained: no external CSS, fonts or scripts.
+  orq-review-agent report template. Copy, replace every placeholder of the form <!-- @NAME --> written
+  without spaces, and write to <run-dir>/report.html. That form cannot occur in agent text, so quoted
+  {{variables}} in instructions never collide with it. Self-contained: no external CSS, fonts or scripts.
   Repeat the marked <tr> / <li> blocks once per row; delete a block's example row when it has none.
   Escape <, > and & in quoted instruction text.
 -->
@@ -9,7 +10,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Agent review: {{AGENT_KEY}}</title>
+<title>Agent review: <!--@AGENT_KEY--></title>
 <style>
   :root { --fg:#1d1d1f; --muted:#6e6e73; --line:#e3e3e8; --bg:#fff; --soft:#f6f6f8;
           --broken:#b42318; --trace:#b54708; --config:#175cd3; --bp:#475467; }
@@ -38,18 +39,18 @@
 </head>
 <body>
 <main>
-  <h1>Agent review: <code>{{AGENT_KEY}}</code></h1>
+  <h1>Agent review: <code><!--@AGENT_KEY--></code></h1>
   <!-- version from the config; mode is "traces" or "config-only" with the reason -->
-  <p class="meta">Version {{AGENT_VERSION}} · project {{PROJECT_ID}} · reviewed {{TIMESTAMP_UTC}} · window {{WINDOW}} · mode {{MODE}} · read-only review, nothing was changed</p>
+  <p class="meta">Version <!--@AGENT_VERSION--> · project <!--@PROJECT_ID--> · reviewed <!--@TIMESTAMP_UTC--> · window <!--@WINDOW--> · mode <!--@MODE--> · read-only review, nothing was changed</p>
 
   <!-- Facts, not findings. Use "unobservable" for any value that could not be read. -->
   <div class="facts">
-    <div class="fact"><b>Model</b>{{MODEL_ID}}</div>
-    <div class="fact"><b>Traces (window)</b>{{TRACE_COUNT}}</div>
-    <div class="fact"><b>Status</b>{{STATUS_SPLIT}}</div>
-    <div class="fact"><b>Latency p50 / p95</b>{{LATENCY_P50}} / {{LATENCY_P95}}</div>
-    <div class="fact"><b>Cost (window)</b>{{COST_SUM}}</div>
-    <div class="fact"><b>Findings</b>{{COUNT_BROKEN}} broken · {{COUNT_TRACE}} trace · {{COUNT_CONFIG}} config · {{COUNT_BP}} best practice</div>
+    <div class="fact"><b>Model</b><!--@MODEL_ID--></div>
+    <div class="fact"><b>Traces (window)</b><!--@TRACE_COUNT--></div>
+    <div class="fact"><b>Status</b><!--@STATUS_SPLIT--></div>
+    <div class="fact"><b>Latency p50 / p95</b><!--@LATENCY_P50--> / <!--@LATENCY_P95--></div>
+    <div class="fact"><b>Cost (window)</b><!--@COST_SUM--></div>
+    <div class="fact"><b>Findings</b><!--@COUNT_BROKEN--> broken · <!--@COUNT_TRACE--> trace · <!--@COUNT_CONFIG--> config · <!--@COUNT_BP--> best practice</div>
   </div>
 
   <h2>Findings, ranked</h2>
@@ -60,7 +61,7 @@
     <thead><tr><th>#</th><th>Tier</th><th>Check</th><th>Observation</th><th>Best practice</th><th>Evidence</th><th>Suggestion</th><th>Fixed by</th></tr></thead>
     <tbody>
       <!-- repeat per finding -->
-      <tr><td>{{N}}</td><td class="tier {{TIER_CLASS}}">{{TIER}}</td><td>{{CHECK}}</td><td>{{OBSERVATION}}</td><td>{{BEST_PRACTICE}}</td><td>{{EVIDENCE}}</td><td>{{SUGGESTION}}</td><td><code>{{FIXING_SKILL}}</code></td></tr>
+      <tr><td><!--@N--></td><td class="tier <!--@TIER_CLASS-->"><!--@TIER--></td><td><!--@CHECK--></td><td><!--@OBSERVATION--></td><td><!--@BEST_PRACTICE--></td><td><!--@EVIDENCE--></td><td><!--@SUGGESTION--></td><td><code><!--@FIXING_SKILL--></code></td></tr>
     </tbody>
   </table>
 
@@ -70,7 +71,7 @@
     <thead><tr><th>Signal</th><th>Declared</th><th>Observed</th><th>Source</th></tr></thead>
     <tbody>
       <!-- repeat per signal -->
-      <tr><td>{{SIGNAL}}</td><td>{{DECLARED}}</td><td>{{OBSERVED}}</td><td>{{SOURCE}}</td></tr>
+      <tr><td><!--@SIGNAL--></td><td><!--@DECLARED--></td><td><!--@OBSERVED--></td><td><!--@SOURCE--></td></tr>
     </tbody>
   </table>
 
@@ -79,17 +80,17 @@
     <thead><tr><th>Guideline</th><th>Status</th><th>Quoted line</th></tr></thead>
     <tbody>
       <!-- repeat for all 11 guidelines; status is present, weak or missing -->
-      <tr><td>{{GUIDELINE}}</td><td>{{GUIDELINE_STATUS}}</td><td><span class="q">{{QUOTE}}</span></td></tr>
+      <tr><td><!--@GUIDELINE--></td><td><!--@GUIDELINE_STATUS--></td><td><span class="q"><!--@QUOTE--></span></td></tr>
     </tbody>
   </table>
-  <p>{{INSTRUCTIONS_MECHANICAL}}</p><!-- tools named vs attached, variables declared vs used, system_prompt -->
+  <p><!--@INSTRUCTIONS_MECHANICAL--></p><!-- tools named vs attached, variables declared vs used, system_prompt -->
 
   <h2>3. Tools</h2>
   <table>
     <thead><tr><th>Tool</th><th>Type</th><th>Rules broken</th><th>Calls / errors</th></tr></thead>
     <tbody>
       <!-- repeat per attached tool; built-ins get "not editable" under rules -->
-      <tr><td>{{TOOL_NAME}}</td><td>{{TOOL_TYPE}}</td><td>{{TOOL_RULES}}</td><td>{{TOOL_USAGE}}</td></tr>
+      <tr><td><!--@TOOL_NAME--></td><td><!--@TOOL_TYPE--></td><td><!--@TOOL_RULES--></td><td><!--@TOOL_USAGE--></td></tr>
     </tbody>
   </table>
 
@@ -98,7 +99,7 @@
     <thead><tr><th>Reference or skill</th><th>Resolves</th><th>Note</th></tr></thead>
     <tbody>
       <!-- repeat per placeholder, then per unreferenced project skill (tag: candidate) -->
-      <tr><td><code>{{SKILL_REF}}</code></td><td>{{SKILL_RESOLVES}}</td><td>{{SKILL_NOTE}}</td></tr>
+      <tr><td><code><!--@SKILL_REF--></code></td><td><!--@SKILL_RESOLVES--></td><td><!--@SKILL_NOTE--></td></tr>
     </tbody>
   </table>
 
@@ -107,25 +108,25 @@
     <thead><tr><th>Evaluator</th><th>Type</th><th>Execute on</th><th>Sample rate</th><th>Runs</th><th>Pass rate</th></tr></thead>
     <tbody>
       <!-- repeat per attached evaluator; pass rate always followed by "(unvalidated)" -->
-      <tr><td>{{EVAL_NAME}}</td><td>{{EVAL_TYPE}}</td><td>{{EVAL_EXECUTE_ON}}</td><td>{{EVAL_SAMPLE_RATE}}</td><td>{{EVAL_RUNS}}</td><td>{{EVAL_PASS_RATE}} (unvalidated)</td></tr>
+      <tr><td><!--@EVAL_NAME--></td><td><!--@EVAL_TYPE--></td><td><!--@EVAL_EXECUTE_ON--></td><td><!--@EVAL_SAMPLE_RATE--></td><td><!--@EVAL_RUNS--></td><td><!--@EVAL_PASS_RATE--> (unvalidated)</td></tr>
     </tbody>
   </table>
 
   <h2>6. Model</h2>
-  <p>{{MODEL_SUMMARY}}</p><!-- declared id, how it resolved, index at which effort, price -->
+  <p><!--@MODEL_SUMMARY--></p><!-- declared id, how it resolved, index at which effort, price -->
   <table>
     <thead><tr><th>Candidate</th><th>Benchmark</th><th>Score</th><th>Price / 1M</th><th>Cheaper by</th></tr></thead>
     <tbody>
       <!-- repeat per candidate, up to 5 per benchmark; each row is a candidate, not a recommendation -->
-      <tr><td><code>{{CANDIDATE_REF}}</code> <span class="tag">candidate</span></td><td>{{BENCHMARK}}</td><td>{{SCORE}}</td><td>{{PRICE}}</td><td>{{PRICE_GAP}}</td></tr>
+      <tr><td><code><!--@CANDIDATE_REF--></code> <span class="tag">candidate</span></td><td><!--@BENCHMARK--></td><td><!--@SCORE--></td><td><!--@PRICE--></td><td><!--@PRICE_GAP--></td></tr>
     </tbody>
   </table>
-  <p class="meta">Rule: RES-1338 A1. Another enabled model with the same capabilities (text and images, tool calling, context of at least min(current, 300k), or the full window for coding agents) scores at least as high at a blended price at least 20% lower. Benchmarks are general; test a switch with <code>orq-run-experiment</code> before making it.</p>
+  <p class="meta">Rule: <!--@MODEL_RULE--><!-- the "rule" field of model-check.json, verbatim --> Benchmarks are general; test a switch with <code>orq-run-experiment</code> when the agent has a dataset and evaluators.</p>
 
   <h2>Unobservable</h2>
   <ul>
     <!-- repeat per item: what could not be read and why. Never leave this empty without saying "nothing". -->
-    <li>{{UNOBSERVABLE_ITEM}}: {{UNOBSERVABLE_REASON}}</li>
+    <li><!--@UNOBSERVABLE_ITEM-->: <!--@UNOBSERVABLE_REASON--></li>
   </ul>
 </main>
 </body>

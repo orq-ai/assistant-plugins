@@ -1,6 +1,5 @@
 test_type,target,assertion,description
 mcp_tool_exists,search_entities,,search_entities listed on MCP server
-mcp_tool_exists,get_agent,,get_agent listed on MCP server
 mcp_tool_exists,search_docs,,search_docs listed on MCP server
 cli_subcommand,agents retrieve,,orq agents retrieve exists
 cli_flag,agents retrieve,-o,orq agents retrieve accepts -o
@@ -10,6 +9,8 @@ cli_subcommand,tools retrieve,,orq tools retrieve exists
 cli_subcommand,knowledge-bases retrieve,,orq knowledge-bases retrieve exists
 cli_subcommand,memory-stores retrieve,,orq memory-stores retrieve exists
 cli_subcommand,evals get,,orq evals get exists
+cli_subcommand,evals all,,orq evals all exists
+cli_flag,evals all,--starting-after,orq evals all accepts --starting-after
 cli_flag,evals get,-j,orq evals get accepts -j
 cli_subcommand,skills list,,orq skills list exists
 cli_flag,skills list,--limit,orq skills list accepts --limit
