@@ -1,0 +1,9 @@
+id: review-agent-near-miss-fix
+skill: orq-review-agent
+kind: invocation
+# Near miss: asking for a fix is improve-agent's job, not a read-only review.
+prompt: My orq agent support-bot keeps stopping before it finishes. Fix it.
+expect_skill: orq-improve-agent
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 4

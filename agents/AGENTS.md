@@ -22,6 +22,7 @@ These skills are:
  - orq-manage-skills -> "skills/orq-manage-skills/SKILL.md"
  - orq-recommend-evaluators -> "skills/orq-recommend-evaluators/SKILL.md"
  - orq-red-team -> "skills/orq-red-team/SKILL.md"
+ - orq-review-agent -> "skills/orq-review-agent/SKILL.md"
  - orq-run-experiment -> "skills/orq-run-experiment/SKILL.md"
  - orq-setup-observability -> "skills/orq-setup-observability/SKILL.md"
  - orq-shared -> "skills/orq-shared/SKILL.md"
@@ -42,6 +43,8 @@ orq-analyze-traces: `Analyze a live agent, deployment, or local agent from its p
 orq-improve-agent: `Improve an underperforming orq agent, deployment, or local agent — rewrite its instructions against a structured prompting framework, or move a configuration knob, grounded in the error-analysis file orq-analyze-traces writes. Use when a prompt needs improvement, when a config knob is wrong (truncated answers, iteration caps, sampling), or when you have a failure taxonomy and want the fix applied. Do NOT use to re-architect a pipeline (use orq-build-agent), to align a judge that already exists (use orq-evaluator-alignment), or to build the failure taxonomy in the first place (use orq-analyze-traces).`
 
 orq-recommend-evaluators: `Use when an orq agent or deployment has no or few evaluators and someone asks which ones it should have ("what should I evaluate", "which evals does this agent need", "suggest evaluators"), including a new agent with no production traffic yet. Do NOT use to build and validate one specific judge in depth (use orq-build-evaluator), to realign a judge that already exists (use orq-evaluator-alignment), or to build a failure taxonomy (use orq-analyze-traces).`
+
+orq-review-agent: `Review an orq agent's setup without changing it — run health, instructions, tools, skill references, evaluators and model choice checked against the suite's best practices, written to one HTML report, with the top finding in chat and the skill that fixes it offered. Use when someone asks to "review my agent", "is my agent set up well", "audit support-bot", or "where should I start improving this agent". Do NOT use to apply a fix (use orq-improve-agent), to find out what is failing in production (use orq-analyze-traces), or to pick evaluators to add (use orq-recommend-evaluators).`
 
 orq-invoke-deployment: `Invoke orq.ai deployments, agents, and models via the Python SDK or HTTP API — pass prompt variables, stream responses, handle multi-turn agent conversations, and generate integration code`
 
@@ -65,7 +68,7 @@ orq-cli: `Drive the orq command-line interface — verify the install, authentic
 
 orq-simulate-agent: `Run multi-turn agent simulations using evaluatorq's first-class simulation primitives (simulate(), generate_and_simulate(), wrap_simulation_agent()). Drive an agent under test with a UserSimulatorAgent and built-in JudgeAgent that terminates on goal achievement or rule violations. Use when generating realistic multi-turn data, stress-testing conversational agents, or producing seed transcripts. Do NOT use when real production conversations exist (use orq-analyze-traces) or for adversarial red-teaming sweeps (call evaluatorq.red_team() directly).`
 
-orq-shared: `Reference bundle shared by the other orq skills — the verified orq CLI trace query contract (trace-queries.md) and the run-key preflight that resolves an agent or deployment key before any call (run-key-preflight.md). Read the file another skill points you at; do not invoke this skill on its own. Do NOT use to run CLI commands (use orq-cli), to analyze traces (use orq-analyze-traces), or to fix an agent (use orq-improve-agent).`
+orq-shared: `Reference bundle shared by the other orq skills — the verified orq CLI trace query contract (trace-queries.md), the run-key preflight that resolves an agent or deployment key before any call (run-key-preflight.md), and the rubrics an agent is built, reviewed and improved against (config-context.md, prompting-guidelines.md, tool-description-guide.md). Read the file another skill points you at; do not invoke this skill on its own. Do NOT use to run CLI commands (use orq-cli), to analyze traces (use orq-analyze-traces), or to fix an agent (use orq-improve-agent).`
 
 </available_skills>
 

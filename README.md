@@ -183,6 +183,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 | **orq-build-agent** | Design, create, and configure an orq.ai Agent with tools, instructions, knowledge bases, and memory | [SKILL.md](skills/orq-build-agent/SKILL.md) |
 | **orq-build-evaluator** | Create validated LLM-as-a-Judge evaluators following evaluation best practices | [SKILL.md](skills/orq-build-evaluator/SKILL.md) |
 | **orq-recommend-evaluators** | Recommend the evaluators an agent is missing, from its traces or (with no traffic) its instructions and config, skip ones already attached, and create each only after approval | [SKILL.md](skills/orq-recommend-evaluators/SKILL.md) |
+| **orq-review-agent** | Review an agent's setup without changing it — run health, instructions, tools, skill references, evaluators and model checked against the suite's rubrics, one HTML report, and the fixing skill offered for the top finding | [SKILL.md](skills/orq-review-agent/SKILL.md) |
 | **orq-evaluator-alignment** | Align an existing LLM-judge (boolean, categorical, numeric) to human judgment — measure how often it changes its mind, group the least reliable cases and ask a few questions instead of labelling every row, rewrite the judge prompt, and recreate the evaluator after approval | [SKILL.md](skills/orq-evaluator-alignment/SKILL.md) |
 | **orq-analyze-traces** | Analyze a live agent from its production traces — relay config and terminal states, build a failure taxonomy by open/axial coding, write an error-analysis file other skills read | [SKILL.md](skills/orq-analyze-traces/SKILL.md) |
 | **orq-improve-agent** | Improve an underperforming agent — rewrite instructions against a prompting framework, or move a config knob, grounded in the error-analysis file orq-analyze-traces writes | [SKILL.md](skills/orq-improve-agent/SKILL.md) |
@@ -194,7 +195,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 | **orq-manage-skills** | Manage orq.ai Skills (the platform entity, formerly Snippets) — list/get/create/update/delete, authoring guidance, reference-scan before delete or rename, and the `{{snippet.<display_name>}}` consumption pattern | [SKILL.md](skills/orq-manage-skills/SKILL.md) |
 | **orq-simulate-agent** | Run multi-turn agent simulations using evaluatorq's first-class primitives (`simulate()`, `generate_and_simulate()`, `wrap_simulation_agent()`) — drive an agent under test with a UserSimulatorAgent and built-in JudgeAgent, scored against criteria | [SKILL.md](skills/orq-simulate-agent/SKILL.md) |
 | **create-skill** | Build or update an agent skill from an API, CLI, or MCP surface — probe the surface, verify every claim, write a tested contract, and register it | [SKILL.md](skills/create-skill/SKILL.md) |
-| **orq-shared** | Reference bundle the other skills read — the verified `orq` CLI trace query contract and the run-key preflight; not invoked on its own | [SKILL.md](skills/orq-shared/SKILL.md) |
+| **orq-shared** | Reference bundle the other skills read — the verified `orq` CLI trace query contract, the run-key preflight, and the prompting, tool-description and config-context rubrics; not invoked on its own | [SKILL.md](skills/orq-shared/SKILL.md) |
 | **orq-cli** | Drive the `orq` command-line interface — install check, auth, workspace selection, `orq doctor` troubleshooting, and read/write commands with JSON output and JMESPath queries | [SKILL.md](skills/orq-cli/SKILL.md) |
 <!-- END_SKILLS_TABLE -->
 
@@ -225,6 +226,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 
 ```
 /orq:analytics --group-by deployment           # Spot high error rates
+"Review the checkout agent's setup"            → orq-review-agent
 "Analyze traces for the checkout agent"        → orq-analyze-traces
 "Build evaluators for the failure modes"       → orq-build-evaluator
 "Generate a dataset covering edge cases"       → orq-generate-synthetic-dataset

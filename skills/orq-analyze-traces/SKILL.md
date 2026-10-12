@@ -142,47 +142,15 @@ There are no flags, no thresholds and no pass/fail per check. A 12% truncation r
 
 Runs **before** open coding. Two passes: a **sweep** over the whole window, then **detail** on ~10–20 spans drawn from the traces you were going to read anyway — no extra sampling budget.
 
-All sweep signals go through `orq traces aggregate` with the target in `filters` (`trace-queries.md` §1). Resolve every field name at runtime.
-
 **Gather and relay. Do not judge.** Collect the mechanical facts, format them, hand them to the coding agent. That is the whole phase.
 
-1. **Terminal states — how runs ended, as a distribution.**
-   - `attributes.gen_ai.response.finish_reasons` — `stop` / `length` / `tool_calls` / `max_iterations` / `max_time`
-   - `status` — `ok` / `error` / `unset`, with the error messages
-   - `attributes.orq.billing.threshold_exceeded`
+1. **Gather the list in [`config-context.md`](../orq-shared/resources/config-context.md)** (in `orq-shared`): terminal states, declared config with every referenced entity resolved, observed behaviour, and everything unreadable named in `unobservable` with a reason. `orq-review-agent` reads the same list. If `orq-shared` is not installed, say so; at minimum relay `finish_reasons` and `status` as distributions, the declared `model`, `settings` and `tools[]`, and the evaluator rates paired with their `sample_rate`, all marked unvalidated.
 
-   `max_iterations` and `max_time` are **explicit terminal reasons** — the platform is saying the run hit the cap. No distribution-shape inference needed.
-
-2. **Declared config — what the agent is set to** (from `mcp__orq-workspace__get_agent`, `orq agents retrieve`, `orq deployments get-config`, or the user in local mode):
-   - `model.id` and `fallback_models`
-   - `model.parameters.*` — `temperature`, `top_p`, `max_tokens`, `reasoning_effort`, `tool_choice`, `parallel_tool_calls`
-   - `settings.*` — `max_iterations`, `max_execution_time`, `max_cost`, `tools[]`, `evaluators[]` **with each `sample_rate`**
-   - `knowledge_bases`, `memory_stores`
-
-   When the agent config references entity IDs (tools, knowledge bases, memory stores, evaluators), resolve them into full definitions to understand what the agent can actually do:
-   - `orq tools retrieve <id> -o json` — tool function schemas and descriptions
-   - `orq knowledge-bases retrieve <id> -o json` — KB config and datasource attachments
-   - `orq memory-stores retrieve <id> -o json` — memory store config
-   - `orq evals get <id> -o json` — evaluator definition and scoring criteria
-
-3. **Observed behaviour — what actually happened**, so declared and actual can be compared:
-   - model actually served vs. declared (is a fallback firing?)
-   - `openresponses.truncation`
-   - tool-call spread by `tool_name`
-   - prompt-cache hit ratio (`cached_tokens ÷ prompt_tokens`)
-   - latency and cost distribution
-   - existing `eval_passed` / `eval_score` rates, **each paired with its `settings.evaluators[].sample_rate`** — available off the traces, or grouped per evaluator in one call via `orq reporting query` with `genai.evaluator.pass_rate` / `.score.avg` / `.runs` and `group_by: ["evaluator"]`
-   - TTFT via `orq reporting query` (`genai.ttft.avg|p50|p95`) — **an all-zero result is `unobservable: [ttft]`, not "fast"**
-
-   > **Relay evaluator rates as unvalidated.** A judge's agreement with human judgement drifts — with foundation-model updates, and with the team's own definition of the criterion. Relay the rate, relay the sample rate, and say neither is ground truth.
-
-4. **Name everything unreadable.** Anything that cannot be read goes in `unobservable` **with a reason**. Never omit it — absence must never read as "fine".
-
-5. **Present it as one compact block above the open-coding table**, ending with a standing instruction rather than a verdict:
+2. **Present it as one compact block above the open-coding table**, ending with a standing instruction rather than a verdict:
 
    > *These are mechanical facts about how this agent is configured and how its runs ended. Read them alongside the traces. Where a cluster of failures traces back to one of these, say so and name the knob — one config cause often produces several behavioural symptoms, and fixing the cause beats coding six of them.*
 
-**Phase 0 is complete when every item in steps 1–3 is either a measured value or listed in `unobservable` with a reason.** That criterion is exhaustive on purpose: it is the defence against a mid-deploy trace query returning a confident, empty, non-erroring result that a looser check would wave through as clean.
+**Phase 0 is complete when every item in `config-context.md` is either a measured value or listed in `unobservable` with a reason.**
 
 ### Phase 1: Collect Traces
 

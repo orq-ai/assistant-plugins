@@ -1,0 +1,132 @@
+# Spec: orq-review-agent skill
+
+Parent ticket: RES-887. Related: RES-1338, RES-1285.
+
+## Problem Statement
+
+Someone with a live orq agent wants to know if it is set up well: are its instructions, tools, skills, evaluators and model in line with our best practices, and where should they start fixing? Today they would have to run four or five assistant-plugins skills one after another (analyze-traces, improve-agent, recommend-evaluators, manage-skills, build-agent) and piece the answer together themselves. Several of those skills also change the agent, while all they wanted was a review. Two checks exist in no skill at all: `{{skill.X}}` references that no longer resolve (they silently render as empty text), and whether the agent's model is beaten on both intelligence and price by another enabled model.
+
+## Solution
+
+A new read-only skill, `orq-review-agent`. You give it an orq agent key and it:
+
+1. resolves the key with the shared run-key preflight
+2. reads the agent config and looks up each attached tool and evaluator
+3. reads the context: the workspace's skills, the model catalogue (`orq models list`, which carries intelligence index, benchmark scores and price), and the last 30 days of traces if there are any
+4. runs six checks: run health, instructions, tools, skills, evaluators, model
+5. ranks the findings
+6. writes one self-contained HTML report
+7. posts the top finding in chat and offers to run the assistant-plugins skill that fixes it, only after the user says yes
+
+Each finding states the observation, the best practice it relates to, the evidence, and the skill that fixes it. It never contains fix text such as a rewritten prompt, tool description or evaluator. It never writes to the platform.
+
+| Check | Looks at | Fixed by |
+|---|---|---|
+| Run health | How runs end, errors, iteration and time caps hit, truncation, fallback models firing | `orq-improve-agent` |
+| Instructions | The 11 prompting guidelines; tools the instructions name vs tools attached | `orq-improve-agent` |
+| Tools | Each description against the tool guide; calls and errors per tool | `orq-build-agent` |
+| Skills | `{{skill.X}}` / `{{snippet.X}}` references that don't resolve; skills in the agent's project that nothing references | `orq-manage-skills` |
+| Evaluators | Attached evaluators, sample rate, runs, pass rate (unvalidated) | `orq-recommend-evaluators` |
+| Model | Declared and fallback models vs enabled models with the same capabilities: is another one at least as smart for at least 20% less? | `orq-run-experiment` |
+
+## User Stories
+
+1. As an agent owner, I want to review my orq agent by giving only its key, so that I get a full picture without knowing which skills to run.
+2. As an agent owner, I want the review to change nothing on the platform, so that I can run it on a production agent without risk.
+3. As an agent owner, I want one HTML report per review, so that I can read it at my own pace and share it with my team.
+4. As an agent owner, I want the most important finding shown in chat, so that I know where to start without opening the report.
+5. As an agent owner, I want the assistant to offer the skill that fixes the top finding, so that I can go from review to fix in one step.
+6. As an agent owner, I want that skill to run only after I agree, so that the review never turns into an edit I did not ask for.
+7. As an agent owner, I want every finding to show its evidence (a quoted line, a config field, trace ids or counts), so that I can check it myself.
+8. As an agent owner, I want every finding to name the best practice it comes from, so that I understand why it matters.
+9. As an agent owner, I want every finding to name the skill that fixes it, so that I know what to run next.
+10. As an agent owner, I want findings ordered broken first, then trace-backed, then config, then best practice only, so that urgent problems are not buried under style notes.
+11. As an agent owner, I want to see how my runs end (stop, length, tool calls, max iterations, max time, errors), so that I can spot caps that cut runs short.
+12. As an agent owner, I want to know when a fallback model is serving my traffic, so that I learn my main model is failing without me noticing.
+13. As an agent owner, I want cost and latency p50/p95 in the report, so that I have a baseline before changing anything.
+14. As an agent owner, I want my instructions checked against the same 11 guidelines orq-improve-agent uses, so that the review and the fix agree.
+15. As an agent owner, I want each guideline marked present, weak or missing with the quoted line, so that I can see exactly what is meant.
+16. As an agent owner, I want to be told when my instructions mention a tool the agent does not have, so that I catch a broken instruction.
+17. As an agent owner, I want to be told when an attached tool is never mentioned in the instructions, so that I know the model has to guess when to use it.
+18. As an agent owner, I want to be told when a `{{variable}}` in the instructions is not declared, or a declared one is not used, so that I catch rendering problems.
+19. As an agent owner, I want each tool description checked against the 5 rules of the tool guide, so that I know which descriptions cause wrong tool choices.
+20. As an agent owner, I want calls and errors per tool over the window, so that I can see which tools fail and which are never used.
+21. As an agent owner, I want built-in tools reported with numbers only, so that I am not told to rewrite descriptions I cannot edit.
+22. As an agent owner, I want every `{{skill.X}}` and `{{snippet.X}}` reference checked against the workspace's skills, so that I learn which ones render as empty text.
+23. As an agent owner, I want to see skills in my project that my agent does not reference, labelled as candidates, so that I can decide whether to use them.
+24. As an agent owner, I want the review not to confuse platform Skills with `AgentCard.skills`, so that it doesn't report skills that aren't there.
+25. As an agent owner, I want my attached evaluators listed with sample rate, runs and pass rate, so that I know what is actually measured.
+26. As an agent owner, I want pass rates marked unvalidated, so that I don't take an unchecked judge's score as the truth.
+27. As an agent owner, I want to be told when no evaluators are attached, or one has sample rate 0 or no runs, so that I know about gaps in monitoring.
+28. As an agent owner, I want evaluator gaps handed to orq-recommend-evaluators, so that the review doesn't redo that skill's work.
+29. As an agent owner, I want my declared and fallback models compared with enabled models that have the same capabilities, so that I learn whether I overpay.
+30. As an agent owner, I want "dominated" to mean the same as the platform's RES-1338 A1 check, so that the skill and the product never disagree about my agent.
+31. As an agent owner with a tool-using agent, I want the model check repeated on the tau2 agentic benchmark, so that a general benchmark does not mislead me.
+32. As an agent owner, I want models without benchmark or price data listed as unknown, so that missing data never reads as a pass.
+33. As an agent owner, I want a model finding to point to orq-run-experiment, so that I test a switch before making it.
+34. As an agent owner with no traces yet, I want the review to still run on config alone, so that I can review an agent before launch.
+35. As an agent owner, I want anything the review could not read listed as unobservable with a reason, so that absence never looks like health.
+36. As an agent owner, I want a clear error when the key is wrong or belongs to another project, so that an empty result is not mistaken for a clean one.
+37. As an agent owner, I want the report named after the agent key and a timestamp, so that I can compare reviews over time.
+38. As an agent owner who asked to "fix" my agent, I want orq-improve-agent to fire instead of the review, so that I get the skill I meant.
+39. As an agent owner who asked "what's failing", I want orq-analyze-traces to fire instead, so that I get a failure analysis.
+40. As an agent owner who asked which evals to add, I want orq-recommend-evaluators to fire instead, so that I get ranked evaluator suggestions.
+41. As a skill maintainer, I want the tool guide, the 11 prompting guidelines and the Phase 0 list to live once in orq-shared, so that the review and the skills that fix things never drift apart.
+42. As a skill maintainer, I want the review to state its model-comparison rule in one place, so that I can update it when RES-1338 changes the definition.
+43. As a skill maintainer, I want the report template shipped inside the skill, so that it works in every install without other skills or local files.
+44. As a skill maintainer, I want the skill's `allowed-tools` to leave out every write verb, so that read-only is enforced by the harness too.
+
+## Implementation Decisions
+
+- **New skill `orq-review-agent`, orq agents only.** It takes an agent key or id. Deployments and local agents are out of v1.
+- **Read-only.** `allowed-tools` has read verbs only: agent, tool, evaluator, skill and model reads, trace aggregate/search/span reads, reporting query. No `create`, `update`, `delete` or `invoke`. The report file is the only thing written.
+- **Observations, not fixes.** A finding carries observation, best practice, evidence and fixing skill. Candidates (models that beat the current one, unreferenced skills) are allowed and labelled as candidates. Rewritten text is never produced.
+- **Refactor into orq-shared.** Three rubrics move there and become shared references:
+  - the tool description guide, from orq-build-agent
+  - the 11 prompting guidelines, from orq-improve-agent
+  - the Phase 0 list of what to report, from orq-analyze-traces
+
+  The skills they come from link to the shared copy instead of keeping their own. The system-instruction template stays in orq-build-agent, because it is a writing template, not a checklist. orq-shared's contents table lists the new files and the skills that use them.
+- **How skills are linked to agents.** No agent has a list of attached skills. The link exists only as `{{skill.X}}` / `{{snippet.X}}` placeholders in `instructions`, matched on the skill's `display_name`, case-sensitive. The check parses the placeholders and resolves each against the workspace's skills. `AgentCard.skills` is ignored.
+- **Model check.** Computed by the skill from `orq models list`; no endpoint exists (RES-1285's `pareto-pool` command and a REST `PreviewSmartRouterBands` never shipped). Inputs per model: `metadata.autorouter.v2.intelligence_index`, `price` (blended per 1M tokens), `aa_evaluations.tau2`, and the constraint fields `context_window`, `supports_tool_calling`, `supports_vision`, `supports_structured_outputs`, `enabled`.
+  - A model counts as dominated when an enabled model with at least the same capabilities has at least the same intelligence index at 20% or more lower price. That is RES-1338 A1 with its guardrails.
+  - The same comparison is shown on `tau2` for agents with tools.
+  - Coverage when checked: 109 of 171 catalogue models have index and price, 82 have `tau2`. Models without data are unknown.
+- **Per-tool errors** need an aggregate grouped by tool name and status. Phase 0 only counts calls per tool, so this query has to be verified before it goes into the skill.
+- **Ranking for the top finding.**
+  1. Broken: an unresolved skill reference, a tool named but not attached, runs hitting a cap.
+  2. Backed by trace evidence.
+  3. Mechanical config or catalogue findings.
+  4. Best practice only.
+
+  Ties go to whichever affects more traffic.
+- **Report.** One self-contained HTML file named after the agent key and a timestamp, with one section per check plus an unobservable list. The template is copied into the skill's resources.
+- **Hand-off.** After the report, one chat message: the top finding, the report path, and a yes/no offer to run the fixing skill. Nothing runs without a yes.
+- **Registration and release.** Registered on every surface validate-skills.mjs checks (skills directory, AGENTS.md, README table, the smoke-test doc, skills-lock.json). Ships a factual CSV and eval cases. MINOR version bump across the four plugin manifests, with a CHANGELOG entry.
+
+## Testing Decisions
+
+- A good test checks what the skill visibly does in a real session: which skill fires, which tools it calls, which tools it never calls. It never checks the wording of SKILL.md. All three test types below already exist in the repo; nothing new is added.
+- **Evals in real sessions** (the `skill-tests` harness through `orq launch`). Prior art: orq-improve-agent's fires, near-miss and reads-config-first cases.
+  - A fires case: a request to review an orq agent fires `orq-review-agent`.
+  - Near-miss cases: "fix support-bot" → `orq-improve-agent`; "what's failing in support-bot" → `orq-analyze-traces`; "which evals should support-bot have" → `orq-recommend-evaluators`.
+  - A behavioural case on the fixture agent `support-bot` in the skill-evals project: it expects `get_agent` and forbids `create_*`, `update_*`, `delete_*` and `invoke_*`. This is where read-only is checked.
+- **Factual drift checks.** A CSV for the skill checks that the CLI commands, MCP tools and `orq models list` fields it names still exist. It is generated with the bootstrap script and pruned by hand.
+- **`validate-skills.mjs`.** Checks registration on every surface, the frontmatter field set and shapes, and that links resolve after the rubrics move into orq-shared.
+- **Not tested:** the content of the finished report. The harness stops after the first turn. Checking the report would need a longer session and a separate decision.
+
+## Out of Scope
+
+- Any write to the platform: attaching evaluators, editing instructions, tools or skills, switching models.
+- Writing fix text: prompt rewrites, tool descriptions, new evaluators.
+- Suggesting new tools. That needs a full failure analysis (orq-analyze-traces).
+- Dollar savings estimates (RES-1338), scheduled reviews (RES-1340), platform UI (RES-1342).
+- Deployments and local agents.
+- Publishing findings as RES-1338 Recommendation objects.
+
+## Further Notes
+
+- Bauke asked on 2026-08-18 to park this for RES-1338. The ticket went back to Todo on 2026-09-21. The skill uses A1's definition of a dominated model so the two cannot disagree. Before building, confirm with Arian that showing the `tau2` comparison alongside is welcome.
+- Open: is "observations plus candidates" enough, given the original ticket says "suggestions"?
+- Open: no skill clearly owns editing an existing agent's tool descriptions. orq-improve-agent deliberately leaves tool definitions alone, and orq-build-agent is built for new agents. The review points to orq-build-agent for now.
+- Open: how ENG-2306 (Control Tower, no description) relates to this.

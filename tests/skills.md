@@ -295,6 +295,30 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify Phase 3a: leaves `{{template_variables}}` unsubstituted and does not propose removing tool definitions
 - Verify: asks which suggestions to apply before rewriting, and skips Phase 4 unless the user asks to save
 
+## `orq-review-agent`
+
+### Scenario 1: Review a fixture agent, read-only
+
+- Provide: the fixture agent `support-bot` in the skill-evals project (`max_iterations: 2` against three-step instructions, no tools, no evaluators)
+- Ask: "Review my orq agent support-bot"
+- Verify Phase 1: runs the run-key preflight, then reads the whole config with `orq agents retrieve` or `get_agent`
+- Verify Phase 2: reads `orq models list` and counts traces; with 0 traces, re-runs the count without the filter and states `config-only` mode
+- Verify Phase 3: reports the `max_iterations: 2` vs three-step instructions contradiction, and "no evaluators attached" → `orq-recommend-evaluators`
+- Verify Phase 3: the model check resolves `anthropic/claude-haiku-4-5` by date suffix to `anthropic/claude-haiku-4-5-20251001` and says so
+- Verify Phase 5: writes `agent-review-support-bot-<timestamp>.html` with all six checks and an `unobservable` list
+- Verify: makes no `create_*`, `update_*`, `delete_*` or `invoke_*` call, and writes no rewritten prompt or tool description
+
+### Scenario 2: A key from another project
+
+- Provide: an agent key that exists in a different project than the active key
+- Verify: stops on `HTTP 404 Not Found: Agent not found` and asks for the right key or workspace, instead of reviewing an empty config
+
+### Scenario 3: Hand-off only after a yes
+
+- Ask: "Review support-bot", then answer "stop here" to the closing question
+- Verify Phase 6: the chat message names the top finding, its evidence and the report path, then asks before running the fixing skill
+- Verify: on "stop here", no other skill is invoked
+
 ## `orq-recommend-evaluators`
 
 ### Scenario 1: New agent, no traces
@@ -637,6 +661,13 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-shared/resources/run-key-preflight.md`
 - `skills/orq-shared/resources/trace-queries.md`
 - `skills/orq-shared/resources/doc-resolution.md`
+- `skills/orq-shared/resources/config-context.md`
+- `skills/orq-shared/resources/prompting-guidelines.md`
+- `skills/orq-shared/resources/tool-description-guide.md`
+- `skills/orq-review-agent/SKILL.md`
+- `skills/orq-review-agent/resources/checks.md`
+- `skills/orq-review-agent/resources/report-template.html`
+- `skills/orq-review-agent/scripts/model_check.py`
 - `skills/orq-analyze-traces/SKILL.md`
 - `skills/orq-improve-agent/SKILL.md`
 - `skills/orq-recommend-evaluators/SKILL.md`
