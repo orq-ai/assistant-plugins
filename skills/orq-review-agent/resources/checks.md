@@ -31,10 +31,10 @@ orq traces search --from-file body.json -o json -j 'data[].trace_id'
 # per trace: the agent span, then its terminal facts
 A=$(orq traces list-spans <trace_id> --raw -j "data[?type=='span.agent'].span_id | [0]")
 orq traces get-span <trace_id> "$A" -o json \
-  -j '{finish: span.attributes.gen_ai.response.finish_reasons, iterations: span.attributes.agent.iterations.count, version: span.attributes.agent.version, dur: span.summary.duration_ms}'
+  -j "{finish: span.attributes.gen_ai.response.finish_reasons, iterations: span.attributes.agent.iterations.count, version: span.attributes.agent.version, dur: span.summary.duration_ms, input: span.attributes.gen_ai.input[?role=='user'] | [-1].content[0].text}"
 ```
 
-Returns e.g. `{"finish":["stop"],"iterations":1,"version":"1.0.3",...}`. Delegate the per-trace reads to one subagent when the Task tool is available.
+Returns e.g. `{"dur":839,"finish":["stop"],"input":"hey","iterations":1,"version":"1.0.4"}`. `input` is the run's last user message; when the sample is greetings or other non-task inputs, say so next to the mode (SKILL.md Phase 2). Delegate the per-trace reads to one subagent when the Task tool is available.
 
 | Finding | Evidence | Tier |
 |---|---|---|
@@ -44,7 +44,7 @@ Returns e.g. `{"finish":["stop"],"iterations":1,"version":"1.0.3",...}`. Delegat
 | Trace `status: error` | count from the sweep, 3 trace ids | Trace-backed |
 | Model served ≠ declared (a fallback serving traffic) | the `model` groups vs `model.id` | Trace-backed |
 
-**Served vs declared:** resolve both through `models.json` and compare the underlying model (`metadata.autorouter.id`), not the provider prefix. `azure/eu.gpt-5.6-luna` serving an agent declared on `openai/gpt-5.6-luna` is the same model on another provider, not a fallback. Sampled `version` different from the config's `version` means older runs are in the window; say so next to every trace-backed count.
+**Served vs declared:** resolve both through `models.json` and compare the underlying model (`metadata.autorouter.id`), not the provider prefix. `azure/eu.gpt-5.6-luna` serving an agent declared on `openai/gpt-5.6-luna` is the same model on another provider, not a fallback. A group matching an attached LLM judge's `model` (Phase 1, resolved through `models.json`) is the judge, not a fallback (gotcha 11): `openai/gpt-4.1` appeared this way next to the agent's own model. Only a group that matches neither the agent's models nor a judge's is a fallback finding; confirm it with `orq traces list-spans <trace_id> --raw -j 'data[].{type:type,name:name,model:model}'` on one of its traces (a judge call sits after a `span.evaluator` span, named `chat <judge model>`). Sampled `version` different from the config's `version` means older runs are in the window; say so next to every trace-backed count.
 
 Always record in the report, as facts not findings: trace count, status split, cost sum, duration p50/p95, and the sample size behind the terminal-state counts.
 
@@ -89,7 +89,7 @@ Platform Skills attach to an agent only through placeholders in `instructions`: 
 3. **Unresolved reference** → tier **broken**: it renders as empty text. Evidence: the quoted placeholder and "no Skill with this display_name". Suggestion: create the Skill or fix the name.
 4. **Skills in the agent's `project_id` that no placeholder references** → `candidate`, tier **config**. List them; do not judge whether they fit.
 
-`orq skills list` returned `{"data":[],"has_more":false}` in both probed projects, so steps 2–4 have not run against a live Skill [unverified: no Skills in the probed workspaces]. An empty list with references present is still step 3: every reference is unresolved.
+`orq skills list` returned `{"data":[],"has_more":false}` in both probed projects, so steps 2 to 4 have not run against a live Skill [unverified: no Skills in the probed workspaces]. An empty list with references present is still step 3: every reference is unresolved.
 
 ## 5. Evaluators
 
@@ -102,6 +102,17 @@ Platform Skills attach to an agent only through placeholders in `instructions`: 
    ```
 
    `orq reporting query --from-file body.json --from 29d --to now -o json -j 'data[]'` returns one row per id, e.g. `{"dimensions":{"evaluator":"01M3KM2H7X1FVP5A4NM46Z3277"},"metrics":{"genai.evaluator.runs":4}}`. Repeat with `genai.evaluator.pass_rate`. Keep the window on the flags, not in the body.
+
+   **That pass rate counts the outcome, not the verdict** (gotcha 10). On the same traces you sampled in §1, read each evaluator span:
+
+   ```bash
+   for S in $(orq traces list-spans <trace_id> --raw -j "data[?type=='span.evaluator'].span_id"); do
+     orq traces get-span <trace_id> "$S" -o json \
+       -j '{name: span.attributes.gen_ai.evaluation.name, passed: span.attributes.gen_ai.evaluation.passed, verdict: span.attributes.gen_ai.evaluation.score}'
+   done
+   ```
+
+   Returns e.g. `{"name":"briefing-complete-six-sections","passed":true,"verdict":{"label":"fail","value":0}}`. Report the verdict pass rate (`verdict.label` is `pass`) over the sample [unverified: only boolean evaluators probed; other output types may label differently] next to the reporting one. When they differ, the reporting number is wrong for this evaluator: say so, and use the verdict rate. Both stay `unvalidated`.
 3. **Project evaluators not attached:** from the Phase 2 list, every evaluator in the agent's project that is not in `settings.evaluators[]`. Each one is a `candidate` with its key and `description`, tier **config**, with the suggestion "consider attaching `<key>`: it checks <description>". You have read only its description, so do not claim it fits; `orq-recommend-evaluators` reads what it actually checks before attaching it.
 
 Findings, tier **config** unless noted:
