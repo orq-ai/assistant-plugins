@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `orq-analyze-traces` Phase 0, `orq-improve-agent` Phase 3a and `orq-build-agent` link to the shared rubrics instead of keeping their own copies. `orq-analyze-traces` now routes setup health checks to `orq-review-agent`. `tool-description-guide.md` moved from `orq-build-agent/resources/` to `orq-shared/resources/`.
+- `orq-analyze-traces` Phase 0, `orq-improve-agent` Phase 3a and `orq-build-agent` link to the shared rubrics instead of keeping their own copies. `orq-analyze-traces` now routes setup health checks to `orq-review-agent`. `orq-improve-agent` Phase 1 also checks that the declared model is available in the project (`orq models list`, resolved per `model-slugs.md`). `tool-description-guide.md` moved from `orq-build-agent/resources/` to `orq-shared/resources/`.
 
 ## [3.9.0] - 2026-10-08
 

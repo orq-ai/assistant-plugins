@@ -94,10 +94,10 @@ Each finding states the observation, the best practice it relates to, the eviden
   - The rule (RES-1338 A1 with the guardrails Bauke set) lives once, as `RULE` in `scripts/model_check.py`, and is printed in every result; the report quotes it from there.
   - Both models are scored at the agent's reasoning effort when the current model has an index for it, otherwise both at their default effort. Provider aliases of one model are listed once.
   - The same comparison is shown on `tau2` for agents with tools. Models without data are unknown.
-  - Resolving the agent's model id follows `orq-shared/resources/model-slugs.md`. An unresolved id lists the closest catalogue names, for the report only.
+  - Resolving the agent's model id follows `orq-shared/resources/model-slugs.md`. A model id with no match after all the lookups is reported as broken (not available in this project, the agent cannot run), with the closest catalogue names as possible replacements. A model that is listed but has no score or price stays unobservable.
 - **Per-tool errors** are not observable on orq-hosted agents (probed 2026-10-12): `group_by: tool_name` returns only the null bucket, and `status` is trace-scoped.
 - **Ranking for the top finding.**
-  1. Broken: an unresolved skill reference, a tool required but not attached, sampled runs whose terminal reason is a cap.
+  1. Broken: an unresolved skill reference, a tool required but not attached, a declared model that is unavailable, sampled runs whose terminal reason is a cap.
   2. Backed by trace evidence, with the sample size.
   3. Mechanical config or catalogue findings. A config contradiction certain to break every run, with no traffic to confirm it, is labelled `predicted broken` and sorts first here.
   4. Best practice only.

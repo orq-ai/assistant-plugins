@@ -130,5 +130,6 @@ Read `model-check.json`:
 | `intelligence.status: dominated` | finding, tier **config**, with up to 5 `candidates` (refId, index, price, `price_gap`, the effort it was scored at, and any `aliases` of the same model), each labelled `candidate`; fixed by `orq-improve-agent`. The suggestion names the cheapest strong candidate and says to run `orq-run-experiment` first if the agent has a dataset and evaluators: the index is a general benchmark and can be wrong for this agent |
 | `tau2.status: dominated` | the same, on the agentic benchmark, as a separate finding |
 | `not dominated` | "no finding" with the current index and price |
-| `unknown` | `unobservable` with the script's `reason`. When the result has `closest`, list those names in the Model section as likely matches; they are not checked |
+| `unknown`, reason `not in the catalogue` | finding, tier **broken**: "the declared model is not available in this project, and the agent cannot run"; fixed by `orq-improve-agent`. The `closest` names are possible replacements, listed in the suggestion; they are not checked |
+| `unknown`, any other reason (`ambiguous: …`, `no intelligence_index or price`, …) | `unobservable` with the script's `reason` |
 | `resolved: date-suffix match on …` or `exact on model_id` | state the matched `refId` next to the result |
