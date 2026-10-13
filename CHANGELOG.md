@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.1] - 2026-10-13
+
+### Changed
+
+- Aligned the SDK-teaching skills with orq-python 4.12.22+ (RES-1221). `orq-invoke-deployment`, `orq-build-agent`, `orq-run-experiment` and `orq-compare-agents` now teach `client.responses.create(model="agent/<key>", input=…)` -> `POST /v3/router/responses` as the primary agent-invocation path (output read from `response.output[-1]["content"][0]["text"]`, multi-turn via `previous_response_id`), with the deprecated `agents.responses.create` / `POST /v2/agents/<key>/responses` path retained as a clearly-marked fallback. Verified live against a workspace agent on orq-ai-sdk 4.15.14.
+- `orq-setup-observability`: raw router base-URL examples move `/v2/router` -> `/v3/router` (the OTLP `/v2/otel` endpoint is unchanged), with a note that the orq SDK's own `chat.completions` still posts v2 internally. Added the first-party observability one-liners `orq_ai_sdk.langchain.setup()` and `OpenAIAgentsInstrumentor().instrument()`.
+- Corrected the `@traced` guide: the decorator falls back to `ORQ_API_KEY` and raises `ValueError` when no key is available, rather than silently exporting nothing.
+
 ## [3.9.0] - 2026-10-08
 
 ### Added
