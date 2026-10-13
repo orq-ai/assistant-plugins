@@ -1,0 +1,8 @@
+id: build-benchmark-fires
+skill: orq-build-benchmark
+kind: invocation
+prompt: Build a benchmark from our support tickets to find which model is best at drafting replies.
+expect_skill: orq-build-benchmark
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 2
