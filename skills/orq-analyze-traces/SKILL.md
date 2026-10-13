@@ -330,6 +330,7 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
 
     ## 1. Drops persona on factual questions — 12.5%
     ...definition, Pass/Fail criteria, a real trace excerpt...
+    Evidence: [cc27bfcc](<trace link>) · [a6502141](<trace link>)
     ````
 
     **Contract rules:**
@@ -340,6 +341,7 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
     - **`unobservable` is a list, not a boolean.** A consumer must check it before claiming the run was clean.
     - **`passing` is the other half of the regression set.** `evidence` records what failed; `passing` records what was read and judged good. Without both, the closing experiment runs against whatever dataset happens to exist.
     - **The body leads with the work list.** One scannable table — mode, rate, lever, location — then the depth below it.
+    - **Link the evidence in the body, not the front matter.** Each mode's section links its `evidence` traces so a human can open them in one click; the front matter keeps bare ids for the skills that read it. A link needs the full 32-hex `trace_id`, not a shortened one. Format, host and key: [`orq-cli` → Building app URLs](../orq-cli/resources/command-map.md#building-app-urls); add the one-line "opens empty → set the Traces project selector to **All projects**" note under the table.
 
 21. **Hand off — the artifact is the router.** Name a destination per failure mode and let the user go wherever they want first. Do not forward on their behalf.
 

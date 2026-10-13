@@ -70,6 +70,8 @@ This document has twice described behaviour that was never run: a capability cel
 | **3b. Conversation** | `orq traces conversation <trace-id> [<span-id>]` (7.4.0+) | one call/trace, normalized | What was actually said — messages, tool calls, tool results, reasoning |
 | **4. Content + terminal state** | `orq agents get-response <agent-key> <agent_execution_span_id> -o json -j '<projection>'` | one call/trace, **projected** | **Agent targets only.** The real `finish_reason` and the message text, neither of which exists on any span — see §3.5 |
 
+**Handing a trace or span to the user:** link it, `https://my.orq.ai/<workspace-key>/traces/(trace:<trace_id>//span:<span_id>)` (drop `//span:…` for the trace alone). Use `trace_id` from the row, never its `id`. Host, key and the "opens empty → Traces project selector to **All projects**" note: [`orq-cli` → Building app URLs](../../orq-cli/resources/command-map.md#building-app-urls).
+
 ### Why `aggregate` and not `list-facet-values`
 
 `list-facet-values` is cheaper but **takes no filter value** — its only flags are `--filter-operator`, `--from`, `--to`, `--limit`. A facet sweep is therefore always workspace-wide, and it covers only 28 of 57 fields (missing `agent_id`, `tool_name`, `duration_ms`, `cost.total`, `agent.iterations.count`, `eval_*`).

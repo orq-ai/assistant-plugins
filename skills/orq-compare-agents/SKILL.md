@@ -201,6 +201,6 @@ Agent Comparison Progress:
 After running the comparison:
 - **Experiment results:** [my.orq.ai](https://my.orq.ai/) → Experiments
 - **Agent details:** [my.orq.ai](https://my.orq.ai/) → Agents
-- **Traces:** [my.orq.ai](https://my.orq.ai/) → Traces
+- **Traces:** [my.orq.ai](https://my.orq.ai/) → Traces, or a direct link to a specific run's trace: `https://my.orq.ai/<workspace-key>/traces/(trace:<trace_id>)` ([format and pitfalls](../orq-cli/resources/command-map.md#building-app-urls))
 
 When this skill conflicts with live API responses or docs.orq.ai, trust the API.

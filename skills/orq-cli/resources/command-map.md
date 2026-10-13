@@ -722,20 +722,35 @@ earlier; see `orq-shared/resources/trace-queries.md` §5.4.
 
 ## Building app URLs
 
-> **Probed against 5.1.0; not re-probed.** The URL shapes are Studio routes, not
-> CLI behaviour, and the `whoami` line needs a live session.
+> **Trace and span routes opened in a browser on 2026-10-13 (RES-1550)**, cold in a
+> new tab against live traces in `orq-research`, prod only; staging was not opened.
+> The `whoami` projections were run on 11.0.2 under both a login session and
+> `ORQ_API_KEY`. The experiments route is from 5.1.0 and was not re-probed.
 
 App URLs are workspace-scoped by **key** (the slug), not by id:
 
 ```
-https://my.orq.ai/<workspace-key>/traces?query=trace_id:is:<trace-id>
-https://my.orq.ai/<workspace-key>/experiments/<experiment-id>
+<host>/<workspace-key>/traces/(trace:<trace_id>)                    # a trace
+<host>/<workspace-key>/traces/(trace:<trace_id>//span:<span_id>)    # one span in it
+<host>/<workspace-key>/experiments/<experiment-id>
 ```
 
 ```sh
-key="$(orq auth whoami -o json -j active_workspace_key --raw)"
-echo "https://my.orq.ai/${key}/traces?query=$(printf 'trace_id:is:%s' "$trace_id" | jq -sRr @uri)"
+set -o pipefail
+# workspace_key: the guarded snippet in SKILL.md, "Which workspace am I really reading?".
+host="$(orq auth whoami -o json -j 'urls.api_base_url || server' --raw)"
+echo "${host}/${workspace_key}/traces/(trace:${trace_id})"
+echo "${host}/${workspace_key}/traces/(trace:${trace_id}//span:${span_id})"
 ```
+
+- **No query string is needed.** The app appends `traces_oql`, `traces_range` and `traces_filters` as you click around; a link without them opens the same view.
+- **`trace_id` is the 32-hex id, `span_id` the 16-hex one.** `traces search` rows carry `trace_id`, `span_id` and `root_span_id`; their `id` is a span id and opens nothing as a trace. `traces list-spans <trace_id>` gives the span ids inside a trace.
+- **The host comes from the session**, not a literal `my.orq.ai`: `urls.api_base_url` under a login session, `server` under `ORQ_API_KEY`, which is why the projection has both.
+- **The key does not survive `ORQ_API_KEY`.** With the env var set, `whoami` reports `active_workspace_key` as `null`, so a key read blindly builds `https://my.orq.ai/null/...`. The SKILL.md snippet rejects that.
+- **The parentheses and `//` are part of the route.** Quote the URL in a shell. In Markdown write `[label](<url>)`; a bare `(…)` destination with nested parentheses is fragile.
+- **The old `traces?query=trace_id:is:<id>` form no longer routes.** Do not emit it.
+
+**"No spans match your search" means the user's project filter, not a bad link.** The Traces page keeps a project selection in the browser, and a link to a trace in another project opens that empty panel (a `traces_filters` project in the URL does not override it). Whenever you hand over a link, tell the user that if it opens empty, switch the Traces project selector to **All projects** and reload. A second known issue, reported to the app team alongside it: a very large span (about 1 MB of Responses-API input) can freeze the tab when opened.
 
 ### Which host am I actually talking to?
 

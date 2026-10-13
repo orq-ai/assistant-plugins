@@ -292,7 +292,7 @@ Fall back to the session file only when the CLI is unavailable. Same value, unde
 jq -r .activeWorkspaceKey ~/.orq/sessions/my.orq.ai.json
 ```
 
-A snippet for scripts that need the key (for example to build `https://my.orq.ai/<key>/traces?query=…` deep-links). It has to tolerate the command succeeding while producing nothing, which is why the guard is not optional:
+A snippet for scripts that need the key (for example to build trace and span links; the URL shapes are in [resources/command-map.md → Building app URLs](resources/command-map.md#building-app-urls)). It has to tolerate the command succeeding while producing nothing, which is why the guard is not optional:
 
 ```sh
 # ORQ_WORKSPACE is read by the CLI itself as of 5.x (still listed on 8.6.9), so honouring it here agrees
@@ -304,7 +304,7 @@ if [ -z "$workspace_key" ]; then
   workspace_key="$(orq auth whoami -o json -j active_workspace_key --raw 2>/dev/null)"
 fi
 case "$workspace_key" in
-  ''|null) echo "no active orq workspace; run 'orq auth login'" >&2; exit 1 ;;
+  ''|null) echo "no active orq workspace; run 'orq auth login', or set ORQ_WORKSPACE when ORQ_API_KEY is set (whoami reports no key then)" >&2; exit 1 ;;
 esac
 ```
 

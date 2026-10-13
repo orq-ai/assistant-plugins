@@ -190,7 +190,7 @@ Follow these steps **in order**. Do NOT skip steps.
    - Agent: check `response.output[0].parts[0].text` for the output text; save `response.task_id` for multi-turn
    - If wrong output: check for missing inputs, wrong key, or prompt issues
 
-11. **Find the trace** — direct user to [my.orq.ai](https://my.orq.ai/) → Traces, or use `response.telemetry.trace_id`.
+11. **Find the trace** — hand the user a link built from `response.telemetry.trace_id`: `https://my.orq.ai/<workspace-key>/traces/(trace:<trace_id>)`, or add `//span:<telemetry.span_id>` inside the parentheses to open the call's own span. Host, workspace key and pitfalls: [`orq-cli` → Building app URLs](../orq-cli/resources/command-map.md#building-app-urls). If it opens on "No spans match your search", the user's Traces project selector is filtering it out: switch it to **All projects**.
 
 ### Phase 4: Generate Integration Code
 
@@ -407,7 +407,7 @@ curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
 | Using `stream=False` for user-facing UI | Use `stream=True` — streaming shows tokens in real time |
 | Not saving `task_id` for agent multi-turn | Store `response.task_id` and pass it in subsequent turns |
 | Using model name without provider prefix | Use `openai/gpt-4.1`, `anthropic/claude-sonnet-4-5` — not just `gpt-4.1` |
-| Not checking the trace after first invocation | Use `response.telemetry.trace_id` to find the trace and verify variable substitution and token counts |
+| Not checking the trace after first invocation | Link the trace from `response.telemetry.trace_id` (step 11) and verify variable substitution and token counts |
 | Using `contact` field in agents | Use `identity` instead — `contact` is deprecated |
 
 ## Open in orq.ai
@@ -415,7 +415,7 @@ curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
 After completing this skill, direct the user to:
 - **Deployments:** [my.orq.ai](https://my.orq.ai/) → Deployments — review configuration and versions
 - **Agents:** [my.orq.ai](https://my.orq.ai/) → Agents — review agent config and tools
-- **Traces:** [my.orq.ai](https://my.orq.ai/) → Traces — inspect invocations, token usage, latency
+- **Traces:** a direct link to the invocation's trace (step 11), or [my.orq.ai](https://my.orq.ai/) → Traces — inspect invocations, token usage, latency
 - **Analytics:** [my.orq.ai](https://my.orq.ai/) → Analytics — per-deployment/agent cost and volume
 
 When this skill conflicts with live API responses or docs.orq.ai, trust the API.
