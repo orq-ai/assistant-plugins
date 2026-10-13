@@ -1,0 +1,8 @@
+id: red-team-fires
+skill: orq-red-team
+kind: invocation
+prompt: Red team my orq deployment customer-bot for prompt injection and jailbreaks.
+expect_skill: orq-red-team
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 2

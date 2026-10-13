@@ -1,0 +1,9 @@
+id: build-evaluator-asks-first
+skill: orq-build-evaluator
+kind: behavioural
+# The skill must scope the evaluator with the user before creating anything.
+prompt: Build an LLM-as-a-judge evaluator in orq that checks answers are grounded in the retrieved context.
+expect_skill: orq-build-evaluator
+expect_question_about: [application, pipeline, good, bad, failure, criterion, criteria, ground, context, label, example]
+allow_tools: [search_entities, list_models, get_llm_eval]
+max_turns: 8

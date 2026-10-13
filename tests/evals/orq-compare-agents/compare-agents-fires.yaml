@@ -1,0 +1,8 @@
+id: compare-agents-fires
+skill: orq-compare-agents
+kind: invocation
+prompt: I've got a LangGraph agent and an orq agent doing the same customer support job. Which one is better? Run both on the same questions and score them.
+expect_skill: orq-compare-agents
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 2

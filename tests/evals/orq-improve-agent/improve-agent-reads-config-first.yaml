@@ -1,0 +1,14 @@
+id: improve-agent-reads-config-first
+skill: orq-improve-agent
+kind: behavioural
+# Needs the fixture agent support-bot (path fixtures/) in the skill-evals project: max_iterations 2
+# against three-step instructions, so the contradiction is visible from its config alone.
+# Phase 1: read the agent's own config before anything else; every write sits behind a diff + approval gate.
+prompt: My orq agent support-bot gives up halfway through multi-step tasks. Improve it.
+expect_skill: orq-improve-agent
+expect_tools: [get_agent]
+forbid_tools: [create_*, update_*, delete_*, invoke_*]
+allow_tools: [search_entities, get_agent, get_span, get_deployment, list_traces, search_docs]
+runs: 5
+pass_threshold: 0.8
+max_turns: 8

@@ -87,6 +87,12 @@ jobs:
           fi
       - name: Self-test the validator (each invariant must fail the run when violated)
         run: bash tests/scripts/validate-skills.test.sh
+      - name: Test the eval scoring (run_evals.py, skill_test_report.py)
+        # Pure functions on fake run outputs. test_run_evals.py fails if this pin and
+        # run_evals.py's inline pin drift apart.
+        run: |
+          uv run --no-project --python 3.12 --with evaluatorq==1.47.1 --with pyyaml --with pytest \
+            python -m pytest tests/scripts/test_run_evals.py -q
       - name: PR title pattern lint
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
@@ -156,6 +162,36 @@ jobs:
             echo "::error::no skills/*/tests/ts/package.json found — the TS contract job would pass vacuously"
             exit 1
           fi
+
+  trace-hooks-tests:
+    # The orq-trace plugin keeps secrets out of spans and binds queued batches
+    # to their workspace; both rest entirely on these suites, which until now
+    # ran only on whoever last ran them locally. Left out on purpose:
+    # test-resolution.mjs reads a real ~/.orq/config.json with two profiles,
+    # and test-trace-flow.sh spawns Claude Code against live ingest.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/trace-hooks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run the plugin's offline test suites
+        # Every suite isolates its state through ORQ_CLAUDE_STATE_DIR and
+        # posts to local HTTP stubs, so no key or network is needed. Each runs
+        # even after an earlier one fails, so one red run reports them all.
+        run: |
+          set -uo pipefail
+          rc=0
+          for t in src/validate-runtime.js tests/test-redact.mjs tests/test-queue-destination.mjs \
+                   tests/test-trace-switch.mjs tests/test-post-tool-use.mjs tests/test-transcript-spans.mjs; do
+            echo "::group::$t"
+            node "$t" || { rc=1; echo "::error::$t failed"; }
+            echo "::endgroup::"
+          done
+          exit "$rc"
 
   skill-tests-windows:
     # Real Windows execution for the win32-only branches (e.g. TLS verification

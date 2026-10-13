@@ -29,7 +29,8 @@ jobs:
           node-version: 20
       - uses: astral-sh/setup-uv@v5
       - name: Test the factual scripts offline
-        run: uv run --no-project --with pytest --with jsonschema pytest tests/scripts -q
+        # test_run_evals.py needs evaluatorq; skills-ci.yml runs it with that pin.
+        run: uv run --no-project --with pytest --with jsonschema pytest tests/scripts/test_factual_scripts.py -q
       - name: Install the latest orq CLI
         run: npm install -g @orq-ai/cli@latest && orq version
       - name: Run factual tests

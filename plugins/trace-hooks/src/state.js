@@ -1,9 +1,16 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
+// os.homedir(), not HOME || USERPROFILE: on Windows a shell such as Git Bash
+// sets HOME to a different directory than USERPROFILE, so the two launches
+// used to keep separate session state and replay queues. os.homedir() reads
+// HOME on POSIX and USERPROFILE on Windows, which is where Claude Code itself
+// resolves ~/.claude.
 const STATE_ROOT =
   process.env.ORQ_CLAUDE_STATE_DIR ||
-  path.join(process.env.HOME || process.env.USERPROFILE || "", ".claude", "state");
+  path.join(os.homedir(), ".claude", "state");
 
 const BASE_STATE_DIR = path.join(STATE_ROOT, "orq_sessions");
 const BASE_QUEUE_DIR = path.join(STATE_ROOT, "orq_queue");
@@ -191,8 +198,56 @@ export async function deleteQueuedFile(filePath) {
 const STALE_SESSION_MS = 24 * 60 * 60 * 1000; // 24 hours
 const STALE_QUEUE_MS = 60 * 60 * 1000; // 1 hour
 
+const UNDELIVERABLE_WARN_MS = 60 * 60 * 1000;
+
+// True at most once an hour per destination, across processes. Every hook is
+// its own node process, so the marker's mtime is the shared rate limit. Hashing
+// the endpoint and key fingerprint creates a safe, unique filename. Keep this
+// marker in STATE_ROOT, outside the queue: queued-file listing and pruning
+// operate on .json batches. If the marker cannot be written, warn again rather
+// than lose the spans in silence.
+export async function shouldWarnUndeliverable(destination, now = Date.now()) {
+  const fingerprint = createHash("sha256")
+    .update(JSON.stringify([destination.endpoint, destination.key]))
+    .digest("hex")
+    .slice(0, 16);
+  const marker = path.join(STATE_ROOT, `orq_undeliverable_warn_${fingerprint}`);
+  try {
+    const stat = await fs.stat(marker);
+    if (now - stat.mtimeMs < UNDELIVERABLE_WARN_MS) {
+      return false;
+    }
+  } catch {
+    // No marker yet, or it cannot be read: fall through and warn.
+  }
+  await ensureDirs().catch(() => {});
+  await fs.writeFile(marker, `${new Date(now).toISOString()}\n`).catch(() => {});
+  return true;
+}
+
 export async function pruneStaleFiles() {
   const now = Date.now();
+
+  // Prune old warning markers, including the unsuffixed marker used by older
+  // versions. Marker names are scoped by destination, so each one can expire
+  // independently after the warning interval.
+  try {
+    const stateNames = await fs.readdir(STATE_ROOT);
+    for (const name of stateNames) {
+      if (!/^orq_undeliverable_warn(?:_[a-f0-9]{16})?$/.test(name)) continue;
+      const filePath = path.join(STATE_ROOT, name);
+      try {
+        const stat = await fs.stat(filePath);
+        if (now - stat.mtimeMs > UNDELIVERABLE_WARN_MS) {
+          await fs.unlink(filePath);
+        }
+      } catch {
+        // Ignore individual file errors
+      }
+    }
+  } catch {
+    // Ignore if directory doesn't exist
+  }
 
   // Prune orphaned session files (mtime > 24h ago)
   try {

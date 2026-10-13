@@ -132,7 +132,11 @@ export function boolEnv(name, defaultValue = false) {
   if (!value) {
     return defaultValue;
   }
-  return value === "1" || value.toLowerCase() === "true";
+  // The same four words Claude Code itself accepts for a boolean env var, so a
+  // user who writes ORQ_TRACE_DISABLED=yes gets tracing off rather than a flag
+  // that silently reads as unset. Trimmed, because a value that came through a
+  // shell script often carries a trailing space.
+  return ["1", "true", "yes", "on"].includes(value.toLowerCase().trim());
 }
 
 // Appends to a debug log when ORQ_DEBUG is set. Uses the platform temp

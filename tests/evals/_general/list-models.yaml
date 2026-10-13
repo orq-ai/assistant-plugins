@@ -1,0 +1,8 @@
+id: list-models
+skill: _general
+kind: behavioural
+prompt: Which models can I use in my orq workspace?
+expect_skill: any
+expect_tools: [list_models]
+allow_tools: [list_models, search_entities]
+max_turns: 4

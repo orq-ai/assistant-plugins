@@ -1,0 +1,8 @@
+id: generate-dataset-fires
+skill: orq-generate-synthetic-dataset
+kind: invocation
+prompt: I don't have any real user data yet for my recipe chatbot. Can you make me about 50 test questions, including some tricky ones, and put them in orq?
+expect_skill: orq-generate-synthetic-dataset
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 2

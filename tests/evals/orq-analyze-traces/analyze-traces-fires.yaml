@@ -1,0 +1,8 @@
+id: analyze-traces-fires
+skill: orq-analyze-traces
+kind: invocation
+prompt: My orq support agent has been giving weird answers this week. Go through its production traces and tell me what kinds of failures it has.
+expect_skill: orq-analyze-traces
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 2
