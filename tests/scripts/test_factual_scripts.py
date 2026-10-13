@@ -30,33 +30,33 @@ def cli_flags(body: str) -> set[tuple[str, str]]:
 
 
 def test_bullet_flag_belongs_to_the_sections_one_command() -> None:
-    body = f"## Thread\n\n{FENCE}sh\norq traces thread <id>\n{FENCE}\n\n- `--reasoning=false` drops reasoning.\n"
-    assert ("traces thread", "--reasoning") in cli_flags(body)
+    body = f"## Thread\n\n{FENCE}sh\norq traces conversation <id>\n{FENCE}\n\n- `--reasoning=false` drops reasoning.\n"
+    assert ("traces conversation", "--reasoning") in cli_flags(body)
 
 
 def test_command_below_the_flag_still_owns_it() -> None:
-    body = "## Thread\n\n- `--max-chars` cuts each block.\n\nRun `orq traces thread <id>`.\n"
-    assert ("traces thread", "--max-chars") in cli_flags(body)
+    body = "## Thread\n\n- `--max-chars` cuts each block.\n\nRun `orq traces conversation <id>`.\n"
+    assert ("traces conversation", "--max-chars") in cli_flags(body)
 
 
 def test_short_and_long_form_both_become_rows() -> None:
-    body = "## Thread\n\n`orq traces thread <id>`\n\n- `-i/--include` renders only these parts.\n"
-    assert {("traces thread", "-i"), ("traces thread", "--include")} <= cli_flags(body)
+    body = "## Thread\n\n`orq traces conversation <id>`\n\n- `-i/--include` renders only these parts.\n"
+    assert {("traces conversation", "-i"), ("traces conversation", "--include")} <= cli_flags(body)
 
 
 def test_section_with_two_commands_attributes_no_bare_flag() -> None:
-    body = "## Traces\n\n`orq traces thread <id>` and `orq traces search`.\n\n- `--max-chars` cuts each block.\n"
+    body = "## Traces\n\n`orq traces conversation <id>` and `orq traces search`.\n\n- `--max-chars` cuts each block.\n"
     assert not any(flag == "--max-chars" for _, flag in cli_flags(body))
 
 
 def test_bare_flag_does_not_cross_a_heading() -> None:
-    body = "## Thread\n\n`orq traces thread <id>`\n\n## Other\n\n- `--max-chars` cuts each block.\n"
+    body = "## Thread\n\n`orq traces conversation <id>`\n\n## Other\n\n- `--max-chars` cuts each block.\n"
     assert not any(flag == "--max-chars" for _, flag in cli_flags(body))
 
 
 def test_hash_comment_in_a_code_fence_is_not_a_heading() -> None:
-    body = f"## Thread\n\n{FENCE}sh\norq traces thread <id>\n# a shell comment\n{FENCE}\n\n- `--max-chars` cuts each block.\n"
-    assert ("traces thread", "--max-chars") in cli_flags(body)
+    body = f"## Thread\n\n{FENCE}sh\norq traces conversation <id>\n# a shell comment\n{FENCE}\n\n- `--max-chars` cuts each block.\n"
+    assert ("traces conversation", "--max-chars") in cli_flags(body)
 
 
 def test_negated_flag_is_skipped() -> None:

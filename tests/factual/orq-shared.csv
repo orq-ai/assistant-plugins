@@ -12,7 +12,7 @@ cli_subcommand,traces list-spans,,orq traces list-spans exists
 cli_flag,traces list-spans,-j,orq traces list-spans accepts -j
 cli_subcommand,traces get-span,,orq traces get-span exists
 cli_flag,traces get-span,-j,orq traces get-span accepts -j
-cli_subcommand,traces thread,,orq traces thread exists
+cli_subcommand,traces conversation,,orq traces conversation exists
 cli_subcommand,tools retrieve,,orq tools retrieve exists
 cli_subcommand,knowledge-bases retrieve,,orq knowledge-bases retrieve exists
 cli_subcommand,memory-stores retrieve,,orq memory-stores retrieve exists

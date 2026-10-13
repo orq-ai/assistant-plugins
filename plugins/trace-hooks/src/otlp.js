@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { attr, compact, debugLog, nowUnixNano } from "./common.js";
 import { getApiKey, getBaseUrl, getOtlpEndpoint } from "./config.js";
 import {
@@ -5,6 +7,7 @@ import {
   enqueuePayload,
   listQueuedFiles,
   readQueuedPayload,
+  shouldWarnUndeliverable,
   writeQueuedPayload,
 } from "./state.js";
 
@@ -98,6 +101,37 @@ function getHeaders() {
   }
 
   return headers;
+}
+
+// A queued batch belongs to the endpoint and the credentials the request will
+// actually use. OTEL_EXPORTER_OTLP_HEADERS may override Authorization or
+// supply another auth header, so getApiKey() alone does not identify the
+// workspace that receives the spans. Hash normalized outgoing headers without
+// Content-Type: the credential values never reach disk. This intentionally
+// gives older key-only queue entries a different fingerprint; their actual
+// authorization cannot be known after an update, so they must not be replayed.
+export function currentDestination() {
+  const headers = new Headers(getHeaders());
+  headers.delete("Content-Type");
+  return {
+    endpoint: getEndpoint(),
+    key: createHash("sha256").update(JSON.stringify([...headers])).digest("hex").slice(0, 16),
+  };
+}
+
+function sameDestination(a, b) {
+  return Boolean(a) && Boolean(b) && a.endpoint === b.endpoint && a.key === b.key;
+}
+
+// Queue files written before destinations were recorded hold the bare payload.
+// Their destination is unknowable, which is why they are skipped rather than
+// drained: the queue evicts the oldest file once it is full, so they leave on
+// their own.
+function queuedEntry(raw) {
+  if (raw && typeof raw === "object" && !Array.isArray(raw) && raw.orqDestination && raw.payload) {
+    return { destination: raw.orqDestination, payload: raw.payload };
+  }
+  return { destination: null, payload: raw };
 }
 
 function buildBatchPayload(spans) {
@@ -220,18 +254,28 @@ async function postSpans(spans) {
 
 export async function drainQueue() {
   const queueFiles = await listQueuedFiles();
+  const destination = currentDestination();
+  let skipped = 0;
   for (const filePath of queueFiles) {
-    let payload;
+    let raw;
     try {
-      payload = await readQueuedPayload(filePath);
+      raw = await readQueuedPayload(filePath);
     } catch (err) {
       process.stderr.write(`[orq-trace] WARN: dropping corrupt queue file: ${err?.message}\n`);
       await deleteQueuedFile(filePath);
       continue;
     }
+    const entry = queuedEntry(raw);
+    // Another workspace's batch, or one whose destination was never recorded.
+    // Left where it is: this session cannot deliver it, and posting it here
+    // would send its content to the wrong workspace.
+    if (!sameDestination(entry.destination, destination)) {
+      skipped += 1;
+      continue;
+    }
     // Re-chunked rather than posted as-is, so a file queued before batching
     // existed still gets through instead of wedging the queue forever.
-    const queued = spansOf(payload);
+    const queued = spansOf(entry.payload);
     const { undelivered, error } = await postSpans(queued);
 
     if (undelivered.length === 0) {
@@ -241,12 +285,34 @@ export async function drainQueue() {
 
     process.stderr.write(`[orq-trace] WARN: drain retry failed: ${error?.message}\n`);
     // Shrink the file to what still needs sending, so the next drain does not
-    // re-post the batches that already landed.
+    // re-post the batches that already landed. The destination travels with
+    // it, or the rewrite would strip what this drain just checked.
     if (undelivered.length !== queued.length) {
-      await writeQueuedPayload(filePath, buildBatchPayload(undelivered)).catch(() => {});
+      await writeQueuedPayload(filePath, {
+        orqDestination: entry.destination,
+        payload: buildBatchPayload(undelivered),
+      }).catch(() => {});
     }
     // Still unreachable. Keep the file; the next hook tries again.
     break;
+  }
+  if (skipped > 0) {
+    await debugLog(`[otlp] DRAIN skipped ${skipped} queued file(s) for another destination\n`);
+    // A file this session cannot deliver is usually another workspace's. It can
+    // also be this session's own, after the key was rotated: the fingerprint no
+    // longer matches, or it can be a legacy file with no recorded destination.
+    // Either way the spans sit there until a later session start prunes them,
+    // which is why the line says that rather than promising they expire on a
+    // timer. Say it on stderr, like the other failure paths here, or the loss is
+    // invisible without ORQ_DEBUG. The warning is rate limited per draining
+    // destination through the state directory, because every hook is its own
+    // process and the condition lasts as long as the files do.
+    if (await shouldWarnUndeliverable(destination)) {
+      process.stderr.write(
+        `[orq-trace] WARN: ${skipped} queued batch(es) have no recorded destination or belong to a different endpoint or API key, ` +
+          `so this session cannot deliver them; a later session start removes them once they are an hour old\n`,
+      );
+    }
   }
 }
 
@@ -268,9 +334,13 @@ export async function sendSpans(spans) {
 
   process.stderr.write(`[orq-trace] WARN: span send failed (queued for retry): ${error?.message}\n`);
   try {
-    // Queued in the same envelope the endpoint takes, so a later drain reads
-    // back exactly what was written.
-    await enqueuePayload(buildBatchPayload(undelivered));
+    // Queued in the same envelope the endpoint takes, wrapped with the
+    // destination it is owed to, so a later drain can tell whether it is the
+    // session that may deliver it.
+    await enqueuePayload({
+      orqDestination: currentDestination(),
+      payload: buildBatchPayload(undelivered),
+    });
   } catch (enqueueErr) {
     process.stderr.write(
       `[orq-trace] WARN: span data lost, send failed and enqueue failed: ${enqueueErr?.message || enqueueErr}\n`,

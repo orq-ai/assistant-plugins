@@ -1,0 +1,8 @@
+id: build-agent-fires
+skill: orq-build-agent
+kind: invocation
+prompt: Set up a new agent in orq that answers HR policy questions from our employee handbook PDF.
+expect_skill: orq-build-agent
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 2

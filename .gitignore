@@ -12,7 +12,10 @@
 ./plans/*
 
 # AI Assistants
-.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/skill-tests/
 .cursor/
 .windsurf/
 context
@@ -37,3 +40,6 @@ __pycache__/
 # TS contract fixture installs unpinned deps on purpose; a lockfile would pin them.
 node_modules/
 skills/*/tests/ts/package-lock.json
+
+# Local eval run summaries (tests/scripts/run_evals.py)
+tests/eval-results/

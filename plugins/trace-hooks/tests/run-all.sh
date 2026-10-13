@@ -11,28 +11,40 @@ PLUGIN_ROOT="$(cd "$DIR/.." && pwd)"
 
 EXIT=0
 
-echo "########## 1/6 manifest schema ##########"
+echo "########## 1/9 manifest schema ##########"
 node -e "JSON.parse(require('fs').readFileSync('$PLUGIN_ROOT/.claude-plugin/plugin.json','utf8'))" \
   && echo "PASS: plugin.json parses" || EXIT=1
 
 echo
-echo "########## 2/6 runtime files ##########"
+echo "########## 2/9 runtime files ##########"
 node "$PLUGIN_ROOT/src/validate-runtime.js" || EXIT=1
 
 echo
-echo "########## 3/6 credential resolution ##########"
+echo "########## 3/9 value redaction ##########"
+node "$DIR/test-redact.mjs" || EXIT=1
+
+echo
+echo "########## 4/9 queue destination ##########"
+node "$DIR/test-queue-destination.mjs" || EXIT=1
+
+echo
+echo "########## 5/9 trace switch ##########"
+node "$DIR/test-trace-switch.mjs" || EXIT=1
+
+echo
+echo "########## 6/9 credential resolution ##########"
 node "$DIR/test-resolution.mjs" || EXIT=1
 
 echo
-echo "########## 4/6 post-tool-use hook ##########"
+echo "########## 7/9 post-tool-use hook ##########"
 node "$DIR/test-post-tool-use.mjs" || EXIT=1
 
 echo
-echo "########## 5/6 transcript spans ##########"
+echo "########## 8/9 transcript spans ##########"
 node "$DIR/test-transcript-spans.mjs" || EXIT=1
 
 echo
-echo "########## 6/6 trace flow (subprocess CC) ##########"
+echo "########## 9/9 trace flow (subprocess CC) ##########"
 bash "$DIR/test-trace-flow.sh" "$TRACE_PROFILE" || EXIT=1
 
 # test-workspace-visibility.sh deliberately not in run-all: known-failing

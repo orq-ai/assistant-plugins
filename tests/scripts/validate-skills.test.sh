@@ -77,7 +77,8 @@ AGENTS
 <!-- END_SKILLS_TABLE -->
 README
 
-  mkdir -p "$d/tests"
+  mkdir -p "$d/tests/evals/example-skill"
+  printf 'id: example-fires\n' > "$d/tests/evals/example-skill/example-fires.yaml"
   cat > "$d/tests/skills.md" <<'SMOKE'
 # Skill Smoke Tests
 
@@ -404,6 +405,24 @@ cp "$d/skills/example-skill/SKILL.md" "$d/.agents/skills/leftover/SKILL.md"
 git -C "$d" add -A
 expect_fail "tracked SKILL.md outside skills/" "$d" "stray tracked skill outside skills/"
 
+# .claude/skills/ may hold maintainer skills, but only with a boolean internal flag.
+maintainer_skill() {
+  local d
+  d=$(build_fixture "$1")
+  mkdir -p "$d/.claude/skills/runner"
+  printf -- '---\nname: runner\ndescription: Maintainer-only fixture skill.\n%b---\n\nBody.\n' "$2" > "$d/.claude/skills/runner/SKILL.md"
+  git -C "$d" add -A
+  echo "$d"
+}
+d=$(maintainer_skill maintainer-no-flag '')
+expect_fail "maintainer skill without internal: true" "$d" "lacks \`metadata: internal: true\`"
+d=$(maintainer_skill maintainer-string-flag 'metadata:\n  internal: "true"\n')
+expect_fail "maintainer skill with internal as a string" "$d" "lacks \`metadata: internal: true\`"
+d=$(maintainer_skill maintainer-block-flag 'metadata:\n  # boolean on purpose\n  internal: true # keep\n')
+expect_pass "maintainer skill with internal: true after a comment line" "$d"
+d=$(maintainer_skill maintainer-flow-flag 'metadata: {internal: true}\n')
+expect_pass "maintainer skill with flow-form internal: true" "$d"
+
 # --- 6. spec §4.1 path containment ---
 # Git Bash without developer mode copies instead of linking; skip on those platforms.
 symlink_cases() {
@@ -698,6 +717,11 @@ mkdir -p "$d/tests/factual"
 printf 'test_type,target,assertion,description\n' > "$d/tests/factual/example-skill.csv"
 printf 'test_type,target,assertion,description\n' > "$d/tests/factual/gone-skill.csv"
 expect_warn "factual CSV that names no skill" "$d" "tests/factual/gone-skill.csv names no skill"
+
+# --- 14. eval cases per skill ---
+d=$(build_fixture no-evals)
+rm -rf "$d/tests/evals"
+expect_fail "new skill without tests/evals/<skill>/" "$d" "a new skill ships with at least one"
 
 # --- git-failure paths ---
 d=$(build_fixture no-git)
