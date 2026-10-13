@@ -346,7 +346,10 @@ rubric = llm_jury(
         '- <criterion 1 from intake>\n- <criterion 2 from intake>\n...'
     ),
     verdict_kind='numeric',
-    model='openai/gpt-5',
+    # The judge must NOT be one of CANDIDATES. A model scoring its own answer self-prefers
+    # and inflates its grade, and graded mode has no self-vote guard. Pick a strong model
+    # that is not under test.
+    model='<judge_model_not_in_CANDIDATES>',
 )
 
 async def main():
@@ -410,6 +413,7 @@ async def main():
 
     records: list[JudgedComparison] = []
     dropped_no_verdict = 0
+    dropped_self_vote = 0
     for i, dp in enumerate(datapoints):
         for a in range(len(CANDIDATES)):
             for b in range(a + 1, len(CANDIDATES)):
@@ -426,8 +430,11 @@ async def main():
                 # bias inside each vote.
                 for vote in comparison.votes:
                     # Drop a judge's vote on a pair that holds its own answer: self-preference
-                    # would inflate that model's skill. (A no-op once judges are independent.)
+                    # would inflate that model's skill. Counted, not silent: when judges overlap
+                    # CANDIDATES this removes most votes (a 3-judge panel on a pair keeps one
+                    # judge), which the ranking must disclose. (A no-op once judges are independent.)
                     if vote.model in (model_a, model_b):
+                        dropped_self_vote += 1
                         continue
                     if vote.vote is None:
                         # A judge returned no usable verdict. Count it, never drop it silently:
@@ -448,6 +455,11 @@ async def main():
         print(
             f'warning: {dropped_no_verdict} judge vote(s) returned no verdict and were excluded; '
             'hard pairs drop out first, so check judge coverage before trusting the ranking.'
+        )
+    if dropped_self_vote:
+        print(
+            f'warning: {dropped_self_vote} judge vote(s) were dropped as self-votes (a judge rating a '
+            'pair that holds its own answer); use judges outside CANDIDATES to keep the full panel.'
         )
 
     fit = fit_bt(records, judge_sigma=True, hard=True)

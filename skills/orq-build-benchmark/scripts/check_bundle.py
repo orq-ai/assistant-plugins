@@ -65,25 +65,70 @@ SECRET_PATTERNS = (
 )
 
 # A seed entry is a markdown list item or section heading, one per task instance;
-# a placeholder line (TODO / <fill in>) is not a seed. This replaces a byte-length
-# check that a 45-char stub (`# Task seeds` plus a `TODO:` line) passed.
-SEED_ENTRY = re.compile(r'\s*([-*+]\s+|\d+[.)]\s+|#{2,6}\s+)\S')
-SEED_PLACEHOLDER = re.compile(r'(?i)\b(todo|fixme|tbd|fill in|placeholder)\b|<[^>]+>')
+# a placeholder line (TODO / <fill in>) is not a seed. A bare section heading is not
+# a seed either (a `## Task seeds` title plus a `TODO:` line must not count as one),
+# so only list items count. The angle-bracket placeholder is lowercase-only so a
+# generic type in a real seed (`List<String>`) is not mistaken for a `<fill in>`.
+SEED_ENTRY = re.compile(r'\s*([-*+]\s+|\d+[.)]\s+)\S')
+SEED_PLACEHOLDER = re.compile(r'(?i)\b(todo|fixme|tbd|fill in|placeholder)\b')
+# Case-sensitive on purpose (kept out of the (?i) pattern above): a lowercase `<name>`
+# is a fill-in placeholder, but a capitalised generic type in a real seed (`List<String>`)
+# is not.
+SEED_ANGLE_PLACEHOLDER = re.compile(r'<[a-z][a-z ._-]*>')
+
+# Values that follow a credential label in prose or a template but are not secrets:
+# a few plain words a field description uses (`password: required`), documentation
+# placeholders, and env-var references. Everything else assigned to an
+# api_key/secret/token/password label is treated as a key, so a real key never slips
+# through for lacking a digit.
+_NON_SECRET_VALUES = frozenset(
+    {
+        'required',
+        'optional',
+        'none',
+        'null',
+        'nil',
+        'empty',
+        'true',
+        'false',
+        'unset',
+        'changeme',
+        'redacted',
+        'placeholder',
+        'example',
+    }
+)
 
 
 def _looks_like_secret(value: str) -> bool:
-    """True when an assigned value looks like a real credential, not an English word.
+    """True when a value assigned to a credential label looks like a real secret.
 
-    A key or token is long, or carries digits or key punctuation (`sk-...`, `AKIA...`,
-    base64). A prose word after `password:` such as the review's `required` is short
-    and all letters, so it is not flagged.
+    Credential labels (api_key/secret/token/password) default to secret: a bundle
+    almost never assigns one a non-secret value, and the earlier digit/length shape
+    check let a real all-letter key (`ORQ_API_KEY=abcdefghijklmnop`) read as clean.
+    The exceptions let through are documentation placeholders, env-var references, and
+    the handful of plain words a field description uses (`password: required`).
     """
-    return len(value) >= 20 or (len(value) >= 12 and any(c.isdigit() or c in '-_/+=.' for c in value))
+    v = value.strip().strip('\'"')
+    if len(v) < 8:  # too short to be a credential; the regex already requires 8+, this is a backstop
+        return False
+    low = v.lower()
+    if low in _NON_SECRET_VALUES:
+        return False
+    if v[0] in '<${':  # <your-key>, ${ORQ_API_KEY}, $TOKEN
+        return False
+    if any(marker in low for marker in ('your_', 'your-', 'changeme', 'redacted', 'placeholder', 'example')):
+        return False
+    return True
 
 
 def _count_seeds(text: str) -> int:
-    """Real seed entries: list items or headings that are not placeholder lines."""
-    return sum(1 for ln in text.splitlines() if SEED_ENTRY.match(ln) and not SEED_PLACEHOLDER.search(ln))
+    """Real seed entries: list items that are not placeholder lines (headings excluded)."""
+    return sum(
+        1
+        for ln in text.splitlines()
+        if SEED_ENTRY.match(ln) and not SEED_PLACEHOLDER.search(ln) and not SEED_ANGLE_PLACEHOLDER.search(ln)
+    )
 
 
 @dataclass
@@ -170,10 +215,13 @@ def check(bundle_dir: Path) -> Report:
             for label, pattern in SECRET_PATTERNS:
                 if label in flagged:
                     continue
-                match = pattern.search(line)
-                if not match:
-                    continue
-                if label == 'assigned api key literal' and not _looks_like_secret(match.group(1)):
+                if label == 'assigned api key literal':
+                    # Check EVERY assignment on the line, not just the first: a prose
+                    # decoy ahead of a real key (`token: required, api_key=sk-...`) must
+                    # not mask the key behind it.
+                    if not any(_looks_like_secret(m.group(1)) for m in pattern.finditer(line)):
+                        continue
+                elif not pattern.search(line):
                     continue
                 report.error(f'{rel} contains a {label}; redact or replace with a declared stand-in.')
                 flagged.add(label)
@@ -240,12 +288,26 @@ def _selftest() -> int:
         assert not good.errors, f'clean bundle should pass, got {good.errors}'
 
         # Ordinary prose is not a key: `password: required` quoted in a bug report must not
-        # flag (the false positive the review hit). 'required' is 8 letters, no digits.
+        # flag (the false positive the shape check exists for). 'required' is exempted by name.
         (root / 'bug_report.txt').write_text(
             'the login form says "password: required" when the field is blank', encoding='utf-8'
         )
         assert not check(root).errors, 'prose `password: required` must not read as a key'
         (root / 'bug_report.txt').unlink()
+
+        # A real all-letter key must be caught: the digit/length shape check used to let
+        # `ORQ_API_KEY=abcdefghijklmnop` (16 letters, no digit) read as clean.
+        (root / 'letter_key.txt').write_text('ORQ_API_KEY=abcdefghijklmnop', encoding='utf-8')  # gitleaks:allow
+        assert any('api key' in e.lower() for e in check(root).errors), 'all-letter key must be caught'
+        (root / 'letter_key.txt').unlink()
+
+        # A prose decoy ahead of a real key on the same line must not mask it (the scan
+        # used to check only the first match).
+        (root / 'decoy.txt').write_text(
+            'token: required, api_key=sk-orq-abcd1234efgh', encoding='utf-8'  # gitleaks:allow
+        )
+        assert any('api key' in e.lower() for e in check(root).errors), 'key behind a decoy must be caught'
+        (root / 'decoy.txt').unlink()
 
         # The `check-bundle:allow` marker overrides a real-looking match on its own line.
         (root / 'declared_standin.txt').write_text(
@@ -254,16 +316,28 @@ def _selftest() -> int:
         assert not check(root).errors, 'allow marker must suppress the scan on its line'
         (root / 'declared_standin.txt').unlink()
 
-        # A placeholder seeds file (a heading plus a TODO, the 45-char stub the old byte-length
-        # check passed) has no real seed entry, so it must still error.
+        # A placeholder seeds file (a section heading plus a TODO) has no real seed entry,
+        # so it must still error. A heading is not itself a seed, and the `##` title here
+        # would have counted as one before headings were dropped from SEED_ENTRY.
         (root / '02_TASK_SEEDS.md').write_text(
-            '# Task seeds\n\nTODO: fill in the task instances here later.\n', encoding='utf-8'
+            '## Task seeds\n\nTODO: fill in the task instances here later.\n', encoding='utf-8'
         )
         assert any('02_TASK_SEEDS' in e for e in check(root).errors), 'placeholder seeds must not pass'
         (root / '02_TASK_SEEDS.md').write_text(
             '- seed: review one PR; answer: missing null check; evidence: line 42', encoding='utf-8'
         )
         assert not check(root).errors, 'restored clean seeds should pass again'
+
+        # A seed naming a generic type is a real seed, not a `<fill in>` placeholder: the
+        # angle-bracket rule is lowercase-only so `List<String>` does not disqualify it.
+        (root / '02_TASK_SEEDS.md').write_text(
+            '- seed: parse a List<String>; answer: handle the empty case; evidence: line 9',
+            encoding='utf-8',
+        )
+        assert not check(root).errors, 'a seed with a generic type must count as a real seed'
+        (root / '02_TASK_SEEDS.md').write_text(
+            '- seed: review one PR; answer: missing null check; evidence: line 42', encoding='utf-8'
+        )
 
         # Unquoted .env-style keys (the most common leak form) are caught too, not only quoted ones.
         for leak in ('ORQ_API_KEY=sk-orq-abcd1234efgh', 'api_key: sk-abcdefghijkl'):  # gitleaks:allow

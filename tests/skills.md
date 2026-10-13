@@ -673,6 +673,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-compare-agents/resources/evaluatorq-api.md`
 - `skills/orq-compare-agents/resources/gotchas.md`
 - `skills/orq-build-agent/SKILL.md`
+- `skills/orq-build-benchmark/SKILL.md`
+- `skills/orq-build-benchmark/scripts/check_bundle.py` — bundle preflight; `--selftest` guards the secret scan and seed checks
 - `skills/orq-build-evaluator/SKILL.md`
 - `skills/orq-evaluator-alignment/SKILL.md`
 - `skills/orq-evaluator-alignment/config.toml`
