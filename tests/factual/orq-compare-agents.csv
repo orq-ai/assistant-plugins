@@ -14,6 +14,7 @@ sdk_import,evaluatorq.llm_jury,,llm_jury importable from evaluatorq
 sdk_import,evaluatorq.string_contains_evaluator,,string_contains_evaluator importable from evaluatorq
 sdk_method,orq_ai_sdk.Orq,evals,Orq client has .evals
 sdk_method,orq_ai_sdk.Orq,agents,Orq client has .agents
+sdk_method,orq_ai_sdk.Orq,responses,Orq client has .responses (the migrated primary path)
 doc_url,https://github.com/orq-ai/evaluatorq,,evaluatorq page reachable
 doc_url,https://docs.orq.ai/docs/tutorials/evaluator-q,,evaluator-q page reachable
 doc_url,https://docs.orq.ai/docs/experiments/creating,,creating page reachable

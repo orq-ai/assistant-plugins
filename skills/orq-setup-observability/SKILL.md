@@ -61,7 +61,7 @@ Instrumentation Progress:
 
 ### Key Concepts
 
-- **AI Router** (`https://api.orq.ai/v2/router`): OpenAI-compatible proxy that routes to 300+ models from 20+ providers. Traces are generated automatically for every call.
+- **AI Router** (`https://api.orq.ai/v3/router`): OpenAI-compatible proxy that routes to 300+ models from 20+ providers. Traces are generated automatically for every call.
 - **Observability** (`https://api.orq.ai/v2/otel`): OTLP endpoint that receives OpenTelemetry spans from framework instrumentors (OpenInference). Captures agent steps, tool calls, chain execution.
 - **`@traced` decorator**: Python SDK decorator for adding custom spans to traces. Supports typed spans: `agent`, `llm`, `tool`, `retrieval`, `embedding`, `function`.
 - Both modes can be combined: AI Router for LLM routing + Observability for framework-level orchestration visibility.
@@ -112,7 +112,7 @@ Follow these steps **in order**. Do NOT skip steps.
 
 5. **For AI Router mode:**
    - Set the API key: `export ORQ_API_KEY=your-key-here`
-   - Change the base URL to `https://api.orq.ai/v2/router`
+   - Change the base URL to `https://api.orq.ai/v3/router`
    - Use `provider/model` format for model names (e.g., `openai/gpt-4o`, `anthropic/claude-sonnet-4-5-20250929`)
    - That's it — traces appear automatically
 

@@ -19,7 +19,7 @@ You are an **orq.ai integration engineer**. Your job is to help users invoke orq
 - **NEVER** invoke a deployment without confirming all `{{variable}}` inputs are populated — missing inputs silently omit prompt content with no error.
 - **NEVER** skip `identity.id` in production calls — it links requests to contacts in orq.ai and enables per-user analytics and cost attribution.
 - **ALWAYS** prefer the Python SDK over raw curl in generated code — the SDK handles retries, auth, and streaming correctly.
-- **ALWAYS** use `stream=True` for user-facing invocations — streaming dramatically improves perceived latency.
+- **Prefer streaming for user-facing invocations** — it dramatically improves perceived latency. Stream deployments with `client.deployments.stream(...)` (an `EventStream`), not `invoke(stream=True)`, which is not iterable.
 - **ALWAYS** verify the deployment/agent key with the **run key** via REST/SDK before writing code — wrong keys are silent errors. Use `search_entities` to **browse** for keys, then verify with the run key (see [run-key preflight](../orq-shared/resources/run-key-preflight.md)).
 
 **Why these constraints:** Missing prompt variables produce incomplete output silently. Hardcoded API keys are a security risk. Wrong keys waste budget. Skipping identity makes traces unattributable.
@@ -94,9 +94,9 @@ Invoke Progress:
 - **`messages`** (deployments) append additional conversation turns after the deployment's configured prompt — use this to pass the user's actual question when the prompt template doesn't use `{{variable}}` substitution.
 - **`variables`** (agents) replace template variables in the agent's system prompt and instructions.
 - **`identity`** links requests to contacts in orq.ai — required `id`, optional `display_name`, `email`, `metadata`, `logo_url`, `tags`.
-- **`stream=True`** enables server-sent events for real-time token delivery.
+- **Streaming** is via `client.deployments.stream(...)`, which returns an `EventStream` you iterate for real-time tokens. `invoke(stream=True)` returns a single response body, not an iterator, so it does not stream.
 - **`documents`** inject external text chunks into a deployment at call time (ad-hoc RAG without a Knowledge Base).
-- **`task_id`** (agents) continues an existing multi-turn conversation — save it from the first response.
+- **`previous_response_id`** (agents) continues an existing multi-turn conversation — save `response.id` from the first turn and pass it on the next. (The deprecated `agents.*` path uses `task_id` for this instead.)
 
 ---
 
@@ -110,7 +110,7 @@ Follow these steps **in order**. Do NOT skip steps.
 
 1. **Identify what the user wants to invoke:**
    - **Deployment** — prompt template + model, versioned, invoke with `inputs` to fill variables
-   - **Agent** — prompt + tools + memory + KB, multi-turn conversations via `responses.create`
+   - **Agent** — prompt + tools + memory + KB, invoked with `client.responses.create(model="agent/<agent-key>", input=…)`, multi-turn via `previous_response_id`
    - **Model direct call** — OpenAI-compatible AI Router, no template
 
 2. **Find the resource key** (agents and deployments only — skip for model direct calls) if the user doesn't already know it, using `search_entities` MCP tool to **browse**:
@@ -160,10 +160,10 @@ Follow these steps **in order**. Do NOT skip steps.
 
 7. **Choose streaming vs. non-streaming.**
 
-   | Use case | Mode |
+   | Use case | How |
    |---|---|
-   | User-facing UI, chatbot | `stream=True` |
-   | Background job, batch, eval | `stream=False` |
+   | User-facing UI, chatbot | `client.deployments.stream(...)` — an `EventStream` you iterate |
+   | Background job, batch, eval | `client.deployments.invoke(...)` — a single response |
 
 8. **Determine additional options as needed.**
 
@@ -187,7 +187,7 @@ Follow these steps **in order**. Do NOT skip steps.
 
 10. **Verify the response:**
    - Deployment: check `choices[0].message.content` for the output text
-   - Agent: check `response.output[0].parts[0].text` for the output text; save `response.task_id` for multi-turn
+   - Agent: read the output text from `response.output[-1]["content"][0]["text"]`; save `response.id` and pass it as `previous_response_id` for multi-turn
    - If wrong output: check for missing inputs, wrong key, or prompt issues
 
 11. **Find the trace** — direct user to [my.orq.ai](https://my.orq.ai/) → Traces, or use `response.telemetry.trace_id`.
@@ -244,15 +244,18 @@ response = client.deployments.invoke(
 )
 print(response.choices[0].message.content)
 
-# Streaming (works with any pattern above)
-response = client.deployments.invoke(
+# Streaming (works with any pattern above) — use deployments.stream(),
+# not invoke(stream=True). invoke(stream=True) returns a single response body,
+# not an iterator, so `for chunk in response` raises. stream() returns an
+# EventStream: a context manager you iterate, each event's payload under .data.
+with client.deployments.stream(
     key="<deployment-key>",
     inputs={"variable_name": "value"},
     identity={"id": "user_<unique_id>"},
-    stream=True,
-)
-for chunk in response:
-    print(chunk, end="", flush=True)
+) as stream:
+    for event in stream:
+        if event.data and event.data.choices:
+            print(event.data.choices[0].message.content, end="", flush=True)
 ```
 
 ### Deployment — curl
@@ -299,37 +302,49 @@ from orq_ai_sdk import Orq
 
 client = Orq(api_key=os.environ["ORQ_API_KEY"])
 
-# Single turn — note: agents use parts format, NOT OpenAI-style content
-response = client.agents.responses.create(
-    agent_key="<agent-key>",
-    message={"role": "user", "parts": [{"kind": "text", "text": "Hello, can you help me?"}]},
+# Single turn: route to the agent with model="agent/<agent-key>".
+# Pin a version with @<version>, e.g. model="agent/<agent-key>@4.0.0".
+response = client.responses.create(
+    model="agent/<agent-key>",
+    input="Hello, can you help me?",
     identity={"id": "user_<unique_id>", "display_name": "Jane Doe"},
 )
-print(response.output[0].parts[0].text)
+# output is a list of message items; the assistant text is the last message's first content block
+print(response.output[-1]["content"][0]["text"])
 
-# Multi-turn: save task_id and pass it in follow-ups
-task_id = response.task_id
-follow_up = client.agents.responses.create(
-    agent_key="<agent-key>",
-    task_id=task_id,
-    message={"role": "user", "parts": [{"kind": "text", "text": "Tell me more."}]},
+# Multi-turn: pass the previous response id, not a task id
+follow_up = client.responses.create(
+    model="agent/<agent-key>",
+    input="Tell me more.",
+    previous_response_id=response.id,
 )
-print(follow_up.output[0].parts[0].text)
+print(follow_up.output[-1]["content"][0]["text"])
 ```
+
+> **Deprecated, still serves.** `client.agents.responses.create(...)` and `POST /v2/agents/<agent-key>/responses` are marked `@deprecated` in orq-python 4.12.22+ but still work; prefer `client.responses.create(model="agent/<agent-key>", …)` above. The old A2A `parts` shape with `task_id` multi-turn:
+>
+> ```python
+> response = client.agents.responses.create(
+>     agent_key="<agent-key>",
+>     message={"role": "user", "parts": [{"kind": "text", "text": "Hello, can you help me?"}]},
+>     identity={"id": "user_<unique_id>", "display_name": "Jane Doe"},
+> )
+> task_id = response.task_id  # pass back in follow-ups
+> print(response.output[0].parts[0].text)
+> ```
 
 ### Agent — curl
 
 ```bash
-curl -s -X POST https://api.orq.ai/v2/agents/<agent-key>/responses \
+curl -s -X POST https://api.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "message": {
-      "role": "user",
-      "parts": [{"kind": "text", "text": "Hello, can you help me?"}]
-    },
+    "model": "agent/<agent-key>",
+    "input": "Hello, can you help me?",
     "identity": {"id": "user_<unique_id>", "display_name": "Jane Doe"}
   }' | jq
+# Deprecated, still serves: POST https://api.orq.ai/v2/agents/<agent-key>/responses with the A2A parts body.
 ```
 
 ### Agent — Node.js SDK
@@ -339,21 +354,26 @@ import { Orq } from "@orq-ai/node";
 
 const client = new Orq({ apiKey: process.env.ORQ_API_KEY });
 
-const response = await client.agents.responses.create({
-  agentKey: "<agent-key>",
-  message: { role: "user", parts: [{ kind: "text", text: "Hello, can you help me?" }] },
+// Mirrors the POST /v3/router/responses body above (the authority). The Node SDK
+// was not introspected here; it is generated from the same spec, so field names
+// are expected to match camelCased — verify against @orq-ai/node before relying on it.
+const response = await client.responses.create({
+  model: "agent/<agent-key>",
+  input: "Hello, can you help me?",
   identity: { id: "user_<unique_id>", displayName: "Jane Doe" },
 });
-console.log(response.output[0].parts[0].text);
+console.log(response.output.at(-1).content[0].text);
 
-// Multi-turn
-const followUp = await client.agents.responses.create({
-  agentKey: "<agent-key>",
-  taskId: response.taskId,
-  message: { role: "user", parts: [{ kind: "text", text: "Tell me more." }] },
+// Multi-turn: pass the previous response id
+const followUp = await client.responses.create({
+  model: "agent/<agent-key>",
+  input: "Tell me more.",
+  previousResponseId: response.id,
 });
-console.log(followUp.output[0].parts[0].text);
+console.log(followUp.output.at(-1).content[0].text);
 ```
+
+> **Deprecated, still serves.** The Node equivalent of the old path is `client.agents.responses.create({ agentKey, message: { role, parts }, taskId })`; prefer `client.responses.create({ model: "agent/<agent-key>", … })` above.
 
 ### Model (AI Router) — Python SDK
 
@@ -365,7 +385,7 @@ from openai import OpenAI
 
 client = OpenAI(
     api_key=os.environ["ORQ_API_KEY"],
-    base_url="https://api.orq.ai/v2/router",
+    base_url="https://api.orq.ai/v3/router",
 )
 
 response = client.chat.completions.create(
@@ -381,7 +401,7 @@ print(response.choices[0].message.content)
 ### Model (AI Router) — curl
 
 ```bash
-curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
+curl -s -X POST https://api.orq.ai/v3/router/chat/completions \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -402,10 +422,10 @@ curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
 | Invoking a deployment without `inputs` when prompt has `{{variables}}` | Always find and pass every `{{variable}}` in the prompt — missing ones silently omit content |
 | Passing `inputs` to a deployment that has no `{{variable}}` placeholders | `inputs` are silently ignored if the placeholder doesn't exist — use `messages` to append the user's question instead |
 | Hardcoding `ORQ_API_KEY` in source code | Use `os.environ["ORQ_API_KEY"]` / `process.env.ORQ_API_KEY` |
-| Using OpenAI message format for agents (`{"role": "user", "content": "..."}`) | Use A2A parts format: `{"role": "user", "parts": [{"kind": "text", "text": "..."}]}` |
+| Using the deprecated agent `parts` message shape in new code | `client.responses.create(model="agent/<agent-key>", input="…")` takes a plain `input` string; the A2A `parts` shape belongs to the deprecated `agents.responses.create` path |
 | Skipping `identity.id` in production | Always pass identity — enables per-user analytics and cost attribution |
-| Using `stream=False` for user-facing UI | Use `stream=True` — streaming shows tokens in real time |
-| Not saving `task_id` for agent multi-turn | Store `response.task_id` and pass it in subsequent turns |
+| Expecting `invoke(stream=True)` to stream | It returns a single response body, not an iterator; use `client.deployments.stream(...)` for token-by-token UI |
+| Using `task_id` for agent multi-turn in new code | Pass `previous_response_id=response.id` to `client.responses.create`; `task_id` is the deprecated path's multi-turn handle |
 | Using model name without provider prefix | Use `openai/gpt-4.1`, `anthropic/claude-sonnet-4-5` — not just `gpt-4.1` |
 | Not checking the trace after first invocation | Use `response.telemetry.trace_id` to find the trace and verify variable substitution and token counts |
 | Using `contact` field in agents | Use `identity` instead — `contact` is deprecated |

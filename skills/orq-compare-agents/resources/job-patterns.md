@@ -14,21 +14,17 @@ Pick the pattern matching each agent's framework, then assemble them into the co
 @job("OrqAgent")
 async def orq_agent_job(data: DataPoint, row: int):
     with Orq(api_key=ORQ_API_KEY, server_url=ORQ_BASE_URL) as orq:
-        response = orq.agents.responses.create(
-            agent_key="<AGENT_KEY>",
-            background=False,
-            message={
-                "role": "user",
-                "parts": [{"kind": "text", "text": data.inputs["query"]}],
-            },
+        response = orq.responses.create(
+            model="agent/<AGENT_KEY>",
+            input=data.inputs["query"],
         )
 
+    # output is a list of message items; collect the assistant text blocks
     text = ""
-    if response.output:
-        for msg in response.output:
-            for part in msg.parts:
-                if hasattr(part, "text"):
-                    text += part.text
+    for msg in response.output or []:
+        for block in msg.get("content", []):
+            if block.get("type") == "output_text":
+                text += block.get("text", "")
 
     return {
         "agent": "OrqAgent",
@@ -44,26 +40,23 @@ async def orq_agent_job(data: DataPoint, row: int):
 ```typescript
 const orqAgentJob = job("OrqAgent", async (data) => {
   const orq = new Orq({ apiKey: process.env.ORQ_API_KEY });
-  const response = await orq.agents.responses.create({
-    agentKey: "<AGENT_KEY>",
-    background: false,
-    message: {
-      role: "user",
-      parts: [{ kind: "text", text: data.inputs.query }],
-    },
+  // Mirrors POST /v3/router/responses (the authority); the Node SDK is generated from the same spec.
+  const response = await orq.responses.create({
+    model: "agent/<AGENT_KEY>",
+    input: data.inputs.query,
   });
 
   let text = "";
   for (const msg of response.output ?? []) {
-    for (const part of msg.parts) {
-      if ("text" in part) text += part.text;
+    for (const block of msg.content ?? []) {
+      if (block.type === "output_text") text += block.text;
     }
   }
   return { agent: "OrqAgent", query: data.inputs.query, response: text };
 });
 ```
 
-> **Important:** Use `agents.responses.create()`, NOT `agents.invoke()`. The `invoke()` method returns an async A2A task (status: "submitted"), not the actual response. See [gotchas](gotchas.md).
+> **Important:** Invoke the agent with `responses.create(model="agent/<AGENT_KEY>")`. If you fall back to the deprecated `agents.*` surface, use `agents.responses.create()`, NOT `agents.invoke()` — `invoke()` returns an async A2A task (status: "submitted"), not the actual response. See [gotchas](gotchas.md).
 
 ---
 
@@ -246,21 +239,21 @@ When comparing two orq.ai agents, duplicate the orq.ai pattern with different ke
 ```python
 @job("OrqAgent-GPT4o")
 async def orq_agent_a(data: DataPoint, row: int):
-    # ... agent_key="agent-gpt4o" ...
+    # ... model="agent/agent-gpt4o" ...
 
 @job("OrqAgent-Claude")
 async def orq_agent_b(data: DataPoint, row: int):
-    # ... agent_key="agent-claude" ...
+    # ... model="agent/agent-claude" ...
 ```
 
 ### TypeScript
 
 ```typescript
 const orqGpt4o = job("OrqAgent-GPT4o", async (data) => {
-  // ... agentKey: "agent-gpt4o" ...
+  // ... model: "agent/agent-gpt4o" ...
 });
 
 const orqClaude = job("OrqAgent-Claude", async (data) => {
-  // ... agentKey: "agent-claude" ...
+  // ... model: "agent/agent-claude" ...
 });
 ```
