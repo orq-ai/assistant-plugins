@@ -42,6 +42,11 @@ TEXT_SUFFIXES = {'.md', '.txt', '.csv', '.tsv', '.json', '.jsonl', '.yaml', '.ym
 # Non-descriptive names: a bundle should say what each file is.
 VAGUE_NAME = re.compile(r'^(doc|file|untitled|new|temp|tmp|copy|image|img|scan)[\s_-]*\d*$', re.IGNORECASE)
 
+# A line carrying this marker is skipped by the secret scan: the override the review
+# asked for, so a declared stand-in or a bug report that quotes a `key: value` phrase
+# can ship without editing the detector.
+SECRET_SCAN_ALLOW = 'check-bundle:allow'
+
 # Uncleared-confidential markers. Presence is an error: it must be redacted or
 # replaced with a declared stand-in before it can enter an orq dataset.
 SECRET_PATTERNS = (
@@ -49,13 +54,36 @@ SECRET_PATTERNS = (
     ('AWS access key id', re.compile(r'AKIA[0-9A-Z]{16}')),  # gitleaks:allow
     (
         # Both a quoted literal and an unquoted value: a bare `.env`-style line
-        # (ORQ_API_KEY=... or api_key: sk-...) is the most common way a key lands in
-        # a bundle, and a quotes-only pattern missed it entirely.
+        # (ORQ_API_KEY=... or api_key: sk-...) is the most common way a key lands in a
+        # bundle, and a quotes-only pattern missed it entirely. The value (group 1,
+        # surrounding quotes optional) is then shape-checked by `_looks_like_secret`
+        # so ordinary prose like `password: required` does not read as a key.
         'assigned api key literal',
-        re.compile(r'(?i)(api[_-]?key|secret|token|password)\s*[:=]\s*([\'"][^\'"\s]{8,}[\'"]|[^\'"\s]{8,})'),  # gitleaks:allow
+        re.compile(r'(?i)(?:api[_-]?key|secret|token|password)\s*[:=]\s*[\'"]?([^\'"\s]{8,})[\'"]?'),  # gitleaks:allow
     ),
     ('confidential banner', re.compile(r'(?i)\b(do not distribute|strictly confidential|internal use only)\b')),
 )
+
+# A seed entry is a markdown list item or section heading, one per task instance;
+# a placeholder line (TODO / <fill in>) is not a seed. This replaces a byte-length
+# check that a 45-char stub (`# Task seeds` plus a `TODO:` line) passed.
+SEED_ENTRY = re.compile(r'\s*([-*+]\s+|\d+[.)]\s+|#{2,6}\s+)\S')
+SEED_PLACEHOLDER = re.compile(r'(?i)\b(todo|fixme|tbd|fill in|placeholder)\b|<[^>]+>')
+
+
+def _looks_like_secret(value: str) -> bool:
+    """True when an assigned value looks like a real credential, not an English word.
+
+    A key or token is long, or carries digits or key punctuation (`sk-...`, `AKIA...`,
+    base64). A prose word after `password:` such as the review's `required` is short
+    and all letters, so it is not flagged.
+    """
+    return len(value) >= 20 or (len(value) >= 12 and any(c.isdigit() or c in '-_/+=.' for c in value))
+
+
+def _count_seeds(text: str) -> int:
+    """Real seed entries: list items or headings that are not placeholder lines."""
+    return sum(1 for ln in text.splitlines() if SEED_ENTRY.match(ln) and not SEED_PLACEHOLDER.search(ln))
 
 
 @dataclass
@@ -95,8 +123,11 @@ def check(bundle_dir: Path) -> Report:
             report.error(f'Missing required root doc: {doc}')
 
     seeds = bundle_dir / '02_TASK_SEEDS.md'
-    if seeds.is_file() and len(seeds.read_text(encoding='utf-8', errors='replace').strip()) < 40:
-        report.error('02_TASK_SEEDS.md has no seeds; stage at least one task instance with its answer.')
+    if seeds.is_file() and _count_seeds(seeds.read_text(encoding='utf-8', errors='replace')) < 1:
+        report.error(
+            '02_TASK_SEEDS.md has no seeds; stage at least one task instance '
+            '(a list item or heading per instance) with its answer, not a TODO placeholder.'
+        )
 
     files = [p for p in bundle_dir.rglob('*') if p.is_file() and not _is_vcs_internal(p, bundle_dir)]
     if not files:
@@ -130,9 +161,22 @@ def check(bundle_dir: Path) -> Report:
         except OSError as exc:
             unscanned.append(f'{rel} (read failed: {exc.strerror or exc})')
             continue
-        for label, pattern in SECRET_PATTERNS:
-            if pattern.search(blob):
+        # Scan line by line so a `check-bundle:allow` marker overrides just its own line,
+        # and so the api-key value can be shape-checked. One error per label per file.
+        flagged: set[str] = set()
+        for line in blob.splitlines():
+            if SECRET_SCAN_ALLOW in line:
+                continue
+            for label, pattern in SECRET_PATTERNS:
+                if label in flagged:
+                    continue
+                match = pattern.search(line)
+                if not match:
+                    continue
+                if label == 'assigned api key literal' and not _looks_like_secret(match.group(1)):
+                    continue
                 report.error(f'{rel} contains a {label}; redact or replace with a declared stand-in.')
+                flagged.add(label)
         if not hidden:
             if path.suffix.lower() in TEXT_SUFFIXES:
                 if len(blob) > TEXT_CONTENT_MAX_LENGTH:
@@ -195,8 +239,34 @@ def _selftest() -> int:
         good = check(root)
         assert not good.errors, f'clean bundle should pass, got {good.errors}'
 
+        # Ordinary prose is not a key: `password: required` quoted in a bug report must not
+        # flag (the false positive the review hit). 'required' is 8 letters, no digits.
+        (root / 'bug_report.txt').write_text(
+            'the login form says "password: required" when the field is blank', encoding='utf-8'
+        )
+        assert not check(root).errors, 'prose `password: required` must not read as a key'
+        (root / 'bug_report.txt').unlink()
+
+        # The `check-bundle:allow` marker overrides a real-looking match on its own line.
+        (root / 'declared_standin.txt').write_text(
+            'api_key = "sk-orq-abcd1234efgh"  check-bundle:allow', encoding='utf-8'  # gitleaks:allow
+        )
+        assert not check(root).errors, 'allow marker must suppress the scan on its line'
+        (root / 'declared_standin.txt').unlink()
+
+        # A placeholder seeds file (a heading plus a TODO, the 45-char stub the old byte-length
+        # check passed) has no real seed entry, so it must still error.
+        (root / '02_TASK_SEEDS.md').write_text(
+            '# Task seeds\n\nTODO: fill in the task instances here later.\n', encoding='utf-8'
+        )
+        assert any('02_TASK_SEEDS' in e for e in check(root).errors), 'placeholder seeds must not pass'
+        (root / '02_TASK_SEEDS.md').write_text(
+            '- seed: review one PR; answer: missing null check; evidence: line 42', encoding='utf-8'
+        )
+        assert not check(root).errors, 'restored clean seeds should pass again'
+
         # Unquoted .env-style keys (the most common leak form) are caught too, not only quoted ones.
-        for leak in ('ORQ_API_KEY=abcdefghijklmnop', 'api_key: sk-abcdefghijkl'):  # gitleaks:allow
+        for leak in ('ORQ_API_KEY=sk-orq-abcd1234efgh', 'api_key: sk-abcdefghijkl'):  # gitleaks:allow
             (root / 'env_leak.txt').write_text(leak, encoding='utf-8')
             env_report = check(root)
             assert any('api key' in e.lower() for e in env_report.errors), f'unquoted key not caught: {leak!r}'
@@ -204,7 +274,7 @@ def _selftest() -> int:
 
         # A secret in a hidden dotfile is scanned too (.env is the top leak vector); it used to be
         # skipped entirely. Version-control internals (.git/) stay excluded.
-        (root / '.env').write_text('ORQ_API_KEY=abcdefghijklmnop', encoding='utf-8')  # gitleaks:allow
+        (root / '.env').write_text('ORQ_API_KEY=sk-orq-abcd1234efgh', encoding='utf-8')  # gitleaks:allow
         dotfile_report = check(root)
         assert any('api key' in e.lower() for e in dotfile_report.errors), 'secret in a dotfile not caught'
         (root / '.env').unlink()

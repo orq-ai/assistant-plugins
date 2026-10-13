@@ -261,9 +261,14 @@ This replaces Optima's package-and-upload step. Do it in order.
 
 ### 1. Propose the plan and get approval
 
-From the seeds, propose: the task count, the categories, and the grading rubric
-(criteria drawn verbatim from the "good vs bad" observations in intake). For
-fixed label sets, name exact-match as the grader. Show this to the user and get
+From the seeds, propose: the task count, the categories, the grading rubric
+(criteria drawn verbatim from the "good vs bad" observations in intake), and the
+model-call budget so the user approves with the cost in view. For fixed label sets,
+name exact-match as the grader. State the call count explicitly: graded mode is
+about `datapoints x candidates` candidate calls plus one judge call each; arena mode
+is far larger, `datapoints x C(candidates, 2) x judges x 2` judge calls (the `x 2`
+is `swap=True`) on top of `datapoints x candidates` answer calls, so three candidates,
+three judges and 50 datapoints is 900 judge calls. Show this to the user and get
 approval before creating anything. Do not create orq objects until they say yes.
 
 ### 2. Create the orq dataset
@@ -273,7 +278,9 @@ One datapoint per task seed. Use the orq MCP tools (`create_dataset` then
 
 - `inputs`: the task input. For `qa`, the question text. For `document_input`,
   the question plus the attached file content (or a reference the job can load).
-  For `agentic`, the instruction plus any input files.
+  For `agentic`, the instruction plus any input files. The step 4a and 4b templates
+  assume this example dataset has a single input column named `text` and so read
+  `dp.inputs['text']`; if you name the column differently, change that key to match.
 - `expected_output`: the established answer from the seed. For `agentic`
   file-producing tasks, put the acceptance criteria or a pointer to the accepted
   artifact here; the rubric judge grades the produced file against it.
@@ -294,9 +301,9 @@ Check the marketplace first, then fill the gaps.
   when it fits the criteria.
 - Rubric judge, when no marketplace evaluator fits: an LLM evaluator whose criteria
   are the "good vs bad" observations. Build it with `create_llm_eval` (orq MCP) or
-  evaluatorq's `llm_jury` at run time. (There is also an `orq-build-evaluator` skill,
-  but it lives in the `orq-ai/assistant-plugins` repo, not here, so reach for it only
-  if that plugin set is installed.)
+  evaluatorq's `llm_jury` at run time. (The `orq-build-evaluator` skill in this same
+  plugin set builds a judge with its own approval gates; reach for it when you want
+  that flow instead of hand-writing the rubric here.)
 - Exact-match for fixed label sets: the built-in `exact_match` evaluator (orq), or
   evaluatorq's `exact_match_evaluator()`.
 
@@ -381,6 +388,10 @@ from evaluatorq import JudgedComparison, fit_bt, llm_jury_pairwise
 CANDIDATES = ['openai/gpt-5', 'anthropic/claude-opus-4-1', 'google-ai/gemini-2.5-pro']
 
 comparator = llm_jury_pairwise(
+    # Judges should be independent of CANDIDATES: a model scoring a pair that holds its
+    # own answer self-prefers and inflates its own skill. These overlap the candidates,
+    # so the loop below drops each judge's votes on pairs containing it; for a cleaner
+    # panel, set judges to models that are not under test.
     judges=['openai/gpt-5', 'anthropic/claude-opus-4-1', 'google-ai/gemini-2.5-pro'],
     criteria='Prefer the answer that ... <the better/worse observations from intake>',
     swap=True,  # judge each pair both ways to cancel position bias
@@ -398,6 +409,7 @@ async def main():
     answers = {m: [await call_model(m, dp.inputs['text']) for dp in datapoints] for m in CANDIDATES}
 
     records: list[JudgedComparison] = []
+    dropped_no_verdict = 0
     for i, dp in enumerate(datapoints):
         for a in range(len(CANDIDATES)):
             for b in range(a + 1, len(CANDIDATES)):
@@ -413,15 +425,30 @@ async def main():
                 # ranks models (not the A/B slot). swap=True already reconciled position
                 # bias inside each vote.
                 for vote in comparison.votes:
-                    if vote.vote is not None:
-                        records.append(
-                            JudgedComparison(
-                                judge=vote.model,
-                                item_a=model_a,
-                                item_b=model_b,
-                                p_a=VOTE_TO_P[str(vote.vote)],
-                            )
+                    # Drop a judge's vote on a pair that holds its own answer: self-preference
+                    # would inflate that model's skill. (A no-op once judges are independent.)
+                    if vote.model in (model_a, model_b):
+                        continue
+                    if vote.vote is None:
+                        # A judge returned no usable verdict. Count it, never drop it silently:
+                        # the pairs a judge fails to parse are the hard ones, so a silent drop
+                        # skews the ranking toward the easy pairs.
+                        dropped_no_verdict += 1
+                        continue
+                    records.append(
+                        JudgedComparison(
+                            judge=vote.model,
+                            item_a=model_a,
+                            item_b=model_b,
+                            p_a=VOTE_TO_P[str(vote.vote)],
                         )
+                    )
+
+    if dropped_no_verdict:
+        print(
+            f'warning: {dropped_no_verdict} judge vote(s) returned no verdict and were excluded; '
+            'hard pairs drop out first, so check judge coverage before trusting the ranking.'
+        )
 
     fit = fit_bt(records, judge_sigma=True, hard=True)
     print('ranking (best first):', ' > '.join(fit.ranking))
