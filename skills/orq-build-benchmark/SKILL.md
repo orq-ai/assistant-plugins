@@ -292,12 +292,12 @@ One datapoint per task seed. Use the orq MCP tools (`create_dataset` then
 Check the marketplace first, then fill the gaps.
 
 - Reuse from the marketplace. Search existing workspace evaluators with
-  `search_entities` (type `evaluator`), and browse the built-in hub templates
-  (`GET /evals/templates`). A built-in function evaluator (for example
+  `search_entities` (type `evaluator`), or list them over the API at
+  `GET /v2/evaluators`. A built-in function evaluator (for example
   `orq_pii_detection`, `valid_json`, `orq_harmful_moderation`) attaches with no
   configuration. A hub LLM-judge or Ragas template needs configuration, so it must
-  be imported into the workspace first, which makes it an evaluator entity you can
-  then attach by id. Prefer reusing a marketplace evaluator over writing a new one
+  be imported into the workspace first, which makes it an evaluator entity (under
+  `/v2/evaluators`) you can then attach by id. Prefer reusing a marketplace evaluator over writing a new one
   when it fits the criteria.
 - Rubric judge, when no marketplace evaluator fits: an LLM evaluator whose criteria
   are the "good vs bad" observations. Build it with `create_llm_eval` (orq MCP) or
