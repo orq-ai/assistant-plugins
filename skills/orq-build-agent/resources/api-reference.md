@@ -74,36 +74,39 @@ curl -s -X PATCH https://api.orq.ai/v2/agents/<KEY> \
 
 ### Agent Responses
 
-**Endpoint:** `POST https://api.orq.ai/v2/agents/{agent_key}/responses` — agent_key goes in the URL path.
+**Endpoint:** `POST https://api.orq.ai/v3/router/responses` — route to the agent by setting `model` to `agent/<AGENT_KEY>`. Successor to the deprecated `POST /v2/agents/{agent_key}/responses`; both still serve.
 
 ```bash
 # Invoke agent
-curl -s -X POST https://api.orq.ai/v2/agents/<AGENT_KEY>/responses \
+curl -s -X POST https://api.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-  "message": {"role": "user", "parts": [{"kind": "text", "text": "Test query"}]},
-  "background": false
+  "model": "agent/<AGENT_KEY>",
+  "input": "Test query"
 }' | jq
 
-# Multi-turn (reuse task_id from previous response)
-curl -s -X POST https://api.orq.ai/v2/agents/<AGENT_KEY>/responses \
+# Multi-turn (pass the previous response id)
+curl -s -X POST https://api.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-  "task_id": "<task_id>",
-  "message": {"role": "user", "parts": [{"kind": "text", "text": "Follow-up"}]},
-  "background": false
+  "model": "agent/<AGENT_KEY>",
+  "input": "Follow-up",
+  "previous_response_id": "<resp_id>"
 }' | jq
 
-# Call specific version
-curl -s -X POST https://api.orq.ai/v2/agents/<AGENT_KEY>@4.0.0/responses \
+# Call a specific version (pin in the model string)
+curl -s -X POST https://api.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-  "message": {"role": "user", "parts": [{"kind": "text", "text": "Query"}]}
+  "model": "agent/<AGENT_KEY>@4.0.0",
+  "input": "Query"
 }' | jq
 ```
+
+> **Deprecated, still serves:** `POST https://api.orq.ai/v2/agents/{agent_key}/responses` (agent_key in the URL path, version as `<AGENT_KEY>@4.0.0`), with a `message.parts` A2A body and `task_id` multi-turn. Marked `@deprecated` in orq-python 4.12.22+.
 
 ### Tools
 

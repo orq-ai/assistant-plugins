@@ -6,16 +6,22 @@ Common pitfalls when running cross-framework agent comparisons with evaluatorq.
 
 ## orq.ai SDK
 
-### `agents.invoke()` vs `agents.responses.create()`
+### Invoking an agent: `responses.create(model="agent/<key>")`
 
-`invoke()` returns an async A2A task with `status: "submitted"` — it does NOT return the agent's response. Use `responses.create(background=False)` to get a synchronous response with output.
+Invoke an agent through the router with `responses.create(model="agent/<key>", input=…)` (`POST /v3/router/responses`), and read the text from `response.output[-1]["content"][0]["text"]`.
 
 ```python
-# Wrong — returns task status, not output
-response = orq.agents.invoke(agent_key="my-agent", ...)
+# Correct — route to the agent by model
+response = orq.responses.create(model="agent/my-agent", input=query)
+text = response.output[-1]["content"][0]["text"]
+```
 
-# Correct — returns actual response
-response = orq.agents.responses.create(
+The old `agents.*` surface is `@deprecated` in orq-python 4.12.22+ but still serves. If you fall back to it, use `agents.responses.create(background=False)`, NOT `agents.invoke()` — `invoke()` returns an async A2A task (`status: "submitted"`), not the response:
+
+```python
+# Deprecated, still serves — and invoke() is the wrong one even here
+response = orq.agents.invoke(agent_key="my-agent", ...)   # returns task status, not output
+response = orq.agents.responses.create(                   # returns the response
     agent_key="my-agent",
     background=False,
     message={"role": "user", "parts": [{"kind": "text", "text": query}]},
@@ -24,13 +30,13 @@ response = orq.agents.responses.create(
 
 ### Message format
 
-The orq agent API uses A2A message format, not OpenAI-style:
+The new router path takes a plain `input` string (or a structured input array). The deprecated `agents.*` path uses the A2A `parts` shape, not OpenAI-style `content`:
 
 ```python
-# Wrong
-message={"role": "user", "content": "Hello"}
+# New path — just a string
+input="Hello"
 
-# Correct
+# Deprecated agents.* path — A2A parts, NOT {"role": "user", "content": "Hello"}
 message={"role": "user", "parts": [{"kind": "text", "text": "Hello"}]}
 ```
 

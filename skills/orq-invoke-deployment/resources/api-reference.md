@@ -143,100 +143,90 @@ curl -s https://api.orq.ai/v2/deployments \
 
 ### Create Response (invoke agent)
 
-**Endpoint:** `POST https://api.orq.ai/v2/agents/{agent_key}/responses`
+**Endpoint:** `POST https://api.orq.ai/v3/router/responses`
 
-**Required fields:** `message`
+Route to an agent by setting `model` to `agent/<agent-key>` (pin a version with `agent/<agent-key>@<version>`). This is the successor to the deprecated `POST /v2/agents/{agent_key}/responses`; both still serve.
+
+**Required fields:** `model`, `input`
 
 **Request body:**
 
 | Field | Type | Description |
 |---|---|---|
-| `message.role` | string | `"user"` or `"tool"` |
-| `message.parts` | array | `[{kind: "text", text: "..."}]` for text; `[{kind: "file", file: {bytes/uri}}]` for files |
-| `task_id` | string | Continue an existing conversation (from previous response's `task_id`) |
-| `variables` | object | Replace `{{variable}}` placeholders in system prompt/instructions |
-| `identity.id` | string (required) | Unique contact identifier |
+| `model` | string (required) | `agent/<agent-key>` to invoke an agent; pin with `agent/<agent-key>@4.0.0` |
+| `input` | string or array | The user message: a plain string for one turn, or an array of input items |
+| `previous_response_id` | string | Continue a conversation (from the previous response's `id`) |
+| `conversation` | string or object | Conversation to attach the turn to |
+| `variables` | object | Replace `{{variable}}` placeholders in the agent's prompt/instructions |
+| `identity.id` | string | Unique contact identifier (enables per-user analytics and cost attribution) |
 | `identity.display_name` | string | Contact display name |
 | `identity.email` | string | Contact email |
-| `thread.id` | string | Thread ID to group related requests |
-| `thread.tags` | array | Thread tags |
-| `memory.entity_id` | string | Associate memory stores with a specific user/session |
-| `metadata` | object | Key-value pairs included in trace |
-| `stream` | boolean | Return SSE stream (default: `false`) |
-| `background` | boolean | Return immediately with `task_id` (async, default: `false`) |
-| `engine` | string | Override template engine: `text`, `jinja`, or `mustache` |
+| `memory` | object | Associate memory stores with a specific user/session |
+| `guardrails` | array | Guardrails to apply to the turn |
+| `fallbacks` | array | Fallback models if the primary fails |
+| `store` | boolean | Persist the response so `GET /v3/router/responses/{id}` (`responses.get`) can retrieve it |
+| `metadata` | object | Key-value pairs included in the trace |
+| `stream` | boolean | Return an SSE token stream (default: `false`) |
 
 **Response fields:**
 
 | Field | Description |
 |---|---|
-| `_id` | Unique response ID |
-| `task_id` | Agent execution task ID — **save this for multi-turn** |
-| `output[].role` | Message role (`agent`, `tool`, etc.) |
-| `output[0].parts[0].text` | Generated text content |
+| `id` | Response ID (`resp_…`) — **pass as `previous_response_id` for multi-turn** |
+| `output[]` | List of output message items |
+| `output[-1]["content"][0]["text"]` | Generated assistant text (last message's first content block) |
+| `status` | `queued`, `in_progress`, `completed`, `failed`, or `incomplete` |
 | `model` | Model used |
-| `usage.total_tokens` | Total tokens used |
-| `usage.prompt_tokens` | Prompt tokens |
-| `usage.completion_tokens` | Completion tokens |
-| `finish_reason` | `stop`, `length`, `tool_calls`, `max_iterations`, `max_time` |
-| `pending_tool_calls` | Tool calls awaiting user response (when `finish_reason` is `function_call`) |
+| `usage.total_tokens` / `usage.input_tokens` / `usage.output_tokens` | Token counts |
+| `usage.total_cost` / `usage.input_cost` / `usage.output_cost` | Cost in USD |
 | `telemetry.trace_id` | Trace ID — use to find the trace in orq.ai |
-
-**Streaming events** (when `stream: true`):
-
-| Event type | Payload |
-|---|---|
-| `response.started` | `{responseId, taskId, model, workflowRunId}` |
-| `part.delta` | `{partId, delta: {kind: "text", text: "chunk"}}` — text token |
-| `part.done` | `{partId, part}` — part fully streamed |
-| `tool.started` | `{toolId, toolName, toolCallId, arguments}` |
-| `tool.done` | `{toolId, toolCallId, result}` |
-| `tool.failed` | `{toolId, toolCallId, error}` |
-| `tool.review.requested` | `{toolId, toolCallId, requiresApproval}` — human-in-loop |
-| `response.done` | `{finishReason, usage, pendingToolCalls}` |
-| `response.failed` | `{error, code}` |
 
 ```bash
 # Single turn
-curl -s -X POST https://api.orq.ai/v2/agents/<agent-key>/responses \
+curl -s -X POST https://api.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "message": {
-      "role": "user",
-      "parts": [{"kind": "text", "text": "Hello, can you help me?"}]
-    },
+    "model": "agent/<agent-key>",
+    "input": "Hello, can you help me?",
     "identity": {"id": "user_<unique_id>", "display_name": "Jane Doe", "email": "jane@example.com"}
   }' | jq
 
-# Multi-turn (pass task_id from previous response)
-curl -s -X POST https://api.orq.ai/v2/agents/<agent-key>/responses \
+# Multi-turn (pass the previous response id)
+curl -s -X POST https://api.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "task_id": "<task_id_from_previous>",
-    "message": {"role": "user", "parts": [{"kind": "text", "text": "Tell me more."}]}
+    "model": "agent/<agent-key>",
+    "input": "Tell me more.",
+    "previous_response_id": "<resp_id_from_previous>"
   }' | jq
 
-# With template variables (replaces {{variable}} in system prompt)
-curl -s -X POST https://api.orq.ai/v2/agents/<agent-key>/responses \
+# With template variables (replaces {{variable}} in the agent prompt)
+curl -s -X POST https://api.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "message": {"role": "user", "parts": [{"kind": "text", "text": "Help me."}]},
+    "model": "agent/<agent-key>",
+    "input": "Help me.",
     "variables": {"customer_tier": "premium", "language": "English"},
     "identity": {"id": "user_<unique_id>"}
   }' | jq
 
-# Streaming
-curl -s -X POST https://api.orq.ai/v2/agents/<agent-key>/responses \
+# Streaming (SSE token deltas)
+curl -s -X POST https://api.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "message": {"role": "user", "parts": [{"kind": "text", "text": "Hello!"}]},
+    "model": "agent/<agent-key>",
+    "input": "Hello!",
     "identity": {"id": "user_<unique_id>"},
     "stream": true
   }'
+
+# Retrieve a stored response
+curl -s https://api.orq.ai/v3/router/responses/<resp_id> \
+  -H "Authorization: Bearer $ORQ_API_KEY" | jq
 
 # List agents
 curl -s https://api.orq.ai/v2/agents \
@@ -246,6 +236,8 @@ curl -s https://api.orq.ai/v2/agents \
 curl -s https://api.orq.ai/v2/agents/<agent-key> \
   -H "Authorization: Bearer $ORQ_API_KEY" | jq
 ```
+
+> **Deprecated, still serves: `POST https://api.orq.ai/v2/agents/{agent_key}/responses`.** Marked `@deprecated` in orq-python 4.12.22+; prefer the `/v3/router/responses` path above. Its body takes `message.role` + `message.parts` (A2A `[{kind: "text", text: "…"}]`), `task_id` for multi-turn, `variables`, `identity`, `thread`, `memory.entity_id`, `stream`, and `background`. It returns `task_id` (save for multi-turn), `output[0].parts[0].text`, `finish_reason`, and `telemetry.trace_id`, and its stream emits `response.started` / `part.delta` / `part.done` / `tool.*` / `response.done` events.
 
 ---
 

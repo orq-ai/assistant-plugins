@@ -4,7 +4,7 @@
 
 | Mode | What It Does | When to Use |
 |------|-------------|-------------|
-| **AI Router** | Route LLM calls through `https://api.orq.ai/v2/router` — traces generated automatically | You want multi-provider access, fallbacks, caching, cost tracking with zero instrumentation code |
+| **AI Router** | Route LLM calls through `https://api.orq.ai/v3/router` — traces generated automatically | You want multi-provider access, fallbacks, caching, cost tracking with zero instrumentation code |
 | **Observability** | Send OpenTelemetry traces from your existing setup to `https://api.orq.ai/v2/otel` | You already call providers directly and want to add tracing without changing your LLM calls |
 | **Both** | AI Router for routing + Observability for framework-level spans | You want full pipeline visibility: framework orchestration spans + LLM call traces |
 | **Control Tower** | Full agent lifecycle management — deploy, monitor, and control agents from the orq.ai dashboard | Framework has native orq.ai integration for agent orchestration (currently: LangGraph, OpenAI Agents, Vercel AI SDK) |
@@ -44,13 +44,15 @@
 
 All AI Router integrations follow the same pattern — point your SDK's base URL to orq.ai:
 
+> **Base URL:** raw base-URL examples use `https://api.orq.ai/v3/router`. This applies when you point a third-party client (OpenAI SDK, LangChain) at orq. The orq SDK's own `client.chat.completions.create` still posts to `/v2` internally, so you do not set a base URL for it.
+
 **Python (OpenAI SDK):**
 ```python
 from openai import OpenAI
 import os
 
 client = OpenAI(
-    base_url="https://api.orq.ai/v2/router",
+    base_url="https://api.orq.ai/v3/router",
     api_key=os.environ["ORQ_API_KEY"],
 )
 ```
@@ -60,7 +62,7 @@ client = OpenAI(
 import OpenAI from "openai";
 
 const client = new OpenAI({
-    baseURL: "https://api.orq.ai/v2/router",
+    baseURL: "https://api.orq.ai/v3/router",
     apiKey: process.env.ORQ_API_KEY,
 });
 ```
@@ -73,13 +75,25 @@ import os
 llm = ChatOpenAI(
     model="openai/gpt-4o",
     api_key=os.environ["ORQ_API_KEY"],
-    base_url="https://api.orq.ai/v2/router",
+    base_url="https://api.orq.ai/v3/router",
 )
 ```
 
 ## Observability (OpenTelemetry) Quick Setup Pattern
 
-All observability integrations use OpenInference instrumentors with OTLP export to orq.ai:
+**First-party one-liners (Python).** The orq SDK ships two zero-config setups that export to orq.ai without wiring OTLP yourself — the docs lead with these:
+
+```python
+# LangChain / LangGraph
+from orq_ai_sdk.langchain import setup
+setup()  # reads ORQ_API_KEY; pass api_key=… / api_url=… to override
+
+# OpenAI Agents SDK
+from orq_ai_sdk.openai_agents_instrumentation import OpenAIAgentsInstrumentor
+OpenAIAgentsInstrumentor().instrument()
+```
+
+For any other framework, use its OpenInference instrumentor with OTLP export to orq.ai:
 
 **Environment variables (all frameworks):**
 ```bash

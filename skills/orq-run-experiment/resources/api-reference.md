@@ -61,17 +61,18 @@ curl -s https://api.orq.ai/v2/agents \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" | jq
 
-# Invoke an agent (for generating test traces)
-curl -s -X POST https://api.orq.ai/v2/agents/<AGENT_KEY>/responses \
+# Invoke an agent (for generating test traces) — model="agent/<AGENT_KEY>"
+curl -s -X POST https://api.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"message": {"role": "user", "parts": [{"kind": "text", "text": "Test input"}]}, "background": false}' | jq
+  -d '{"model": "agent/<AGENT_KEY>", "input": "Test input"}' | jq
 
-# Multi-turn agent testing (reuse task_id)
-curl -s -X POST https://api.orq.ai/v2/agents/<AGENT_KEY>/responses \
+# Multi-turn agent testing (pass the previous response id)
+curl -s -X POST https://api.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"task_id": "<task_id>", "message": {"role": "user", "parts": [{"kind": "text", "text": "Step 2"}]}, "background": false}' | jq
+  -d '{"model": "agent/<AGENT_KEY>", "input": "Step 2", "previous_response_id": "<resp_id>"}' | jq
+# Deprecated, still serves: POST /v2/agents/<AGENT_KEY>/responses with a message.parts body and task_id multi-turn.
 ```
 
 ### Tools
