@@ -134,7 +134,7 @@ Follow these steps **in order**. Do NOT skip steps.
 
 8. **Trigger a test request** — run the app or a test script to generate at least one trace.
 
-9. **Check traces in orq.ai** — find the test request's trace (`orq traces search --sort '[{"field":"end_time","order":"desc"}]' --limit 1 -o json -j 'data[0].trace_id' --raw`; the sort is what makes `data[0]` the latest) and hand the user a direct link, `https://my.orq.ai/<workspace-key>/traces/(trace:<trace_id>)`; host, key and pitfalls are in [`orq-cli` → Building app URLs](../orq-cli/resources/command-map.md#building-app-urls). Without the CLI, direct them to open [Traces](https://my.orq.ai) in the orq.ai dashboard. A link that opens on "No spans match your search" means the Traces project selector is filtering it out: switch it to **All projects**.
+9. **Check traces in orq.ai** — find the test request's trace (`orq traces search --sort '[{"field":"end_time","order":"desc"}]' --limit 1 -o json -j 'data[0].trace_id' --raw`; the sort is what makes `data[0]` the latest) and hand the user a direct link, `<host>/<workspace-key>/traces/(trace:<trace_id>)`; host, key and pitfalls are in [`orq-cli` → Building app URLs](../orq-cli/resources/command-map.md#building-app-urls). Without the CLI, direct them to open [Traces](https://my.orq.ai) in the orq.ai dashboard. A link that opens on "No spans match your search" means the Traces project selector is filtering it out: switch it to **All projects**.
 
 10. **Verify baseline requirements** using [resources/baseline-checklist.md](resources/baseline-checklist.md):
 

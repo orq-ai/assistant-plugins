@@ -190,7 +190,7 @@ Follow these steps **in order**. Do NOT skip steps.
    - Agent: check `response.output[0].parts[0].text` for the output text; save `response.task_id` for multi-turn
    - If wrong output: check for missing inputs, wrong key, or prompt issues
 
-11. **Find the trace** — hand the user a link built from `response.telemetry.trace_id`: `https://my.orq.ai/<workspace-key>/traces/(trace:<trace_id>)`, or add `//span:<telemetry.span_id>` inside the parentheses to open the call's own span. Host, workspace key and pitfalls: [`orq-cli` → Building app URLs](../orq-cli/resources/command-map.md#building-app-urls). If it opens on "No spans match your search", the user's Traces project selector is filtering it out: switch it to **All projects**.
+11. **Find the trace** — hand the user a link built from `response.telemetry.trace_id`: `<host>/<workspace-key>/traces/(trace:<trace_id>)`, or add `//span:<telemetry.span_id>` inside the parentheses to open the call's own span. These telemetry ids have not been checked against the route; if the link opens nothing, look the trace up with `orq traces search` and use its `trace_id`. Host, workspace key and pitfalls: [`orq-cli` → Building app URLs](../orq-cli/resources/command-map.md#building-app-urls). If it opens on "No spans match your search", the user's Traces project selector is filtering it out: switch it to **All projects**.
 
 ### Phase 4: Generate Integration Code
 
