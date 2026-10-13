@@ -723,7 +723,7 @@ earlier; see `orq-shared/resources/trace-queries.md` §5.4.
 ## Building app URLs
 
 > **Trace and span routes opened in a browser on 2026-10-13 (RES-1550)**, cold in a
-> new tab against live traces in `orq-research`, prod only; staging was not opened.
+> new tab against live traces in a research workspace, prod only; staging was not opened.
 > The `whoami` projections were run on 11.0.2 under both a login session and
 > `ORQ_API_KEY`. The experiments route is from 5.1.0 and was not re-probed.
 
@@ -732,7 +732,7 @@ App URLs are workspace-scoped by **key** (the slug), not by id:
 ```
 <host>/<workspace-key>/traces/(trace:<trace_id>)                    # a trace
 <host>/<workspace-key>/traces/(trace:<trace_id>//span:<span_id>)    # one span in it
-<host>/<workspace-key>/experiments/<experiment-id>
+<host>/<workspace-key>/experiments/<experiment-id>                  # unverified, 5.1.0
 ```
 
 ```sh
@@ -741,6 +741,12 @@ host="${ORQ_UI_BASE_URL:-$(orq auth whoami -o json -j 'urls.api_base_url || serv
 case "$host" in
   ''|null) echo "no orq host; run 'orq auth login' or set ORQ_UI_BASE_URL" >&2; exit 1 ;;
 esac
+host="${host%/}"
+for pair in "workspace_key=${workspace_key:-}" "trace_id=${trace_id:-}" "span_id=${span_id:-}"; do   # trace-only link: drop span_id here and the span echo below
+  case "${pair#*=}" in
+    ''|null) echo "${pair%%=*} is not set; a link built without it opens nothing" >&2; exit 1 ;;
+  esac
+done
 echo "${host}/${workspace_key}/traces/(trace:${trace_id})"
 echo "${host}/${workspace_key}/traces/(trace:${trace_id}//span:${span_id})"
 ```
@@ -753,7 +759,7 @@ echo "${host}/${workspace_key}/traces/(trace:${trace_id}//span:${span_id})"
 - **The old `traces?query=trace_id:is:<id>` form no longer routes.** Do not emit it.
 - **Ids from an invocation response are unverified.** Only ids read off `traces search` / `list-spans` were opened in the browser. `telemetry.trace_id` / `telemetry.span_id` from a deployment or agent call were not checked against the route; if a link built from them opens nothing, look the trace up with `traces search` and use its `trace_id`.
 
-**"No spans match your search" means the user's project filter, not a bad link.** The Traces page keeps a project selection in the browser, and a link to a trace in another project opens that empty panel (a `traces_filters` project in the URL does not override it). Whenever you hand over a link, tell the user that if it opens empty, switch the Traces project selector to **All projects** and reload. A second known issue, reported to the app team alongside it: a very large span (about 1 MB of Responses-API input) can freeze the tab when opened.
+**"No spans match your search" means the user's project filter, not a bad link.** The Traces page keeps a project selection in the browser, and a link to a trace in another project opens that empty panel (a `traces_filters` project in the URL does not override it). Whenever you hand over a link, tell the user that if it opens empty, switch the Traces project selector to **All projects** and reload.
 
 ### Which host am I actually talking to?
 

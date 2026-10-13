@@ -256,7 +256,7 @@ Workspace entries carry `id`, `key`, `name`, `total_members`, `active`. The **ke
 
 That produces the nastiest failure in this skill, because nothing errors:
 
-- `orq auth whoami` reports the workspace you logged into — it only reads the session.
+- `orq auth whoami` does not name the key's workspace. On 5.1.0 it reported the one you logged into (it only read the session); on 11.0.2 it reports the key (`method: api_key`, `active_workspace_key: null`).
 - `orq agents list` reads the **key's** workspace — a different one.
 - On 5.1.0, `.env` and `.env.local` autoloaded from the working directory, so the key could arrive without anyone setting it in this shell. **8.6.9 did not autoload either file** (a `.env` and a `.env.local` holding a valid `ORQ_API_KEY`, `ORQ_API_KEY` unset in the shell: `missing API key`), so on a current CLI a key comes from the shell environment or a profile.
 

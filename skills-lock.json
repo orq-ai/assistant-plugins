@@ -14,7 +14,7 @@
     "orq-analyze-traces": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "42f19d1c2dbdc100100413e9e2600c936f78da082d8565ee01d787315a5b7997"
+      "computedHash": "90bcd890f2f5fdaa0bd237ccbe907bff8fd6306f401ce1f3da852230acb24894"
     },
     "orq-build-agent": {
       "source": "orq-ai/assistant-plugins",
@@ -29,12 +29,12 @@
     "orq-cli": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "8ccfaa3c8a7bb24ced6323847ab655b4bb3288dabf1809bffecafc53b4c8489c"
+      "computedHash": "5c1fb23a79ba95e76fc4e208e9e506c5e69d6a921d1e22ef4e302be95635c516"
     },
     "orq-compare-agents": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "79171f9803cc1b3fc0a22f10600b90dc4790a967782da7efad878c46912c8f70"
+      "computedHash": "61c6309df0c981502246b6ec368c002009373c0b066d40d94a526abace0a16d0"
     },
     "orq-evaluator-alignment": {
       "source": "orq-ai/assistant-plugins",
@@ -79,7 +79,7 @@
     "orq-setup-observability": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "961c2d054eb03bc2a94f37ba7116cb1836fbe90c82399b6282986b393b056e95"
+      "computedHash": "c430d24e4eabc1958f1bac88c42cdbfb6b3e46a8cb33db445e5c46c4249c67f7"
     },
     "orq-shared": {
       "source": "orq-ai/assistant-plugins",

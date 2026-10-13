@@ -5,11 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.9.1] - 2026-10-13
+## [3.9.2] - 2026-10-13
 
 ### Changed
 
-- `orq-cli/resources/command-map.md` "Building app URLs" is the single definition of trace and span links in the app: `<host>/<workspace-key>/traces/(trace:<trace_id>)` and `…/(trace:<trace_id>//span:<span_id>)`, opened cold in a browser on prod on 2026-10-13. The snippet takes the host from `ORQ_UI_BASE_URL` or the session (`urls.api_base_url`, or `server` under `ORQ_API_KEY`) and fails loudly when there is none. It records that a link to a trace outside the user's selected Traces project opens on "No spans match your search" (switch to All projects), and that ids from an invocation's `telemetry` were not checked against the route (RES-1550).
+- `orq-cli/resources/command-map.md` "Building app URLs" is the single definition of trace and span links in the app: `<host>/<workspace-key>/traces/(trace:<trace_id>)` and `…/(trace:<trace_id>//span:<span_id>)`, opened cold in a browser on prod on 2026-10-13. The snippet takes the host from `ORQ_UI_BASE_URL` or the session (`urls.api_base_url`, or `server` under `ORQ_API_KEY`) and fails loudly when there is none, or when the workspace key or an id is missing. It records that a link to a trace outside the user's selected Traces project opens on "No spans match your search" (switch to All projects), and that ids from an invocation's `telemetry` were not checked against the route (RES-1550).
 - `orq-invoke-deployment`, `orq-setup-observability`, `orq-analyze-traces`, `orq-compare-agents` and `orq-shared/resources/trace-queries.md` hand the user a link to the trace instead of "go to my.orq.ai → Traces", and point at that section. `orq-analyze-traces` now requires full 32-hex ids in `evidence` and `passing`.
 - `orq-cli` skill: with `ORQ_API_KEY` set, `orq auth whoami` on 11.0.2 reports `active_workspace_key: null` rather than the logged-in workspace; the constraint and the workspace-key snippet's error message say so.
 
