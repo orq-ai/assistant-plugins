@@ -142,7 +142,7 @@ There are no flags, no thresholds and no pass/fail per check. A 12% truncation r
 
 Reading finds the failure modes. It cannot look at every trace in a window of thousands, and that is where the failures you never read are. A decision model can: it answers typed yes/no or choice questions about one trace for about $0.001, several questions in one call. `scripts/decide.py` runs one call per trace over the whole window. **The point is to surface failing traces to fix, not a precise percentage.** Discovery stays with you: a decision model answers the questions it is given and cannot name a failure nobody asked about.
 
-**Run it with uv from the working directory**, as `uv run <this skill's directory>/scripts/decide.py …`. It keeps everything under `./decide-runs/` (`--run-dir` moves it): one labels file per questions file and model pair, so a rewritten question or a switched model starts a fresh pass instead of reusing old answers. It needs `ORQ_API_KEY`; `ORQ_API_BASE_URL` overrides the host.
+**Run it with uv from the working directory**, as `uv run <this skill's directory>/scripts/decide.py …`. It keeps everything under `./decide-runs/` (`--run-dir` moves it): one labels file per questions file and model pair, so a rewritten question or a switched model starts a fresh pass instead of reusing old answers. It needs `ORQ_API_KEY`; `ORQ_API_BASE_URL` overrides the host. A project key cannot see router traffic sent with no project (`trace-queries.md` §0), so on such a target `estimate` counts 0: use a workspace-wide key.
 
 | Subcommand | Does | When |
 |---|---|---|
@@ -178,8 +178,8 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
 **Gather and relay. Do not judge.** Collect the mechanical facts, format them, hand them to the coding agent. That is the whole phase.
 
 1. **Terminal states — how runs ended, as a distribution.**
-   - `attributes.gen_ai.response.finish_reasons` — `stop` / `length` / `tool_calls` / `max_iterations` / `max_time`
-   - `status` — `ok` / `error` / `unset`, with the error messages
+   - `attributes.gen_ai.response.finish_reasons` — `stop` / `length` / `tool_calls` / `max_iterations` / `max_time`. **On an orq agent this sweeps as all-null** (the null bucket, not "no failures"): take the run-level reason from `orq agents get-response` once per trace (`trace-queries.md` §3.5), and a single turn's reason from its `span.chat_completion` with `get-span` (§4).
+   - `status` — `ok` / `error` / `unset`, with the error messages. **On an orq agent the trace-level `status` stays `ok` even when every model call errored**, and a `status eq error` filter misses those runs. Find them with `traces search` on `attributes.http.response.status_code` (e.g. `eq "400"`), which matches at span level; the message is the errored span's `span.attributes.otel.status_description` (`trace-queries.md` §2)
    - `attributes.orq.billing.threshold_exceeded`
 
    `max_iterations` and `max_time` are **explicit terminal reasons** — the platform is saying the run hit the cap. No distribution-shape inference needed.
@@ -191,7 +191,7 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
    - `knowledge_bases`, `memory_stores`
 
    When the agent config references entity IDs (tools, knowledge bases, memory stores, evaluators), resolve them into full definitions to understand what the agent can actually do:
-   - `orq tools retrieve <id> -o json` — tool function schemas and descriptions
+   - `orq tools retrieve <id> -o json` — tool function schemas and descriptions, **custom tools only**. A built-in (`action_type`, e.g. `current_date`) returns `404 Tool collection not found`; read its schema from a chat-completion span's `gen_ai.tool.definitions` (`trace-queries.md` §4) instead
    - `orq knowledge-bases retrieve <id> -o json` — KB config and datasource attachments
    - `orq memory-stores retrieve <id> -o json` — memory store config
    - `orq evals get <id> -o json` — evaluator definition and scoring criteria
@@ -202,8 +202,10 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
    - tool-call spread by `tool_name`
    - prompt-cache hit ratio (`cached_tokens ÷ prompt_tokens`)
    - latency and cost distribution
-   - existing `eval_passed` / `eval_score` rates, **each paired with its `settings.evaluators[].sample_rate`** — available off the traces, or grouped per evaluator in one call via `orq reporting query` with `genai.evaluator.pass_rate` / `.score.avg` / `.runs` and `group_by: ["evaluator"]`
-   - TTFT via `orq reporting query` (`genai.ttft.avg|p50|p95`) — **an all-zero result is `unobservable: [ttft]`, not "fast"**
+   - existing `eval_passed` / `eval_score` rates, **each paired with its `settings.evaluators[].sample_rate`**. First check that results exist at all: filter `evaluator_key` with op `exists` (not `neq ""`, which also matches traces with no evaluator). An attached evaluator with zero results is `unobservable: [evaluator_rates]`, never a 0% or 100% pass rate — available off the traces, or grouped per evaluator in one call via `orq reporting query` with `genai.evaluator.pass_rate` / `.score.avg` / `.runs` and `group_by: ["evaluator"]`
+   - TTFT via `orq reporting query` (`genai.ttft.avg|p50|p95`) — **an all-zero result is `unobservable: [ttft]`, not "fast"**. It refuses an `agent` filter (HTTP 400), so per-agent TTFT is `unobservable: [ttft]` too
+
+   > **Reporting needs the agent `_id` and a cross-check.** The reporting `agent` filter takes the agent's ULID `_id`, not its key; the key matches nothing without erroring (empty when grouped, a scalar `0` when not). Before relaying any reporting number, compare the scoped `genai.requests` with the trace count from the sweep. If they differ, every reporting-sourced item goes in `unobservable` with the mismatch as the reason (`trace-queries.md` §5).
 
    > **Relay evaluator rates as unvalidated.** A judge's agreement with human judgement drifts — with foundation-model updates, and with the team's own definition of the criterion. Relay the rate, relay the sample rate, and say neither is ground truth.
 
@@ -226,8 +228,8 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
    | Strategy | How | When |
    |---|---|---|
    | **Random** | Uniform sample from all traces | Default; establishes the baseline failure rate |
-   | **Outlier** | Sort by response length, latency, or tool-call count; sample extremes | Edge cases hiding in unusual traces |
-   | **Failure-driven** | Filter on guardrail triggers, error status, negative feedback | Failures exist but the patterns are unknown |
+   | **Outlier** | Threshold filters such as `duration_ms gt "1000"` or `tokens.total gt "1500"` (values as strings); search cannot sort by them, `end_time desc` is its only sort | Edge cases hiding in unusual traces |
+   | **Failure-driven** | Filter on guardrail triggers, span-level HTTP errors (`attributes.http.response.status_code`, not trace `status`), negative feedback | Failures exist but the patterns are unknown |
    | **Uncertainty** | Traces where existing evaluators disagree or score near thresholds | Refining evaluators, borderline cases |
    | **Stratified** | Equal sampling across segments, features, time periods | Representative coverage across dimensions |
 
@@ -243,7 +245,7 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
 
 8. **Ensure trace completeness.** For each trace you need the original input, the final output, all intermediate steps (LLM calls, tool calls with args and responses, retrieved documents, reasoning), and the metadata (latency, tokens, model, cost).
 
-   **For deep reading of specific traces, use `mcp__orq-workspace__get_span` with `mode=full`.** This returns structured message arrays with all conversation turns, tool calls and responses, system instructions, and per-message `finish_reason`. Use it selectively on traces that need full content (failures, outliers), not on every trace. For the span tree and metadata, CLI `list-spans` with `-j` projection stays the compact path.
+   **For deep reading of specific traces, use `orq traces conversation <trace-id>`** (`-x system` drops the repeated system prompt). Its default render cuts each block at 4,000 characters (`[truncated: N more characters]`): when the rules the agent broke sit in a long system prompt or a pasted document, read with `--max-chars 0`. It renders every turn, each tool call with its arguments, and each tool result. It is cheap enough to run on every trace in a small window. `mcp__orq-workspace__get_span` with `mode=full` returns the same content plus per-message `finish_reason`; use it when the MCP is connected and you need that field. For the span tree and metadata, CLI `list-spans` with `-j` projection stays the compact path.
 
 ### Phase 2: Open Coding — Read and Annotate
 
