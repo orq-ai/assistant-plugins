@@ -64,6 +64,8 @@ MODELS = {
 SHORT_MODEL = 'typesafe/jev-latest'
 LONG_MODEL = 'openai/gpt-6-luna'
 OVERFLOW = 'max_tokens_exceeded'
+# Undercounts CJK and other dense scripts by up to 4x. The overflow retry catches that on the short model; the long
+# model's pre-check can still pass a trace the router then rejects, which is recorded as an error row.
 CHARS_PER_TOKEN = 4
 DEFAULT_MAX_TRACES = 5000
 SEARCH_PAGE = 100
@@ -185,10 +187,16 @@ def read_ids(path: Path) -> list[str]:
     return list(dict.fromkeys(line.strip() for line in lines if line.strip()))
 
 
+class FetchError(RuntimeError):
+    def __init__(self, message: str, status: int) -> None:
+        super().__init__(message)
+        self.status = status
+
+
 async def conversation(http: httpx.AsyncClient, trace_id: str) -> list[dict[str, Any]]:
     response = await request(http, 'GET', f'/v3/traces/{trace_id}/conversation')
     if response.status_code != 200:
-        raise RuntimeError(f'conversation HTTP {response.status_code}: {response.text[:200]}')
+        raise FetchError(f'conversation HTTP {response.status_code}: {response.text[:200]}', response.status_code)
     items = response.json().get('items') or []
     return [item for item in items if isinstance(item, dict)]
 
@@ -241,6 +249,29 @@ def build_state(items: list[dict[str, Any]]) -> dict[str, Any]:
 def state_tokens(state: dict[str, Any], questions: dict[str, Any]) -> int:
     longest = max((len(json.dumps(q, ensure_ascii=False)) for q in questions.values()), default=0)
     return (len(json.dumps(state, ensure_ascii=False)) + longest) // CHARS_PER_TOKEN
+
+
+def estimated_cost(name: str, tokens: int) -> float:
+    return tokens * model(name).price_per_m / 1e6
+
+
+class Budget:
+    """Each call reserves its estimated cost before it starts and settles to the billed cost when it ends, so calls
+    already in flight cannot carry a pass past `--budget-usd`. No await sits between check and reserve, so the event
+    loop needs no lock here."""
+
+    def __init__(self, limit: float) -> None:
+        self.limit, self.spent, self.held = limit, 0.0, 0.0
+
+    def reserve(self, amount: float) -> bool:
+        if self.spent + self.held + amount > self.limit:
+            return False
+        self.held += amount
+        return True
+
+    def settle(self, held: float, cost: float) -> None:
+        self.held -= held
+        self.spent += cost
 
 
 # --- questions and runs ------------------------------------------------------------------------------------------
@@ -307,6 +338,16 @@ def existing_rows(args: argparse.Namespace, questions: Questions) -> tuple[Path,
     return path, latest_rows(path)
 
 
+def meta_path(labels: Path) -> Path:
+    return labels.with_suffix('.meta.json')
+
+
+def load_meta(labels: Path) -> dict[str, Any]:
+    """The last window pass over this labels file: its source, size and trace ids (newest first)."""
+    path = meta_path(labels)
+    return json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+
+
 def verdicts(row: dict[str, Any], questions: Questions) -> set[str] | None:
     """The modes a row flags, or None when any answer is missing, refused, or a label outside the criteria."""
     flagged: set[str] = set()
@@ -357,12 +398,15 @@ async def decide(http: httpx.AsyncClient, name: str, state: Any, questions: dict
     }
 
 
-async def label_one(http: httpx.AsyncClient, trace_id: str, order: int, args: argparse.Namespace, wire: dict) -> dict:
+async def label_one(
+    http: httpx.AsyncClient, trace_id: str, order: int, args: argparse.Namespace, wire: dict, budget: Budget
+) -> dict | None:
+    """One trace's row, or None when the budget cannot cover its call (the trace stays unstarted)."""
     row: dict[str, Any] = {'trace_id': trace_id, 'order': order}
     try:
         state = build_state(await conversation(http, trace_id))
     except (RuntimeError, httpx.HTTPError, ValueError) as exc:
-        return {**row, 'error': f'fetch: {exc}'}
+        return {**row, 'error': f'fetch: {exc}', 'status': getattr(exc, 'status', None)}
     if not state['messages']:
         return {**row, 'error': 'empty conversation'}
     tokens = state_tokens(state, wire)
@@ -372,17 +416,32 @@ async def label_one(http: httpx.AsyncClient, trace_id: str, order: int, args: ar
     name, reason = (
         (args.short_model, 'fits') if tokens <= model(args.short_model).budget_tokens else (args.long_model, 'over')
     )
+    held, cost = 0.0, 0.0
     try:
+        if not budget.reserve(estimated_cost(name, tokens)):
+            return None
+        held = estimated_cost(name, tokens)
         result = await decide(http, name, state, wire)
         if result.get('overflow') and name == args.short_model:
             name, reason = args.long_model, 'short_overflowed'
+            if not budget.reserve(estimated_cost(name, tokens)):
+                return None
+            held += estimated_cost(name, tokens)
             result = await decide(http, name, state, wire)
+        row.update(model=name, route='short' if name == args.short_model else 'long', reason=reason)
+        if 'error' in result:
+            return {**row, 'error': result['error'], 'status': result['status']}
+        billed = result['usage'].get('total_cost')
+        if isinstance(billed, (int, float)):
+            cost = float(billed)
+            return {**row, 'answers': result['answers'], 'cost': cost}
+        # No billed cost on the response: count the estimate, so the budget cap still holds.
+        cost = estimated_cost(name, tokens)
+        return {**row, 'answers': result['answers'], 'cost': cost, 'cost_estimated': True}
     except (httpx.HTTPError, ValueError) as exc:
         return {**row, 'model': name, 'error': f'decide: {type(exc).__name__}: {exc}'}
-    row.update(model=name, route='short' if name == args.short_model else 'long', reason=reason)
-    if 'error' in result:
-        return {**row, 'error': result['error'], 'status': result['status']}
-    return {**row, 'answers': result['answers'], 'cost': result['usage'].get('total_cost')}
+    finally:
+        budget.settle(held, cost)
 
 
 # --- subcommands -------------------------------------------------------------------------------------------------
@@ -467,38 +526,51 @@ async def cmd_label(args: argparse.Namespace) -> None:
         semaphore = asyncio.Semaphore(args.concurrency)
         lock = asyncio.Lock()
         totals: Counter = Counter()
-        spent = 0.0
+        budget = Budget(args.budget_usd)
         abort: str | None = None
+        warned_estimate = False
         started = time.perf_counter()
 
         async def run(order: int, trace_id: str) -> None:
-            nonlocal spent, abort
+            nonlocal abort, warned_estimate
             async with semaphore:
-                if abort or spent >= args.budget_usd:
+                if abort:
                     totals['not_started'] += 1
                     return
                 try:
-                    row = await label_one(http, trace_id, order, args, questions.wire)
+                    row = await label_one(http, trace_id, order, args, questions.wire, budget)
                 except Exception as exc:  # one malformed trace must not end a paid pass
                     row = {'trace_id': trace_id, 'order': order, 'error': f'{type(exc).__name__}: {exc}'}
+            if row is None:
+                totals['not_started'] += 1
+                return
             async with lock:
                 with out.open('a', encoding='utf-8') as handle:
                     handle.write(json.dumps(row, ensure_ascii=False) + '\n')
                 totals['error' if 'error' in row else row['route']] += 1
-                spent += row.get('cost') or 0.0
+                if row.get('cost_estimated') and not warned_estimate:
+                    warned_estimate = True
+                    print('⚠ the router reported no cost; the budget counts estimated input cost', file=sys.stderr)
                 if row.get('status') in (401, 403):
                     abort = row['error']
                 if sum(totals.values()) % 100 == 0:
-                    print(f'… {sum(totals.values())}/{len(todo)} · ${spent:.2f}', file=sys.stderr)
+                    print(f'… {sum(totals.values())}/{len(todo)} · ${budget.spent:.2f}', file=sys.stderr)
 
         await asyncio.gather(*(run(order, trace_id) for order, trace_id in todo))
     meta = {'window': window.source, 'traces': len(window.ids), 'capped_at_max_traces': window.capped}
-    out.with_suffix('.meta.json').write_text(json.dumps(meta, indent=2), encoding='utf-8')
+    if args.search_body:
+        # Only a window pass describes the window; a `--trace-ids` pass (calibration) shares the labels file.
+        meta_path(out).write_text(json.dumps({**meta, 'ids': window.ids}, indent=2), encoding='utf-8')
     rows = latest_rows(out)
     report = {
         **meta,
         'labelled': sum('answers' in row for row in rows.values()),
-        'this_run': {**dict(totals), 'cost_usd': round(spent, 4), 'seconds': round(time.perf_counter() - started)},
+        'this_run': {
+            **dict(totals),
+            'cost_usd': round(budget.spent, 4),
+            'cost_estimated': warned_estimate,
+            'seconds': round(time.perf_counter() - started),
+        },
         'stopped': abort
         or (
             f'budget of ${args.budget_usd} reached; re-run with a higher --budget-usd to finish'
@@ -514,11 +586,14 @@ async def cmd_label(args: argparse.Namespace) -> None:
 
 def cmd_pick(args: argparse.Namespace) -> None:
     """Flagged picks at random among the flagged traces; the random half uniformly from every other trace in the
-    pass, including those the model could not label, so they can still be read."""
+    window, including those the model could not label or never reached, so they can still be read."""
     questions = load_questions(args.questions)
-    _, rows_by_id = existing_rows(args, questions)
+    path, rows_by_id = existing_rows(args, questions)
     key = args.question or next(iter(questions.wire))
+    if key not in questions.wire or questions.wire[key]['type'] != 'noul':
+        fail(f'{args.questions}: pick needs a noul question; {key!r} is not one')
     rows = list(rows_by_id.values())
+    window_ids = load_meta(path).get('ids') or list(rows_by_id)
     flagged = [
         row['trace_id']
         for row in rows
@@ -527,14 +602,14 @@ def cmd_pick(args: argparse.Namespace) -> None:
     rng = random.Random(args.seed)
     picked_flagged = rng.sample(flagged, min(args.flagged, len(flagged)))
     taken = set(picked_flagged)
-    pool = [row['trace_id'] for row in rows if row['trace_id'] not in taken]
+    pool = [trace_id for trace_id in window_ids if trace_id not in taken]
     picked_random = rng.sample(pool, min(args.random, len(pool)))
     picks = args.run_dir / 'picks'
     picks.mkdir(parents=True, exist_ok=True)
     (picks / 'flagged_ids.txt').write_text(''.join(f'{i}\n' for i in picked_flagged), encoding='utf-8')
     (picks / 'random_ids.txt').write_text(''.join(f'{i}\n' for i in picked_random), encoding='utf-8')
     report = {
-        'traces': len(rows),
+        'traces': len(window_ids),
         'labelled': sum('answers' in row for row in rows),
         'flagged': len(flagged),
         'picks': {'flagged': picked_flagged, 'random': picked_random},
@@ -614,8 +689,8 @@ def wilson(count: int, n: int) -> list[float]:
 def cmd_rates(args: argparse.Namespace) -> None:
     questions = load_questions(args.questions)
     path, rows = existing_rows(args, questions)
-    meta_path = path.with_suffix('.meta.json')
-    meta = json.loads(meta_path.read_text(encoding='utf-8')) if meta_path.exists() else {}
+    meta = load_meta(path)
+    window_ids = meta.pop('ids', None)
     modes = mode_names(questions)
     read = set(read_ids(args.read_ids)) if args.read_ids else set()
     labelled: Counter = Counter()
@@ -639,6 +714,8 @@ def cmd_rates(args: argparse.Namespace) -> None:
         'labelled': n,
         'labelled_by_route': dict(labelled),
         'not_labelled': dict(not_labelled),
+        # Window traces with no row at all: the pass stopped at its budget (or was interrupted) before reaching them.
+        'not_started': sum(trace_id not in rows for trace_id in window_ids) if window_ids is not None else None,
         'flagged_more_than_one_mode': multi,
         'modes': {
             mode: {
