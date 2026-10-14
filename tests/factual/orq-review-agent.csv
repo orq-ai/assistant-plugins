@@ -18,6 +18,7 @@ cli_flag,skills list,--starting-after,orq skills list accepts --starting-after
 cli_subcommand,models list,,orq models list exists
 cli_flag,models list,-o,orq models list accepts -o
 cli_subcommand,traces list-fields,,orq traces list-fields exists
+cli_subcommand,traces list-facets,,orq traces list-facets exists
 cli_subcommand,traces aggregate,,orq traces aggregate exists
 cli_flag,traces aggregate,--from-file,orq traces aggregate accepts --from-file
 cli_subcommand,traces search,,orq traces search exists

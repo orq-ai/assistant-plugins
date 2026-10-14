@@ -150,7 +150,7 @@ Decide first whether this is a **coding agent** (its instructions or tools are a
 uv run --no-project <skill-dir>/scripts/model_check.py <run-dir>/models.json <run-dir>/agent.json [--coding] > <run-dir>/model-check.json
 ```
 
-It checks the primary model and each entry of `fallback_models` [unverified: no agent with fallbacks was available to read their shape]. The rule lives in the script and is printed as `rule` in every result; quote that field in the report rather than restating it.
+It checks the primary model and each entry of `fallback_models` [unverified: no agent with fallbacks was available to read their shape]. The rule lives in the script and is printed once, as the top-level `rule` field of `model-check.json`; quote that field in the report rather than restating it. A capability the current model does not report is required of every candidate; the script lists those in `unreported_flags`, so state them next to the result.
 
 Read `model-check.json`:
 
@@ -158,9 +158,11 @@ Read `model-check.json`:
 |---|---|
 | `intelligence.status: dominated` | finding, tier **config**, with up to 5 `candidates` (refId, index, `current_at_same_effort`, price, `price_gap`, the effort both were scored at, and any `aliases` of the same model), each labelled `candidate`; fixed by `orq-improve-agent`. The suggestion names the cheapest strong candidate and says to run `orq-run-experiment` first if the agent has a dataset and evaluators: the index is a general benchmark and can be wrong for this agent |
 | `tau2.status: dominated` | the same, on the agentic benchmark, as a separate finding |
-| `not dominated` | "no finding" with the current index and price |
-| `cheaper_provider` set (per model, next to `intelligence`) | finding, tier **config**, once per model: the same model is `price_gap` cheaper on that refId; fixed by `orq-improve-agent`. The suggestion says to check the provider's region first (an `eu.` prefix can be a data residency choice) |
+| `not dominated` | "no finding: not dominated among `compared` comparable models (`skipped_no_data` skipped for a missing price or score)", with the current index and price |
+| `cheaper_provider` with `status: unknown` | `unobservable` with the script's `reason` (the current model has no price, so no provider was compared) |
+| `cheaper_provider` set to a model row (per model, next to `intelligence`) | finding, tier **config**, once per model: the same model is `price_gap` cheaper on that refId; fixed by `orq-improve-agent`. The suggestion says to check the provider's region first (an `eu.` prefix can be a data residency choice) |
 | `unknown`, reason `not in the catalogue`, role `primary` | finding, tier **broken**: "the declared model is not available in this project, and the agent cannot run"; fixed by `orq-improve-agent`. The `closest` names are possible replacements, listed in the suggestion; they are not checked |
 | `unknown`, reason `not in the catalogue`, role `fallback` | finding, tier **config**: "this fallback is not available in this project, so it cannot take over when the primary fails"; the same fixing skill and `closest` list |
-| `unknown`, any other reason (`ambiguous: …`, `no intelligence_index or price`, …) | `unobservable` with the script's `reason` |
+| `unknown`, reason `catalogue empty`, or `catalogue_size` 0 | `unobservable: model catalogue empty`, never a broken finding: re-read `models.json` before trusting any model result |
+| `unknown`, any other reason (`ambiguous: …`, `no intelligence_index or price`, `no comparable model: …`, …) | `unobservable` with the script's `reason` |
 | `resolved: date-suffix match on …` or `exact on model_id` | state the matched `refId` next to the result |

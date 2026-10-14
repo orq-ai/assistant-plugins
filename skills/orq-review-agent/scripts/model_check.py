@@ -30,10 +30,13 @@ DATE_SUFFIX = re.compile(r"-(20\d{6}|(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01]))$")
 RULE = (
     "RES-1338 A1, guardrails agreed on RES-887 (2026-10-12): the model is dominated when "
     "another enabled chat model has an intelligence index at least as high at a blended "
-    "price at least 20% lower, and: handles text in and out, plus image input or output "
-    "where the current model has it; has tool calling where the current model has it; has "
-    "structured outputs when response_format is json_schema; has a context window of at "
-    "least min(current, 300k), or the full current window for a coding agent. Each pair is "
+    "price at least 20% lower, and: handles text in and out, plus image input where the "
+    "current model has it or does not report it; has tool calling where the current model "
+    "has it or does not report it, or the agent has tools attached; has structured outputs "
+    "when response_format is json_schema; has a context window of at least min(current, "
+    "300k), or the full current window for a coding agent, and at least 300k when the "
+    "current window is not reported. A candidate must report each capability it needs. "
+    "Image output is not checked: the catalogue does not report it. Each pair is "
     "scored at the agent's reasoning_effort when both models have an index for it, "
     "otherwise both at their default effort. The same model on another provider never "
     "dominates; one 20% cheaper is listed separately. Provider aliases of one model are "
@@ -63,6 +66,8 @@ def resolve(models: list[dict], ref: str) -> tuple[dict | None, str]:
     `anthropic/claude-haiku-4-5-20251001`), so the last resort is a refId equal
     to the slug plus a date-shaped suffix, and only when exactly one row matches.
     """
+    if not models:
+        return None, "catalogue empty"
     for keys, how in ((("id", "refId"), "exact"), (("model_id",), "exact on model_id")):
         hits = [m for m in models if ref in (m.get(k) for k in keys)]
         if len(hits) == 1:
@@ -124,6 +129,17 @@ def default_index(model: dict) -> tuple[float | None, str]:
     return data.get("intelligence_index"), data.get("default_effort") or "default"
 
 
+# Capability flags the guards read. Absent is kept as None, not False: on 2026-10-13,
+# supports_vision was absent on 43 of 160 chat models and supports_image_output on all 160.
+FLAGS = {"tool_calling": "supports_tool_calling", "vision": "supports_vision",
+         "structured_outputs": "supports_structured_outputs"}
+
+
+def flag(meta: dict, key: str) -> bool | None:
+    value = meta.get(key)
+    return None if value is None else bool(value)
+
+
 def facts(model: dict) -> dict:
     data = benchmark(model)
     meta = model.get("metadata") or {}
@@ -135,29 +151,26 @@ def facts(model: dict) -> dict:
         "tau2": (data.get("aa_evaluations") or {}).get("tau2"),
         "context_window": meta.get("context_window"),
         "text": bool(meta.get("supports_text_input")) and bool(meta.get("supports_text_output")),
-        "tool_calling": bool(meta.get("supports_tool_calling")),
-        "vision": bool(meta.get("supports_vision")),
-        "image_output": bool(meta.get("supports_image_output")),
-        "structured_outputs": bool(meta.get("supports_structured_outputs")),
+        **{name: flag(meta, key) for name, key in FLAGS.items()},
     }
 
 
 def eligible(cand: dict, cand_facts: dict, cur_facts: dict, needs: Needs) -> bool:
+    """A current flag that is True or absent is a requirement; a candidate meets it only by reporting True."""
     if cand.get("model_type") != "chat" or not cand.get("enabled") or not cand_facts["text"]:
         return False
-    if (needs.tools or cur_facts["tool_calling"]) and not cand_facts["tool_calling"]:
+    if (needs.tools or cur_facts["tool_calling"] is not False) and cand_facts["tool_calling"] is not True:
         return False
-    if needs.schema and not cand_facts["structured_outputs"]:
+    if needs.schema and cand_facts["structured_outputs"] is not True:
         return False
-    if cur_facts["vision"] and not cand_facts["vision"]:
+    if cur_facts["vision"] is not False and cand_facts["vision"] is not True:
         return False
-    if cur_facts["image_output"] and not cand_facts["image_output"]:
-        return False
-    if cur_facts["context_window"]:
-        floor = cur_facts["context_window"] if needs.coding else min(cur_facts["context_window"], CONTEXT_FLOOR)
-        if (cand_facts["context_window"] or 0) < floor:
-            return False
-    return True
+    window = cur_facts["context_window"]
+    if window:
+        floor = window if needs.coding else min(window, CONTEXT_FLOOR)
+    else:
+        floor = CONTEXT_FLOOR
+    return (cand_facts["context_window"] or 0) >= floor
 
 
 def current_score(cur: dict, metric: str, effort: str | None) -> tuple[float | None, str | None]:
@@ -189,11 +202,14 @@ def keep_cheapest(rows: dict[str, dict], key: str, row: dict) -> None:
 
 
 def cheaper_provider(models: list[dict], cur: dict, needs: Needs) -> dict | None:
-    """The same model on another provider at least PRICE_GAP cheaper, cheapest first; it never dominates."""
+    """The same model on another provider at least PRICE_GAP cheaper, cheapest first; it never dominates.
+
+    None means none was found; an unpriced current model returns `status: unknown`, never None.
+    """
     cur_facts = facts(cur)
     price, cur_key = cur_facts["price"], model_key(cur)
     if price is None:
-        return None
+        return {"status": "unknown", "reason": f"no price for {cur.get('refId')}"}
     rows: dict[str, dict] = {}
     for cand in models:
         cand_facts = facts(cand)
@@ -213,20 +229,26 @@ def compare(models: list[dict], cur: dict, metric: str, effort: str | None, need
         return {"status": "unknown", "reason": f"no {metric} or price for {cur.get('refId')}"}
     cur_key = model_key(cur)
     hits: dict[str, dict] = {}
+    compared = skipped = 0  # eligible catalogue rows with, and without, a price and score
     for cand in models:
         cand_facts = facts(cand)
-        if cand is cur or model_key(cand) == cur_key or cand_facts["price"] is None:
+        if cand is cur or model_key(cand) == cur_key or not eligible(cand, cand_facts, cur_facts, needs):
             continue
-        if cand_facts["price"] > price * (1 - PRICE_GAP) or not eligible(cand, cand_facts, cur_facts, needs):
+        base, value, scored_at = paired_scores(cur, cand, metric, effort)
+        if cand_facts["price"] is None or value is None or base is None:
+            skipped += 1
+            continue
+        compared += 1
+        if cand_facts["price"] > price * (1 - PRICE_GAP) or value < base:
             continue
         row = {**cand_facts, "price_gap": round(1 - cand_facts["price"] / price, 3), "aliases": []}
-        base, value, scored_at = paired_scores(cur, cand, metric, effort)
-        if value is None or base is None or value < base:
-            continue
         row.update({metric: value, "current_at_same_effort": base})
         if scored_at:
             row["effort"] = scored_at  # the agent's effort, or "default": each model at its own default
         keep_cheapest(hits, model_key(cand), row)
+    if not compared:
+        return {"status": "unknown",
+                "reason": f"no comparable model: {skipped} eligible models lack a price or {metric}"}
     ranked = sorted(hits.values(), key=lambda h: (-h[metric], h["price"]))
     out = {
         "status": "dominated" if hits else "not dominated",
@@ -234,6 +256,8 @@ def compare(models: list[dict], cur: dict, metric: str, effort: str | None, need
         "current_price": price,
         "candidates": ranked[:MAX_CANDIDATES],
         "candidate_count": len(ranked),
+        "compared": compared,
+        "skipped_no_data": skipped,
     }
     if cur_effort:
         out["effort"] = cur_effort
@@ -263,6 +287,11 @@ def check(models, agent, ref, params, role, coding):
         out["closest"] = closest(models, ref)
         return out
     out["facts"] = facts(cur)
+    meta = cur.get("metadata") or {}
+    # Unreported on the current model, so treated as required of every candidate (context: at least 300k).
+    out["unreported_flags"] = [
+        key for key in ("supports_tool_calling", "supports_vision", "context_window") if meta.get(key) is None
+    ]
     out["cheaper_provider"] = cheaper_provider(models, cur, needs)
     effort = params.get("reasoning_effort")
     out["intelligence"] = compare(models, cur, "intelligence_index", effort, needs)
