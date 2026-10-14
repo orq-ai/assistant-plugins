@@ -7,35 +7,18 @@
 # ///
 """Window-wide decisions for orq-analyze-traces: one `/decisions` call per trace, over every trace in the window.
 
-The agent reads a sample and names the failure modes; this script measures them over the whole window. It
-never writes to the platform: it reads traces (`POST /v3/traces/search`, `GET /v3/traces/{id}/conversation`)
-and asks the router's decision models (`POST /v3/router/decisions`), which costs money but changes nothing.
+The agent reads a sample and names the failure modes; this script finds them across the whole window. It never
+writes to the platform: it reads traces (`POST /v3/traces/search`, `GET /v3/traces/{id}/conversation`) and asks the
+router's decision models (`POST /v3/router/decisions`), which costs money but changes nothing.
 
-Input routing. A trace whose state fits the short model's limit goes to Jev (`typesafe/jev-latest`, 32k tokens of
-state plus longest question). Anything larger goes to the long model (`openai/gpt-6-luna`, 1.05M context) whole,
-never chunked or trimmed: chunking with max pooling inflates a mode's rate on long traces, and trimming deflates
-it. A Jev call that still overflows (`max_tokens_exceeded`) is retried on the long model. Every row records which
-model labelled it, so agreement and rates can be read per route.
+A trace goes whole to the short model when its estimated size fits that model's budget, and whole to the long model
+otherwise; a short call the router still rejects as too long is retried long. Traces are never chunked or trimmed:
+max-pooled chunks flag long traces more often, trimming flags them less, and either makes what the model finds
+depend on trace length. This is also why the script does not build on evaluatorq's labelling pass, which chunks;
+its state shape differs from evaluatorq's `jev_state` too, and calibration measures the instrument as built here.
 
-Subcommands:
-    probe      one tiny call per model: is `/decisions` reachable with this key?
-    estimate   enumerate the window, measure a random sample of conversations, project cost per route
-    label      label every trace in the window (or an id list) against a questions file; resumable JSONL
-    pick       draw Phase 1 reading picks from a selection pass: flagged traces plus a random slice
-    agreement  per mode, the decision model against the agent's own labels on traces it read
-    rates      per mode, the share of labelled traces the decision model flags, per route
-
-Usage (from the skill directory):
-    uv run scripts/decide.py probe
-    uv run scripts/decide.py estimate --search-body body.json
-    uv run scripts/decide.py label --search-body body.json --questions modes.json --out labels.jsonl
-    uv run scripts/decide.py pick --labels selection.jsonl --question failed --flagged 30 --random 50
-    uv run scripts/decide.py agreement --labels labels.jsonl --questions modes.json --agent-labels coded.json
-    uv run scripts/decide.py rates --labels labels.jsonl --questions modes.json
-
-`--search-body` is the same `traces search` body file the skill already builds (trace-queries.md §1): RFC3339
-`from`/`to`, the target in `filters`. `sort` and paging are set here. Requires `ORQ_API_KEY`; `ORQ_API_BASE_URL`
-overrides the host (default https://api.orq.ai).
+Subcommands and the files they share are described in the skill's "Window decisions" section. Requires
+`ORQ_API_KEY`; `ORQ_API_BASE_URL` overrides the host (default https://api.orq.ai).
 """
 
 from __future__ import annotations
@@ -44,12 +27,14 @@ import argparse
 import asyncio
 import hashlib
 import json
+import math
 import os
 import random
 import ssl
 import sys
 import time
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -62,20 +47,41 @@ if sys.platform == 'win32':
         except (AttributeError, ValueError):
             pass
 
+
+@dataclass(frozen=True)
+class Model:
+    budget_tokens: int  # estimated state + longest question routed to this model
+    price_per_m: float  # USD per million input tokens, catalogue price on 2026-10-14; `estimate` only
+
+
+# Jev and decider-4b reject state plus longest question above 32k tokens; the 4k margin absorbs the 4-characters
+# estimate, and a trace it misjudges is retried on the long model.
+MODELS = {
+    'typesafe/jev-latest': Model(28_000, 0.042),
+    'orq/decider-4b': Model(28_000, 0.035),
+    'openai/gpt-6-luna': Model(1_000_000, 0.10),
+}
 SHORT_MODEL = 'typesafe/jev-latest'
 LONG_MODEL = 'openai/gpt-6-luna'
-# Catalogue input prices, USD per million tokens, on 2026-10-14 (`orq models list`). Estimates only: `label`
-# reports what each call actually cost from the router's own usage block.
-PRICES = {SHORT_MODEL: 0.042, LONG_MODEL: 0.10, 'orq/decider-4b': 0.035}
-# Jev: state plus the longest question within 32k tokens. Tokens are estimated at 4 characters each, as evaluatorq
-# does. A trace the estimate routes short and Jev still rejects as too long is retried on the long model, so the
-# estimate only has to avoid wasted calls, not guarantee a fit: an 85k-character trace estimated at 28k tokens by a
-# 3-characters rule measured 19k on Luna's tokenizer and would have gone long for nothing.
-SHORT_LIMIT_TOKENS = 28_000
-LONG_LIMIT_TOKENS = 1_000_000
+OVERFLOW = 'max_tokens_exceeded'
 CHARS_PER_TOKEN = 4
-MAX_ATTEMPTS = 5
+DEFAULT_MAX_TRACES = 5000
 SEARCH_PAGE = 100
+MAX_ATTEMPTS = 5
+# A mode clears for window-wide labelling only on enough evidence that the model finds what the agent found.
+MIN_POSITIVES = 10
+MIN_RECALL = 0.7
+FLAGGED_LIST = 50
+
+
+def fail(message: str) -> None:
+    sys.exit(f'✗ {message}')
+
+
+def model(name: str) -> Model:
+    if name not in MODELS:
+        fail(f'unknown decision model {name!r}; known: {", ".join(MODELS)}')
+    return MODELS[name]
 
 
 def base_url() -> str:
@@ -83,10 +89,13 @@ def base_url() -> str:
 
 
 def tls_verify() -> bool | ssl.SSLContext:
-    """Verify TLS everywhere. On Windows use the OS trust store: OpenSSL's file-based CA load aborts some builds."""
+    """Same policy as orq-evaluator-alignment's `lib/orq_client.tls_verify` (RES-1387): verify always, and on
+    Windows through the OS trust store. Never fall back to unverified TLS: the API key rides these connections."""
     if sys.platform == 'win32':
-        import truststore
-
+        try:
+            import truststore
+        except ImportError:
+            fail('truststore is required on Windows; run this script with `uv run`, which installs it')
         return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     return True
 
@@ -94,14 +103,14 @@ def tls_verify() -> bool | ssl.SSLContext:
 def client() -> httpx.AsyncClient:
     key = os.environ.get('ORQ_API_KEY')
     if not key:
-        sys.exit('✗ ORQ_API_KEY is not set')
+        fail('ORQ_API_KEY is not set')
     return httpx.AsyncClient(
         base_url=base_url(), headers={'Authorization': f'Bearer {key}'}, timeout=300, verify=tls_verify()
     )
 
 
 async def request(http: httpx.AsyncClient, method: str, path: str, **kwargs: Any) -> httpx.Response:
-    """One call with retries on 429, 5xx and network errors. Any other status is returned to the caller."""
+    """Retries 429, 5xx, the router's 499 `internal_error` and network errors; returns any other status."""
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             response = await http.request(method, path, **kwargs)
@@ -111,7 +120,7 @@ async def request(http: httpx.AsyncClient, method: str, path: str, **kwargs: Any
             print(f'⚠ {method} {path}: {type(exc).__name__}, retrying', file=sys.stderr)
             await asyncio.sleep(2**attempt)
             continue
-        if response.status_code == 429 or response.status_code >= 500:
+        if response.status_code in (429, 499) or response.status_code >= 500:
             if attempt == MAX_ATTEMPTS:
                 return response
             try:
@@ -127,45 +136,61 @@ async def request(http: httpx.AsyncClient, method: str, path: str, **kwargs: Any
 # --- window ------------------------------------------------------------------------------------------------------
 
 
-async def window_ids(http: httpx.AsyncClient, body_path: Path, max_traces: int) -> list[str]:
-    """Every distinct trace id the search body selects, newest first. Search rows repeat a trace once per span."""
-    body = json.loads(body_path.read_text(encoding='utf-8-sig'))
+@dataclass
+class Window:
+    ids: list[str]  # newest first
+    capped: bool
+    source: str
+
+
+async def load_window(http: httpx.AsyncClient, args: argparse.Namespace) -> Window:
+    """The traces to label. Over the cap, refuse unless `--max-traces` was given: a cap silently turns the date
+    range into its newest N traces."""
+    if args.trace_ids:
+        return Window(read_ids(args.trace_ids), False, str(args.trace_ids))
+    limit = args.max_traces or DEFAULT_MAX_TRACES
+    body = json.loads(args.search_body.read_text(encoding='utf-8-sig'))
     for field in ('from', 'to'):
         if field not in body:
-            sys.exit(f'✗ {body_path}: `{field}` is required (RFC3339) in a search body')
+            fail(f'{args.search_body}: `{field}` is required (RFC3339) in a search body')
     body['sort'] = [{'field': 'end_time', 'order': 'desc'}]
     body['limit'] = SEARCH_PAGE
-    ids: dict[str, None] = {}
-    token = None
+    ids: dict[str, None] = {}  # search rows repeat a trace once per span
     seen_tokens: set[str] = set()
-    while len(ids) < max_traces:
-        if token:
-            body['page_token'] = token
+    while len(ids) <= limit:
         response = await request(http, 'POST', '/v3/traces/search', json=body)
         if response.status_code != 200:
-            sys.exit(f'✗ traces search: HTTP {response.status_code} {response.text[:300]}')
+            fail(f'traces search: HTTP {response.status_code} {response.text[:300]}')
         payload = response.json()
         for row in payload.get('data') or []:
             if row.get('trace_id'):
                 ids.setdefault(row['trace_id'], None)
-        token = payload.get('next_page_token') or payload.get('page_token')
-        if not token or token in seen_tokens or not payload.get('data'):
+        token = payload.get('next_page_token')
+        if not payload.get('has_more', bool(token)) or not token or token in seen_tokens:
             break
         seen_tokens.add(token)
-    return list(ids)[:max_traces]
+        body['page_token'] = token
+    capped = len(ids) > limit
+    if capped and args.max_traces is None:
+        fail(
+            f'the window holds more than {limit:,} traces; pass --max-traces to label only the newest N '
+            '(and report the window as those traces), or narrow the search body'
+        )
+    window = f'{body["from"]} to {body["to"]}'
+    return Window(list(ids)[:limit], capped, window)
 
 
 def read_ids(path: Path) -> list[str]:
-    return list(
-        dict.fromkeys(line.strip() for line in path.read_text(encoding='utf-8-sig').splitlines() if line.strip())
-    )
+    lines = path.read_text(encoding='utf-8-sig').splitlines()
+    return list(dict.fromkeys(line.strip() for line in lines if line.strip()))
 
 
 async def conversation(http: httpx.AsyncClient, trace_id: str) -> list[dict[str, Any]]:
     response = await request(http, 'GET', f'/v3/traces/{trace_id}/conversation')
     if response.status_code != 200:
         raise RuntimeError(f'conversation HTTP {response.status_code}: {response.text[:200]}')
-    return response.json().get('items') or []
+    items = response.json().get('items') or []
+    return [item for item in items if isinstance(item, dict)]
 
 
 def _text(content: Any) -> str:
@@ -177,8 +202,8 @@ def _text(content: Any) -> str:
 
 
 def build_state(items: list[dict[str, Any]]) -> dict[str, Any]:
-    """The decision state: every message, tool call and tool result in order, whole. Reasoning is left out, as in
-    evaluatorq's `jev_state`: it is the model's scratchpad, not something the agent did or said."""
+    """Every message, tool call and tool result in order, whole. Reasoning is left out: it is the model's
+    scratchpad, not something the agent did or said."""
     entries: list[dict[str, Any]] = []
     for index, item in enumerate(items):
         kind = item.get('type')
@@ -208,7 +233,7 @@ def build_state(items: list[dict[str, Any]]) -> dict[str, Any]:
                 }
             )
         elif kind and kind != 'reasoning':
-            # Built-in tool calls (web or file search), MCP calls and anything newer: kept as recorded, minus ids.
+            # Built-in tool calls (web or file search), MCP calls and anything newer, as recorded.
             entries.append({'index': index, **{k: v for k, v in item.items() if k not in ('id', 'signature')}})
     return {'messages': entries}
 
@@ -218,378 +243,417 @@ def state_tokens(state: dict[str, Any], questions: dict[str, Any]) -> int:
     return (len(json.dumps(state, ensure_ascii=False)) + longest) // CHARS_PER_TOKEN
 
 
-# --- decisions ---------------------------------------------------------------------------------------------------
+# --- questions and runs ------------------------------------------------------------------------------------------
 
 
-def load_questions(path: Path) -> tuple[dict[str, Any], dict[str, float]]:
-    """`{key: {type, instructions, criteria?, threshold?}}`, type `noul` or `choice`. `threshold` is local (noul
-    only) and never sent. `score` questions are refused: nothing here turns a score into a mode verdict."""
+@dataclass
+class Questions:
+    wire: dict[str, Any]  # exactly what is sent
+    thresholds: dict[str, float]
+    path: Path
+
+
+def load_questions(path: Path) -> Questions:
+    """`{key: {type: noul | choice, instructions, criteria?, threshold?}}`. `threshold` (noul) is never sent."""
     raw = json.loads(path.read_text(encoding='utf-8-sig'))
     if not isinstance(raw, dict) or not raw:
-        sys.exit(f'✗ {path}: expected a non-empty object of questions')
+        fail(f'{path}: expected a non-empty object of questions')
     wire: dict[str, Any] = {}
     thresholds: dict[str, float] = {}
     for key, question in raw.items():
         if question.get('type') not in ('noul', 'choice'):
-            sys.exit(f'✗ {path}: question {key!r} needs type noul or choice')
+            fail(f'{path}: question {key!r} needs type noul or choice')
         if question['type'] == 'choice' and not isinstance(question.get('criteria'), dict):
-            sys.exit(f'✗ {path}: choice question {key!r} needs a {{label: description}} criteria object')
+            fail(f'{path}: choice question {key!r} needs a {{label: description}} criteria object')
         thresholds[key] = float(question.get('threshold', 0.5))
         wire[key] = {k: v for k, v in question.items() if k != 'threshold'}
-    return wire, thresholds
+    return Questions(wire, thresholds, path)
 
 
-def questions_sha(questions: dict[str, Any]) -> str:
-    """Which questions a row answers. Rows from another version of the questions are never reused or counted."""
-    return hashlib.sha256(json.dumps(questions, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:12]
+def run_file(args: argparse.Namespace, questions: Questions) -> Path:
+    """One labels file per questions file and model pair, so a rewritten question or a switched model can never be
+    answered by, or pooled with, an earlier pass."""
+    key = json.dumps([questions.wire, args.short_model, args.long_model], sort_keys=True, ensure_ascii=False)
+    digest = hashlib.sha256(key.encode()).hexdigest()[:12]
+    return args.run_dir / f'{questions.path.stem}-{digest}.jsonl'
 
 
-async def decide(http: httpx.AsyncClient, model: str, state: Any, questions: dict[str, Any]) -> dict[str, Any]:
+def read_rows(path: Path) -> list[dict[str, Any]]:
+    """Rows of a labels file. A torn last line (a run killed mid-write) is skipped, so the pass stays resumable."""
+    if not path.exists():
+        return []
+    rows = []
+    for line in path.read_text(encoding='utf-8').splitlines():
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return rows
+
+
+def latest_rows(path: Path) -> dict[str, dict[str, Any]]:
+    """The last row per trace: a retried trace's success replaces its earlier error."""
+    rows: dict[str, dict[str, Any]] = {}
+    for row in read_rows(path):
+        if 'answers' in row or row['trace_id'] not in rows:
+            rows[row['trace_id']] = row
+    return rows
+
+
+def existing_rows(args: argparse.Namespace, questions: Questions) -> tuple[Path, dict[str, dict[str, Any]]]:
+    path = run_file(args, questions)
+    if not path.exists():
+        fail(f'no labels for {questions.path} with these models in {args.run_dir}; run `label` first')
+    return path, latest_rows(path)
+
+
+def verdicts(row: dict[str, Any], questions: Questions) -> set[str] | None:
+    """The modes a row flags, or None when any answer is missing, refused, or a label outside the criteria."""
+    flagged: set[str] = set()
+    answers = row.get('answers') or {}
+    for key, question in questions.wire.items():
+        answer = answers.get(key)
+        if not isinstance(answer, dict) or answer.get('type') != question['type']:
+            return None
+        if question['type'] == 'choice':
+            label = answer.get('choice')
+            if label not in question['criteria']:
+                return None
+            if label not in ('none', 'pass'):
+                flagged.add(label)
+        else:
+            if answer.get('noul') is None:
+                return None
+            if answer['noul'] >= questions.thresholds[key]:
+                flagged.add(key)
+    return flagged
+
+
+def mode_names(questions: Questions) -> list[str]:
+    names: list[str] = []
+    for key, question in questions.wire.items():
+        if question['type'] == 'choice':
+            names.extend(label for label in question['criteria'] if label not in ('none', 'pass'))
+        else:
+            names.append(key)
+    return names
+
+
+# --- decisions ---------------------------------------------------------------------------------------------------
+
+
+async def decide(http: httpx.AsyncClient, name: str, state: Any, questions: dict[str, Any]) -> dict[str, Any]:
     response = await request(
-        http, 'POST', '/v3/router/decisions', json={'model': model, 'state': state, 'questions': questions}
+        http, 'POST', '/v3/router/decisions', json={'model': name, 'state': state, 'questions': questions}
     )
     if response.status_code == 200:
         body = response.json()
-        return {'answers': body.get('answers') or {}, 'usage': body.get('usage') or {}}
-    overflow = response.status_code == 400 and 'max_tokens_exceeded' in response.text
-    return {'error': f'HTTP {response.status_code}: {response.text[:200]}', 'overflow': overflow}
+        usage = body.get('usage') if isinstance(body.get('usage'), dict) else {}
+        return {'answers': body.get('answers') or {}, 'usage': usage}
+    return {
+        'error': f'HTTP {response.status_code}: {response.text[:200]}',
+        'status': response.status_code,
+        'overflow': response.status_code == 400 and OVERFLOW in response.text,
+    }
 
 
-async def label_one(
-    http: httpx.AsyncClient, trace_id: str, questions: dict[str, Any], short: str, long: str
-) -> dict[str, Any]:
-    row: dict[str, Any] = {'trace_id': trace_id, 'questions_sha': questions_sha(questions)}
+async def label_one(http: httpx.AsyncClient, trace_id: str, order: int, args: argparse.Namespace, wire: dict) -> dict:
+    row: dict[str, Any] = {'trace_id': trace_id, 'order': order}
     try:
         state = build_state(await conversation(http, trace_id))
     except (RuntimeError, httpx.HTTPError, ValueError) as exc:
         return {**row, 'error': f'fetch: {exc}'}
     if not state['messages']:
         return {**row, 'error': 'empty conversation'}
-    tokens = state_tokens(state, questions)
+    tokens = state_tokens(state, wire)
     row['estimated_tokens'] = tokens
-    if tokens > LONG_LIMIT_TOKENS:
-        return {**row, 'error': f'too long for {long} (about {tokens:,} tokens)'}
-    model, reason = (short, 'fits') if tokens <= SHORT_LIMIT_TOKENS else (long, 'over_short_limit')
+    if tokens > model(args.long_model).budget_tokens:
+        return {**row, 'error': f'too long for {args.long_model} (about {tokens:,} tokens)'}
+    name, reason = (
+        (args.short_model, 'fits') if tokens <= model(args.short_model).budget_tokens else (args.long_model, 'over')
+    )
     try:
-        result = await decide(http, model, state, questions)
-        if result.get('overflow') and model == short:
-            model, reason = long, 'short_overflowed'
-            result = await decide(http, model, state, questions)
+        result = await decide(http, name, state, wire)
+        if result.get('overflow') and name == args.short_model:
+            name, reason = args.long_model, 'short_overflowed'
+            result = await decide(http, name, state, wire)
     except (httpx.HTTPError, ValueError) as exc:
-        return {**row, 'model': model, 'error': f'decide: {type(exc).__name__}: {exc}'}
-    row.update(model=model, route='short' if model == short else 'long', reason=reason)
+        return {**row, 'model': name, 'error': f'decide: {type(exc).__name__}: {exc}'}
+    row.update(model=name, route='short' if name == args.short_model else 'long', reason=reason)
     if 'error' in result:
-        return {**row, 'error': result['error']}
-    usage = result['usage']
-    return {
-        **row,
-        'answers': result['answers'],
-        'input_tokens': usage.get('input_tokens'),
-        'cost': usage.get('total_cost'),
-    }
+        return {**row, 'error': result['error'], 'status': result['status']}
+    return {**row, 'answers': result['answers'], 'cost': result['usage'].get('total_cost')}
 
 
-def read_rows(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    return [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines() if line.strip()]
+# --- subcommands -------------------------------------------------------------------------------------------------
 
 
-def done_ids(out: Path, sha: str) -> set[str]:
-    """Traces already answered for these questions. An out file written for other questions is refused, so a
-    rewritten question is never silently skipped as done: give each questions file its own out file."""
-    rows = read_rows(out)
-    if {row.get('questions_sha') for row in rows} - {sha}:
-        sys.exit(f'✗ {out} holds answers to a different questions file; write this pass to a new --out')
-    return {row['trace_id'] for row in rows if 'answers' in row}
-
-
-def latest_rows(path: Path, sha: str | None = None) -> dict[str, dict[str, Any]]:
-    """The last row per trace: a retried trace's success replaces its earlier error. With `sha`, rows answering
-    other questions are left out, with a warning."""
-    rows: dict[str, dict[str, Any]] = {}
-    skipped = 0
-    for row in read_rows(path):
-        if sha is not None and row.get('questions_sha') != sha:
-            skipped += 1
-            continue
-        if 'answers' in row or row['trace_id'] not in rows:
-            rows[row['trace_id']] = row
-    if skipped:
-        print(f'⚠ {path}: {skipped} rows answer a different questions file and were left out', file=sys.stderr)
-    return rows
-
-
-def verdicts(row: dict[str, Any], questions: dict[str, Any], thresholds: dict[str, float]) -> set[str] | None:
-    """The modes a labelled row flags. A choice question's label is the mode (`none` and `pass` flag nothing);
-    a noul question flags its own key at or above its threshold. None when an answer is missing or refused."""
-    flagged: set[str] = set()
-    answers = row.get('answers') or {}
-    for key, question in questions.items():
-        answer = answers.get(key)
-        if not isinstance(answer, dict) or answer.get('type') != question['type']:
-            return None
-        if question['type'] == 'choice':
-            label = answer.get('choice')
-            if label is None or label not in question['criteria']:
-                return None  # missing or outside the criteria: unreadable, never a clean trace
-            if label not in ('none', 'pass'):
-                flagged.add(label)
-        elif question['type'] == 'noul':
-            if answer.get('noul') is None:
-                return None
-            if answer['noul'] >= thresholds[key]:
-                flagged.add(key)
-    return flagged
-
-
-def mode_names(questions: dict[str, Any]) -> list[str]:
-    names: list[str] = []
-    for key, question in questions.items():
-        if question['type'] == 'choice':
-            names.extend(label for label in question['criteria'] if label not in ('none', 'pass'))
-        elif question['type'] == 'noul':
-            names.append(key)
-    return names
-
-
-# --- subcommands ---------------------------------------------------------------------------------------------------
-
-
-PROBE_STATE = {
-    'messages': [{'role': 'user', 'text': 'Where is my order?'}, {'role': 'assistant', 'text': 'It ships today.'}]
-}
+PROBE_STATE = {'messages': [{'role': 'user', 'text': 'Where is my order?'}, {'role': 'assistant', 'text': 'Today.'}]}
 PROBE_QUESTION = {'probe': {'type': 'noul', 'instructions': 'Did the assistant answer the user?'}}
 
 
 async def cmd_probe(args: argparse.Namespace) -> None:
+    ok = True
     async with client() as http:
-        for model in (args.short_model, args.long_model):
-            result = await decide(http, model, PROBE_STATE, PROBE_QUESTION)
-            status = 'available' if 'answers' in result else f'unavailable ({result["error"]})'
-            print(json.dumps({'model': model, 'status': status}))
+        for name in (args.short_model, args.long_model):
+            model(name)
+            try:
+                result = await decide(http, name, PROBE_STATE, PROBE_QUESTION)
+            except httpx.HTTPError as exc:
+                result = {'error': f'{type(exc).__name__}: {exc}', 'status': None}
+            if 'answers' in result:
+                status = 'available'
+            elif result.get('status') == 429:
+                status = 'rate limited: retry in a minute, this is not unavailability'
+            else:
+                status, ok = f'unavailable ({result["error"]})', False
+            print(json.dumps({'model': name, 'status': status}))
+    if not ok:
+        sys.exit(1)
 
 
 async def cmd_estimate(args: argparse.Namespace) -> None:
-    questions = load_questions(args.questions)[0] if args.questions else PROBE_QUESTION
+    wire = load_questions(args.questions).wire if args.questions else PROBE_QUESTION
+    short, long = model(args.short_model), model(args.long_model)
     async with client() as http:
-        ids = read_ids(args.trace_ids) if args.trace_ids else await window_ids(http, args.search_body, args.max_traces)
-        if not ids:
-            sys.exit('✗ the window holds no traces; re-check the target filter before reading this as clean')
-        sample = random.Random(args.seed).sample(ids, min(args.sample, len(ids)))
+        window = await load_window(http, args)
+        if not window.ids:
+            fail('the window holds no traces; re-check the target filter before reading this as clean')
+        sample = random.Random(args.seed).sample(window.ids, min(args.sample, len(window.ids)))
         sizes = []
         for trace_id in sample:
             try:
-                sizes.append(state_tokens(build_state(await conversation(http, trace_id)), questions))
+                sizes.append(state_tokens(build_state(await conversation(http, trace_id)), wire))
             except (RuntimeError, httpx.HTTPError, ValueError) as exc:
                 print(f'⚠ {trace_id}: {exc}', file=sys.stderr)
     if not sizes:
-        sys.exit('✗ no sampled conversation could be read')
-    short = [s for s in sizes if s <= SHORT_LIMIT_TOKENS]
-    long = [s for s in sizes if s > SHORT_LIMIT_TOKENS]
-    share_long = len(long) / len(sizes)
-    n = len(ids)
-    cost_short = (
-        n
-        * (1 - share_long)
-        * (sum(short) / len(short) if short else 0)
-        * PRICES.get(args.short_model, PRICES[SHORT_MODEL])
-        / 1e6
-    )
-    cost_long = (
-        n * share_long * (sum(long) / len(long) if long else 0) * PRICES.get(args.long_model, PRICES[LONG_MODEL]) / 1e6
-    )
+        fail('no sampled conversation could be read')
+    n = len(window.ids)
+    over = [s for s in sizes if s > short.budget_tokens]
+    under = [s for s in sizes if s <= short.budget_tokens]
+    cost_short = n * len(under) / len(sizes) * (sum(under) / len(under) if under else 0) * short.price_per_m / 1e6
+    cost_long = n * len(over) / len(sizes) * (sum(over) / len(over) if over else 0) * long.price_per_m / 1e6
     sizes.sort()
-    print(
-        json.dumps(
-            {
-                'traces_in_window': n,
-                'capped_at_max_traces': n >= args.max_traces,
-                'sampled': len(sizes),
-                'estimated_tokens': {
-                    'p50': sizes[len(sizes) // 2],
-                    'p90': sizes[min(len(sizes) - 1, int(len(sizes) * 0.9))],
-                    'max': sizes[-1],
-                },
-                'share_over_short_limit': round(share_long, 3),
-                'estimated_cost_usd': {
-                    'short': round(cost_short, 4),
-                    'long': round(cost_long, 4),
-                    'total': round(cost_short + cost_long, 4),
-                },
-                'note': 'Input tokens at catalogue prices, one call per trace; extra questions in the same call add '
-                'almost nothing. The long model may also bill output tokens, so treat the long share as a floor.',
-            },
-            indent=2,
-        )
-    )
+    report = {
+        'window': window.source,
+        'traces': n,
+        'capped_at_max_traces': window.capped,
+        'sampled': len(sizes),
+        'estimated_tokens': {'p50': sizes[len(sizes) // 2], 'max': sizes[-1]},
+        'sampled_over_short_budget': len(over),
+        'estimated_cost_usd': round(cost_short + cost_long, 4),
+        'note': 'input tokens at catalogue prices, one call per trace whatever the number of questions. '
+        + (
+            'No sampled trace went long; one that does costs up to '
+            f'${long.budget_tokens * long.price_per_m / 1e6:.2f}, so budget above this.'
+            if not over
+            else 'The long model may also bill output tokens; budget above this.'
+        ),
+    }
+    print(json.dumps(report, indent=2))
 
 
 async def cmd_label(args: argparse.Namespace) -> None:
-    questions, _ = load_questions(args.questions)
+    questions = load_questions(args.questions)
+    model(args.short_model)
+    model(args.long_model)
+    out = run_file(args, questions)
+    out.parent.mkdir(parents=True, exist_ok=True)
     async with client() as http:
-        ids = read_ids(args.trace_ids) if args.trace_ids else await window_ids(http, args.search_body, args.max_traces)
-        done = done_ids(args.out, questions_sha(questions))
-        todo = [trace_id for trace_id in ids if trace_id not in done]
-        print(f'✓ {len(ids)} traces, {len(done & set(ids))} already labelled, {len(todo)} to go', file=sys.stderr)
+        window = await load_window(http, args)
+        done = {row['trace_id'] for row in read_rows(out) if 'answers' in row}
+        todo = [(order, trace_id) for order, trace_id in enumerate(window.ids) if trace_id not in done]
+        print(f'✓ {len(window.ids)} traces, {len(window.ids) - len(todo)} already labelled → {out}', file=sys.stderr)
         semaphore = asyncio.Semaphore(args.concurrency)
         lock = asyncio.Lock()
-        totals = Counter()
-        cost = 0.0
+        totals: Counter = Counter()
+        spent = 0.0
+        abort: str | None = None
         started = time.perf_counter()
 
-        async def run(trace_id: str) -> None:
-            nonlocal cost
+        async def run(order: int, trace_id: str) -> None:
+            nonlocal spent, abort
             async with semaphore:
-                row = await label_one(http, trace_id, questions, args.short_model, args.long_model)
+                if abort or spent >= args.budget_usd:
+                    totals['not_started'] += 1
+                    return
+                try:
+                    row = await label_one(http, trace_id, order, args, questions.wire)
+                except Exception as exc:  # one malformed trace must not end a paid pass
+                    row = {'trace_id': trace_id, 'order': order, 'error': f'{type(exc).__name__}: {exc}'}
             async with lock:
-                with args.out.open('a', encoding='utf-8') as handle:
+                with out.open('a', encoding='utf-8') as handle:
                     handle.write(json.dumps(row, ensure_ascii=False) + '\n')
                 totals['error' if 'error' in row else row['route']] += 1
-                cost += row.get('cost') or 0.0
+                spent += row.get('cost') or 0.0
+                if row.get('status') in (401, 403):
+                    abort = row['error']
                 if sum(totals.values()) % 100 == 0:
-                    print(f'… {sum(totals.values())}/{len(todo)} · ${cost:.2f}', file=sys.stderr)
+                    print(f'… {sum(totals.values())}/{len(todo)} · ${spent:.2f}', file=sys.stderr)
 
-        await asyncio.gather(*(run(trace_id) for trace_id in todo))
-    print(
-        json.dumps(
-            {
-                'traces_in_window': len(ids),
-                'capped_at_max_traces': not args.trace_ids and len(ids) >= args.max_traces,
-                'labelled_short': totals['short'],
-                'labelled_long': totals['long'],
-                'errors': totals['error'],
-                'cost_usd': round(cost, 4),
-                'seconds': round(time.perf_counter() - started),
-                'out': str(args.out),
-            },
-            indent=2,
-        )
-    )
+        await asyncio.gather(*(run(order, trace_id) for order, trace_id in todo))
+    meta = {'window': window.source, 'traces': len(window.ids), 'capped_at_max_traces': window.capped}
+    out.with_suffix('.meta.json').write_text(json.dumps(meta, indent=2), encoding='utf-8')
+    rows = latest_rows(out)
+    report = {
+        **meta,
+        'labelled': sum('answers' in row for row in rows.values()),
+        'this_run': {**dict(totals), 'cost_usd': round(spent, 4), 'seconds': round(time.perf_counter() - started)},
+        'stopped': abort
+        or (
+            f'budget of ${args.budget_usd} reached; re-run with a higher --budget-usd to finish'
+            if totals['not_started']
+            else None
+        ),
+        'labels': str(out),
+    }
+    print(json.dumps(report, indent=2))
+    if abort:
+        fail(f'stopped on an authorisation error: {abort}')
 
 
 def cmd_pick(args: argparse.Namespace) -> None:
     """Flagged picks at random among the flagged traces; the random half uniformly from every other trace in the
-    labels file, including those the model could not label (too long, failed), so they can still be read."""
-    rows = list(latest_rows(args.labels).values())
+    pass, including those the model could not label, so they can still be read."""
+    questions = load_questions(args.questions)
+    _, rows_by_id = existing_rows(args, questions)
+    key = args.question or next(iter(questions.wire))
+    rows = list(rows_by_id.values())
     flagged = [
         row['trace_id']
         for row in rows
-        if 'answers' in row and ((row['answers'].get(args.question) or {}).get('noul') or 0) >= args.threshold
+        if 'answers' in row and ((row['answers'].get(key) or {}).get('noul') or 0) >= questions.thresholds[key]
     ]
     rng = random.Random(args.seed)
     picked_flagged = rng.sample(flagged, min(args.flagged, len(flagged)))
     taken = set(picked_flagged)
     pool = [row['trace_id'] for row in rows if row['trace_id'] not in taken]
     picked_random = rng.sample(pool, min(args.random, len(pool)))
-    if args.write:
-        args.write.mkdir(parents=True, exist_ok=True)
-        (args.write / 'flagged_ids.txt').write_text(''.join(f'{i}\n' for i in picked_flagged), encoding='utf-8')
-        (args.write / 'random_ids.txt').write_text(''.join(f'{i}\n' for i in picked_random), encoding='utf-8')
-    print(
-        json.dumps(
-            {
-                'traces': len(rows),
-                'labelled': sum('answers' in row for row in rows),
-                'flagged': len(flagged),
-                'picks': {'flagged': picked_flagged, 'random': picked_random},
-            },
-            indent=2,
-        )
-    )
+    picks = args.run_dir / 'picks'
+    picks.mkdir(parents=True, exist_ok=True)
+    (picks / 'flagged_ids.txt').write_text(''.join(f'{i}\n' for i in picked_flagged), encoding='utf-8')
+    (picks / 'random_ids.txt').write_text(''.join(f'{i}\n' for i in picked_random), encoding='utf-8')
+    report = {
+        'traces': len(rows),
+        'labelled': sum('answers' in row for row in rows),
+        'flagged': len(flagged),
+        'picks': {'flagged': picked_flagged, 'random': picked_random},
+        'written': str(picks),
+    }
+    print(json.dumps(report, indent=2))
 
 
 def kappa(tp: int, fp: int, fn: int, tn: int) -> float | None:
     n = tp + fp + fn + tn
-    if not n:
-        return None
-    observed = (tp + tn) / n
-    expected = ((tp + fp) * (tp + fn) + (fn + tn) * (fp + tn)) / n**2
-    return None if expected == 1 else round((observed - expected) / (1 - expected), 3)
+    expected = ((tp + fp) * (tp + fn) + (fn + tn) * (fp + tn)) / n**2 if n else 1
+    return None if expected == 1 else round(((tp + tn) / n - expected) / (1 - expected), 3)
 
 
 def cmd_agreement(args: argparse.Namespace) -> None:
-    questions, thresholds = load_questions(args.questions)
+    questions = load_questions(args.questions)
+    _, rows = existing_rows(args, questions)
     agent = json.loads(args.agent_labels.read_text(encoding='utf-8-sig'))
-    rows = latest_rows(args.labels, questions_sha(questions))
     modes = mode_names(questions)
-    random_ids = set(read_ids(args.random_ids)) if args.random_ids else set()
+    random_path = args.run_dir / 'picks' / 'random_ids.txt'
+    random_ids = set(read_ids(random_path)) if random_path.exists() else set()
     report: dict[str, Any] = {'compared': 0, 'missing_or_unreadable': [], 'unknown_agent_labels': {}, 'modes': {}}
     cells: dict[tuple[str, str], Counter] = {}
     for trace_id, agent_mode in agent.items():
         if not isinstance(agent_mode, str) or (agent_mode not in modes and agent_mode != 'none'):
-            # A display name instead of the slug, or a mode left out of the questions: scoring it would turn the
-            # model's correct flags into false positives.
+            # Scoring a label that names no mode would turn the model's correct flags into false positives.
             report['unknown_agent_labels'][trace_id] = agent_mode
             continue
         row = rows.get(trace_id)
-        flagged = verdicts(row, questions, thresholds) if row and 'answers' in row else None
+        flagged = verdicts(row, questions) if row and 'answers' in row else None
         if flagged is None:
             report['missing_or_unreadable'].append(trace_id)
             continue
         report['compared'] += 1
         for mode in modes:
-            for route in ('all', row['route'], *(('random',) if trace_id in random_ids else ())):
-                truth, guess = agent_mode == mode, mode in flagged
-                cells.setdefault((mode, route), Counter())[
-                    'tp' if truth and guess else 'fp' if guess else 'fn' if truth else 'tn'
-                ] += 1
+            truth, guess = agent_mode == mode, mode in flagged
+            cell = 'tp' if truth and guess else 'fp' if guess else 'fn' if truth else 'tn'
+            for stratum in ('all', row['route'], *(('random',) if trace_id in random_ids else ())):
+                cells.setdefault((mode, stratum), Counter())[cell] += 1
     for mode in modes:
-        report['modes'][mode] = {}
-        for route in ('all', 'short', 'long', 'random'):
-            c = cells.get((mode, route))
-            if not c:
-                continue
-            tp, fp, fn, tn = c['tp'], c['fp'], c['fn'], c['tn']
-            report['modes'][mode][route] = {
-                'agent_positives': tp + fn,
-                'tp': tp,
-                'fp': fp,
-                'fn': fn,
-                'tn': tn,
-                'precision': round(tp / (tp + fp), 3) if tp + fp else None,
-                'recall': round(tp / (tp + fn), 3) if tp + fn else None,
-                'kappa': kappa(tp, fp, fn, tn),
-            }
+        strata = {}
+        for stratum in ('all', 'short', 'long', 'random'):
+            c = cells.get((mode, stratum))
+            if c:
+                tp, fp, fn, tn = c['tp'], c['fp'], c['fn'], c['tn']
+                strata[stratum] = {
+                    'agent_positives': tp + fn,
+                    'tp': tp,
+                    'fp': fp,
+                    'fn': fn,
+                    'tn': tn,
+                    'recall': round(tp / (tp + fn), 3) if tp + fn else None,
+                    'precision': round(tp / (tp + fp), 3) if tp + fp else None,
+                    'kappa': kappa(tp, fp, fn, tn),
+                }
+        overall = strata.get('all', {'agent_positives': 0, 'recall': None})
+        if overall['agent_positives'] < MIN_POSITIVES:
+            clears = f'no: {overall["agent_positives"]} agent positives, {MIN_POSITIVES} needed'
+        elif (overall['recall'] or 0) < MIN_RECALL:
+            clears = f'no: recall {overall["recall"]} below {MIN_RECALL}'
+        else:
+            clears = 'yes'
+        report['modes'][mode] = {'clears': clears, **strata}
     print(json.dumps(report, indent=2))
 
 
+def wilson(count: int, n: int) -> list[float]:
+    """95% Wilson interval of a share: the flag rate's sampling spread, not the model's error."""
+    if not n:
+        return [0.0, 0.0]
+    z, p = 1.96, count / n
+    centre = (p + z * z / (2 * n)) / (1 + z * z / n)
+    spread = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / (1 + z * z / n)
+    return [round(max(0.0, centre - spread), 4), round(min(1.0, centre + spread), 4)]
+
+
 def cmd_rates(args: argparse.Namespace) -> None:
-    questions, thresholds = load_questions(args.questions)
-    rows = latest_rows(args.labels, questions_sha(questions))
+    questions = load_questions(args.questions)
+    path, rows = existing_rows(args, questions)
+    meta_path = path.with_suffix('.meta.json')
+    meta = json.loads(meta_path.read_text(encoding='utf-8')) if meta_path.exists() else {}
     modes = mode_names(questions)
-    counts: dict[str, Counter] = {route: Counter() for route in ('all', 'short', 'long')}
-    labelled = Counter()
+    read = set(read_ids(args.read_ids)) if args.read_ids else set()
+    labelled: Counter = Counter()
+    flagged_by: dict[str, list[tuple[int, str]]] = {mode: [] for mode in modes}
+    routes: dict[str, Counter] = {mode: Counter() for mode in modes}
+    not_labelled: Counter = Counter()
     multi = 0
-    errors = Counter()
     for row in rows.values():
-        flagged = verdicts(row, questions, thresholds) if 'answers' in row else None
+        flagged = verdicts(row, questions) if 'answers' in row else None
         if flagged is None:
-            errors[(row.get('error') or 'unreadable answer').split(':')[0]] += 1
+            not_labelled[(row.get('error') or 'unreadable answer').split(':')[0]] += 1
             continue
+        labelled[row['route']] += 1
         multi += len(flagged) > 1
-        for route in ('all', row['route']):
-            labelled[route] += 1
-            counts[route].update(flagged)
-    print(
-        json.dumps(
-            {
-                'traces': len(rows),
-                'labelled': dict(labelled),
-                'not_labelled': dict(errors),
-                'flagged_more_than_one_mode': multi,
-                'modes': {
-                    mode: {
-                        route: {'count': counts[route][mode], 'rate': round(counts[route][mode] / labelled[route], 4)}
-                        for route in ('all', 'short', 'long')
-                        if labelled[route]
-                    }
-                    for mode in modes
-                },
-            },
-            indent=2,
-        )
-    )
+        for mode in flagged:
+            flagged_by[mode].append((row.get('order', 0), row['trace_id']))
+            routes[mode][row['route']] += 1
+    n = sum(labelled.values())
+    report = {
+        **meta,
+        'labelled': n,
+        'labelled_by_route': dict(labelled),
+        'not_labelled': dict(not_labelled),
+        'flagged_more_than_one_mode': multi,
+        'modes': {
+            mode: {
+                'count': len(flagged_by[mode]),
+                'flag_rate': round(len(flagged_by[mode]) / n, 4) if n else None,
+                'interval': wilson(len(flagged_by[mode]), n),
+                'by_route': dict(routes[mode]),
+                'flagged_not_read': [trace_id for _, trace_id in sorted(flagged_by[mode]) if trace_id not in read][
+                    :FLAGGED_LIST
+                ],
+            }
+            for mode in modes
+        },
+    }
+    print(json.dumps(report, indent=2))
 
 
 def main() -> None:
@@ -597,45 +661,45 @@ def main() -> None:
     sub = parser.add_subparsers(dest='command', required=True)
 
     def models(p: argparse.ArgumentParser) -> None:
-        p.add_argument('--short-model', default=SHORT_MODEL)
+        p.add_argument('--short-model', default=SHORT_MODEL, help=f'one of {", ".join(MODELS)}')
         p.add_argument('--long-model', default=LONG_MODEL)
 
     def window(p: argparse.ArgumentParser) -> None:
         source = p.add_mutually_exclusive_group(required=True)
         source.add_argument('--search-body', type=Path, help='traces search body file: from, to, filters')
         source.add_argument('--trace-ids', type=Path, help='one trace id per line, instead of a search')
-        p.add_argument('--max-traces', type=int, default=5000)
+        p.add_argument('--max-traces', type=int, help=f'label only the newest N (needed above {DEFAULT_MAX_TRACES:,})')
+
+    def run(p: argparse.ArgumentParser) -> None:
+        models(p)
+        p.add_argument('--questions', type=Path, required=True)
+        p.add_argument('--run-dir', type=Path, default=Path('decide-runs'))
 
     p = sub.add_parser('probe')
     models(p)
     p = sub.add_parser('estimate')
     models(p)
     window(p)
+    p.add_argument('--questions', type=Path, help='size the sample with these questions')
     p.add_argument('--sample', type=int, default=30)
-    p.add_argument('--questions', type=Path, help='size the sample with these questions (default: one short one)')
     p.add_argument('--seed', type=int, default=0)
     p = sub.add_parser('label')
-    models(p)
+    run(p)
     window(p)
-    p.add_argument('--questions', type=Path, required=True)
-    p.add_argument('--out', type=Path, required=True)
+    p.add_argument('--budget-usd', type=float, required=True, help='stop starting calls once this much is spent')
     p.add_argument('--concurrency', type=int, default=16)
     p = sub.add_parser('pick')
-    p.add_argument('--labels', type=Path, required=True)
-    p.add_argument('--question', required=True, help='the noul question key of the selection pass')
-    p.add_argument('--threshold', type=float, default=0.5)
+    run(p)
+    p.add_argument('--question', help='the noul question to pick on (default: the first)')
     p.add_argument('--flagged', type=int, default=30)
     p.add_argument('--random', type=int, default=50)
-    p.add_argument('--write', type=Path, help='also write flagged_ids.txt and random_ids.txt into this directory')
     p.add_argument('--seed', type=int, default=0)
     p = sub.add_parser('agreement')
-    p.add_argument('--labels', type=Path, required=True)
-    p.add_argument('--questions', type=Path, required=True)
+    run(p)
     p.add_argument('--agent-labels', type=Path, required=True, help='{trace_id: mode slug or "none"}, traces read')
-    p.add_argument('--random-ids', type=Path, help="pick's random_ids.txt: also report the random stratum alone")
     p = sub.add_parser('rates')
-    p.add_argument('--labels', type=Path, required=True)
-    p.add_argument('--questions', type=Path, required=True)
+    run(p)
+    p.add_argument('--read-ids', type=Path, help='traces already read, left out of the flagged lists')
 
     args = parser.parse_args()
     handlers = {'probe': cmd_probe, 'estimate': cmd_estimate, 'label': cmd_label}

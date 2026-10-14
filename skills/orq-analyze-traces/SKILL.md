@@ -14,7 +14,7 @@ allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq tr
 
 # Analyze Traces
 
-> `allowed-tools` here is a curated read/search allowlist. The shell grant is **enumerated read verbs only** — the `orq traces` query commands, `orq reporting query`, `orq agents retrieve`, `orq agents get-response`, `orq deployments get-config`, and explicit retrieve verbs for related entities (`orq tools retrieve`, `orq knowledge-bases retrieve`, `orq memory-stores retrieve`, `orq evals get`, `orq skills get`) — so a mistyped or hallucinated `orq agents update` / `orq ... delete` still prompts rather than executing silently. A broad `Bash(orq:*)` would prefix-match every write and delete the CLI has, which is why it is not used here. Every other shell command prompts, `create_*`/`update_*`/`delete_*`/`invoke_*` MCP tools prompt, and `delete_*` is disabled entirely while this skill is active. **This skill never writes to the platform** — the write path lives in `orq-improve-agent`. `uv run scripts/decide.py` is deliberately left off the allowlist: it reads traces and calls paid decision models, so every run prompts, and that prompt is the user's spend approval.
+> `allowed-tools` here is a curated read/search allowlist. The shell grant is **enumerated read verbs only** — the `orq traces` query commands, `orq reporting query`, `orq agents retrieve`, `orq agents get-response`, `orq deployments get-config`, and explicit retrieve verbs for related entities (`orq tools retrieve`, `orq knowledge-bases retrieve`, `orq memory-stores retrieve`, `orq evals get`, `orq skills get`) — so a mistyped or hallucinated `orq agents update` / `orq ... delete` still prompts rather than executing silently. A broad `Bash(orq:*)` would prefix-match every write and delete the CLI has, which is why it is not used here. Every other shell command prompts, `create_*`/`update_*`/`delete_*`/`invoke_*` MCP tools prompt, and `delete_*` is disabled entirely while this skill is active. **This skill never writes to the platform** — the write path lives in `orq-improve-agent`. `decide.py` is deliberately left off the allowlist, so every run of it prompts; spend itself is approved through `AskUserQuestion` and capped by `--budget-usd` ("Window decisions").
 
 You are an **orq.ai failure analyst**. Your job is to read production traces, **relay** how the agent is configured and how its runs ended, and build an actionable failure taxonomy using grounded theory (open coding → axial coding) — then write it to a file the rest of the suite can read.
 
@@ -51,7 +51,7 @@ What this skill leans on each for:
 - **NEVER** call `get-span` or `list-spans` without a `-j` projection. One trace's spans measured 115,868 bytes unprojected.
 - **ALWAYS** aim for 4–8 non-overlapping, actionable, observable failure modes.
 - **ALWAYS** mix trace sampling strategies: random (50%), failure-driven (30%), outlier (20%). With window decisions available, the failure-driven share comes from the selection pass (Phase 1); the random half stays random.
-- **NEVER** report a window rate for a mode the user has not cleared after seeing its agreement numbers (Phase 4). A decision model that disagrees with the traces you read measures the wrong thing at scale.
+- **NEVER** report a window flag rate for a mode that did not clear Phase 4 (10+ agent positives, recall 0.7+). A decision model that misses what you found on the traces you read misses it at scale too.
 - **ALWAYS** resolve trace field names at runtime from `list-fields` / `list-facets`, and fail loudly on a name that no longer resolves.
 - **ALWAYS** write the artifact (Phase 5). An unwritten artifact silently pushes every downstream skill back into re-running its own error analysis.
 
@@ -76,7 +76,7 @@ Agent Analysis Progress:
 - 50+ traces read with freeform annotations; 20+ bad traces annotated with specific failure descriptions
 - 4–8 non-overlapping, actionable failure modes defined with Pass/Fail criteria
 - Taxonomy stable across 2+ coding rounds (no new categories emerging)
-- With decisions available: every mode has its agreement numbers shown to the user, and every mode the user cleared has a `window` rate; otherwise `decisions` says why not
+- With decisions available: every mode's agreement was shown to the user, every cleared mode has `rate_basis: window_flags` and its `flagged` list, and the flag-rate caveat was stated; otherwise `decisions` says why not
 - `error-analysis-<key>-<timestamp>.md` written, its front matter parses, and its lead table alone is enough to decide what to do first
 
 **Companion skills:**
@@ -140,32 +140,32 @@ There are no flags, no thresholds and no pass/fail per check. A 12% truncation r
 
 ## Window decisions (`scripts/decide.py`)
 
-Reading finds the failure modes; it cannot count them over a window of thousands of traces. A decision model can: it answers typed yes/no or choice questions about one trace for about $0.001, with several questions in one call. `scripts/decide.py` runs one such call per trace over the whole window. It is the measuring instrument; **discovery stays with you**, because a decision model answers the questions it is given and cannot name a failure nobody asked about.
+Reading finds the failure modes. It cannot look at every trace in a window of thousands, and that is where the failures you never read are. A decision model can: it answers typed yes/no or choice questions about one trace for about $0.001, several questions in one call. `scripts/decide.py` runs one call per trace over the whole window. **The point is to surface failing traces to fix, not a precise percentage.** Discovery stays with you: a decision model answers the questions it is given and cannot name a failure nobody asked about.
 
-**Run it with uv from the working directory**, as `uv run <this skill's directory>/scripts/decide.py …`, so its input and output files land next to the artifact and not in the plugin cache. It needs `ORQ_API_KEY`; `ORQ_API_BASE_URL` overrides the host.
+**Run it with uv from the working directory**, as `uv run <this skill's directory>/scripts/decide.py …`. It keeps everything under `./decide-runs/` (`--run-dir` moves it): one labels file per questions file and model pair, so a rewritten question or a switched model starts a fresh pass instead of reusing old answers. It needs `ORQ_API_KEY`; `ORQ_API_BASE_URL` overrides the host.
 
 | Subcommand | Does | When |
 |---|---|---|
-| `probe` | one tiny call per model: are decisions reachable with this key? | Once, before Phase 1 |
-| `estimate --search-body body.json [--questions q.json]` | counts the window, measures a sample of conversations, projects cost per route | Before every `label` |
-| `label --search-body body.json --questions q.json --out <pass>.jsonl` | one call per trace, appended to a resumable JSONL: re-run the same command to finish an interrupted pass. `--trace-ids <file>` (one id per line) labels a list instead of the window | Phase 1 selection, Phase 4 |
-| `pick --labels sel.jsonl --question failed --write picks/` | flagged traces plus a random slice, as reading picks; `--write` also saves `flagged_ids.txt` and `random_ids.txt` | Phase 1 |
-| `agreement --labels … --questions … --agent-labels coded.json [--random-ids picks/random_ids.txt]` | per mode: TP, FP, FN, TN, precision, recall, Cohen's kappa, by route and for the random picks alone | Phase 4 calibration |
-| `rates --labels … --questions …` | per mode: count and share of labelled traces, by route; what could not be labelled, and why | Phase 4 |
+| `probe` | one tiny call per model; exits 1 if one is unavailable ("rate limited" is not unavailable) | Once, before Phase 1 |
+| `estimate --search-body body.json [--questions q.json]` | counts the window, sizes a sample of conversations, projects the cost | Before every `label` |
+| `label --search-body body.json --questions q.json --budget-usd <approved>` | one call per trace; stops starting calls at the budget; resumable (re-run the same command). `--trace-ids <file>` (one full id per line) labels a list instead | Phase 1, Phase 4 |
+| `pick --questions sel.json` | flagged traces plus a random slice to read; writes `decide-runs/picks/{flagged,random}_ids.txt` | Phase 1 |
+| `agreement --questions q.json --agent-labels coded.json` | per mode: recall, precision, kappa, by route and for the random picks; `clears: yes` or why not | Phase 4 |
+| `rates --questions q.json --read-ids read_ids.txt` | per mode: count, flag rate with a 95% interval, by route, and the newest 50 flagged traces nobody read; what could not be labelled, and why | Phase 4 |
 
-**One out file per questions file.** Each row records which questions it answers. `label` refuses an `--out` that holds answers to a different questions file, and `agreement` and `rates` leave such rows out, so a rewritten question is never answered by stale rows. Use `sel.jsonl` for the selection pass, `calib.jsonl` for calibration, and `window.jsonl` for the window pass, and pick a new name after rewriting a question.
+`--search-body` is the `traces search` body you build for Phase 1 (`trace-queries.md` §1): RFC3339 `from`/`to` and the target in `filters`. Pass the same `--short-model` / `--long-model` to every command of a pass, or none.
 
-`--search-body` is the same `traces search` body you build for Phase 1 (`trace-queries.md` §1): RFC3339 `from`/`to` and the target in `filters`. The script sets the sort and pages through every trace.
+**Routing.** A trace goes whole to Jev (`typesafe/jev-latest`) when its estimated size fits Jev's budget (28k tokens; the hard limit is 32k), and whole to `openai/gpt-6-luna` (1.05M context, about 2.4× the price per token) otherwise. Traces are never chunked or trimmed (the script's docstring says why). Each row records `model` and `route`.
 
-**Input routing, and why it is not chunking or trimming.** Jev (`typesafe/jev-latest`) takes at most about 32k tokens of state. A trace that fits goes to Jev whole. A larger one goes to `openai/gpt-6-luna` (1.05M context, about 2.4× Jev's price per token) whole; a Jev call that still overflows is retried there. Chunking with max pooling makes long traces look worse, because every extra chunk is another chance of a false flag; trimming makes them look better, because the middle and the tool output go. Either way a mode's rate starts to track trace length. Each row records `model` and `route` (`short` / `long`), so agreement and rates are read per route.
+**Questions file** (`q.json`): `{key: {type, instructions, criteria?, threshold?}}`. `type` is `noul` (yes/no; flagged at or above `threshold`, default 0.5, never sent) or `choice` (`criteria` is `{label: description}`; the label is the mode, `none` flags nothing). A missing answer, or a label outside `criteria`, counts as not labelled, never as clean. Write instructions as a question about the trace, from the mode's Fail definition: *"Did the assistant claim the refund was issued without a successful refund tool result?"*
 
-**Questions file** (`q.json`): `{key: {type, instructions, criteria?, threshold?}}`. `type` is `noul` (yes/no; flagged at or above `threshold`, default 0.5, never sent) or `choice` (`criteria` is `{label: description}`; the label is the mode, `none` flags nothing). `score` questions are refused. A choice answer with no label, or a label outside `criteria`, counts as not labelled, never as a clean trace. Write instructions as a question about the trace, from the mode's Fail definition: *"Did the assistant claim the refund was issued without a successful refund tool result?"*
+**Spend gate.** A run labels the window twice: the Phase 1 selection pass and the Phase 4 window pass, plus the read traces once for calibration. Before the first `label`, run `estimate` and ask the user with `AskUserQuestion`, showing the trace count and the projected cost of both window passes. Pass the approved amount as `--budget-usd`. If a pass stops at the budget, say so and ask before re-running it with more. Over 5,000 traces `label` and `estimate` refuse unless `--max-traces` is given: ask the user whether to label only the newest N, and if so report the window as those traces.
 
-**Cost gate.** Run `estimate` first and show the user the trace count and projected cost before any `label`. `capped_at_max_traces: true` (in `estimate` and `label`) means only the newest `--max-traces` (default 5,000) were counted. Say so, ask whether to raise the cap, and if it stays, report the window as those traces and not the full date range. The estimate prices input tokens only, so treat the long-route share as a floor.
+**What a window rate is.** It is the share of labelled traces the model flagged, not a corrected failure rate. Calibration measured how often the model misses or over-flags on the traces you read, and the interval covers only sampling spread, not those errors. Say both when you report it. Lead with what it is for: the flagged traces you had not read.
 
-**Fallback.** If `probe` reports a model unavailable (no key, HTTP 401/403/404, a gateway without `/v3/router/decisions`), or the user declines the spend, run the skill as before: random-first sampling in Phase 1, rates over `read` in Phase 4. Say which path ran in the artifact (`decisions: unavailable | declined | used`).
+**Fallback.** If `probe` exits 1 (no key, HTTP 401/403/404, a gateway without `/v3/router/decisions`), or the user declines the spend, run the skill as before: random-first sampling in Phase 1, rates over `read` in Phase 4. Record which path ran (`decisions: unavailable | declined | used`).
 
-**Clean up** `body.json`, the questions files, `coded.json`, `read_ids.txt`, `picks/` and the `.jsonl` files when the artifact is written, unless the user wants to keep them for a rerun.
+**Clean up** `body.json`, the questions files, `coded.json`, `read_ids.txt` and `decide-runs/` when the artifact is written, unless the user wants them for a rerun.
 
 ## Steps
 
@@ -236,8 +236,8 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
    **With decisions available, the failure-driven share comes from a selection pass over the whole window**, not from status filters alone. Status filters find loud failures; a wrong answer with `status=ok` needs someone to read the conversation, and a selection pass reads all of them.
 
    1. Failure-driven picks start with the free signals Phase 0 already swept: `status: error`, `max_iterations`, `max_time`, `finish_reasons: length`, guardrail triggers.
-   2. Write one generic question, with no taxonomy in it (`sel.json`): `{"failed": {"type": "noul", "instructions": "Did the assistant fail to do what the user asked, or claim something its tool results do not support?"}}`. `estimate`, get the user's go-ahead, then `label --search-body body.json --questions sel.json --out sel.jsonl`.
-   3. `pick --labels sel.jsonl --question failed --flagged <n> --random <m> --write picks/` draws the flagged picks at random from the flagged traces. The random half is drawn uniformly from every other trace in the window, including the ones the model could not label, so silent failures the question misses, and the longest traces, still reach you.
+   2. Write one generic question, with no taxonomy in it (`sel.json`): `{"failed": {"type": "noul", "instructions": "Did the assistant fail to do what the user asked, or claim something its tool results do not support?"}}`. `estimate`, ask the user (spend gate above), then `label --search-body body.json --questions sel.json --budget-usd <approved>`.
+   3. `pick --questions sel.json --flagged <n> --random <m>` draws the flagged picks at random from the flagged traces. The random half is drawn uniformly from every other trace in the window, including the ones the model could not label, so silent failures the question misses, and the longest traces, still reach you.
 
    The selection question only decides what you read first. It is not a failure mode and never appears in the artifact as one.
 
@@ -288,18 +288,14 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
 
 16. **Label all traces against the taxonomy** and compute error rates per mode: count ÷ traces read. Because modes are non-overlapping, the per-mode **counts** sum to `failed` and can never exceed it — so the rates sum to `failed ÷ read`.
 
-    **Then, with decisions available, measure each mode over the whole window.**
+    **Then, with decisions available, find each mode across the whole window.**
 
-    1. **Calibrate on what you read.** Write your own labels as `coded.json`, `{trace_id: mode slug or "none"}` for every trace read, using the exact slugs in `modes.json`. Write its keys one per line to `read_ids.txt`. Then run `label --trace-ids read_ids.txt --questions modes.json --out calib.jsonl` and `agreement --labels calib.jsonl --questions modes.json --agent-labels coded.json --random-ids picks/random_ids.txt`. No extra labelling is needed: the traces you read are the reference. Fix anything `agreement` lists under `unknown_agent_labels` before reading the numbers.
-    2. **Show the user the agreement per mode** (agent positives, precision, recall, kappa, by route and for the random picks) and decide together which modes go window-wide. There is no fixed bar. Weigh:
-        - how many positives the number rests on (kappa on 3 positives says little)
-        - whether misses or false flags matter more for this mode
-        - whether the long route agrees as well as the short one
-        - **the `random` row over `all`.** The read set is enriched with traces the selection pass flagged, so precision on `all` overstates precision at the window's real prevalence.
-    3. **A mode that does not agree well enough** is acted on, not dropped. Read the disagreements. If the question is vague, or the definition leans on context the model cannot see, rewrite the question, label the same traces into a new out file, and re-run `agreement`. If the model is wrong on clear cases, say so and keep that mode's rate over `read`.
-    4. **Label the window with the same `modes.json` that was calibrated.** A trimmed questions file would be a different instrument from the one the agreement measured, and it saves nothing, because all questions share one call. Run `estimate --questions modes.json`, get the go-ahead, then `label --search-body body.json --questions modes.json --out window.jsonl` and `rates`. Report a window rate only for the modes the user cleared: their count over the traces labelled. Report what `rates` lists under `not_labelled`, and the route split, next to it.
+    1. **Calibrate on what you read.** Write your own labels as `coded.json`, `{trace_id: mode slug or "none"}` for every trace read, with full trace ids and the exact slugs in `modes.json`. Write its keys one per line to `read_ids.txt`. Run `label --trace-ids read_ids.txt --questions modes.json --budget-usd <small>`, then `agreement --questions modes.json --agent-labels coded.json`. This is a separate paid pass, but only over the traces read. Fix anything listed under `unknown_agent_labels` first.
+    2. **A mode clears when `agreement` says `clears: yes`**: at least 10 traces you labelled with it, and the model finds at least 70% of them (recall 0.7). Recall is the bar because the window pass exists to surface failures: a miss hides one, a false flag only costs a read. Show the user the numbers per mode (recall, precision, kappa, the `random` row, the long route) and say which modes cleared. Precision on `all` is inflated, because the read set is enriched with flagged traces; the `random` row is the fairer one.
+    3. **A mode that does not clear** is acted on, not dropped. Under 10 positives, it keeps its read-based rate; read more traces only if the user wants it measured. Under the recall bar, read the misses: if the question is vague, or the definition leans on context the model cannot see, rewrite it in `modes.json` (a new pass starts automatically) and re-run steps 1 and 2. If the model is wrong on clear cases, say so and keep the read-based rate.
+    4. **Label the window with the same `modes.json` that was calibrated.** A trimmed questions file would be a different instrument from the one the agreement measured, and it saves nothing, because all questions share one call. The traces from step 1 are already done. `estimate --questions modes.json`, ask the user, `label --search-body body.json --questions modes.json --budget-usd <approved>`, then `rates --questions modes.json --read-ids read_ids.txt`. For each cleared mode, report the count and flag rate with its interval and caveat (above), the route split, what could not be labelled, and **the flagged traces you have not read**: they are the reason for the pass. Open a few of them; a flagged trace that shows a failure no mode covers is a new mode for Phase 6.
 
-    The read-based rate stays: it is what the agreement was measured on, and it is the only rate for modes that were not cleared.
+    The read-based rate stays alongside: it is what the agreement was measured on, and the only rate for modes that did not clear.
 
 17. **On a multi-step agent, record `where` on each failure mode** — the state where the first failure occurred, and the state it followed:
 
@@ -346,16 +342,21 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
     decisions: used                       # used | unavailable | declined
     unobservable: [reasoning_effort]      # could not be read — never absent, never assumed fine
 
-    failure_modes:                        # rates are over `read`; modes are non-overlapping,
-      - name: Drops persona on factual questions   # so their COUNTS sum to `failed`, never past it
-        rate: 0.125                                # 10 / 80
-        window: { rate: 0.094, count: 319, labelled: 3390, routes: { short: 3301, long: 89 },
-                  agreement: { agent_positives: 10, precision: 0.82, recall: 0.9, kappa: 0.83 } }
+    failure_modes:                        # read_rate is over `read`; modes are non-overlapping,
+      - name: Drops persona on factual questions   # so their read COUNTS sum to `failed`, never past it
+        rate: 0.094                                # the best available rate, on the basis below
+        rate_basis: window_flags                   # window_flags (mode cleared) | read
+        read_rate: 0.125                           # 10 / 80, always present
+        window_flags: { count: 319, labelled: 3390, interval: [0.085, 0.104], by_route: { short: 310, long: 9 },
+                        agreement: { agent_positives: 12, recall: 0.92, precision: 0.82, kappa: 0.83 } }
+        flagged: [9e1d33a0, 52c7be19]              # model-flagged, not read: newest first, up to 50
         fix: prompt              # prompt | config | tools | retrieval | structure | evaluator | code
         evidence: [cc27bfcc, a6502141]
 
       - name: Answers cut off mid-sentence
         rate: 0.075                                # 6 / 80
+        rate_basis: read                           # did not clear: 6 agent positives, 10 needed
+        read_rate: 0.075
         fix: config
         where: ExecSQL after GenSQL       # optional — omit on single-step agents
         caused_by: finish_reasons.length  # your attribution back to a Phase 0 fact
@@ -366,6 +367,8 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
 
       - name: Wrong tool on ambiguous queries
         rate: 0.05                                 # 4 / 80
+        rate_basis: read
+        read_rate: 0.05
         fix: evaluator
         where: DecideTool
         classification: generalization-subjective  # evaluator modes only
@@ -377,11 +380,11 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
     # Error analysis — support-bot
     80 read · 75% pass · 3412 swept · 12–26 Aug
 
-    | # | Failure mode | Rate (read) | Rate (window) | Fix | Where |
+    | # | Failure mode | Rate | Flagged in window | Fix | Where |
     |---|---|---|---|---|---|
-    | 1 | Drops persona on factual questions | 12.5% | 9.4% of 3,390 | prompt | — |
-    | 2 | Answers cut off mid-sentence | 7.5% | not cleared | config — `max_tokens` 8000→16000 | ExecSQL |
-    | 3 | Wrong tool on ambiguous queries | 5% | not cleared | evaluator → alignment | DecideTool |
+    | 1 | Drops persona on factual questions | 9.4% flagged of 3,390 (read: 12.5%) | 319 | prompt | — |
+    | 2 | Answers cut off mid-sentence | 7.5% of 80 read | not cleared | config — `max_tokens` 8000→16000 | ExecSQL |
+    | 3 | Wrong tool on ambiguous queries | 5% of 80 read | not cleared | evaluator → alignment | DecideTool |
 
     Not observable this run: `reasoning_effort` — OTLP spans carry no request params.
 
@@ -393,8 +396,9 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
     - **`fix` is the only routing field.** Seven values, one taxonomy.
     - **`knob` + `current` + `suggest`** appear only on a `fix: config` mode, and only because you judged it.
     - **`caused_by` names the Phase 0 fact; `knob` names the fix.** Both are your judgement. Absent is the normal case.
-    - **`rate` is over `read`**, and because modes are non-overlapping the per-mode **counts** sum to `failed` — the rates sum to `failed ÷ read` (here 0.125 + 0.075 + 0.05 = 0.25 = 20/80).
-    - **`window` appears only on a mode the user cleared in Phase 4**, and its `rate` is over `labelled`, not `read`. It does not change `rate`: consumers that read `rate` keep working, and the sum rule above holds for `rate` only. Its `agreement` is what the clearance rested on; keep it next to the number. With `decisions: unavailable` or `declined`, no mode has `window` and `traces.labelled` is absent.
+    - **`read_rate` is over `read`**, and because modes are non-overlapping the per-mode **counts** sum to `failed` — the read rates sum to `failed ÷ read` (here 0.125 + 0.075 + 0.05 = 0.25 = 20/80).
+    - **`rate` is the best available number, and `rate_basis` says which.** On a mode that cleared Phase 4 it is the window flag rate (`rate_basis: window_flags`): the share of labelled traces the model flagged, not a corrected failure rate, with `window_flags.agreement` as the evidence it rests on. Otherwise it equals `read_rate` (`rate_basis: read`). Quote `rate` with its basis; window flag rates do not obey the sum rule. With `decisions: unavailable` or `declined`, every mode is `read` and `traces.labelled` is absent.
+    - **`flagged` is a reading list, not evidence.** It holds full ids of traces the model flagged and nobody read. Never move them into `evidence` or `passing` unread; those stay what a person confirmed.
     - **`unobservable` is a list, not a boolean.** A consumer must check it before claiming the run was clean.
     - **`passing` is the other half of the regression set.** `evidence` records what failed; `passing` records what was read and judged good. Without both, the closing experiment runs against whatever dataset happens to exist.
     - **The body leads with the work list.** One scannable table — mode, rate, lever, location — then the depth below it.

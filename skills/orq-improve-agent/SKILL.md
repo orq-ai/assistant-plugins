@@ -141,6 +141,8 @@ A contradiction found here is a **`fix: config` finding already**. Take it strai
 
    **Check `unobservable` before claiming anything about what the analysis covered.**
 
+   **Quote each mode's `rate` with its `rate_basis`.** `window_flags` means the share of every trace in the window that a decision model flagged ("9.4% flagged of 3,390"), not a corrected failure rate; `read` means the share of the traces the analyst read ("12.5% of 80 read"). A mode's `flagged` list holds traces the model flagged and nobody read: open a few to find more failing examples to write the fix against, but never put them in the regression set unread.
+
 2. **No artifact, the user has traces** → recommend `orq-analyze-traces` first. **Do not silently re-run a mini error analysis inline.**
 
 3. **No artifact, the user can describe the problem** ("it keeps cutting off mid-answer") → run a **narrow, targeted sweep** to ground the complaint in real traces: `orq traces aggregate` on **one or two signals only** — typically `attributes.gen_ai.response.finish_reasons` and `status` — then `orq traces search` for a handful of matching ids. This is the "start right away" path, and it is **hard-bounded to those one or two signals**. Anything wider must route to `orq-analyze-traces`.
@@ -223,7 +225,7 @@ Present the analysis, ask which suggestions to apply, then rewrite:
 **Strengths:** [what the prompt does well]
 
 ### Suggestions
-1. [Guideline X] — [suggestion] — **Evidence-backed fix:** addresses failure mode [N] ([rate])
+1. [Guideline X] — [suggestion] — **Evidence-backed fix:** addresses failure mode [N] ([rate], [rate_basis])
 2. [Guideline Y] — [suggestion] — **Best-practice suggestion:** no failing example behind it
 ```
 
@@ -253,7 +255,7 @@ Every write — prompt or config — goes through the same gate:
 
 1. **Show the diff.** Original and new, side by side, with each change tied to the guideline or failure mode it addresses.
 2. **Get explicit approval** via `AskUserQuestion`. Approval for one change is not approval for the next.
-3. **Apply** with `--version-increment` and `--version-description` saying *what* changed and *why* (name the failure mode and its rate).
+3. **Apply** with `--version-increment` and `--version-description` saying *what* changed and *why* (name the failure mode and its rate, with its basis).
 4. **Verify and report.** Re-read the agent: **the intended knob changed, and `settings.tools[]` is unchanged.** Report the new version and the rollback path.
 
 Deployment mode stops at step 1 for config: show the recommended change and point at the UI.
