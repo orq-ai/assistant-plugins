@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.0] - 2026-10-12
+
+### Added
+
+- `orq-review-agent` skill (RES-887): a read-only health check of one orq agent. It checks run health, instructions, tools, `{{skill.X}}` references, evaluators and model choice against the suite's rubrics, gives each finding a high-level suggestion (never a rewritten prompt or diff), lists project evaluators the agent does not use and tools its instructions need but it lacks, writes one HTML report into a per-run directory (`agent-review-<key>-<timestamp>/`), posts a summary with the report link, shows the findings on request, then offers the skill that owns each fix. `allowed-tools` pre-approves no write verb. The model check (`scripts/model_check.py`, stdlib only) applies the RES-1338 A1 rule with the RES-887 guardrails, and lists a cheaper provider of the same model as its own finding. The rule text lives once in the script and is printed in every result. An unresolved model id lists the closest catalogue names, and a config contradiction certain to break every run is labelled `predicted broken` when there is no traffic to confirm it. Probed live on CLI 11.0.2; untested paths are marked `[unverified]`.
+- `orq-shared/resources/config-context.md`, `prompting-guidelines.md` and `tool-description-guide.md`: the Phase 0 relay list, the 11 prompting guidelines and the tool description guide, now shared by the skills that build, review and improve an agent.
+- `orq-shared/resources/model-slugs.md`: which catalogue field names a model (`id`, `refId`, `model_id`) and the rule for resolving an agent's model id, cited by `orq-cli`, `orq-evaluator-alignment`, `orq-recommend-evaluators` and `orq-review-agent`.
+- `tests/factual/orq-review-agent.csv` and `tests/evals/orq-review-agent/` (three fires cases, three near-miss cases, a read-only behavioural case on `support-bot` and a cross-project behavioural case).
+
+### Changed
+
+- `orq-analyze-traces` Phase 0, `orq-improve-agent` Phase 3a and `orq-build-agent` link to the shared rubrics instead of keeping their own copies. `orq-analyze-traces` now routes setup health checks to `orq-review-agent`. `orq-improve-agent` Phase 1 also checks that the declared model is available in the project (`orq models list`, resolved per `model-slugs.md`). `tool-description-guide.md` moved from `orq-build-agent/resources/` to `orq-shared/resources/`.
+
 ## [3.9.0] - 2026-10-08
 
 ### Added
