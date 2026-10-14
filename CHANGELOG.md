@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.0] - 2026-10-14
+
+### Added
+
+- `orq-analyze-traces/scripts/decide.py`: window-wide decisions for failure-mode measurement (RES-1629). One `POST /v3/router/decisions` call per trace, over every trace a `traces search` body selects, with the conversation read from `GET /v3/traces/{id}/conversation`. Subcommands `probe`, `estimate`, `label` (resumable JSONL), `pick`, `agreement` (precision, recall and Cohen's kappa against the agent's own labels) and `rates`. A trace that fits Jev's 32k-token limit goes to `typesafe/jev-latest` whole; a larger one goes to `openai/gpt-6-luna` whole, and a Jev call that still overflows is retried there. Neither route chunks or trims the trace, because both bias a mode's rate by trace length. Every row records its model, its route and a hash of the questions it answers. `label` refuses to resume into an out file written for different questions, so a rewritten question is never answered by stale rows. A choice answer that is missing or outside its criteria counts as not labelled rather than clean, and `score` questions are refused. `agreement` reports agent labels that match no mode, and can report the random picks as their own stratum. The script reads traces and calls paid decision models but never writes to the platform, and it is left off `allowed-tools` so that every run prompts as a spend approval.
+- `orq-analyze-traces`: a "Window decisions" section, a Phase 1 selection pass (a generic failure question over the window, then flagged picks plus a random slice), a Phase 3 questions file built from the mode definitions, and a Phase 4 calibration step. The skill shows per-mode agreement on the traces already read, the user decides which modes are measured window-wide (no fixed bar), and a mode that disagrees gets a rewritten question or keeps its read-based rate. Falls back to the sample-based path when decisions are unavailable or the user declines the spend.
+- Error-analysis artifact: `decisions: used | unavailable | declined`, `traces.labelled`, and an optional per-mode `window` block (`rate`, `count`, `labelled`, `routes`, `agreement`). `rate` stays over `read`, so existing consumers are unaffected.
+
 ## [3.9.0] - 2026-10-08
 
 ### Added

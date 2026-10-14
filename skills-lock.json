@@ -14,7 +14,7 @@
     "orq-analyze-traces": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "503e43bfeb17eddcd62cc8b1b45ee57692efcafa41c7aa1fb762a62cfd929ec9"
+      "computedHash": "5d4e5b4d4f269d1e8fa0d50fadb845c2d55defbf0c7c94d923e9d2942a90e71d"
     },
     "orq-build-agent": {
       "source": "orq-ai/assistant-plugins",
