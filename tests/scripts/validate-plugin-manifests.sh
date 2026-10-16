@@ -132,8 +132,17 @@ assert_jq .claude-plugin/plugin.json '.name == "orq"' \
   "Claude plugin name must be 'orq'"
 assert_jq .claude-plugin/plugin.json '.skills == "./skills/"' \
   "Claude plugin must declare skills path './skills/'"
-assert_jq .claude-plugin/plugin.json '.mcpServers == "./.mcp.json"' \
-  "Claude plugin must declare mcpServers path './.mcp.json'"
+# Claude Code declares the server inline so the key comes from a sensitive
+# userConfig option; it replaces the same-named server in the root .mcp.json
+# (which keeps the ORQ_API_KEY env var for Codex/Cursor/other harnesses).
+assert_jq .claude-plugin/plugin.json \
+  '.userConfig.orq_api_key | .type == "string" and .sensitive == true and (.title|length>0) and (.description|length>0)' \
+  "Claude plugin must declare a sensitive string userConfig option 'orq_api_key'"
+assert_jq .claude-plugin/plugin.json \
+  '.mcpServers["orq-workspace"] | .type == "http" and .url == "https://my.orq.ai/v2/mcp" and .headers.Authorization == "Bearer ${user_config.orq_api_key}"' \
+  "Claude plugin must declare inline orq-workspace MCP server using \${user_config.orq_api_key}"
+assert_jq .claude-plugin/plugin.json '(.mcpServers | type) == "object" and (.mcpServers | keys) == ["orq-workspace"]' \
+  "Claude plugin mcpServers must be an inline map with only orq-workspace"
 
 # --- MCP config: expected server ---
 

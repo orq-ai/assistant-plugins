@@ -27,7 +27,7 @@ const probe = `
 function run(env) {
   return new Promise((resolve) => {
     const child = spawn("node", ["--input-type=module", "-e", probe], {
-      env: { ...process.env, ORQ_TRACE_DISABLED: "", ...env },
+      env: { ...process.env, ORQ_TRACE_DISABLED: "", ORQ_API_KEY: "", CLAUDE_PLUGIN_OPTION_ORQ_API_KEY: "", ...env },
     });
     let out = "";
     child.stdout.on("data", (chunk) => { out += chunk; });
@@ -37,6 +37,9 @@ function run(env) {
 }
 
 const CASES = [
+  ["runs on the plugin option alone", { CLAUDE_PLUGIN_OPTION_ORQ_API_KEY: "test-key" }, true],
+  ["runs when the plugin option is blank but ORQ_API_KEY is set", { CLAUDE_PLUGIN_OPTION_ORQ_API_KEY: "", ORQ_API_KEY: "test-key" }, true],
+  ["stays off with no key anywhere", {}, false],
   ["runs with a key and no switch", { ORQ_API_KEY: "test-key" }, true],
   ["stops when the switch is set", { ORQ_API_KEY: "test-key", ORQ_TRACE_DISABLED: "1" }, false],
   ["stops on the word true as well", { ORQ_API_KEY: "test-key", ORQ_TRACE_DISABLED: "true" }, false],

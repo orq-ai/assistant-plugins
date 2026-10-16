@@ -21,6 +21,8 @@ Built on the [Agent Skills](https://agentskills.io/home#adoption) standard forma
   export ORQ_API_KEY=your-key-here
   ```
 
+  Claude Code's `orq-skills` plugin asks for the key when you install or enable it (change it later with `/plugin configure`) and keeps it in the system credential store, so you don't need the env var there. Every other harness reads `ORQ_API_KEY`.
+
 ### Quick reference
 
 | Tool | Recommended install |

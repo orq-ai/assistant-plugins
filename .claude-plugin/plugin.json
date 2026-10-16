@@ -14,5 +14,22 @@
   "license": "MIT",
   "keywords": ["orq", "llm", "agents", "prompts", "deployments", "evaluation", "monitoring", "rag", "experiments", "traces"],
   "skills": "./skills/",
-  "mcpServers": "./.mcp.json"
+  "userConfig": {
+    "orq_api_key": {
+      "type": "string",
+      "title": "orq.ai API key",
+      "description": "Your orq.ai API key (my.orq.ai > Settings > API keys). Authenticates the orq-workspace MCP server. Stored in your system credential store.",
+      "required": true,
+      "sensitive": true
+    }
+  },
+  "mcpServers": {
+    "orq-workspace": {
+      "type": "http",
+      "url": "https://my.orq.ai/v2/mcp",
+      "headers": {
+        "Authorization": "Bearer ${user_config.orq_api_key}"
+      }
+    }
+  }
 }

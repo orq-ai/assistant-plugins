@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Run all trace-hooks tests in order. Stops on first failure.
 #
-# Usage: ./run-all.sh [TRACE_PROFILE]
+# Usage: ./run-all.sh   (TEST_ORQ_API_KEY=<key> enables the subprocess trace-flow test)
 
 set -uo pipefail
 
-TRACE_PROFILE="${1:-${TEST_TRACE_PROFILE:-trace}}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 PLUGIN_ROOT="$(cd "$DIR/.." && pwd)"
 
@@ -51,7 +50,7 @@ node "$DIR/test-transcript-spans.mjs" || EXIT=1
 
 echo
 echo "########## 9/9 trace flow (subprocess CC) ##########"
-bash "$DIR/test-trace-flow.sh" "$TRACE_PROFILE" || EXIT=1
+bash "$DIR/test-trace-flow.sh" || EXIT=1
 
 # test-workspace-visibility.sh deliberately not in run-all: known-failing
 # because of a backend ingestion bug (OTLP returns 200 but list/get cannot
