@@ -742,12 +742,15 @@ case "$host" in
   ''|null) echo "no orq host; run 'orq auth login' or set ORQ_UI_BASE_URL" >&2; exit 1 ;;
 esac
 host="${host%/}"
-for pair in "workspace_key=${workspace_key:-}" "trace_id=${trace_id:-}" "span_id=${span_id:-}"; do   # trace-only link: drop span_id here and the span echo below
+for pair in "workspace_key=${workspace_key:-}" "trace_id=${trace_id:-}"; do
   case "${pair#*=}" in
     ''|null) echo "${pair%%=*} is not set; a link built without it opens nothing" >&2; exit 1 ;;
   esac
 done
-echo "${host}/${workspace_key}/traces/(trace:${trace_id})"
+echo "${host}/${workspace_key}/traces/(trace:${trace_id})"     # trace link; a trace-only caller stops here
+case "${span_id:-}" in
+  ''|null) echo "span_id is not set; no span link" >&2; exit 1 ;;
+esac
 echo "${host}/${workspace_key}/traces/(trace:${trace_id}//span:${span_id})"
 ```
 
