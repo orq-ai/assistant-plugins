@@ -9,7 +9,7 @@ description: >
   `eq sim` multi-turn user simulation. Do NOT use when comparing multiple
   agents head-to-head (use orq-compare-agents) or when running
   orq.ai-native experiments only (use orq-run-experiment).
-allowed-tools: Bash(eq:*), Bash(pip:*), Bash(python:*), Bash(npx:*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities
+allowed-tools: Bash(eq redteam *), Bash(eq sim *), Bash(eq dashboard *), Bash(pip install evaluatorq*), Bash(pip install 'evaluatorq*), Bash(pip install orq-ai-sdk*), Bash(python evaluate.py*), Bash(npx tsx evaluate.ts*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities
 ---
 
 # Evaluatorq

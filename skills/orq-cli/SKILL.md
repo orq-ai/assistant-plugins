@@ -9,7 +9,7 @@ description: >
   resolved. Do NOT use for writing application code that calls orq.ai (use
   orq-invoke-deployment) or for guided evaluation workflows (use
   orq-run-experiment).
-allowed-tools: Bash(orq:*), Bash(jq:*), Bash(curl:*), Bash(npm:*), Read, Write, Edit, Grep, Glob, WebFetch, AskUserQuestion, mcp__orq-workspace__search_docs, mcp__orq-workspace__search_entities
+allowed-tools: Bash(orq:*), Bash(npm install -g @orq-ai/cli:*), Bash(npm i @orq-ai/cli@:*), Bash(curl -fsSL https://raw.githubusercontent.com/orq-ai/orq-cli/main/openapi.yaml:*), Read, Write, Edit, Grep, Glob, WebFetch, AskUserQuestion, mcp__orq-workspace__search_docs, mcp__orq-workspace__search_entities
 ---
 
 # orq CLI

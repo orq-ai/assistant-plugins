@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Anthropic's plugin directory validator rejected the repo ("Couldn't validate that repository") because of `.gitattributes`; the file is removed.
 - Its blocking findings are fixed: `commands/orq-manage-skills.md` had an unquoted `argument-hint` with two bracketed groups (invalid YAML); the `.claude-plugin/.mcp.json` and `.claude-plugin/skills` symlinks are removed (the plugin root is the repo root, so the manifest paths resolve without them; `docs/install-claude-cowork.md` and `validate-plugin-manifests.sh` updated, and the script now fails on any symlink under `.claude-plugin/`); the `orq-trace` tests no longer ship token-shaped literals (trace-hooks 0.5.2).
 
+- Narrowed the broad `allowed-tools` shell grants that Anthropic's plugin directory holds for review. `curl` is scoped to `https://api.orq.ai/v2/*` (or dropped where the skill never runs it); `eq`, `pip`, `python`, `npx`, `uv`, `jq` and `npm` are scoped to the documented commands; bare `Bash` in `create-skill` and `commands/quickstart.md` is replaced by specific rules; the `orq*` entries in `commands/` become the `mcp__orq-workspace__*` tools those commands call. Commands outside the allow-list now prompt instead of running silently. `Bash(orq:*)` stays broad in `orq-cli`, which documents the whole CLI.
+
 ### Added
 
 - Directory listing fields in `.claude-plugin/plugin.json` for submission to Anthropic's plugin directory: `icon`, `privacyPolicyUrl`, `termsOfServiceUrl`.

@@ -6,12 +6,12 @@ description: >
   existing skill's contract is stale and needs re-verification. Do NOT use
   when editing an existing skill without re-probing the surface, or when
   documenting internal code conventions (that belongs in CLAUDE.md).
-allowed-tools: Read, Write, Edit, Grep, Glob, Bash, AskUserQuestion, WebFetch, WebSearch, ToolSearch
+allowed-tools: Read, Write, Edit, Grep, Glob, Bash(ls:*), Bash(mkdir:*), Bash(node tests/scripts/validate-skills.mjs:*), AskUserQuestion, WebFetch, WebSearch, ToolSearch
 ---
 
 # Create Skill
 
-> `allowed-tools` grants bare `Bash` because this skill probes unknown surfaces: arbitrary CLIs via `--help`, `curl` against undocumented APIs, whatever the target requires. The surface is not known at skill-authoring time, so the grant cannot be enumerated. Every other tool is standard read/write. **The output skill this produces must NOT inherit the broad grant** -- its `allowed-tools` enumerates write operations individually (see [`resources/writing-guide.md`](resources/writing-guide.md)).
+> `allowed-tools` pre-approves only `ls`, `mkdir` and the repo validator. This skill also probes unknown surfaces (arbitrary CLIs via `--help`, `curl` against undocumented APIs); the surface is not known at skill-authoring time, so those commands cannot be enumerated and prompt each time (Anthropic's plugin directory holds skills that pre-approve broad shell access). Every other tool is standard read/write. **The output skill this produces must NOT inherit the broad grant** -- its `allowed-tools` enumerates write operations individually (see [`resources/writing-guide.md`](resources/writing-guide.md)).
 
 You are a **skill author**. You take a capability **surface** (an API, a CLI, or an MCP server), build a verified **inventory** of what it offers, and write it into a **contract**: a SKILL.md the agent can rely on because every claim in it was tested.
 
