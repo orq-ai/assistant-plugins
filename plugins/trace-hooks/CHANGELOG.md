@@ -2,6 +2,11 @@
 
 All notable changes to the `orq-trace` plugin are documented here. Follows [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-10-16
+
+### Fixed
+- Claude Desktop skipped `orq-skills` and `orq-mcp` on marketplace sync with "plugin.json must be at .claude-plugin/plugin.json at the plugin root; found nested: plugins/trace-hooks/.claude-plugin/plugin.json". The manifest now lives inline in the `orq-trace` entry of `.claude-plugin/marketplace.json` (`strict: false`) and the nested file is gone. Hooks, `userConfig` and behaviour are unchanged; the version is now read from the marketplace entry.
+
 ## [0.5.0] - 2026-09-30
 
 ### Added

@@ -12,8 +12,14 @@ PLUGIN_ROOT="$(cd "$DIR/.." && pwd)"
 EXIT=0
 
 echo "########## 1/9 manifest schema ##########"
-node -e "JSON.parse(require('fs').readFileSync('$PLUGIN_ROOT/.claude-plugin/plugin.json','utf8'))" \
-  && echo "PASS: plugin.json parses" || EXIT=1
+# The manifest is inline in the orq-trace entry of the marketplace (strict: false); a nested
+# plugin.json would make Claude Desktop skip the ./-sourced plugins at the repo root.
+node -e "
+const m = JSON.parse(require('fs').readFileSync('$PLUGIN_ROOT/../../.claude-plugin/marketplace.json','utf8'));
+const e = m.plugins.find(p => p.name === 'orq-trace');
+if (!e || e.strict !== false || !e.hooks || !e.version) process.exit(1);
+if (require('fs').existsSync('$PLUGIN_ROOT/.claude-plugin/plugin.json')) process.exit(1);
+" && echo "PASS: orq-trace marketplace entry is a complete inline manifest" || EXIT=1
 
 echo
 echo "########## 2/9 runtime files ##########"

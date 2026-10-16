@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.1] - 2026-10-16
+
+### Fixed
+
+- Claude Desktop skipped `orq-skills` and `orq-mcp` on marketplace sync ("plugin.json must be at .claude-plugin/plugin.json at the plugin root; found nested: plugins/trace-hooks/.claude-plugin/plugin.json"). The `orq-trace` manifest now lives inline in its `.claude-plugin/marketplace.json` entry (`strict: false`, version 0.5.1) and the nested `plugins/trace-hooks/.claude-plugin/plugin.json` is removed.
+- `.codex-plugin/plugin.json` `privacyPolicyURL` and `termsOfServiceURL` pointed at `orq.ai/privacy` (a redirect) and `orq.ai/terms` (404). They now use `https://orq.ai/legal/privacy` and `https://orq.ai/legal/terms-of-service`.
+
+### Added
+
+- Directory listing fields in `.claude-plugin/plugin.json` for submission to Anthropic's plugin directory: `icon`, `privacyPolicyUrl`, `termsOfServiceUrl`.
+- README "Data & privacy" section describing what each component sends.
+
 ## [3.9.0] - 2026-10-08
 
 ### Added
