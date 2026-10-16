@@ -15,21 +15,7 @@ The plugin manifest lives at `.claude-plugin/plugin.json` and declares:
 "mcpServers": "./.mcp.json"
 ```
 
-| Client | Path resolution base | `./skills/` resolves to |
-|--------|----------------------|------------------------|
-| Claude Code (CLI) | Repo root | `<repo-root>/skills/` ✓ |
-| Claude Cowork (Desktop) | `plugin.json` location | `.claude-plugin/skills/` |
-
-Claude Cowork validates that paths exist at load time; Claude Code does not. To make both work with the same `plugin.json`, the repo includes symlinks inside `.claude-plugin/`:
-
-```
-.claude-plugin/skills     → ../skills      (symlink)
-.claude-plugin/.mcp.json  → ../.mcp.json   (symlink)
-```
-
-These symlinks allow Desktop to resolve `./skills/` and `./.mcp.json` correctly while keeping Claude Code behaviour unchanged.
-
-> **Windows:** Symlinks require `core.symlinks=true` and either Developer Mode or Admin privileges. Run `git config --global core.symlinks true` before cloning and enable [Windows Developer Mode](https://learn.microsoft.com/en-us/windows/apps/get-started/enable-your-device-for-development).
+Paths resolve from the plugin root, which is the repository root, so `./skills/` is `<repo-root>/skills/` and `./.mcp.json` is `<repo-root>/.mcp.json`. No symlinks inside `.claude-plugin/` are needed (Anthropic's plugin directory validator rejects them).
 
 ---
 

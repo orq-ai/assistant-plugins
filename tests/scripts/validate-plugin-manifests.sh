@@ -155,19 +155,23 @@ assert_jq .agents/plugins/marketplace.json \
 # --- Symlink integrity ---
 
 assert_symlink "mcp.json" ".mcp.json"
-assert_symlink ".claude-plugin/.mcp.json" "../.mcp.json"
-assert_symlink ".claude-plugin/skills" "../skills"
 
 # Spec §4.1 containment and the one-plugin-root rule live in validate-skills.mjs
 # (sections 6-7): resolving a symlink correctly needs realpath semantics.
 
-# --- Claude Cowork Desktop: symlinks resolve to real targets ---
+# --- Claude plugin loader: no symlinks under .claude-plugin/ ---
+# Anthropic's directory validator blocks them (ARCHIVE_SYMLINK_EXEC_SURFACE);
+# the plugin root is the repo root, so skills/ and .mcp.json resolve from there.
 
-assert_path -f ".claude-plugin/.mcp.json" \
-  ".claude-plugin/.mcp.json must resolve to a readable file"
-assert_path -d ".claude-plugin/skills" \
-  ".claude-plugin/skills must resolve to a readable directory"
-assert_path -f ".claude-plugin/skills/orq-build-agent/SKILL.md" \
-  ".claude-plugin/skills/orq-build-agent/SKILL.md must exist (verifies symlink resolves)"
+while IFS= read -r entry; do
+  if [[ "$(tracked_mode "$entry")" == "120000" ]]; then
+    echo "FAIL: $entry is a symlink; no symlinks are allowed under .claude-plugin/"
+    exit 1
+  fi
+done < <(git ls-files -- .claude-plugin)
+
+assert_path -d "skills" "skills/ must exist at the plugin root"
+assert_path -f ".mcp.json" ".mcp.json must exist at the plugin root"
+assert_path -f "skills/orq-build-agent/SKILL.md" "skills/orq-build-agent/SKILL.md must exist"
 
 echo "Plugin manifest validation passed."

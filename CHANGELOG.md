@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Claude Desktop skipped `orq-skills` and `orq-mcp` on marketplace sync ("plugin.json must be at .claude-plugin/plugin.json at the plugin root; found nested: plugins/trace-hooks/.claude-plugin/plugin.json"). The `orq-trace` manifest now lives inline in its `.claude-plugin/marketplace.json` entry (`strict: false`, version 0.5.1) and the nested `plugins/trace-hooks/.claude-plugin/plugin.json` is removed.
 - `.codex-plugin/plugin.json` `privacyPolicyURL` and `termsOfServiceURL` pointed at `orq.ai/privacy` (a redirect) and `orq.ai/terms` (404). They now use `https://orq.ai/legal/privacy` and `https://orq.ai/legal/terms-of-service`.
 
+- Anthropic's plugin directory validator rejected the repo ("Couldn't validate that repository") because of `.gitattributes`; the file is removed.
+- Its blocking findings are fixed: `commands/orq-manage-skills.md` had an unquoted `argument-hint` with two bracketed groups (invalid YAML); the `.claude-plugin/.mcp.json` and `.claude-plugin/skills` symlinks are removed (the plugin root is the repo root, so the manifest paths resolve without them; `docs/install-claude-cowork.md` and `validate-plugin-manifests.sh` updated, and the script now fails on any symlink under `.claude-plugin/`); the `orq-trace` tests no longer ship token-shaped literals (trace-hooks 0.5.2).
+
 ### Added
 
 - Directory listing fields in `.claude-plugin/plugin.json` for submission to Anthropic's plugin directory: `icon`, `privacyPolicyUrl`, `termsOfServiceUrl`.

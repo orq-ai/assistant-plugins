@@ -2,6 +2,11 @@
 
 All notable changes to the `orq-trace` plugin are documented here. Follows [Semantic Versioning](https://semver.org/).
 
+## [0.5.2] - 2026-10-16
+
+### Changed
+- `tests/test-redact.mjs` and `tests/test-post-tool-use.mjs` build their secret-shaped fixtures from fragments at runtime, so no token-shaped literal ships in the plugin source. Anthropic's plugin directory validator blocked submission on them ("Secret in a shipped file"). The strings the redactor sees are byte-identical to before.
+
 ## [0.5.1] - 2026-10-16
 
 ### Fixed
