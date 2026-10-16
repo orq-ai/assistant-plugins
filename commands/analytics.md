@@ -2,7 +2,7 @@
 name: analytics
 description: Show workspace analytics — requests, cost, tokens, errors, top models, and drill-down trends
 argument-hint: "[--last <duration>] [--group-by <dimension>]"
-allowed-tools: AskUserQuestion, orq*
+allowed-tools: AskUserQuestion, mcp__orq-workspace__get_analytics_overview, mcp__orq-workspace__query_analytics
 ---
 
 # Analytics

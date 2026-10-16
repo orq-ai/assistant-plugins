@@ -1,162 +1,39 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
-// Single source of truth for the orqi CLI config location. The orqi CLI
-// (node orq-cli) stores its profiles at ~/.orq/config.json. Override with
-// ORQ_CONFIG_PATH (tests rely on this; users can redirect it if the CLI ever
-// moves the file). Note: the homebrew `orq` binary is a different tool and
-// does not manage these profiles.
-// os.homedir() rather than HOME || USERPROFILE, for the reason given at
-// STATE_ROOT in state.js: the orq CLI resolves ~/.orq the same way.
-export const ORQ_CONFIG_PATH =
-  process.env.ORQ_CONFIG_PATH ||
-  path.join(os.homedir(), ".orq", "config.json");
-
-let _cached = null;
-
-function loadOrqConfig() {
-  if (_cached !== null) return _cached;
-  try {
-    const raw = fs.readFileSync(ORQ_CONFIG_PATH, "utf8");
-    _cached = JSON.parse(raw);
-  } catch (err) {
-    if (err?.code !== "ENOENT") {
-      process.stderr.write(
-        `[orq-trace] WARN: failed to load orq config (${ORQ_CONFIG_PATH}): ${err?.message}\n`,
-      );
-    }
-    _cached = {};
-  }
-  return _cached;
-}
-
 /**
- * ┌─────────────────────────────────────────────────────────────────┐
- * │           Credential Resolution Hierarchy (trace hook)         │
- * ├─────────────────────────────────────────────────────────────────┤
- * │                                                                │
- * │  API Key:                                                      │
- * │    1. ORQ_TRACE_PROFILE profile        (trace-specific)         │
- * │    2. ORQ_API_KEY env var              (general key)             │
- * │    3. Profile resolved below                                   │
- * │                                                                │
- * │  Profile (determines api_key + base_url):                      │
- * │    1. ORQ_TRACE_PROFILE env var        (trace-specific)         │
- * │    2. ORQ_PROFILE env var              (general orqi profile)   │
- * │    3. "current" in ~/.orq/config.json  (CLI default)             │
- * │                                                                │
- * │  Base URL:                                                     │
- * │    1. ORQ_BASE_URL env var             (explicit override)      │
- * │    2. Profile resolved above                                   │
- * │    3. Default: https://my.orq.ai                               │
- * │                                                                │
- * │  Set ORQ_TRACE_PROFILE to decouple trace destination from the  │
- * │  profile used for CLI/MCP operations.                          │
- * └─────────────────────────────────────────────────────────────────┘
- */
-function resolveProfile() {
-  const config = loadOrqConfig();
-  const profiles = config.profiles || {};
-
-  const resolved = resolveProfileName();
-  if (resolved.name && profiles[resolved.name]) {
-    return profiles[resolved.name];
-  }
-
-  return null;
-}
-
-/**
- * Returns the resolved profile name and which source it came from.
- */
-function resolveProfileName() {
-  const config = loadOrqConfig();
-
-  if (process.env.ORQ_TRACE_PROFILE) {
-    return { name: process.env.ORQ_TRACE_PROFILE, source: "ORQ_TRACE_PROFILE env var" };
-  }
-  if (process.env.ORQ_PROFILE) {
-    return { name: process.env.ORQ_PROFILE, source: "ORQ_PROFILE env var" };
-  }
-  if (config.current) {
-    return { name: config.current, source: `~/.orq/config.json (current)` };
-  }
-  return { name: null, source: "none — no profile found" };
-}
-
-/**
- * Resolve the API key with the following priority:
- * 1. ORQ_TRACE_PROFILE profile's api_key (trace-specific override)
- * 2. ORQ_API_KEY env var (general key)
- * 3. ORQ_PROFILE profile's api_key
- * 4. Current profile in ~/.orq/config.json
+ * Credential resolution for the trace hook. Nothing here touches the disk.
  *
- * ORQ_TRACE_PROFILE wins over ORQ_API_KEY so users can decouple
- * where traces go from the key used for CLI/MCP operations.
+ *   API key:
+ *     1. CLAUDE_PLUGIN_OPTION_ORQ_API_KEY  the plugin's own `ORQ_API_KEY`
+ *                                          userConfig option (sensitive), which
+ *                                          Claude Code exports to hook processes
+ *     2. ORQ_API_KEY env var
+ *     3. none: tracing stays off
+ *
+ *   Base URL:       ORQ_BASE_URL env var, default https://my.orq.ai
+ *   OTLP endpoint:  ORQ_OTLP_ENDPOINT env var, else null (otlp.js derives it)
+ *
+ * An empty string counts as unset: Claude Code exports an option the user left
+ * blank as "", and a shell may export `VAR=`.
  */
+
+function fromEnv(name) {
+  const value = process.env[name];
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
 export function getApiKey() {
-  // If a trace-specific profile is set, its key takes priority over everything
-  if (process.env.ORQ_TRACE_PROFILE) {
-    const config = loadOrqConfig();
-    const profile = config.profiles?.[process.env.ORQ_TRACE_PROFILE];
-    if (!profile) {
-      process.stderr.write(
-        `[orq-trace] WARN: ORQ_TRACE_PROFILE="${process.env.ORQ_TRACE_PROFILE}" not found in orq config — falling back to ORQ_API_KEY\n`,
-      );
-    } else if (profile.api_key) {
-      return profile.api_key;
-    }
-  }
-  if (process.env.ORQ_API_KEY) {
-    return process.env.ORQ_API_KEY;
-  }
-  return resolveProfile()?.api_key || null;
+  return fromEnv("CLAUDE_PLUGIN_OPTION_ORQ_API_KEY") || fromEnv("ORQ_API_KEY");
 }
 
 /**
- * Resolve an explicit OTLP endpoint from the active profile, if it declares one.
- *
- * Production needs nothing here: `getEndpoint()` derives api.orq.ai from
- * my.orq.ai by swapping the subdomain, and that is correct. Non-production
- * hosts are where it breaks. my.staging.orq.ai rewritten to api.staging.orq.ai
- * answers with a Cloudflare 526 (bad origin certificate), so a profile can
- * name its ingest URL directly and skip the derivation.
- *
- * Priority:
- * 1. ORQ_TRACE_PROFILE profile's otlp_endpoint (trace-specific override)
- * 2. Resolved profile's otlp_endpoint
+ * Explicit OTLP ingest URL, for hosts where the my. -> api. subdomain swap in
+ * otlp.js does not serve OTLP (my.staging.orq.ai swaps to a host that answers
+ * with a Cloudflare 526). Production needs nothing here.
+ * OTEL_EXPORTER_OTLP_ENDPOINT, handled in otlp.js, still wins over this.
  */
 export function getOtlpEndpoint() {
-  if (process.env.ORQ_TRACE_PROFILE) {
-    const config = loadOrqConfig();
-    const profile = config.profiles?.[process.env.ORQ_TRACE_PROFILE];
-    if (profile?.otlp_endpoint) {
-      return profile.otlp_endpoint;
-    }
-  }
-  return resolveProfile()?.otlp_endpoint || null;
+  return fromEnv("ORQ_OTLP_ENDPOINT");
 }
 
-/**
- * Resolve the base URL with the following priority:
- * 1. ORQ_TRACE_PROFILE profile's base_url (trace-specific override)
- * 2. ORQ_BASE_URL env var (general override)
- * 3. ORQ_PROFILE profile's base_url
- * 4. Current profile in ~/.orq/config.json
- * 5. Default: https://my.orq.ai
- */
 export function getBaseUrl() {
-  if (process.env.ORQ_TRACE_PROFILE) {
-    const config = loadOrqConfig();
-    const profile = config.profiles?.[process.env.ORQ_TRACE_PROFILE];
-    if (profile?.base_url) {
-      return profile.base_url;
-    }
-  }
-  if (process.env.ORQ_BASE_URL) {
-    return process.env.ORQ_BASE_URL;
-  }
-  return resolveProfile()?.base_url || "https://my.orq.ai";
+  return fromEnv("ORQ_BASE_URL") || "https://my.orq.ai";
 }
-

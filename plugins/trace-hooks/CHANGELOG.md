@@ -2,6 +2,29 @@
 
 All notable changes to the `orq-trace` plugin are documented here. Follows [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-10-16
+
+### Changed
+- The API key comes from the plugin's own `ORQ_API_KEY` option first (exported to hooks as `CLAUDE_PLUGIN_OPTION_ORQ_API_KEY`), then the `ORQ_API_KEY` environment variable. Empty values count as unset. The hook no longer reads a credential off the user's machine that the user did not give to the plugin, which Anthropic's plugin directory requires.
+- `ORQ_BASE_URL` still overrides the default `https://my.orq.ai`. An explicit OTLP ingest URL, which used to come from a profile's `otlp_endpoint`, is now the `ORQ_OTLP_ENDPOINT` environment variable (`OTEL_EXPORTER_OTLP_ENDPOINT` still wins over it).
+- Tests no longer need an orq config file: `test-resolution.mjs` covers the new order with placeholders, and the subprocess flow test takes its key from `TEST_ORQ_API_KEY` and skips without it.
+
+### Removed
+- `~/.orq/config.json` is no longer read, nor is any orq CLI profile. `ORQ_TRACE_PROFILE`, `ORQ_PROFILE`, `ORQ_CONFIG_PATH` and the CLI's current profile have no effect, and the `ORQ_CONFIG_PATH` export is gone from `src/config.js`. Migration: set the plugin option (`/plugin configure`) or export `ORQ_API_KEY`. Without either, tracing stays off.
+
+### Fixed
+- The `ORQ_API_KEY` option the plugin prompts for was ignored: the hook never read it, so a key entered there had no effect and tracing depended on the environment or the CLI profile. It is now read first.
+
+## [0.5.2] - 2026-10-16
+
+### Changed
+- `tests/test-redact.mjs` and `tests/test-post-tool-use.mjs` build their secret-shaped fixtures from fragments at runtime, so no token-shaped literal ships in the plugin source. Anthropic's plugin directory validator blocked submission on them ("Secret in a shipped file"). The strings the redactor sees are byte-identical to before.
+
+## [0.5.1] - 2026-10-16
+
+### Fixed
+- Claude Desktop skipped `orq-skills` and `orq-mcp` on marketplace sync with "plugin.json must be at .claude-plugin/plugin.json at the plugin root; found nested: plugins/trace-hooks/.claude-plugin/plugin.json". The manifest now lives inline in the `orq-trace` entry of `.claude-plugin/marketplace.json` (`strict: false`) and the nested file is gone. Hooks, `userConfig` and behaviour are unchanged; the version is now read from the marketplace entry.
+
 ## [0.5.0] - 2026-09-30
 
 ### Added

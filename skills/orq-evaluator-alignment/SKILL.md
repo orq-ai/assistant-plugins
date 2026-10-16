@@ -2,7 +2,7 @@
 name: orq-evaluator-alignment
 description: >-
   Align, calibrate, or improve an existing LLM-as-a-judge (orq evaluator) so its verdicts match human judgment — boolean, categorical, or numeric judges. Use when the user wants to "align my evaluator", "improve my eval", "my judge keeps changing its mind", "find ambiguous cases", or "annotate an evaluator" — i.e. they have an LLM judge that disagrees with human labels or is inconsistent. Measures judge self-consistency and, when several judge models are selected, cross-model disagreement with repeated votes per model. Groups the least reliable examples by what makes them hard and asks a few questions instead of making the user label every row, rewrites the judge prompt from those answers, and creates the new evaluator only after the human approves. If the evaluator ID isn't given, ask for it after triggering. Do NOT use to build an evaluator from scratch (use orq-build-evaluator) or to fix failures with prompt tweaks (use orq-improve-agent).
-allowed-tools: Read, Write, Edit, Grep, Glob, Bash(uv run:*), AskUserQuestion
+allowed-tools: Read, Write, Edit, Grep, Glob, Bash(uv run scripts/*), Bash(uv run --system-certs scripts/*), AskUserQuestion
 ---
 
 # Evaluator Alignment

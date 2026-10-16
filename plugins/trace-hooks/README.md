@@ -28,21 +28,24 @@ orq.claude_code.session              (root, carries the whole conversation)
 
 ### Required
 
-An API key must be resolvable for tracing to activate. Set one of the following:
+An API key must be resolvable for tracing to activate. The hook reads it from the first of these that is non-empty:
 
-| Variable | Description |
+| Source | Description |
 |---|---|
-| `ORQ_TRACE_PROFILE` | Profile name in `~/.orq/config.json` — **highest priority** for trace destination |
-| `ORQ_API_KEY` | API key (used if no trace profile is set) |
+| Plugin option `ORQ_API_KEY` | Prompted for when you enable the plugin (stored as a sensitive value); change it with `/plugin configure`. Claude Code passes it to the hook as `CLAUDE_PLUGIN_OPTION_ORQ_API_KEY`. |
+| `ORQ_API_KEY` env var | Used when the plugin option is empty. |
+
+The hook does not read `~/.orq/config.json` or any orq CLI profile.
+
+**Migrating from profile-based setup (0.5.x and earlier).** `ORQ_TRACE_PROFILE`, `ORQ_PROFILE` and the orq CLI's current profile are no longer consulted. If you relied on them, enter your key as the plugin option (`/plugin configure`) or export `ORQ_API_KEY` in your shell.
 
 ### Trace Destination
 
 | Variable | Description | Default |
 |---|---|---|
-| `ORQ_TRACE_PROFILE` | Orqi profile for trace destination (decouples traces from CLI/MCP profile) | — |
-| `ORQ_PROFILE` | General orqi profile (fallback if `ORQ_TRACE_PROFILE` not set) | — |
 | `ORQ_BASE_URL` | Override API base URL | `https://my.orq.ai` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Override the full OTLP endpoint URL | Derived from base URL |
+| `ORQ_OTLP_ENDPOINT` | Explicit OTLP ingest URL, for hosts where the derived `api.` host does not serve OTLP (e.g. staging) | Derived from base URL |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Override the full OTLP endpoint URL (wins over `ORQ_OTLP_ENDPOINT`) | — |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Extra headers for OTLP endpoint (comma-separated `key=value`) | — |
 
 ### Privacy & Content Control
@@ -69,17 +72,16 @@ An API key must be resolvable for tracing to activate. Set one of the following:
 
 ```
 API Key:
-  1. ORQ_TRACE_PROFILE profile's api_key    (trace-specific)
-  2. ORQ_API_KEY env var                     (general key)
-  3. ORQ_PROFILE profile's api_key
-  4. ~/.orq/config.json current profile
+  1. CLAUDE_PLUGIN_OPTION_ORQ_API_KEY       (plugin option)
+  2. ORQ_API_KEY env var
+  3. none: tracing stays off
 
-Base URL:
-  1. ORQ_TRACE_PROFILE profile's base_url   (trace-specific)
-  2. ORQ_BASE_URL env var                    (general override)
-  3. Profile's base_url
-  4. Default: https://my.orq.ai
+Base URL:       ORQ_BASE_URL, else https://my.orq.ai
+OTLP endpoint:  OTEL_EXPORTER_OTLP_ENDPOINT, else ORQ_OTLP_ENDPOINT,
+                else derived from the base URL (my. -> api.)
 ```
+
+Empty values are treated as unset.
 
 ## What Gets Captured
 

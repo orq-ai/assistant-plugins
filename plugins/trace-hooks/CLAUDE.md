@@ -19,12 +19,17 @@ Always prefer the `orqi` CLI over MCP tools for inspecting traces and spans. Use
 
 ## Trace plugin configuration
 
-The trace hook resolves API key and base URL using this priority chain:
+The trace hook reads credentials from the environment only. It never reads `~/.orq/config.json` or any orq CLI profile.
 
-1. **`ORQ_TRACE_PROFILE` env var** — trace-specific profile override (highest priority for API key, so traces can be pinned to a workspace independent of `ORQ_API_KEY`)
-2. **`ORQ_API_KEY` / `ORQ_BASE_URL` env vars** — explicit overrides
-3. **`ORQ_PROFILE` env var** — names a profile in `~/.orq/config.json`
-4. **orqi CLI current profile** — whatever `orqi profile set <name>` is set to
+API key, first match wins:
+
+1. **`CLAUDE_PLUGIN_OPTION_ORQ_API_KEY`** — the plugin's own `ORQ_API_KEY` userConfig option (`sensitive: true`, declared in the `orq-trace` entry of `.claude-plugin/marketplace.json`). Claude Code exports every userConfig option to hook processes as `CLAUDE_PLUGIN_OPTION_<KEY>`. Set it with `/plugin configure`.
+2. **`ORQ_API_KEY` env var**
+3. None: tracing stays off.
+
+An empty value counts as unset. Other settings: `ORQ_BASE_URL` (default `https://my.orq.ai`) and `ORQ_OTLP_ENDPOINT` (explicit ingest URL for hosts where the `my.` to `api.` subdomain swap does not serve OTLP).
+
+Migration: `ORQ_TRACE_PROFILE`, `ORQ_PROFILE`, `ORQ_CONFIG_PATH` and the orqi CLI current profile no longer have any effect. Users who relied on them set the plugin option or export `ORQ_API_KEY`.
 
 Tracing is enabled whenever an API key can be resolved. Disable by disabling the plugin in CC settings.
 
@@ -63,7 +68,7 @@ env -u CLAUDECODE bash -c 'cd ~/Documents/orq-skills && claude -p "list files wi
 
 4. **Verify traces arrived**:
    ```bash
-   orqi profile set prod-claude-code
+   orqi profile set prod-claude-code   # selects what orqi lists; the hook does not read it
    orqi trace list --limit 3
    orqi trace span list <trace-id>
    ```
