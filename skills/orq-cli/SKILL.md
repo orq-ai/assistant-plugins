@@ -29,7 +29,7 @@ The CLI is a Go binary generated from the orq.ai OpenAPI spec, so nearly every A
 - **NEVER** guess a flag or subcommand. Run `orq <group> --help` first; the help text lists every flag with its exact name and type.
 - **NEVER** parse default output. `--help` names `table` as the default format, but piped (not a terminal) it renders TOON, which is meant for humans; a real terminal was not probed. Pass **`-o json`** on anything a script or you will parse. There is no separate JSON flag (`--json` is `unknown flag`). `ORQ_OUTPUT_FORMAT=json` did produce JSON on 8.6.9, but an explicit `-o json` does not depend on the environment.
 - **NEVER** run `orq auth login` unattended without an API key. Its default is an interactive OAuth device flow that needs a browser; `--api-key` signs in with a key instead. If nobody can complete the browser flow, stop and say so — `ORQ_API_KEY` is **not** a substitute for the commands that need a session (see the auth matrix below).
-- **NEVER** assume which workspace is active. `ORQ_API_KEY` **overrides an active OAuth session** (5.1.0; not re-probed on 8.6.9, which needed a live session), so a stray exported key silently redirects every read to that key's workspace while `whoami` keeps reporting the one you logged into. Confirm with a count before trusting data (see "Which workspace am I really reading?").
+- **NEVER** assume which workspace is active. `ORQ_API_KEY` **overrides an active OAuth session** (5.1.0; not re-probed on 8.6.9, which needed a live session), so a stray exported key silently redirects every read to that key's workspace. On 5.1.0 `whoami` kept reporting the one you logged into; on 11.0.2 it reports the key instead (`method: api_key`, `active_workspace_key: null`), so neither tells you which workspace the key reads. Confirm with a count before trusting data (see "Which workspace am I really reading?").
 - **NEVER** report a count or a "complete" list from a default page. Every list command below except `agents` caps by default and sets `has_more: true` with nothing in the output to signal it. Check `has_more` or pass `--limit` (see "Lists truncate silently"). `agents list` is the exception on 8.6.9: it returns every agent when `--limit` is omitted.
 - **NEVER** treat an empty or small result as an answer. `0` rows is the characteristic symptom of a project-scoped key or a wrong workspace, and it reads exactly like a legitimately empty workspace. Rule out credentials first.
 - **NEVER** take `data[0]` from `traces search` as the latest trace unless you passed the sort. Only `[{"field":"end_time","order":"desc"}]` sorts and nothing else is accepted, so ordering is a contract only when you ask for it.
@@ -256,7 +256,7 @@ Workspace entries carry `id`, `key`, `name`, `total_members`, `active`. The **ke
 
 That produces the nastiest failure in this skill, because nothing errors:
 
-- `orq auth whoami` reports the workspace you logged into — it only reads the session.
+- `orq auth whoami` does not tell you which workspace `ORQ_API_KEY` reads. On 5.1.0 it still reported the workspace you logged into (it only read the session); on 11.0.2 it reports `method: api_key` and `active_workspace_key: null`.
 - `orq agents list` reads the **key's** workspace — a different one.
 - On 5.1.0, `.env` and `.env.local` autoloaded from the working directory, so the key could arrive without anyone setting it in this shell. **8.6.9 did not autoload either file** (a `.env` and a `.env.local` holding a valid `ORQ_API_KEY`, `ORQ_API_KEY` unset in the shell: `missing API key`), so on a current CLI a key comes from the shell environment or a profile.
 
@@ -270,7 +270,7 @@ Use `orq projects list` as the canary, not `agents list`:
 
 ```sh
 [ -n "${ORQ_API_KEY:-}" ] && echo "key present — resource reads use ITS workspace, not the session's"
-orq auth whoami -o json -j active_workspace_key --raw           # session's workspace
+orq auth whoami -o json -j active_workspace_key --raw           # session's workspace; null on 11.0.2 when the key is set
 orq projects list -o json --limit 200 -j 'length(data)' --raw   # scope of whatever authenticated
 ```
 
@@ -292,7 +292,7 @@ Fall back to the session file only when the CLI is unavailable. Same value, unde
 jq -r .activeWorkspaceKey ~/.orq/sessions/my.orq.ai.json
 ```
 
-A snippet for scripts that need the key (for example to build `https://my.orq.ai/<key>/traces?query=…` deep-links). It has to tolerate the command succeeding while producing nothing, which is why the guard is not optional:
+A snippet for scripts that need the key (for example to build trace and span links; the URL shapes are in [resources/command-map.md → Building app URLs](resources/command-map.md#building-app-urls)). It has to tolerate the command succeeding while producing nothing, which is why the guard is not optional:
 
 ```sh
 # ORQ_WORKSPACE is read by the CLI itself as of 5.x (still listed on 8.6.9), so honouring it here agrees
@@ -304,7 +304,7 @@ if [ -z "$workspace_key" ]; then
   workspace_key="$(orq auth whoami -o json -j active_workspace_key --raw 2>/dev/null)"
 fi
 case "$workspace_key" in
-  ''|null) echo "no active orq workspace; run 'orq auth login'" >&2; exit 1 ;;
+  ''|null) echo "no active orq workspace; run 'orq auth login', or set ORQ_WORKSPACE when ORQ_API_KEY is set (whoami reports no key then)" >&2; exit 1 ;;
 esac
 ```
 
