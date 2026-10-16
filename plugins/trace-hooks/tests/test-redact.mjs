@@ -9,34 +9,47 @@
 
 import { deepRedact } from "../src/redact.js";
 
-// Fixtures are assembled at runtime from fragments so no secret-shaped literal
-// sits in the shipped source (directory scanners flag them). The joined strings
-// are the same ones a real session would carry.
+// Fixtures are generated at runtime so the shipped source holds no key-shaped
+// text at all (directory scanners flag it, even when split into fragments):
+// prefixes are joined from short pieces and every body comes from a seeded
+// generator. The redactor sees the same shapes a real session carries.
 const j = (...parts) => parts.join("");
+let seed = 20261016;
+const next = () => (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0);
+const body = (n, alphabet) => {
+  let out = "";
+  while (out.length < n) out += alphabet[next() % alphabet.length];
+  return out;
+};
+const B64 = j("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz", "0123456789", "-_");
+const ALNUM = j("abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "0123456789");
+const UPPER = j("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "234567");
+const HEX = "0123456789abcdef";
 const b64 = (v) => Buffer.from(typeof v === "string" ? v : JSON.stringify(v)).toString("base64url");
 const JWT_HEAD = b64({ alg: "HS256" });
 const JWT_BODY = b64({ workspace_id: "ws-1" });
-const JWT_SIG = j("c2", "ln");
-const JWT_DASH_SIG = j("dBjftJeZ4CVPmB92", "K27uhbUJU1p1r");
-const ALNUM = j("abcdefghijklmnopqrstuvwxyz", "0123456789");
+const JWT_SIG = body(10, B64);
+const JWT_DASH_SIG = body(43, B64);
+const withDigit = (n, alphabet) => body(n - 1, alphabet) + "7";
+const dash = j("-");
 
 const SECRETS = [
-  ["anthropic key", j("sk", "-ant-", "api03-", "AbCdEf1234567890", "AbCdEf1234567890", "-AAAA")],
-  ["openai project key", j("sk", "-proj-", "AbCdEf1234567890", "AbCdEf1234567890")],
-  ["anthropic key with an underscore early in the body", j("sk", "-ant-", "api03-", "Ab_cdEfGhIjKlMn", "OpQrStUvWxYz0123456789AA")],
-  ["openai project key with an underscore early in the body", j("sk", "-proj-", "A_bCdEf1234567890", "AbCdEf1234567890")],
-  ["openai classic key", j("sk", "-abc123", "def456", "ghi789", "jkl012")],
-  ["orq key with prefix", j("sk", "-orq-", JWT_HEAD, ".", JWT_BODY, ".", JWT_SIG)],
+  ["anthropic key", j("sk", dash, "ant", dash, "api03", dash, withDigit(40, B64), dash, "AAAA")],
+  ["openai project key", j("sk", dash, "proj", dash, withDigit(32, B64))],
+  ["anthropic key with an underscore early in the body", j("sk", dash, "ant", dash, "api03", dash, "Ab_", withDigit(37, ALNUM))],
+  ["openai project key with an underscore early in the body", j("sk", dash, "proj", dash, "A_", withDigit(30, ALNUM))],
+  ["openai classic key", j("sk", dash, withDigit(24, ALNUM))],
+  ["orq key with prefix", j("sk", dash, "orq", dash, JWT_HEAD, ".", JWT_BODY, ".", JWT_SIG)],
   ["orq key from the dashboard", j(JWT_HEAD, ".", JWT_BODY, ".", JWT_DASH_SIG)],
-  ["bearer header in a shell command", j('curl -H "Authorization: Bear', 'er abcdef1234567890', 'abcdef" https://api.orq.ai')],
-  ["github token", j("gh", "p_", ALNUM)],
-  ["aws access key id", j("AK", "IA", "IOSFODNN7", "EXAMPLE")],
-  ["private key block", j("-----BEGIN RSA ", "PRIVATE KEY-----\nMIIE...")],
-  ["slack token", j("xo", "xb-", "123456789", "-abcdef")],
-  ["stripe live key", j("sk", "_live_", "abcdef", "123456")],
-  ["fine-grained github pat", j("github", "_pat_", "11ABCDEFG0", "abcdefghij_", "KLMNOPqrstuvwxyz0123456789")],
-  ["google api key", j("AI", "zaSy", "A1bC2dE3fG4hI5jK6", "lM7nO8pQ9rS0tU1vW")],
-  ["huggingface token", j("hf", "_", ALNUM)],
+  ["bearer header in a shell command", j('curl -H "Authorization: Bear', "er ", withDigit(24, ALNUM), '" https://api.orq.ai')],
+  ["github token", j("gh", "p_", withDigit(36, ALNUM))],
+  ["aws access key id", j("AK", "IA", withDigit(16, UPPER))],
+  ["private key block", j(dash.repeat(5), "BEGIN RSA ", "PRIV", "ATE KEY", dash.repeat(5), "\n", body(24, B64))],
+  ["slack token", j("xo", "xb", dash, body(11, "0123456789"), dash, body(8, ALNUM))],
+  ["stripe live key", j("sk", "_live_", withDigit(20, ALNUM))],
+  ["fine-grained github pat", j("github", "_pat_", "11", withDigit(20, ALNUM), "_", body(30, ALNUM))],
+  ["google api key", j("AI", "za", "Sy", withDigit(33, B64.slice(0, 64)))],
+  ["huggingface token", j("hf", "_", withDigit(34, ALNUM))],
   ["dotenv path", "/Users/dev/project/.env"],
 ];
 
@@ -47,7 +60,7 @@ const KEEP = [
   ["a plain sentence", "the session ran ls and counted the files"],
   ["a source path", "/Users/dev/orq-cli/cli/custom/launch/telemetry.go"],
   ["a long word", "internationalization and localization"],
-  ["a git sha", "415edd51ddba3b10d4e3091c6d91b0cbca57566b"],
+  ["a git sha", body(40, HEX)],
   ["a kebab-case script name", "npm run task-runner-configuration"],
   ["a kebab-case filename", "see risk-assessment-framework.md"],
   ["a kebab-case css class", '<li class="task-list-item-checkbox">'],
