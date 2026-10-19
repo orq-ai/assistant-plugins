@@ -8,7 +8,7 @@ Common pitfalls when running cross-framework agent comparisons with evaluatorq.
 
 ### Invoking an agent: `responses.create(model="agent/<agent-key>")`
 
-Invoke an agent through the router with `responses.create(model="agent/<agent-key>", input=…)` (`POST /v3/router/responses`), and read the text from `response.output[-1]["content"][0]["text"]`.
+Invoke an agent through the router with `responses.create(model="agent/<agent-key>", input=…)` (`POST /v3/router/responses`), and read the text by collecting the `output_text` blocks across `response.output` (see [job-patterns.md](job-patterns.md)), not by assuming the last item's first block is text.
 
 ```python
 # Correct — route to the agent by model

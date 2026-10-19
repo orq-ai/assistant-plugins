@@ -187,7 +187,7 @@ Follow these steps **in order**. Do NOT skip steps.
 
 10. **Verify the response:**
    - Deployment: check `choices[0].message.content` for the output text
-   - Agent: read the output text from `response.output[-1]["content"][0]["text"]`; save `response.id` and pass it as `previous_response_id` for multi-turn
+   - Agent: read the output text by collecting the `output_text` blocks across `response.output` (do not assume the last item's first block is text); save `response.id` and pass it as `previous_response_id` for multi-turn
    - If wrong output: check for missing inputs, wrong key, or prompt issues
 
 11. **Find the trace** — direct user to [my.orq.ai](https://my.orq.ai/) → Traces, or use `response.telemetry.trace_id`.
@@ -309,8 +309,18 @@ response = client.responses.create(
     input="Hello, can you help me?",
     identity={"id": "user_<unique_id>", "display_name": "Jane Doe"},
 )
-# output is a list of message items; the assistant text is the last message's first content block
-print(response.output[-1]["content"][0]["text"])
+# output is a list of message items; collect the assistant text blocks rather than
+# assuming the last item's first block is text (it may be a tool or reasoning block)
+def agent_text(resp):
+    return "".join(
+        block.get("text", "")
+        for msg in resp.output or []
+        for block in msg.get("content", [])
+        if block.get("type") == "output_text"
+    )
+
+
+print(agent_text(response))
 
 # Multi-turn: pass the previous response id, not a task id
 follow_up = client.responses.create(
@@ -318,7 +328,7 @@ follow_up = client.responses.create(
     input="Tell me more.",
     previous_response_id=response.id,
 )
-print(follow_up.output[-1]["content"][0]["text"])
+print(agent_text(follow_up))
 ```
 
 > **Deprecated, still serves.** `client.agents.responses.create(...)` and `POST /v2/agents/<agent-key>/responses` are marked `@deprecated` in orq-python 4.12.22+ but still work; prefer `client.responses.create(model="agent/<agent-key>", …)` above. The old A2A `parts` shape with `task_id` multi-turn:

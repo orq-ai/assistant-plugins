@@ -15,7 +15,7 @@ Pick the pattern matching each agent's framework, then assemble them into the co
 async def orq_agent_job(data: DataPoint, row: int):
     with Orq(api_key=ORQ_API_KEY, server_url=ORQ_BASE_URL) as orq:
         response = orq.responses.create(
-            model="agent/<AGENT_KEY>",
+            model="agent/<agent-key>",
             input=data.inputs["query"],
         )
 
@@ -42,7 +42,7 @@ const orqAgentJob = job("OrqAgent", async (data) => {
   const orq = new Orq({ apiKey: process.env.ORQ_API_KEY });
   // Mirrors POST /v3/router/responses (the authority); the Node SDK is generated from the same spec.
   const response = await orq.responses.create({
-    model: "agent/<AGENT_KEY>",
+    model: "agent/<agent-key>",
     input: data.inputs.query,
   });
 
@@ -56,7 +56,7 @@ const orqAgentJob = job("OrqAgent", async (data) => {
 });
 ```
 
-> **Important:** Invoke the agent with `responses.create(model="agent/<AGENT_KEY>")`. If you fall back to the deprecated `agents.*` surface, use `agents.responses.create()`, NOT `agents.invoke()` — `invoke()` returns an async A2A task (status: "submitted"), not the actual response. See [gotchas](gotchas.md).
+> **Important:** Invoke the agent with `responses.create(model="agent/<agent-key>")`. If you fall back to the deprecated `agents.*` surface, use `agents.responses.create()`, NOT `agents.invoke()` — `invoke()` returns an async A2A task (status: "submitted"), not the actual response. See [gotchas](gotchas.md).
 
 ---
 

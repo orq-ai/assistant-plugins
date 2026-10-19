@@ -74,7 +74,7 @@ curl -s -X PATCH https://api.orq.ai/v2/agents/<KEY> \
 
 ### Agent Responses
 
-**Endpoint:** `POST https://api.orq.ai/v3/router/responses` — route to the agent by setting `model` to `agent/<AGENT_KEY>`. Successor to the deprecated `POST /v2/agents/{agent_key}/responses`; both still serve.
+**Endpoint:** `POST https://api.orq.ai/v3/router/responses` — route to the agent by setting `model` to `agent/<agent-key>`. Successor to the deprecated `POST /v2/agents/{agent_key}/responses`; both still serve.
 
 ```bash
 # Invoke agent
@@ -82,7 +82,7 @@ curl -s -X POST https://api.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-  "model": "agent/<AGENT_KEY>",
+  "model": "agent/<agent-key>",
   "input": "Test query"
 }' | jq
 
@@ -91,7 +91,7 @@ curl -s -X POST https://api.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-  "model": "agent/<AGENT_KEY>",
+  "model": "agent/<agent-key>",
   "input": "Follow-up",
   "previous_response_id": "<resp_id>"
 }' | jq
@@ -101,12 +101,12 @@ curl -s -X POST https://api.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-  "model": "agent/<AGENT_KEY>@4.0.0",
+  "model": "agent/<agent-key>@4.0.0",
   "input": "Query"
 }' | jq
 ```
 
-> **Deprecated, still serves:** `POST https://api.orq.ai/v2/agents/{agent_key}/responses` (agent_key in the URL path, version as `<AGENT_KEY>@4.0.0`), with a `message.parts` A2A body and `task_id` multi-turn. Marked `@deprecated` in orq-python 4.12.22+.
+> **Deprecated, still serves:** `POST https://api.orq.ai/v2/agents/{agent_key}/responses` (agent_key in the URL path, version as `<agent-key>@4.0.0`), with a `message.parts` A2A body and `task_id` multi-turn. Marked `@deprecated` in orq-python 4.12.22+.
 
 ### Tools
 
