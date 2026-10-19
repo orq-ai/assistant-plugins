@@ -10,34 +10,25 @@
 # Does NOT validate visibility in workspace UI — that's a backend concern
 # (see test-workspace-visibility.sh for the slow/external check).
 #
-# Usage: ./test-trace-flow.sh [TRACE_PROFILE] [SECONDARY_PROFILE]
-#   TRACE_PROFILE     — orqi profile to point traces at (default: any non-current profile)
-#   SECONDARY_PROFILE — orqi profile whose api_key is used in T2/T3 to simulate
-#                       a different ORQ_API_KEY in the shell (default: CLI current profile)
-# Repo root is auto-detected via `git rev-parse --show-toplevel`.
+# Usage: TEST_ORQ_API_KEY=<key> ./test-trace-flow.sh
+#   TEST_ORQ_API_KEY — a real workspace key to send the test trace with. Without
+#                      it (or without the `claude` CLI) the test SKIPs, since
+#                      there is nothing to authenticate with.
+# Credential order under test: CLAUDE_PLUGIN_OPTION_ORQ_API_KEY, then ORQ_API_KEY.
+# No orq config file or profile is read. Repo root is auto-detected via
+# `git rev-parse --show-toplevel`.
 
 set -uo pipefail
 
 REPO_ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
-CONFIG_JS="$REPO_ROOT/plugins/trace-hooks/src/config.js"
-# Single source of truth: read the path constant from config.js, don't re-hardcode it.
-ORQ_CONFIG="$(node --input-type=module -e "import('file://$CONFIG_JS').then(m=>process.stdout.write(m.ORQ_CONFIG_PATH))")"
 LOG=/tmp/orq-trace-debug.log
 PASS=0
 FAIL=0
 
-# Default to the CLI current profile and any other one, so the test runs against
-# a real config without manual overrides.
-CURRENT="$(python3 -c "import json;print(json.load(open('$ORQ_CONFIG'))['current'])" 2>/dev/null || true)"
-OTHER="$(python3 -c "import json;d=json.load(open('$ORQ_CONFIG'));print(next((n for n in d['profiles'] if n!=d['current']), d['current']))" 2>/dev/null || true)"
-TRACE_PROFILE="${1:-${TEST_TRACE_PROFILE:-$OTHER}}"
-SECONDARY_PROFILE="${2:-${TEST_SECONDARY_PROFILE:-$CURRENT}}"
-
-SECONDARY_KEY="$(python3 -c "import json,sys;print(json.load(open('$ORQ_CONFIG'))['profiles']['$SECONDARY_PROFILE']['api_key'])" 2>/dev/null || true)"
-if [ -z "${SECONDARY_KEY:-}" ]; then
-  echo "ERROR: profile '$SECONDARY_PROFILE' not found in $ORQ_CONFIG"
-  echo "Pass a valid profile name as the 2nd arg or via TEST_SECONDARY_PROFILE."
-  exit 2
+KEY="${TEST_ORQ_API_KEY:-}"
+if [ -z "$KEY" ] || ! command -v claude >/dev/null 2>&1; then
+  echo "SKIP: needs TEST_ORQ_API_KEY and the claude CLI on PATH"
+  exit 0
 fi
 
 # Run a fresh CC subprocess with an env-var setup. Invoked via `eval` so the
@@ -54,8 +45,7 @@ run_case() {
     env -u CLAUDECODE \
       ORQ_DEBUG=1 \
       ORQ_API_KEY="${ORQ_API_KEY-}" \
-      ORQ_TRACE_PROFILE="${ORQ_TRACE_PROFILE-}" \
-      ORQ_PROFILE="${ORQ_PROFILE-}" \
+      CLAUDE_PLUGIN_OPTION_ORQ_API_KEY="${CLAUDE_PLUGIN_OPTION_ORQ_API_KEY-}" \
       bash -c "cd '$REPO_ROOT' && claude -p 'echo trace_test' 2>&1" \
     > /tmp/cc-out.txt
   )
@@ -81,17 +71,14 @@ run_case() {
   echo
 }
 
-run_case "T1: ORQ_TRACE_PROFILE only" \
-  "unset ORQ_API_KEY; export ORQ_TRACE_PROFILE='$TRACE_PROFILE'; unset ORQ_PROFILE"
+run_case "T1: ORQ_API_KEY only" \
+  "export ORQ_API_KEY='$KEY'; unset CLAUDE_PLUGIN_OPTION_ORQ_API_KEY"
 
-run_case "T2: ORQ_API_KEY only" \
-  "export ORQ_API_KEY='$SECONDARY_KEY'; unset ORQ_TRACE_PROFILE; unset ORQ_PROFILE"
+run_case "T2: plugin option only" \
+  "unset ORQ_API_KEY; export CLAUDE_PLUGIN_OPTION_ORQ_API_KEY='$KEY'"
 
-run_case "T3: BOTH set, TRACE_PROFILE wins" \
-  "export ORQ_API_KEY='$SECONDARY_KEY'; export ORQ_TRACE_PROFILE='$TRACE_PROFILE'; unset ORQ_PROFILE"
-
-run_case "T4: neither (CLI current profile)" \
-  "unset ORQ_API_KEY; unset ORQ_TRACE_PROFILE; unset ORQ_PROFILE"
+run_case "T3: both set, plugin option wins" \
+  "export ORQ_API_KEY='$KEY'; export CLAUDE_PLUGIN_OPTION_ORQ_API_KEY='$KEY'"
 
 echo "==========================="
 echo "RESULTS: $PASS pass, $FAIL fail"
