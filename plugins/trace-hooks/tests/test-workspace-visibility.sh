@@ -8,15 +8,17 @@
 #
 # Depends on:
 #   - orqi CLI installed
-#   - orqi profile <TRACE_PROFILE> configured with valid api_key
+#   - TEST_ORQ_API_KEY: a valid key for the workspace orqi is pointed at
 #   - backend ingestion lag tolerable within INGEST_WAIT_SEC
 #
-# Usage: ./test-workspace-visibility.sh [TRACE_PROFILE]
-#   TRACE_PROFILE — orqi profile to point traces at (default: trace)
+# Usage: TEST_ORQ_API_KEY=<key> ./test-workspace-visibility.sh
+#   The trace is sent with that key as the plugin option
+#   (CLAUDE_PLUGIN_OPTION_ORQ_API_KEY). Select the workspace orqi lists from
+#   yourself beforehand (`orqi profile set <name>`); the hook does not read it.
 
 set -uo pipefail
 
-TRACE_PROFILE="${1:-${TEST_TRACE_PROFILE:-trace}}"
+KEY="${TEST_ORQ_API_KEY:-}"
 INGEST_WAIT_SEC="${INGEST_WAIT_SEC:-30}"
 REPO_ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 LOG=/tmp/orq-trace-debug.log
@@ -26,8 +28,10 @@ if ! command -v orqi >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Switching orqi profile to $TRACE_PROFILE..."
-orqi profile set "$TRACE_PROFILE" >/dev/null
+if [ -z "$KEY" ]; then
+  echo "FAIL: set TEST_ORQ_API_KEY"
+  exit 1
+fi
 
 echo "Capturing baseline trace_id list..."
 BEFORE=$(orqi trace list --v3 --limit 20 --fields trace_id 2>/dev/null \
@@ -35,7 +39,7 @@ BEFORE=$(orqi trace list --v3 --limit 20 --fields trace_id 2>/dev/null \
 
 echo "Emitting fresh trace via subprocess CC..."
 rm -f "$LOG"
-( unset ORQ_API_KEY; env -u CLAUDECODE ORQ_DEBUG=1 ORQ_TRACE_PROFILE="$TRACE_PROFILE" \
+( unset ORQ_API_KEY; env -u CLAUDECODE ORQ_DEBUG=1 CLAUDE_PLUGIN_OPTION_ORQ_API_KEY="$KEY" \
   bash -c "cd '$REPO_ROOT' && claude -p 'echo workspace_visibility_test' 2>&1" ) >/dev/null
 sleep 5
 

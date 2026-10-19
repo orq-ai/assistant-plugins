@@ -6,7 +6,7 @@ description: >
   agent in a conversation, or call a model directly through the AI Router.
   Do NOT use for creating or editing deployments/agents (use orq-improve-agent
   or orq-build-agent). Do NOT use for running evaluations (use orq-run-experiment).
-allowed-tools: Bash(curl:*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__list_models, mcp__orq-workspace__list_traces
+allowed-tools: Bash(curl -s https://api.orq.ai/v2/*), Bash(curl -s -X POST https://api.orq.ai/v2/*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__list_models, mcp__orq-workspace__list_traces
 ---
 
 # Invoke Deployment

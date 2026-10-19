@@ -154,6 +154,7 @@ function runHook(hookScript, payload, stateDir) {
         ...process.env,
         ORQ_CLAUDE_STATE_DIR: stateDir,
         ORQ_API_KEY: "test-key",
+        CLAUDE_PLUGIN_OPTION_ORQ_API_KEY: "",
         OTEL_EXPORTER_OTLP_ENDPOINT: endpoint,
       },
     });
@@ -586,6 +587,7 @@ await test("queue: an oversized payload is split and still lands as one trace", 
   // has to be in place before the first import of it.
   process.env.ORQ_CLAUDE_STATE_DIR = dir;
   process.env.ORQ_API_KEY = "test-key";
+  delete process.env.CLAUDE_PLUGIN_OPTION_ORQ_API_KEY;
   process.env.OTEL_EXPORTER_OTLP_ENDPOINT = endpoint;
   const { drainQueue, currentDestination } = await import(
     `file://${path.join(repoRoot, "src/otlp.js").replaceAll("\\", "/")}`
@@ -617,27 +619,10 @@ await test("queue: an oversized payload is split and still lands as one trace", 
 });
 
 // --- Test 13: endpoint resolution per environment ---
-await test("endpoint: profile otlp_endpoint overrides the subdomain swap, prod unchanged", async () => {
-  const dir = makeTempDir();
-  const configPath = path.join(dir, "orq-config.json");
-  fs.writeFileSync(configPath, JSON.stringify({
-    current: "prod",
-    profiles: {
-      // Production derives api.orq.ai from my.orq.ai and must keep doing so.
-      prod: { api_key: "sk-orq-prod", base_url: "https://my.orq.ai" },
-      // Staging cannot: api.staging.orq.ai answers 526, so it names its URL.
-      staging: {
-        api_key: "sk-orq-staging",
-        base_url: "https://my.staging.orq.ai",
-        otlp_endpoint: "https://my.staging.orq.ai/v2/otel/v1/traces",
-      },
-      local: { api_key: "sk-orq-local", base_url: "http://localhost:5300" },
-    },
-  }));
-
+await test("endpoint: ORQ_OTLP_ENDPOINT overrides the subdomain swap, prod unchanged", async () => {
   // Exercise otlp.js's own resolution, not a reimplementation of it: the bug
   // this guards against was the wiring between the two modules going missing.
-  const resolve = (profile) => {
+  const resolve = (env) => {
     const out = spawnSync("node", ["--input-type=module", "-e", `
       import { getEndpoint } from ${JSON.stringify(`file://${path.join(repoRoot, "src/otlp.js").replaceAll("\\", "/")}`)};
       console.log(getEndpoint());
@@ -645,19 +630,30 @@ await test("endpoint: profile otlp_endpoint overrides the subdomain swap, prod u
       encoding: "utf8",
       env: {
         ...process.env,
-        ORQ_CONFIG_PATH: configPath,
-        ORQ_TRACE_PROFILE: profile,
+        ORQ_BASE_URL: "",
+        ORQ_OTLP_ENDPOINT: "",
         OTEL_EXPORTER_OTLP_ENDPOINT: "",
+        ...env,
       },
     });
     return out.stdout.trim();
   };
 
-  assert.equal(resolve("prod"), "https://api.orq.ai/v2/otel/v1/traces", "prod must keep the subdomain swap");
-  assert.equal(resolve("staging"), "https://my.staging.orq.ai/v2/otel/v1/traces", "staging must use its declared endpoint");
-  assert.equal(resolve("local"), "http://localhost:5300/v2/otel/v1/traces", "local has no my. prefix to swap");
-
-  fs.rmSync(dir, { recursive: true, force: true });
+  // Production derives api.orq.ai from my.orq.ai and must keep doing so.
+  assert.equal(resolve({ ORQ_BASE_URL: "https://my.orq.ai" }), "https://api.orq.ai/v2/otel/v1/traces", "prod must keep the subdomain swap");
+  assert.equal(resolve({}), "https://api.orq.ai/v2/otel/v1/traces", "the default base URL is prod");
+  // Staging cannot: api.staging.orq.ai answers 526, so it names its URL.
+  assert.equal(
+    resolve({ ORQ_BASE_URL: "https://my.staging.orq.ai", ORQ_OTLP_ENDPOINT: "https://my.staging.orq.ai/v2/otel/v1/traces" }),
+    "https://my.staging.orq.ai/v2/otel/v1/traces",
+    "staging must use its declared endpoint",
+  );
+  assert.equal(resolve({ ORQ_BASE_URL: "http://localhost:5300" }), "http://localhost:5300/v2/otel/v1/traces", "local has no my. prefix to swap");
+  assert.equal(
+    resolve({ ORQ_OTLP_ENDPOINT: "https://a.example", OTEL_EXPORTER_OTLP_ENDPOINT: "https://b.example" }),
+    "https://b.example/v1/traces",
+    "the standard OTEL variable still wins",
+  );
 });
 
 // --- Test 14: a later window's spans start where the previous one ended ---
@@ -1269,6 +1265,7 @@ await test("queue: a drain that fails halfway does not re-send delivered spans",
         ...process.env,
         ORQ_CLAUDE_STATE_DIR: dir,
         ORQ_API_KEY: "test-key",
+        CLAUDE_PLUGIN_OPTION_ORQ_API_KEY: "",
         OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${flaky.address().port}/v1/traces`,
       },
     });
@@ -1324,6 +1321,7 @@ await test("queue round trip: spans queued while offline are delivered later", a
         ...process.env,
         ORQ_CLAUDE_STATE_DIR: dir,
         ORQ_API_KEY: "test-key",
+        CLAUDE_PLUGIN_OPTION_ORQ_API_KEY: "",
         OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${flaky.address().port}/v1/traces`,
       },
     });
@@ -1564,6 +1562,7 @@ await test("send: a black-hole endpoint gives up in time, and a killed hook keep
         ...process.env,
         ORQ_CLAUDE_STATE_DIR: stateDir,
         ORQ_API_KEY: "test-key",
+        CLAUDE_PLUGIN_OPTION_ORQ_API_KEY: "",
         OTEL_EXPORTER_OTLP_ENDPOINT: deadEndpoint,
       },
     });

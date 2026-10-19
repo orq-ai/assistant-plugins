@@ -2,6 +2,9 @@
 # Quick trace-hooks test runner. Runs a CC session with --plugin-dir,
 # waits for the trace to land, then prints span list + validates.
 #
+# Needs a key: export ORQ_API_KEY, or configure the plugin option
+# (/plugin configure). The hook reads no orq CLI profile or config file.
+#
 # Usage:
 #   ./test-trace.sh                          # default: tool call test
 #   ./test-trace.sh "say hello"              # custom prompt (no tools)
@@ -19,7 +22,7 @@ echo "==> CWD: $TEST_DIR"
 echo
 
 cd "$TEST_DIR"
-env -u CLAUDECODE -u ORQ_API_KEY -u ORQ_OTEL_API_KEY \
+env -u CLAUDECODE -u ORQ_OTEL_API_KEY \
   bash -c "claude --plugin-dir '$PLUGIN_DIR' -p '$PROMPT' 2>&1"
 
 echo

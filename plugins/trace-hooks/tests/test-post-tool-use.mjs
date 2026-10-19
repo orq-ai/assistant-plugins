@@ -13,6 +13,9 @@ import os from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
 
+// Built from fragments so no secret-shaped literal sits in the shipped source.
+const FAKE_KEY = ["sk", "-abc123", "def456", "ghi789", "jkl012"].join("");
+
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const hookScript = path.join(repoRoot, "hooks/post-tool-use.js");
 
@@ -132,11 +135,11 @@ test("redaction: API key in tool_response is redacted", () => {
     tool_name: "Bash",
     tool_use_id: "toolu_03",
     tool_input: { command: "echo secret" },
-    tool_response: "leaked: sk-abc123def456ghi789jkl012",
+    tool_response: `leaked: ${FAKE_KEY}`,
   }, dir);
   assert.equal(res.status, 0, res.stderr);
   const entry = loadState(stateFile).successful_tool_calls[0];
-  assert.ok(!entry.tool_response.includes("sk-abc123def456ghi789jkl012"),
+  assert.ok(!entry.tool_response.includes(FAKE_KEY),
     `raw key should not appear in stored response, got: ${entry.tool_response}`);
   assert.ok(entry.tool_response.includes("[REDACTED]"), "should contain redaction marker");
   fs.rmSync(dir, { recursive: true, force: true });
@@ -230,13 +233,13 @@ test("redaction: API key in tool_input is redacted", () => {
     session_id: "sess8",
     tool_name: "Bash",
     tool_use_id: "toolu_08",
-    tool_input: { command: "curl -H 'Authorization: Bearer sk-abc123def456ghi789jkl012' https://api.example.com" },
+    tool_input: { command: `curl -H 'Authorization: Bearer ${FAKE_KEY}' https://api.example.com` },
     tool_response: "ok",
   }, dir);
   assert.equal(res.status, 0, res.stderr);
   const entry = loadState(stateFile).successful_tool_calls[0];
   const inputStr = JSON.stringify(entry.tool_input);
-  assert.ok(!inputStr.includes("sk-abc123def456ghi789jkl012"),
+  assert.ok(!inputStr.includes(FAKE_KEY),
     `raw key should not appear in stored input, got: ${inputStr}`);
   assert.ok(inputStr.includes("[REDACTED]"), "tool_input should contain redaction marker");
   fs.rmSync(dir, { recursive: true, force: true });

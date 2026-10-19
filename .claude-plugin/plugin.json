@@ -1,15 +1,35 @@
 {
   "name": "orq",
-  "version": "3.9.1",
+  "version": "3.9.2",
   "description": "Agent skills for building, deploying, evaluating, and monitoring LLM pipelines on the orq.ai platform.",
   "author": {
     "name": "orq.ai",
     "url": "https://orq.ai"
   },
   "homepage": "https://orq.ai",
+  "icon": "./assets/logo.png",
+  "privacyPolicyUrl": "https://orq.ai/legal/privacy",
+  "termsOfServiceUrl": "https://orq.ai/legal/terms-of-service",
   "repository": "https://github.com/orq-ai/assistant-plugins",
   "license": "MIT",
   "keywords": ["orq", "llm", "agents", "prompts", "deployments", "evaluation", "monitoring", "rag", "experiments", "traces"],
   "skills": "./skills/",
-  "mcpServers": "./.mcp.json"
+  "userConfig": {
+    "orq_api_key": {
+      "type": "string",
+      "title": "orq.ai API key",
+      "description": "Your orq.ai API key (my.orq.ai > Settings > API keys). Authenticates the orq-workspace MCP server. Stored in your system credential store.",
+      "required": true,
+      "sensitive": true
+    }
+  },
+  "mcpServers": {
+    "orq-workspace": {
+      "type": "http",
+      "url": "https://my.orq.ai/v2/mcp",
+      "headers": {
+        "Authorization": "Bearer ${user_config.orq_api_key}"
+      }
+    }
+  }
 }

@@ -5,13 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.9.1] - 2026-10-13
+## [3.9.2] - 2026-10-20
 
 ### Changed
 
 - Aligned the SDK-teaching skills with orq-python 4.12.22+ (RES-1221). `orq-invoke-deployment`, `orq-build-agent`, `orq-run-experiment` and `orq-compare-agents` now teach `client.responses.create(model="agent/<key>", input=…)` -> `POST /v3/router/responses` as the primary agent-invocation path (output read from `response.output[-1]["content"][0]["text"]`, multi-turn via `previous_response_id`), with the deprecated `agents.responses.create` / `POST /v2/agents/<key>/responses` path retained as a clearly-marked fallback. Verified live against a workspace agent on orq-ai-sdk 4.15.14.
 - `orq-setup-observability`: raw router base-URL examples move `/v2/router` -> `/v3/router` (the OTLP `/v2/otel` endpoint is unchanged), with a note that the orq SDK's own `chat.completions` still posts v2 internally. Added the first-party observability one-liners `orq_ai_sdk.langchain.setup()` and `OpenAIAgentsInstrumentor().instrument()`.
 - Corrected the `@traced` guide: the decorator falls back to `ORQ_API_KEY` and raises `ValueError` when no key is available, rather than silently exporting nothing.
+
+## [3.9.1] - 2026-10-16
+
+### Fixed
+
+- Claude Desktop skipped `orq-skills` and `orq-mcp` on marketplace sync ("plugin.json must be at .claude-plugin/plugin.json at the plugin root; found nested: plugins/trace-hooks/.claude-plugin/plugin.json"). The `orq-trace` manifest now lives inline in its `.claude-plugin/marketplace.json` entry (`strict: false`, version 0.5.1) and the nested `plugins/trace-hooks/.claude-plugin/plugin.json` is removed.
+- `.codex-plugin/plugin.json` `privacyPolicyURL` and `termsOfServiceURL` pointed at `orq.ai/privacy` (a redirect) and `orq.ai/terms` (404). They now use `https://orq.ai/legal/privacy` and `https://orq.ai/legal/terms-of-service`.
+
+- Anthropic's plugin directory validator rejected the repo ("Couldn't validate that repository") because of `.gitattributes`; the file is removed.
+- Its blocking findings are fixed: `commands/orq-manage-skills.md` had an unquoted `argument-hint` with two bracketed groups (invalid YAML); the `.claude-plugin/.mcp.json` and `.claude-plugin/skills` symlinks are removed (the plugin root is the repo root, so the manifest paths resolve without them; `docs/install-claude-cowork.md` and `validate-plugin-manifests.sh` updated, and the script now fails on any symlink under `.claude-plugin/`); the `orq-trace` tests no longer ship token-shaped literals (trace-hooks 0.5.2).
+
+- Narrowed the broad `allowed-tools` shell grants that Anthropic's plugin directory holds for review. `curl` is scoped to `https://api.orq.ai/v2/*` (or dropped where the skill never runs it); `eq`, `pip`, `python`, `npx`, `uv`, `jq` and `npm` are scoped to the documented commands; bare `Bash` in `create-skill` and `commands/quickstart.md` is replaced by specific rules; the `orq*` entries in `commands/` become the `mcp__orq-workspace__*` tools those commands call. Commands outside the allow-list now prompt instead of running silently. `Bash(orq:*)` stays broad in `orq-cli`, which documents the whole CLI.
+
+### Changed
+
+- The Claude Code manifest (`.claude-plugin/plugin.json`) now declares `orq-workspace` inline and takes the API key from a new sensitive `userConfig` option (`orq_api_key`, prompted on install/enable) instead of reading `ORQ_API_KEY` from the user's machine, which Anthropic's plugin directory flags. Root `.mcp.json` / `mcp.json` are unchanged, so Codex, Cursor and other harnesses still use `ORQ_API_KEY`. `validate-plugin-manifests.sh` asserts the new shape.
+
+### Added
+
+- Directory listing fields in `.claude-plugin/plugin.json` for submission to Anthropic's plugin directory: `icon`, `privacyPolicyUrl`, `termsOfServiceUrl`.
+- README "Data & privacy" section describing what each component sends.
 
 ## [3.9.0] - 2026-10-08
 
