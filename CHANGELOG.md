@@ -17,6 +17,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The `traces?query=trace_id:is:<id>` deep link from `orq-cli`; the app no longer routes it.
 
+## [3.9.1] - 2026-10-16
+
+### Fixed
+
+- Claude Desktop skipped `orq-skills` and `orq-mcp` on marketplace sync ("plugin.json must be at .claude-plugin/plugin.json at the plugin root; found nested: plugins/trace-hooks/.claude-plugin/plugin.json"). The `orq-trace` manifest now lives inline in its `.claude-plugin/marketplace.json` entry (`strict: false`, version 0.5.1) and the nested `plugins/trace-hooks/.claude-plugin/plugin.json` is removed.
+- `.codex-plugin/plugin.json` `privacyPolicyURL` and `termsOfServiceURL` pointed at `orq.ai/privacy` (a redirect) and `orq.ai/terms` (404). They now use `https://orq.ai/legal/privacy` and `https://orq.ai/legal/terms-of-service`.
+
+- Anthropic's plugin directory validator rejected the repo ("Couldn't validate that repository") because of `.gitattributes`; the file is removed.
+- Its blocking findings are fixed: `commands/orq-manage-skills.md` had an unquoted `argument-hint` with two bracketed groups (invalid YAML); the `.claude-plugin/.mcp.json` and `.claude-plugin/skills` symlinks are removed (the plugin root is the repo root, so the manifest paths resolve without them; `docs/install-claude-cowork.md` and `validate-plugin-manifests.sh` updated, and the script now fails on any symlink under `.claude-plugin/`); the `orq-trace` tests no longer ship token-shaped literals (trace-hooks 0.5.2).
+
+- Narrowed the broad `allowed-tools` shell grants that Anthropic's plugin directory holds for review. `curl` is scoped to `https://api.orq.ai/v2/*` (or dropped where the skill never runs it); `eq`, `pip`, `python`, `npx`, `uv`, `jq` and `npm` are scoped to the documented commands; bare `Bash` in `create-skill` and `commands/quickstart.md` is replaced by specific rules; the `orq*` entries in `commands/` become the `mcp__orq-workspace__*` tools those commands call. Commands outside the allow-list now prompt instead of running silently. `Bash(orq:*)` stays broad in `orq-cli`, which documents the whole CLI.
+
+### Changed
+
+- The Claude Code manifest (`.claude-plugin/plugin.json`) now declares `orq-workspace` inline and takes the API key from a new sensitive `userConfig` option (`orq_api_key`, prompted on install/enable) instead of reading `ORQ_API_KEY` from the user's machine, which Anthropic's plugin directory flags. Root `.mcp.json` / `mcp.json` are unchanged, so Codex, Cursor and other harnesses still use `ORQ_API_KEY`. `validate-plugin-manifests.sh` asserts the new shape.
+
+### Added
+
+- Directory listing fields in `.claude-plugin/plugin.json` for submission to Anthropic's plugin directory: `icon`, `privacyPolicyUrl`, `termsOfServiceUrl`.
+- README "Data & privacy" section describing what each component sends.
+
 ## [3.9.0] - 2026-10-08
 
 ### Added

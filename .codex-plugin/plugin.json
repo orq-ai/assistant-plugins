@@ -22,7 +22,7 @@
     "brandColor": "#ff8f34",
     "logo": "./assets/logo.png",
     "websiteURL": "https://orq.ai",
-    "privacyPolicyURL": "https://orq.ai/privacy",
-    "termsOfServiceURL": "https://orq.ai/terms"
+    "privacyPolicyURL": "https://orq.ai/legal/privacy",
+    "termsOfServiceURL": "https://orq.ai/legal/terms-of-service"
   }
 }

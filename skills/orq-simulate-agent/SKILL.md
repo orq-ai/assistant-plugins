@@ -10,7 +10,7 @@ description: >
   dataset curation. Do NOT use when you have enough real production
   conversations (use `orq-analyze-traces`). Do NOT use for adversarial
   red-teaming sweeps (use `orq-red-team`).
-allowed-tools: Bash(curl:*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities
+allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities
 ---
 
 # Simulate Agent

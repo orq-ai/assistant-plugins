@@ -132,8 +132,17 @@ assert_jq .claude-plugin/plugin.json '.name == "orq"' \
   "Claude plugin name must be 'orq'"
 assert_jq .claude-plugin/plugin.json '.skills == "./skills/"' \
   "Claude plugin must declare skills path './skills/'"
-assert_jq .claude-plugin/plugin.json '.mcpServers == "./.mcp.json"' \
-  "Claude plugin must declare mcpServers path './.mcp.json'"
+# Claude Code declares the server inline so the key comes from a sensitive
+# userConfig option; it replaces the same-named server in the root .mcp.json
+# (which keeps the ORQ_API_KEY env var for Codex/Cursor/other harnesses).
+assert_jq .claude-plugin/plugin.json \
+  '.userConfig.orq_api_key | .type == "string" and .sensitive == true and (.title|length>0) and (.description|length>0)' \
+  "Claude plugin must declare a sensitive string userConfig option 'orq_api_key'"
+assert_jq .claude-plugin/plugin.json \
+  '.mcpServers["orq-workspace"] | .type == "http" and .url == "https://my.orq.ai/v2/mcp" and .headers.Authorization == "Bearer ${user_config.orq_api_key}"' \
+  "Claude plugin must declare inline orq-workspace MCP server using \${user_config.orq_api_key}"
+assert_jq .claude-plugin/plugin.json '(.mcpServers | type) == "object" and (.mcpServers | keys) == ["orq-workspace"]' \
+  "Claude plugin mcpServers must be an inline map with only orq-workspace"
 
 # --- MCP config: expected server ---
 
@@ -155,19 +164,23 @@ assert_jq .agents/plugins/marketplace.json \
 # --- Symlink integrity ---
 
 assert_symlink "mcp.json" ".mcp.json"
-assert_symlink ".claude-plugin/.mcp.json" "../.mcp.json"
-assert_symlink ".claude-plugin/skills" "../skills"
 
 # Spec §4.1 containment and the one-plugin-root rule live in validate-skills.mjs
 # (sections 6-7): resolving a symlink correctly needs realpath semantics.
 
-# --- Claude Cowork Desktop: symlinks resolve to real targets ---
+# --- Claude plugin loader: no symlinks under .claude-plugin/ ---
+# Anthropic's directory validator blocks them (ARCHIVE_SYMLINK_EXEC_SURFACE);
+# the plugin root is the repo root, so skills/ and .mcp.json resolve from there.
 
-assert_path -f ".claude-plugin/.mcp.json" \
-  ".claude-plugin/.mcp.json must resolve to a readable file"
-assert_path -d ".claude-plugin/skills" \
-  ".claude-plugin/skills must resolve to a readable directory"
-assert_path -f ".claude-plugin/skills/orq-build-agent/SKILL.md" \
-  ".claude-plugin/skills/orq-build-agent/SKILL.md must exist (verifies symlink resolves)"
+while IFS= read -r entry; do
+  if [[ "$(tracked_mode "$entry")" == "120000" ]]; then
+    echo "FAIL: $entry is a symlink; no symlinks are allowed under .claude-plugin/"
+    exit 1
+  fi
+done < <(git ls-files -- .claude-plugin)
+
+assert_path -d "skills" "skills/ must exist at the plugin root"
+assert_path -f ".mcp.json" ".mcp.json must exist at the plugin root"
+assert_path -f "skills/orq-build-agent/SKILL.md" "skills/orq-build-agent/SKILL.md must exist"
 
 echo "Plugin manifest validation passed."

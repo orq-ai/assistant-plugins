@@ -7,7 +7,7 @@ description: >
   how my agent handles adversarial inputs". Do NOT use when you only need to build
   evaluators (use orq-build-evaluator) or analyze existing trace failures (use
   orq-analyze-traces).
-allowed-tools: Bash(eq:*), Bash(jq:*), Bash(uv:*), Bash(curl:*), Read, Write, Edit, Grep, Glob, mcp__orq-workspace__search_entities, mcp__orq-workspace__get_agent
+allowed-tools: Bash(eq redteam *), Bash(eq dashboard *), Bash(eq --help*), Bash(uv run --package evaluatorq eq *), Bash(uv venv*), Bash(uv pip install 'evaluatorq[redteam]'*), Bash(uv tool install 'evaluatorq[redteam]'*), Bash(jq '{asr:*), Bash(jq -r '.results[]*), Bash(jq '.results | map*), Read, Write, Edit, Grep, Glob, mcp__orq-workspace__search_entities, mcp__orq-workspace__get_agent
 ---
 
 # Red Team
