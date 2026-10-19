@@ -89,7 +89,3 @@ node tests/scripts/validate-skills.mjs --fix
 ```
 
 > `--fix` hashes **staged** content. An unstaged edit is not reflected; the validator warns when it finds one.
-
-## Sub-plugin versioning
-
-`plugins/trace-hooks` has its own independent version, in the `orq-trace` entry of `.claude-plugin/marketplace.json`. It deliberately has no `plugins/trace-hooks/.claude-plugin/plugin.json`: that entry is `strict: false` and carries the manifest inline, because Claude Desktop's marketplace sync skips the `./`-sourced plugins (`orq-skills`, `orq-mcp`) when it finds a nested `.claude-plugin/plugin.json` under their root. Do not re-add the nested file. Bump it whenever files under `plugins/trace-hooks/` are touched in a commit — same semver rules apply. Do **not** bump the root 4-manifest version for trace-hooks-only changes.

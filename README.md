@@ -45,17 +45,15 @@ Use this if you want easy access to all components — skills, MCP tools, and tr
 # In Claude Code:
 /plugin marketplace add orq-ai/assistant-plugins
 
-# Install all 3 plugins
+# Install both plugins
 /plugin install orq-skills@orq-claude-plugin
 /plugin install orq-mcp@orq-claude-plugin
-/plugin install orq-trace@orq-claude-plugin
 ```
 
 | Plugin | What it gives you |
 |--------|-------------------|
 | `orq-skills` | Skills, commands, and agents for the Build → Evaluate → Optimize lifecycle |
 | `orq-mcp` | MCP server registration — Claude can call orq.ai APIs directly |
-| `orq-trace` | OTLP tracing hooks that capture Claude Code sessions into orq.ai |
 
 Verify with the interactive onboarding — checks `ORQ_API_KEY`, MCP reachability, and credentials:
 
@@ -250,7 +248,6 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 
 - **Skills and commands** run locally in your agent. They send nothing on their own.
 - **MCP server (`orq-workspace`)** talks to `https://my.orq.ai/v2/mcp`, authenticated with your `ORQ_API_KEY` as a bearer token. Tool calls you make (agents, deployments, datasets, experiments, traces) go to your orq.ai workspace.
-- **`orq-trace`** (separate plugin, opt-in) sends session, tool-call and LLM-response spans to orq.ai over OTLP, with secrets redacted. See [plugins/trace-hooks/README.md](plugins/trace-hooks/README.md#privacy--content-control) to strip content entirely or disable it per session.
 
 Privacy policy: <https://orq.ai/legal/privacy> · Terms: <https://orq.ai/legal/terms-of-service>
 
