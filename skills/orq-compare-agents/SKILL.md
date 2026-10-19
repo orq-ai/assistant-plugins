@@ -162,7 +162,7 @@ Agent Comparison Progress:
    | Experiment Type | Jobs to Include |
    |---|---|
    | External vs orq.ai | One external job + one orq.ai job |
-   | orq.ai vs orq.ai | Two orq.ai jobs with different `agent/<key>` models |
+   | orq.ai vs orq.ai | Two orq.ai jobs with different `agent/<agent-key>` models |
    | External vs external | Two external jobs (e.g., LangGraph + CrewAI) |
    | Multi-agent | Three or more jobs of any type |
 

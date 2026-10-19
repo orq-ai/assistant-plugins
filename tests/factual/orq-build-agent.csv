@@ -28,6 +28,9 @@ doc_url,https://docs.orq.ai/docs/proxy/fallbacks,,fallbacks page reachable
 doc_url,https://docs.orq.ai/docs/proxy/cache,,cache page reachable
 doc_url,https://docs.orq.ai/reference/agents/create-agent,,create-agent page reachable
 doc_url,https://docs.orq.ai/reference/agents/create-response,,create-response page reachable
+sdk_import,orq_ai_sdk.Orq,,Orq importable from orq_ai_sdk
+sdk_method,orq_ai_sdk.Orq,responses,Orq client has .responses (the path this skill teaches for agents)
+sdk_signature,orq_ai_sdk.responses.Responses.create,memory,responses.create accepts a memory kwarg (memory.entity_id for per-user memory)
 mcp_tool_args,search_entities,"{""type"": ""evaluator""}",search_entities(type=evaluator) matches the schema
 mcp_tool_args,search_entities,"{""type"": ""knowledge""}",search_entities(type=knowledge) matches the schema
 mcp_tool_args,search_entities,"{""type"": ""memory_store""}",search_entities(type=memory_store) matches the schema

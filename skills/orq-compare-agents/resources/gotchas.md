@@ -6,9 +6,9 @@ Common pitfalls when running cross-framework agent comparisons with evaluatorq.
 
 ## orq.ai SDK
 
-### Invoking an agent: `responses.create(model="agent/<key>")`
+### Invoking an agent: `responses.create(model="agent/<agent-key>")`
 
-Invoke an agent through the router with `responses.create(model="agent/<key>", input=…)` (`POST /v3/router/responses`), and read the text from `response.output[-1]["content"][0]["text"]`.
+Invoke an agent through the router with `responses.create(model="agent/<agent-key>", input=…)` (`POST /v3/router/responses`), and read the text from `response.output[-1]["content"][0]["text"]`.
 
 ```python
 # Correct — route to the agent by model

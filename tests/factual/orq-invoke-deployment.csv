@@ -7,6 +7,9 @@ sdk_import,orq_ai_sdk.Orq,,Orq importable from orq_ai_sdk
 sdk_method,orq_ai_sdk.Orq,deployments,Orq client has .deployments
 sdk_method,orq_ai_sdk.Orq,responses,Orq client has .responses (the migrated primary path)
 sdk_method,orq_ai_sdk.Orq,agents,Orq client has .agents
+sdk_method,orq_ai_sdk.deployments.Deployments,stream,deployments.stream() exists (the iterable EventStream path)
+sdk_signature,orq_ai_sdk.deployments.Deployments.invoke,stream,deployments.invoke accepts a stream kwarg (returns a single body, not an iterator)
+sdk_signature,orq_ai_sdk.responses.Responses.create,memory,responses.create accepts a memory kwarg
 doc_url,https://docs.orq.ai/docs/deployments/overview,,overview page reachable
 doc_url,https://docs.orq.ai/reference/deployments/invoke,,invoke page reachable
 doc_url,https://docs.orq.ai/reference/deployments/stream,,stream page reachable

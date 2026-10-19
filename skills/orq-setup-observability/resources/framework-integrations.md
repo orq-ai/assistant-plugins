@@ -44,7 +44,7 @@
 
 All AI Router integrations follow the same pattern — point your SDK's base URL to orq.ai:
 
-> **Base URL:** raw base-URL examples use `https://api.orq.ai/v3/router`. This applies when you point a third-party client (OpenAI SDK, LangChain) at orq. You do not set a base URL for the orq SDK itself — its methods (`client.deployments.*`, `client.responses.*`) target orq directly, and its internal router calls still post to `/v2`.
+> **Base URL:** raw base-URL examples use `https://api.orq.ai/v3/router`. This applies when you point a third-party client (OpenAI SDK, LangChain) at orq. You do not set a base URL for the orq SDK itself — its methods target orq directly: `client.deployments.invoke` posts to `/v2/deployments/invoke` and `client.responses.create` posts to `/v3/router/responses`.
 
 **Python (OpenAI SDK):**
 ```python
