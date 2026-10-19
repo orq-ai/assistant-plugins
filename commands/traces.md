@@ -2,7 +2,7 @@
 name: traces
 description: Query and summarize traces with filters — debugging entry point before orq-analyze-traces
 argument-hint: "[--deployment <name>] [--status <status>] [--last <duration>] [--limit <n>]"
-allowed-tools: AskUserQuestion, orq*
+allowed-tools: AskUserQuestion, mcp__orq-workspace__list_traces, mcp__orq-workspace__list_registry_keys, mcp__orq-workspace__list_registry_values
 ---
 
 # Traces

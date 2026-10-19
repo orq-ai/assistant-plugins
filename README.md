@@ -21,6 +21,8 @@ Built on the [Agent Skills](https://agentskills.io/home#adoption) standard forma
   export ORQ_API_KEY=your-key-here
   ```
 
+  Claude Code's `orq-skills` plugin asks for the key when you install or enable it (change it later with `/plugin configure`) and keeps it in the system credential store, so you don't need the env var there. Every other harness reads `ORQ_API_KEY`.
+
 ### Quick reference
 
 | Tool | Recommended install |
@@ -244,6 +246,14 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 ```
 
 ---
+
+## Data & privacy
+
+- **Skills and commands** run locally in your agent. They send nothing on their own.
+- **MCP server (`orq-workspace`)** talks to `https://my.orq.ai/v2/mcp`, authenticated with your `ORQ_API_KEY` as a bearer token. Tool calls you make (agents, deployments, datasets, experiments, traces) go to your orq.ai workspace.
+- **`orq-trace`** (separate plugin, opt-in) sends session, tool-call and LLM-response spans to orq.ai over OTLP, with secrets redacted. See [plugins/trace-hooks/README.md](plugins/trace-hooks/README.md#privacy--content-control) to strip content entirely or disable it per session.
+
+Privacy policy: <https://orq.ai/legal/privacy> · Terms: <https://orq.ai/legal/terms-of-service>
 
 ## Links
 
