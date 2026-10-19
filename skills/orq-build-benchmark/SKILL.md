@@ -390,12 +390,18 @@ from evaluatorq import JudgedComparison, fit_bt, llm_jury_pairwise
 
 CANDIDATES = ['openai/gpt-5', 'anthropic/claude-opus-4-1', 'google-ai/gemini-2.5-pro']
 
+# Judges MUST be disjoint from CANDIDATES. A model scoring a pair that holds its own
+# answer self-prefers and inflates its own skill, and nothing downstream corrects for
+# it. Pick strong models that are not under test. Verify each id against list_models
+# (orq MCP) before running; do not invent ids.
+JUDGES = ['openai/gpt-4.1', 'anthropic/claude-sonnet-4-5']
+assert not (set(JUDGES) & set(CANDIDATES)), (
+    'judges overlap candidates: a judge rating its own answer biases the ranking; '
+    f'remove the overlap {sorted(set(JUDGES) & set(CANDIDATES))}'
+)
+
 comparator = llm_jury_pairwise(
-    # Judges should be independent of CANDIDATES: a model scoring a pair that holds its
-    # own answer self-prefers and inflates its own skill. These overlap the candidates,
-    # so the loop below drops each judge's votes on pairs containing it; for a cleaner
-    # panel, set judges to models that are not under test.
-    judges=['openai/gpt-5', 'anthropic/claude-opus-4-1', 'google-ai/gemini-2.5-pro'],
+    judges=JUDGES,
     criteria='Prefer the answer that ... <the better/worse observations from intake>',
     swap=True,  # judge each pair both ways to cancel position bias
 )
@@ -429,10 +435,10 @@ async def main():
                 # ranks models (not the A/B slot). swap=True already reconciled position
                 # bias inside each vote.
                 for vote in comparison.votes:
-                    # Drop a judge's vote on a pair that holds its own answer: self-preference
-                    # would inflate that model's skill. Counted, not silent: when judges overlap
-                    # CANDIDATES this removes most votes (a 3-judge panel on a pair keeps one
-                    # judge), which the ranking must disclose. (A no-op once judges are independent.)
+                    # Backstop self-vote guard: with JUDGES disjoint from CANDIDATES (asserted
+                    # above) this never fires, but if someone widens the panel to overlap the
+                    # candidates it drops a judge's vote on a pair holding its own answer, counts
+                    # the drop, and the warning below reports it so the ranking stays honest.
                     if vote.model in (model_a, model_b):
                         dropped_self_vote += 1
                         continue
@@ -461,6 +467,16 @@ async def main():
             f'warning: {dropped_self_vote} judge vote(s) were dropped as self-votes (a judge rating a '
             'pair that holds its own answer); use judges outside CANDIDATES to keep the full panel.'
         )
+
+    # How many votes actually counted. A ranking built on a handful of votes is noise,
+    # so show the kept fraction and refuse to rank on an empty set.
+    total_votes = len(records) + dropped_no_verdict + dropped_self_vote
+    print(f'votes counted: {len(records)} of {total_votes} '
+          f'({len(records) / total_votes:.0%})' if total_votes else 'votes counted: 0 of 0')
+    if not records:
+        print('error: no usable votes; ranking would be meaningless. '
+              'Check judge coverage and that JUDGES is disjoint from CANDIDATES.')
+        return
 
     fit = fit_bt(records, judge_sigma=True, hard=True)
     print('ranking (best first):', ' > '.join(fit.ranking))

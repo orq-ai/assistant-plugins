@@ -15,8 +15,8 @@ Checks:
 
 Usage:  python check_bundle.py <bundle-dir>
         python check_bundle.py --selftest
-Exit 0 = shippable (warnings may still print), 1 = fix first,
-2 = wrong usage (not one argument, or the argument is not a directory to scan).
+Exit 0 = shippable (warnings may still print), 1 = fix first (includes a path
+that is not a directory), 2 = wrong argument count (not exactly one argument).
 """
 
 from __future__ import annotations
@@ -56,8 +56,8 @@ SECRET_PATTERNS = (
         # Both a quoted literal and an unquoted value: a bare `.env`-style line
         # (ORQ_API_KEY=... or api_key: sk-...) is the most common way a key lands in a
         # bundle, and a quotes-only pattern missed it entirely. The value (group 1,
-        # surrounding quotes optional) is then shape-checked by `_looks_like_secret`
-        # so ordinary prose like `password: required` does not read as a key.
+        # surrounding quotes optional) is then run through the `_looks_like_secret`
+        # allowlist so ordinary prose like `password: required` does not read as a key.
         'assigned api key literal',
         re.compile(r'(?i)(?:api[_-]?key|secret|token|password)\s*[:=]\s*[\'"]?([^\'"\s]{8,})[\'"]?'),  # gitleaks:allow
     ),
@@ -76,11 +76,11 @@ SEED_PLACEHOLDER = re.compile(r'(?i)\b(todo|fixme|tbd|fill in|placeholder)\b')
 # is not.
 SEED_ANGLE_PLACEHOLDER = re.compile(r'<[a-z][a-z ._-]*>')
 
-# Values that follow a credential label in prose or a template but are not secrets:
-# a few plain words a field description uses (`password: required`), documentation
-# placeholders, and env-var references. Everything else assigned to an
-# api_key/secret/token/password label is treated as a key, so a real key never slips
-# through for lacking a digit.
+# Plain words a credential label can carry in prose or a field description
+# (`password: required`) that are not secrets. These are matched before the length
+# gate in `_looks_like_secret`, so short entries like `none` actually take effect.
+# `changeme`/`redacted`/`placeholder`/`example` are intentionally NOT here: they are
+# caught by the substring-marker check in `_looks_like_secret` instead.
 _NON_SECRET_VALUES = frozenset(
     {
         'required',
@@ -92,12 +92,16 @@ _NON_SECRET_VALUES = frozenset(
         'true',
         'false',
         'unset',
-        'changeme',
-        'redacted',
-        'placeholder',
-        'example',
     }
 )
+
+# Env-var references and bracketed placeholders, matched as a whole value so a real
+# secret that merely starts with `$` (`$ecretPass99xyz`) is still flagged:
+#   ${ORQ_API_KEY}  $TOKEN  <your-key>
+# The bare `$NAME` form is restricted to the env-var naming convention (uppercase,
+# digits, underscores) so a mixed-case secret like `$ecretPass99xyz` is not mistaken
+# for a reference. `${...}` and `<...>` are explicit brackets, so any content is fine.
+PLACEHOLDER_REF = re.compile(r'^(?:\$\{[^}]+\}|\$[A-Z_][A-Z0-9_]*|<[^>]+>)$')
 
 
 def _looks_like_secret(value: str) -> bool:
@@ -110,12 +114,19 @@ def _looks_like_secret(value: str) -> bool:
     the handful of plain words a field description uses (`password: required`).
     """
     v = value.strip().strip('\'"')
-    if len(v) < 8:  # too short to be a credential; the regex already requires 8+, this is a backstop
+    # An env-var reference or a bracketed placeholder is not a secret, whatever its
+    # length: match the whole form (`${ORQ_API_KEY}`, `$TOKEN`, `<your-key>`) so a real
+    # key that merely starts with `$` (`$ecretPass99xyz`) is still flagged. Checked here,
+    # before trailing punctuation is stripped, so a closing `}` or `>` is not lost.
+    if PLACEHOLDER_REF.match(v):
         return False
+    # Strip trailing sentence punctuation so an unquoted value at the end of a sentence
+    # (`password: required.`) matches the allowlist instead of capturing `required.`.
+    v = v.rstrip('.,;:)]}')
     low = v.lower()
-    if low in _NON_SECRET_VALUES:
+    if low in _NON_SECRET_VALUES:  # checked before the length gate so short words (`none`) exempt
         return False
-    if v[0] in '<${':  # <your-key>, ${ORQ_API_KEY}, $TOKEN
+    if len(v) < 8:  # too short to be a credential; the regex already requires 8+, this is a backstop
         return False
     if any(marker in low for marker in ('your_', 'your-', 'changeme', 'redacted', 'placeholder', 'example')):
         return False
@@ -288,26 +299,54 @@ def _selftest() -> int:
         assert not good.errors, f'clean bundle should pass, got {good.errors}'
 
         # Ordinary prose is not a key: `password: required` quoted in a bug report must not
-        # flag (the false positive the shape check exists for). 'required' is exempted by name.
+        # flag (the false positive the allowlist exists for). 'required' is exempted by name.
         (root / 'bug_report.txt').write_text(
             'the login form says "password: required" when the field is blank', encoding='utf-8'
         )
         assert not check(root).errors, 'prose `password: required` must not read as a key'
         (root / 'bug_report.txt').unlink()
 
-        # A real all-letter key must be caught: the digit/length shape check used to let
-        # `ORQ_API_KEY=abcdefghijklmnop` (16 letters, no digit) read as clean.
+        # A real all-letter key must be caught: it is not in the `_NON_SECRET_VALUES`
+        # allowlist, so `ORQ_API_KEY=abcdefghijklmnop` (16 letters, no digit) reads as a key.
         (root / 'letter_key.txt').write_text('ORQ_API_KEY=abcdefghijklmnop', encoding='utf-8')  # gitleaks:allow
         assert any('api key' in e.lower() for e in check(root).errors), 'all-letter key must be caught'
         (root / 'letter_key.txt').unlink()
 
         # A prose decoy ahead of a real key on the same line must not mask it (the scan
-        # used to check only the first match).
+        # used to check only the first match). The decoy word `required` is in the
+        # allowlist, so the first match is exempt and the scan must reach the second
+        # match to catch the key. This fails if the scan looks at only the first match.
         (root / 'decoy.txt').write_text(
-            'token: required, api_key=sk-orq-abcd1234efgh', encoding='utf-8'  # gitleaks:allow
+            'token: required api_key=sk-orq-abcd1234efgh', encoding='utf-8'  # gitleaks:allow
         )
         assert any('api key' in e.lower() for e in check(root).errors), 'key behind a decoy must be caught'
         (root / 'decoy.txt').unlink()
+
+        # A real secret that merely starts with `$` is not an env-var reference and must
+        # be flagged (an earlier check exempted any value whose first char was `$`).
+        (root / 'dollar_key.txt').write_text('password=$ecretPass99xyz', encoding='utf-8')  # gitleaks:allow
+        assert any('api key' in e.lower() for e in check(root).errors), 'secret starting with $ must be caught'
+        (root / 'dollar_key.txt').unlink()
+
+        # An env-var reference is still exempt whatever its length.
+        for ref in ('${ORQ_API_KEY}', '$TOKEN', '<your-key>'):
+            (root / 'ref.txt').write_text(f'api_key={ref}', encoding='utf-8')
+            assert not check(root).errors, f'env-var reference must stay exempt: {ref!r}'
+        (root / 'ref.txt').unlink()
+
+        # Trailing punctuation on an unquoted value must not defeat the allowlist: a
+        # sentence ending `password: required.` captured `required.` and read as a key.
+        (root / 'prose_dot.txt').write_text(
+            'the field validation says password: required.', encoding='utf-8'
+        )
+        assert not check(root).errors, 'unquoted `password: required.` must not read as a key'
+        (root / 'prose_dot.txt').unlink()
+
+        # Short allowlist words (`none`) take effect: they are checked before the length
+        # gate, so a label assigned one of them does not read as a key.
+        (root / 'short_word.txt').write_text('api_key: none', encoding='utf-8')
+        assert not check(root).errors, 'short allowlist word must exempt the value'
+        (root / 'short_word.txt').unlink()
 
         # The `check-bundle:allow` marker overrides a real-looking match on its own line.
         (root / 'declared_standin.txt').write_text(
