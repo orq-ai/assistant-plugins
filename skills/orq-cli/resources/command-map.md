@@ -747,11 +747,11 @@ for pair in "workspace_key=${workspace_key:-}" "trace_id=${trace_id:-}"; do
     ''|null) echo "${pair%%=*} is not set; a link built without it opens nothing" >&2; exit 1 ;;
   esac
 done
-echo "${host}/${workspace_key}/traces/(trace:${trace_id})"     # trace link; a trace-only caller stops here
-case "${span_id:-}" in
-  ''|null) echo "span_id is not set; no span link" >&2; exit 1 ;;
+echo "${host}/${workspace_key}/traces/(trace:${trace_id})"
+case "${span_id:-}" in   # span link only when a span_id is set; unset is fine for a trace-only caller
+  ''|null) ;;
+  *) echo "${host}/${workspace_key}/traces/(trace:${trace_id}//span:${span_id})" ;;
 esac
-echo "${host}/${workspace_key}/traces/(trace:${trace_id}//span:${span_id})"
 ```
 
 - **No query string is needed.** The app appends `traces_oql`, `traces_range` and `traces_filters` as you click around; a link without them opens the same view.
