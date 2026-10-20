@@ -722,20 +722,47 @@ earlier; see `orq-shared/resources/trace-queries.md` §5.4.
 
 ## Building app URLs
 
-> **Probed against 5.1.0; not re-probed.** The URL shapes are Studio routes, not
-> CLI behaviour, and the `whoami` line needs a live session.
+> **Trace and span routes opened in a browser on 2026-10-13 (RES-1550)**, cold in a
+> new tab against live traces in a research workspace, prod only; staging was not opened.
+> The `whoami` projections were run on 11.0.2 under both a login session and
+> `ORQ_API_KEY`. The experiments route is from 5.1.0 and was not re-probed.
 
 App URLs are workspace-scoped by **key** (the slug), not by id:
 
 ```
-https://my.orq.ai/<workspace-key>/traces?query=trace_id:is:<trace-id>
-https://my.orq.ai/<workspace-key>/experiments/<experiment-id>
+<host>/<workspace-key>/traces/(trace:<trace_id>)                    # a trace
+<host>/<workspace-key>/traces/(trace:<trace_id>//span:<span_id>)    # one span in it
+<host>/<workspace-key>/experiments/<experiment-id>                  # unverified, 5.1.0
 ```
 
 ```sh
-key="$(orq auth whoami -o json -j active_workspace_key --raw)"
-echo "https://my.orq.ai/${key}/traces?query=$(printf 'trace_id:is:%s' "$trace_id" | jq -sRr @uri)"
+# workspace_key: the guarded snippet in SKILL.md, "Which workspace am I really reading?".
+host="${ORQ_UI_BASE_URL:-$(orq auth whoami -o json -j 'urls.api_base_url || server' --raw 2>/dev/null)}"
+case "$host" in
+  ''|null) echo "no orq host; run 'orq auth login' or set ORQ_UI_BASE_URL" >&2; exit 1 ;;
+esac
+host="${host%/}"
+for pair in "workspace_key=${workspace_key:-}" "trace_id=${trace_id:-}"; do
+  case "${pair#*=}" in
+    ''|null) echo "${pair%%=*} is not set; a link built without it opens nothing" >&2; exit 1 ;;
+  esac
+done
+echo "${host}/${workspace_key}/traces/(trace:${trace_id})"
+case "${span_id:-}" in   # span link only when a span_id is set; unset is fine for a trace-only caller
+  ''|null) ;;
+  *) echo "${host}/${workspace_key}/traces/(trace:${trace_id}//span:${span_id})" ;;
+esac
 ```
+
+- **No query string is needed.** The app appends `traces_oql`, `traces_range` and `traces_filters` as you click around; a link without them opens the same view.
+- **`trace_id` is the 32-hex id, `span_id` the 16-hex one.** `traces search` rows carry `trace_id`, `span_id` and `root_span_id`; their `id` is a span id and opens nothing as a trace. `traces list-spans <trace_id>` gives the span ids inside a trace.
+- **The host comes from the session**, not a literal `my.orq.ai`: `urls.api_base_url` under a login session, `server` under `ORQ_API_KEY`, which is why the projection has both. That the app is served from the API's host was checked on prod only. Where it differs (staging, self-hosted), `ORQ_UI_BASE_URL` overrides it, the same variable evaluatorq uses for its dashboard links; the CLI itself ignores it.
+- **The key does not survive `ORQ_API_KEY`.** With the env var set, `whoami` reports `active_workspace_key` as `null`, so a key read blindly builds `<host>/null/...`. The SKILL.md snippet rejects that.
+- **The parentheses and `//` are part of the route.** Quote the URL in a shell. In Markdown write `[label](<url>)`; a bare `(…)` destination with nested parentheses is fragile.
+- **The old `traces?query=trace_id:is:<id>` form no longer routes.** Do not emit it.
+- **Ids from an invocation response are unverified.** Only ids read off `traces search` / `list-spans` were opened in the browser. `telemetry.trace_id` / `telemetry.span_id` from a deployment or agent call were not checked against the route; if a link built from them opens nothing, look the trace up with `traces search` and use its `trace_id`.
+
+**"No spans match your search" means the user's project filter, not a bad link.** The Traces page keeps a project selection in the browser, and a link to a trace in another project opens that empty panel (a `traces_filters` project in the URL does not override it). Whenever you hand over a link, tell the user that if it opens empty, switch the Traces project selector to **All projects** and reload.
 
 ### Which host am I actually talking to?
 

@@ -70,7 +70,7 @@ All endpoints require `Authorization: Bearer $ORQ_API_KEY`.
 | `model` | Model used |
 | `provider` | Provider used |
 | `is_final` | Whether this is the final response chunk (streaming) |
-| `telemetry.trace_id` | Trace ID — use to find the trace in orq.ai |
+| `telemetry.trace_id` | Trace ID — link it as `<host>/<workspace-key>/traces/(trace:<trace_id>)` ([format, and the unverified-id caveat](../../orq-cli/resources/command-map.md#building-app-urls)) |
 | `telemetry.span_id` | Span ID |
 | `choices[].message.content` | Generated text content |
 | `choices[].message.tool_calls` | Tool call requests (if model used tools) |
@@ -180,7 +180,7 @@ curl -s https://api.orq.ai/v2/deployments \
 | `usage.completion_tokens` | Completion tokens |
 | `finish_reason` | `stop`, `length`, `tool_calls`, `max_iterations`, `max_time` |
 | `pending_tool_calls` | Tool calls awaiting user response (when `finish_reason` is `function_call`) |
-| `telemetry.trace_id` | Trace ID — use to find the trace in orq.ai |
+| `telemetry.trace_id` | Trace ID — link it as `<host>/<workspace-key>/traces/(trace:<trace_id>)` ([format, and the unverified-id caveat](../../orq-cli/resources/command-map.md#building-app-urls)) |
 
 **Streaming events** (when `stream: true`):
 
