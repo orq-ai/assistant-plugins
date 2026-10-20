@@ -174,7 +174,7 @@ Route to an agent by setting `model` to `agent/<agent-key>` (pin a version with 
 |---|---|
 | `id` | Response ID (`resp_…`) — **pass as `previous_response_id` for multi-turn** |
 | `output[]` | List of output message items |
-| `output[-1]["content"][0]["text"]` | Generated assistant text (last message's first content block) |
+| `output[].content[]` blocks where `type == "output_text"` | Generated assistant text — collect these across `output`; do not assume the last item's first block is text (it may be a tool or reasoning block) |
 | `status` | `queued`, `in_progress`, `completed`, `failed`, or `incomplete` |
 | `model` | Model used |
 | `usage.total_tokens` / `usage.input_tokens` / `usage.output_tokens` | Token counts |
