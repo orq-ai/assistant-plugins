@@ -372,7 +372,18 @@ const response = await client.responses.create({
   input: "Hello, can you help me?",
   identity: { id: "user_<unique_id>", displayName: "Jane Doe" },
 });
-console.log(response.output.at(-1).content[0].text);
+// Collect the assistant text blocks across output rather than assuming the last
+// item's first block is text (it may be a tool or reasoning block), mirroring the
+// Python helper. Field names are camelCased by the Node SDK; verify the block
+// shape against @orq-ai/node.
+const agentText = (resp: { output?: { content?: { type?: string; text?: string }[] }[] }) =>
+  (resp.output ?? [])
+    .flatMap((msg) => msg.content ?? [])
+    .filter((block) => block.type === "output_text")
+    .map((block) => block.text ?? "")
+    .join("");
+
+console.log(agentText(response));
 
 // Multi-turn: pass the previous response id
 const followUp = await client.responses.create({
@@ -380,7 +391,7 @@ const followUp = await client.responses.create({
   input: "Tell me more.",
   previousResponseId: response.id,
 });
-console.log(followUp.output.at(-1).content[0].text);
+console.log(agentText(followUp));
 ```
 
 > **Deprecated, still serves.** The Node equivalent of the old path is `client.agents.responses.create({ agentKey, message: { role, parts }, taskId })`; prefer `client.responses.create({ model: "agent/<agent-key>", … })` above.
