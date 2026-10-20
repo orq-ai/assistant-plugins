@@ -1,0 +1,8 @@
+test_type,target,assertion,description
+mcp_tool_exists,search_entities,,search_entities listed on MCP server
+mcp_tool_exists,list_models,,list_models listed on MCP server
+mcp_tool_exists,create_dataset,,create_dataset listed on MCP server
+mcp_tool_exists,create_datapoints,,create_datapoints listed on MCP server
+mcp_tool_exists,create_llm_eval,,create_llm_eval listed on MCP server
+mcp_tool_param,search_entities,type,search_entities takes type
+mcp_tool_args,search_entities,"{""type"": ""evaluator""}",search_entities(type=evaluator) matches the schema

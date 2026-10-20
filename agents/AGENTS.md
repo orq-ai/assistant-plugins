@@ -11,6 +11,7 @@ These skills are:
  - orq-analyze-traces -> "skills/orq-analyze-traces/SKILL.md"
  - orq-build-agent -> "skills/orq-build-agent/SKILL.md"
  - orq-build-evaluator -> "skills/orq-build-evaluator/SKILL.md"
+ - orq-build-benchmark -> "skills/orq-build-benchmark/SKILL.md"
  - create-skill -> "skills/create-skill/SKILL.md"
  - orq-cli -> "skills/orq-cli/SKILL.md"
  - orq-evaluator-alignment -> "skills/orq-evaluator-alignment/SKILL.md"
@@ -34,6 +35,8 @@ IMPORTANT: You MUST read the SKILL.md file whenever the description of the skill
 orq-build-agent: `Design, create, and configure an orq.ai Agent with tools, instructions, knowledge bases, and memory — includes model selection, KB management, and memory store setup`
 
 orq-build-evaluator: `Create validated LLM-as-a-Judge evaluators following best practices — binary Pass/Fail judges with TPR/TNR validation for measuring specific failure modes`
+
+orq-build-benchmark: `Turn a team's own work into a custom orq benchmark — interview the user, stage real task instances, then build an orq dataset and evaluators and run candidate models with evaluatorq, either graded against known answers (reported to orq Experiments) or as a pairwise win-rate arena when there is no single right answer. Use when the user wants to "make an eval", "build a benchmark from my codebase / docs / tickets / this chat", know "which model is best at [our task]", or "turn our work into a benchmark". Do NOT use to build one judge in depth (use orq-build-evaluator) or to run a config comparison on an existing dataset (use orq-run-experiment).`
 
 orq-evaluator-alignment: `Align, calibrate, or improve an existing LLM-as-a-judge (orq evaluator) so its verdicts match human judgment — boolean, categorical, or numeric judges. Measures judge self-consistency as one 0..1 instability score via repeated runs, groups the least reliable examples by what makes them hard and asks a few questions instead of making the user label every row, rewrites the judge prompt from those answers, and creates the new evaluator only after human approval. Use to "align my evaluator", "annotate an evaluator", "my judge keeps changing its mind", or "find ambiguous cases". Do NOT use to build an evaluator from scratch (use orq-build-evaluator) or to fix failures with prompt tweaks (use orq-improve-agent).`
 
