@@ -57,6 +57,10 @@ jobs:
           fi
       - name: Validate skills (frontmatter, lock invariants + hash freshness, version sync, content patterns)
         run: node tests/scripts/validate-skills.mjs
+      - name: CHANGELOG has an entry for the manifest version
+        # The release workflow takes its notes from this section and fails
+        # without it; catch the gap on the PR, not after merge.
+        run: tests/scripts/changelog-section.sh "$(jq -er .version plugin.json)" > /dev/null
       - uses: astral-sh/setup-uv@v5
       - name: Cross-check every skill against the reference validator
         # validate-skills.mjs is our own reading of the Agent Skills spec;
