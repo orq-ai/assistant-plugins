@@ -247,8 +247,9 @@ python <this skill's directory>/scripts/check_bundle.py <bundle-dir>
 It confirms the three root docs are present, that `02_TASK_SEEDS.md` has seeds,
 that filenames are self-describing, that no file is too large to ingest cleanly,
 and it flags common uncleared-confidential markers so nothing private slips in.
-Exit 0 means shippable (warnings may still print); exit 1 means fix first; exit 2
-means wrong usage (you did not pass exactly one argument, or it is not a directory).
+Exit 0 means shippable (warnings may still print); exit 1 means fix first (including
+a path that is not a directory); exit 2 means wrong usage (you did not pass exactly
+one argument).
 
 Also confirm by eye: every filename self-describing; provenance stated for every
 file; nothing confidential the user has not cleared; every known answer in
