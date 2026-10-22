@@ -14,23 +14,16 @@ Since 5.0.0 the CLI's version is its own and no longer tracks the API's; run
 `orq version -o json` to read both. The command surface is tracked upstream in
 `surface.json`, so it cannot change silently, but it can change deliberately.
 
-To re-derive the tree after a CLI upgrade, instead of editing it by hand. On 8.x
-`orq --help` sorts groups into named sections rather than one `Available
-Commands:` block, so the script reads either shape. Run it
-with `bash` explicitly — under `zsh` (the macOS default) unquoted parameters are
-**not** word-split, so `for g in $groups` iterates once with the whole list as a
-single value and the script silently produces nothing useful:
+Discover commands progressively instead of relying on a copied command inventory:
 
-```bash
-#!/usr/bin/env bash
-groups=$(orq --help 2>&1 | awk '/^Usage:/{next} /^[A-Z][A-Za-z ]+:$/{f=1;next} /^Flags:/{f=0} f&&/^  [a-z]/{print $1}')
-for g in $groups; do
-  subs=$(orq "$g" --help 2>&1 | awk '/Available Commands:/,/^Flags:/' | grep '^  [a-z]' | awk '{print $1}' | tr '\n' ' ')
-  [ -n "$subs" ] && echo "$g: $subs" || echo "$g: (leaf command)"
-done
+```sh
+orq --help
+orq traces --help
+orq traces search --help
+orq help-input
 ```
 
-If you must run it under `zsh`, split explicitly: `for g in ${=groups}`.
+Read only the group and operation needed for the task. The installed CLI's help is the source of truth for available commands, flags and request-body fields.
 
 Response field names are not in the help text; they come from the spec the CLI
 was generated from:
@@ -363,103 +356,14 @@ orq doctor -o json -j "checks[?status!='pass']"      # real problems ('info' row
 
 ---
 
-## Generated resource commands
+## Resource command behavior
 
-> **Probed against 8.6.9 (API 4.14.20), 2026-09-21.** The tree below was re-derived with the script at the top; only
-the groups called out under it changed.
-
-One group per API tag. Groups marked with a leading `→` are the ones worth
-knowing by heart.
-
-```
-→ agents             create delete get-response invoke list retrieve run
-                     stream stream-run update
-  agents-responses   create
-  alerts             create delete get list list-trigger-events list-triggers
-                     update
-  annotation-queues  add-items clear create delete get get-item list
-                     query-items remove-items update
-  api-keys           create delete get list list-capabilities update
-  budgets            create delete get list reset-consumption update
-  chat               create
-  chunking           parse
-  completions        create
-→ datasets           clear create create-datapoint delete delete-datapoint list
-                     list-datapoints retrieve retrieve-datapoint update
-                     update-datapoint
-→ deployments        get-config invoke list stream
-  embeddings         create
-→ evals              all create delete get invoke list-versions update
-  feedback           create delete evaluation evaluation-remove
-  files              content delete get list update upload
-  identities         create delete list retrieve update
-  images             edit generate variation
-  knowledge-bases    create create-chunks create-datasource delete delete-chunk
-                     delete-chunks delete-datasource list list-chunks
-                     list-chunks-paginated list-datasources retrieve
-                     retrieve-chunk retrieve-datasource retrieve-file-url
-                     retrieve-processing-status search toggle-chunk update
-                     update-chunk update-datasource get-chunks-count
-  logs               aggregate get get-context get-patterns list-facet-values
-                     list-facets list-fields list-trace query search
-  management-keys    create delete get list list-capabilities update
-  mcp-gateways       create delete list list-tools retrieve update
-  mcp-servers        create delete list retrieve sync test-tool update
-  model-catalog      get list list-offerings
-  memory-stores      create create-document create-memory delete delete-document
-                     delete-memory list list-documents list-memories retrieve
-                     retrieve-document retrieve-memory update update-document
-                     update-memory
-  models             list create delete disable enable import-litellm
-                     list-litellm list-preview update validate
-                     create-aws-bedrock create-openai-like create-vertex
-                     azure-foundry-deployments
-                     update-aws-bedrock update-openai-like validate-aws-bedrock
-  moderations        create
-  notifiers          create delete get list update
-  ocr                ocr
-  pii                detect redact restore
-→ projects           create delete get list update use
-→ prompts            create delete get-version list list-versions retrieve update
-  reporting          query
-  rerank             create
-  responses          create get
-  schedules          create delete list retrieve trigger update
-→ skills             create delete get list update
-  smart-routers      create delete get list update
-  speech             create
-  tools              create delete get-version list list-versions retrieve update
-→ traces             aggregate conversation create delete get get-span
-                     list-facet-values list-facets list-fields list-spans
-                     query-oql search
-                     insights-service-* (15 subcommands, see below)
-  transcriptions     create
-  translations       create
-  webhooks           count create delete generate-secret get list query update
-  workspace          list use
-  workspace-security add-ip-range create-domain delete-domain delete-ip-range
-                     get-ip-allowlist list-domains update-ip-allowlist
-                     verify-domain
-  workspace-settings get update
-```
-
-New since 5.1.0: `models list-preview`, `projects use`, `traces conversation`
-(`traces thread` before 11.4.0, see below) and the `workspace` built-in now
-shown in the tree. The top-level `status`, `switch` and `orqi` are in the built-ins table.
+Use `orq <group> --help` and then `orq <group> <operation> --help` to discover the current surface. For model and agent inference, default to `orq responses create` on `/v3/router/responses`, with `openai/gpt-6-luna` for model examples or `agent/<key>` for managed agents.
 
 There is no `experiments` group — experiments are MCP/evaluatorq-only.
 `annotation-queues` is the CLI surface for the eval-corrections /
 unified-annotation model (annotation review workflows); its subcommands were
 listed from `--help` and not called on either version.
-
-`traces insights-service-*` is a family of **15** subcommands on 8.6.9 (the
-5.1.0 pass said 18: `…-create-insight`, `…-list-clusters`, `…-run-analysis`,
-`…-get-run-artifacts`, and so on) wrapping the trace-insights service.
-*[unverified: enumerated from `--help`, not called.]*
-
-**Every group is now listed.** The previous pass excluded several as "not
-covered by this skill", and two of the names it listed (`activities`, `people`)
-do not exist as groups at all — do not filter them out when re-deriving the tree.
 
 Note `orq evals all` (not `list`) is the evaluator listing command, and
 `orq traces create` / `orq traces delete` add and remove **span annotations**,

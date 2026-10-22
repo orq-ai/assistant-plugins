@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#     "evaluatorq>=1.4.0",
+#     "evaluatorq>=1.30.0",
 #     "fire>=0.7.0",
 #     "httpx>=0.27",
 #     "loguru>=0.7.3",
