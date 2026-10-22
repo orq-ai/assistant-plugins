@@ -204,21 +204,26 @@ def keep_cheapest(rows: dict[str, dict], key: str, row: dict) -> None:
 def cheaper_provider(models: list[dict], cur: dict, needs: Needs) -> dict | None:
     """The same model on another provider at least PRICE_GAP cheaper, cheapest first; it never dominates.
 
-    None means none was found; an unpriced current model returns `status: unknown`, never None.
+    No hit returns `status: none` with `skipped_no_data`, the same-model rows dropped for a missing price;
+    an unpriced current model returns `status: unknown`.
     """
     cur_facts = facts(cur)
     price, cur_key = cur_facts["price"], model_key(cur)
     if price is None:
         return {"status": "unknown", "reason": f"no price for {cur.get('refId')}"}
     rows: dict[str, dict] = {}
+    skipped = 0
     for cand in models:
         cand_facts = facts(cand)
-        if cand is cur or model_key(cand) != cur_key or cand_facts["price"] is None:
+        if cand is cur or model_key(cand) != cur_key:
+            continue
+        if cand_facts["price"] is None:
+            skipped += eligible(cand, cand_facts, cur_facts, needs)
             continue
         if cand_facts["price"] > price * (1 - PRICE_GAP) or not eligible(cand, cand_facts, cur_facts, needs):
             continue
         keep_cheapest(rows, cur_key, {**cand_facts, "price_gap": round(1 - cand_facts["price"] / price, 3), "aliases": []})
-    return rows.get(cur_key)
+    return rows.get(cur_key) or {"status": "none", "skipped_no_data": skipped}
 
 
 def compare(models: list[dict], cur: dict, metric: str, effort: str | None, needs: Needs) -> dict:
@@ -229,10 +234,13 @@ def compare(models: list[dict], cur: dict, metric: str, effort: str | None, need
         return {"status": "unknown", "reason": f"no {metric} or price for {cur.get('refId')}"}
     cur_key = model_key(cur)
     hits: dict[str, dict] = {}
-    compared = skipped = 0  # eligible catalogue rows with, and without, a price and score
+    compared = skipped = ineligible = 0  # catalogue rows with, and without, a price and score; and rejected by the guards
     for cand in models:
         cand_facts = facts(cand)
-        if cand is cur or model_key(cand) == cur_key or not eligible(cand, cand_facts, cur_facts, needs):
+        if cand is cur or model_key(cand) == cur_key:
+            continue
+        if not eligible(cand, cand_facts, cur_facts, needs):
+            ineligible += 1
             continue
         base, value, scored_at = paired_scores(cur, cand, metric, effort)
         if cand_facts["price"] is None or value is None or base is None:
@@ -247,8 +255,8 @@ def compare(models: list[dict], cur: dict, metric: str, effort: str | None, need
             row["effort"] = scored_at  # the agent's effort, or "default": each model at its own default
         keep_cheapest(hits, model_key(cand), row)
     if not compared:
-        return {"status": "unknown",
-                "reason": f"no comparable model: {skipped} eligible models lack a price or {metric}"}
+        why = f"{skipped} eligible models lack a price or {metric}" if skipped else "no model passes the capability guards"
+        return {"status": "unknown", "reason": f"no comparable model: {why}", "ineligible": ineligible}
     ranked = sorted(hits.values(), key=lambda h: (-h[metric], h["price"]))
     out = {
         "status": "dominated" if hits else "not dominated",
@@ -258,6 +266,7 @@ def compare(models: list[dict], cur: dict, metric: str, effort: str | None, need
         "candidate_count": len(ranked),
         "compared": compared,
         "skipped_no_data": skipped,
+        "ineligible": ineligible,
     }
     if cur_effort:
         out["effort"] = cur_effort
@@ -287,11 +296,8 @@ def check(models, agent, ref, params, role, coding):
         out["closest"] = closest(models, ref)
         return out
     out["facts"] = facts(cur)
-    meta = cur.get("metadata") or {}
     # Unreported on the current model, so treated as required of every candidate (context: at least 300k).
-    out["unreported_flags"] = [
-        key for key in ("supports_tool_calling", "supports_vision", "context_window") if meta.get(key) is None
-    ]
+    out["unreported_flags"] = [k for k in (*FLAGS, "context_window") if out["facts"][k] is None]
     out["cheaper_provider"] = cheaper_provider(models, cur, needs)
     effort = params.get("reasoning_effort")
     out["intelligence"] = compare(models, cur, "intelligence_index", effort, needs)
