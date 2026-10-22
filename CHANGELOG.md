@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Replace the generated CLI command inventory, group listing and inventory-generation script with progressive `--help` discovery. Retain task-specific examples, behavior caveats and invocation regression checks.
 - Use `openai/gpt-6-luna` in direct model invocation examples and model command defaults instead of older GPT models.
 - Model and agent invocation guidance now defaults to `POST /v3/router/responses` and `orq responses create`, using `provider/model-id` for models and `agent/<key>` for managed agents. Prefer Responses over Chat Completions and avoid v2 inference. Other inference interfaces require an explicit user request and must never be automatic error fallbacks.
 - Update invocation, observability, simulation and comparison examples to Responses request/output shapes, including streaming, structured output and `previous_response_id` continuation. Framework guidance explicitly selects Responses (including LangChain `use_responses_api=True`). Configuration, deployment, evaluator and telemetry APIs retain their own contracts.

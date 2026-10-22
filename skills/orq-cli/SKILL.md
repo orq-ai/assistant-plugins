@@ -339,23 +339,13 @@ orq help-config                  # env vars and config files
 
 Every generated group is one API tag. `orq request <method> <path>` is the escape hatch for an endpoint with no generated command; it reuses the configured auth and server.
 
-`orq --help` sorts the groups into seven sections. Knowing the sections is the fastest way to guess where a capability lives before running `--help` on it:
-
-| Section | Groups |
-|---|---|
-| Get started | `auth`, `connect`, `disconnect`, `doctor`, `launch`, `orqi`, `setup`, `status`, `switch`, `update` |
-| AI Gateway | `budgets`, `chat`, `chunking`, `completions`, `embeddings`, `images`, `mcp-gateways`, `mcp-servers`, `model-catalog`, `models`, `moderations`, `ocr`, `pii`, `rerank`, `responses`, `smart-routers`, `speech`, `transcriptions`, `translations` |
-| Observability | `alerts`, `feedback`, `identities`, `logs`, `notifiers`, `traces` |
-| Managed agents | `agents`, `agents-responses`, `deployments`, `knowledge-bases`, `memory-stores`, `prompts`, `schedules`, `skills`, `tools` |
-| Optimization | `annotation-queues`, `datasets`, `evals` |
-| Administration | `api-keys`, `files`, `management-keys`, `projects`, `reporting`, `webhooks`, `workspace`, `workspace-security`, `workspace-settings` |
-| Utilities | `completion`, `default-format`, `help`, `help-config`, `help-input`, `request`, `server`, `version` |
+Discover one group at a time using the installed CLI's help. Do not copy a full command inventory into generated guidance.
 
 There is still no `experiments` group — use the MCP tools or the evaluatorq SDK for those.
 
-The **Get started** group is not generated from the API and behaves differently from everything else: those commands write to local config files rather than calling the platform. `orqi` (the orq.ai assistant, installed on first use) and `switch` are new since 5.1.0 and were only read from `--help`, not run. See "Wiring coding agents" below before running any of them.
+Local setup and coding-agent wiring commands can write config files. See "Wiring coding agents" below before running them.
 
-See [resources/command-map.md](resources/command-map.md) for the full command tree, JMESPath recipes, and body-input patterns.
+See [resources/command-map.md](resources/command-map.md) for behavior caveats, JMESPath recipes, and body-input patterns.
 
 ## Phase 5 — Run with machine-readable output
 
