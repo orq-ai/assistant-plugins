@@ -1,0 +1,9 @@
+id: review-agent-near-miss-evals
+skill: orq-review-agent
+kind: invocation
+# Near miss: picking evaluators to add is recommend-evaluators' job.
+prompt: Which evaluators should my orq agent support-bot have?
+expect_skill: orq-recommend-evaluators
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 4

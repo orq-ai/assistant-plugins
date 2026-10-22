@@ -1,7 +1,7 @@
 """Tests for the §5.3 type-aware judge wiring (RES-978): response format per type,
 the wrong_output_type -> abstained mapping, and the off-contract tally.
 
-The routing tests drive build_judge_fn with a monkeypatched execute_chat_completion
+The routing tests drive build_judge_fn with a monkeypatched execute_response
 so no network is touched; they pin the locked decision that an off-contract judge
 completion becomes an ABSTAINED prediction (not an error, not a scored verdict).
 """
@@ -81,9 +81,9 @@ def test_run_jury_for_row_normalizes_real_jury_repetitions(monkeypatch):
 
 
 def _fake_exec(raw: str):
-    async def _exec(**kwargs):  # matches execute_chat_completion's keyword call
+    async def _exec(**kwargs):  # matches execute_response's keyword call
         resp = types.SimpleNamespace(
-            choices=[types.SimpleNamespace(message=types.SimpleNamespace(content=raw))]
+            output_text=raw, status='completed'
         )
         return resp, None
     return _exec
@@ -97,7 +97,7 @@ def _run(fn):
 
 
 def test_categorical_ok_returns_label(monkeypatch):
-    monkeypatch.setattr(judge, 'execute_chat_completion', _fake_exec('{"explanation":"x","value":"abuse"}'))
+    monkeypatch.setattr(judge, 'execute_response', _fake_exec('{"explanation":"x","value":"abuse"}'))
     fn = judge.build_judge_fn(_SPEC, client=object(), output_type='categorical', labels=['abuse', 'safe'])
     pred = _run(fn)
     assert pred.value == 'abuse'
@@ -105,7 +105,7 @@ def test_categorical_ok_returns_label(monkeypatch):
 
 
 def test_categorical_off_contract_abstains(monkeypatch):
-    monkeypatch.setattr(judge, 'execute_chat_completion', _fake_exec('totally different label'))
+    monkeypatch.setattr(judge, 'execute_response', _fake_exec('totally different label'))
     fn = judge.build_judge_fn(_SPEC, client=object(), output_type='categorical', labels=['abuse', 'safe'])
     pred = _run(fn)
     assert pred.abstained is True
@@ -114,7 +114,7 @@ def test_categorical_off_contract_abstains(monkeypatch):
 
 
 def test_numeric_ok_returns_number(monkeypatch):
-    monkeypatch.setattr(judge, 'execute_chat_completion', _fake_exec('4'))
+    monkeypatch.setattr(judge, 'execute_response', _fake_exec('4'))
     fn = judge.build_judge_fn(_SPEC, client=object(), output_type='number', scale=(1.0, 5.0))
     pred = _run(fn)
     assert pred.value == 4.0
@@ -122,7 +122,7 @@ def test_numeric_ok_returns_number(monkeypatch):
 
 
 def test_numeric_out_of_scale_abstains(monkeypatch):
-    monkeypatch.setattr(judge, 'execute_chat_completion', _fake_exec('12'))
+    monkeypatch.setattr(judge, 'execute_response', _fake_exec('12'))
     fn = judge.build_judge_fn(_SPEC, client=object(), output_type='number', scale=(1.0, 5.0))
     pred = _run(fn)
     assert pred.abstained is True

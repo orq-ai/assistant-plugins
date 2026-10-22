@@ -25,7 +25,7 @@ from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait
 
 from evaluatorq.common.judge import EvaluatorResponsePayload, render_template
 from evaluatorq.common.jury import Prediction, VerdictKind, run_jury
-from evaluatorq.common.llm_call import execute_chat_completion
+from evaluatorq.common.llm_call import execute_response
 from evaluatorq.common.llm_client import resolve_llm_client
 
 from lib.content import (
@@ -504,16 +504,18 @@ def build_judge_fn(
                 reraise=True,
             ):
                 with attempt:
-                    response, usage = await execute_chat_completion(
+                    response, usage = await execute_response(
                         client=client,
                         model=model,
                         messages=messages,
                         span=None,
                         timeout_s=spec.timeout_s,
                         temperature=spec.temperature,
-                        response_format=response_format,
+                        extra_body={'text': {'format': {'type': 'json_schema', **response_format['json_schema']}}},
                     )
-            raw = response.choices[0].message.content or '{}'
+            if response.status != 'completed':
+                raise ValueError(f'Response {response.id} has status {response.status}')
+            raw = response.output_text or '{}'
             return _to_prediction(raw, usage)
         except Exception as exc:  # noqa: BLE001 — recorded as a failed repetition
             return Prediction(error=f'{type(exc).__name__}: {exc}')

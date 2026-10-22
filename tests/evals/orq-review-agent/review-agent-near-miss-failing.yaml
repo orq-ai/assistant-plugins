@@ -1,0 +1,9 @@
+id: review-agent-near-miss-failing
+skill: orq-review-agent
+kind: invocation
+# Near miss: "what's failing" is a failure analysis over traces, not a setup review.
+prompt: What's failing in my orq agent support-bot? Look at its production traces and tell me why.
+expect_skill: orq-analyze-traces
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 4

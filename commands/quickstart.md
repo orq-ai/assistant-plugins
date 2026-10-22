@@ -2,7 +2,7 @@
 name: quickstart
 description: Interactive onboarding guide — set up credentials, connect to orq.ai, and learn every command and skill
 argument-hint:
-allowed-tools: Bash, AskUserQuestion, orq*
+allowed-tools: AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__get_analytics_overview
 ---
 <!-- Note: Bash is kept for env var check and MCP setup command only. All data fetching uses MCP tools. -->
 

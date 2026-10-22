@@ -2,7 +2,7 @@
 name: orq-evaluator-alignment
 description: >-
   Align, calibrate, or improve an existing LLM-as-a-judge (orq evaluator) so its verdicts match human judgment — boolean, categorical, or numeric judges. Use when the user wants to "align my evaluator", "improve my eval", "my judge keeps changing its mind", "find ambiguous cases", or "annotate an evaluator" — i.e. they have an LLM judge that disagrees with human labels or is inconsistent. Measures judge self-consistency and, when several judge models are selected, cross-model disagreement with repeated votes per model. Groups the least reliable examples by what makes them hard and asks a few questions instead of making the user label every row, rewrites the judge prompt from those answers, and creates the new evaluator only after the human approves. If the evaluator ID isn't given, ask for it after triggering. Do NOT use to build an evaluator from scratch (use orq-build-evaluator) or to fix failures with prompt tweaks (use orq-improve-agent).
-allowed-tools: Read, Write, Edit, Grep, Glob, Bash(uv run:*), AskUserQuestion
+allowed-tools: Read, Write, Edit, Grep, Glob, Bash(uv run scripts/*), Bash(uv run --system-certs scripts/*), AskUserQuestion
 ---
 
 # Evaluator Alignment
@@ -16,6 +16,8 @@ Mechanically: you run small independent scripts under `scripts/`, each writing o
 Each script under `scripts/` is self-contained: it declares its own dependencies via PEP 723 inline metadata, so `uv run scripts/<name>.py ...` builds an isolated, cached environment on first run — no `uv sync`, no project venv, no repo needed. Always invoke as `uv run scripts/<name>.py` (not `uv run python scripts/...`, which bypasses the inline metadata).
 
 > **TLS-intercepting antivirus / corporate proxy:** the first run of each script reaches PyPI to build its env. Behind SSL-inspecting AV (e.g. Norton) or a corporate proxy that re-signs HTTPS, `uv` fails with `invalid peer certificate: UnknownIssuer`. Add `--system-certs` so `uv` trusts the OS certificate store: `uv run --system-certs scripts/<name>.py ...`. Only the first (uncached) build per script needs it.
+
+**Invocation policy (models and agents):** Default to `POST /v3/router/responses` or `orq responses create`. Set `model` to `provider/model-id` for a model or `agent/<key>` for a managed agent, and pass `input`. Use `openai/gpt-6-luna` for default model command examples unless the user specifies another model. Prefer Responses over Chat Completions; do not use v2 inference routes. Use another inference interface only when the user explicitly requests it. Legacy agent execution APIs remain deprecated. Never fall back to v2, Chat Completions, or legacy agent endpoints after a routing or model error. Use Responses for streaming and continuation too. Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK. Configuration, deployment, evaluator, and telemetry APIs retain their own contracts.
 
 ## Constraints
 

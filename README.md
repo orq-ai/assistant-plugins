@@ -21,6 +21,8 @@ Built on the [Agent Skills](https://agentskills.io/home#adoption) standard forma
   export ORQ_API_KEY=your-key-here
   ```
 
+  Claude Code's `orq-skills` plugin asks for the key when you install or enable it (change it later with `/plugin configure`) and keeps it in the system credential store, so you don't need the env var there. Every other harness reads `ORQ_API_KEY`.
+
 ### Quick reference
 
 | Tool | Recommended install |
@@ -183,6 +185,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 | **orq-build-agent** | Design, create, and configure an orq.ai Agent with tools, instructions, knowledge bases, and memory | [SKILL.md](skills/orq-build-agent/SKILL.md) |
 | **orq-build-evaluator** | Create validated LLM-as-a-Judge evaluators following evaluation best practices | [SKILL.md](skills/orq-build-evaluator/SKILL.md) |
 | **orq-recommend-evaluators** | Recommend the evaluators an agent is missing, from its traces or (with no traffic) its instructions and config, skip ones already attached, and create each only after approval | [SKILL.md](skills/orq-recommend-evaluators/SKILL.md) |
+| **orq-review-agent** | Health-check an agent's setup without changing it, with or without traffic: instructions, tools, skill references, evaluators, model and run health checked against the suite's rubrics, with a suggestion per finding in one HTML report | [SKILL.md](skills/orq-review-agent/SKILL.md) |
 | **orq-evaluator-alignment** | Align an existing LLM-judge (boolean, categorical, numeric) to human judgment — measure how often it changes its mind, group the least reliable cases and ask a few questions instead of labelling every row, rewrite the judge prompt, and recreate the evaluator after approval | [SKILL.md](skills/orq-evaluator-alignment/SKILL.md) |
 | **orq-analyze-traces** | Analyze a live agent from its production traces — relay config and terminal states, build a failure taxonomy by open/axial coding, write an error-analysis file other skills read | [SKILL.md](skills/orq-analyze-traces/SKILL.md) |
 | **orq-improve-agent** | Improve an underperforming agent — rewrite instructions against a prompting framework, or move a config knob, grounded in the error-analysis file orq-analyze-traces writes | [SKILL.md](skills/orq-improve-agent/SKILL.md) |
@@ -194,7 +197,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 | **orq-manage-skills** | Manage orq.ai Skills (the platform entity, formerly Snippets) — list/get/create/update/delete, authoring guidance, reference-scan before delete or rename, and the `{{snippet.<display_name>}}` consumption pattern | [SKILL.md](skills/orq-manage-skills/SKILL.md) |
 | **orq-simulate-agent** | Run multi-turn agent simulations using evaluatorq's first-class primitives (`simulate()`, `generate_and_simulate()`, `wrap_simulation_agent()`) — drive an agent under test with a UserSimulatorAgent and built-in JudgeAgent, scored against criteria | [SKILL.md](skills/orq-simulate-agent/SKILL.md) |
 | **create-skill** | Build or update an agent skill from an API, CLI, or MCP surface — probe the surface, verify every claim, write a tested contract, and register it | [SKILL.md](skills/create-skill/SKILL.md) |
-| **orq-shared** | Reference bundle the other skills read — the verified `orq` CLI trace query contract and the run-key preflight; not invoked on its own | [SKILL.md](skills/orq-shared/SKILL.md) |
+| **orq-shared** | Reference bundle the other skills read — the verified `orq` CLI trace query contract, the run-key preflight, and the prompting, tool-description and config-context rubrics; not invoked on its own | [SKILL.md](skills/orq-shared/SKILL.md) |
 | **orq-cli** | Drive the `orq` command-line interface — install check, auth, workspace selection, `orq doctor` troubleshooting, and read/write commands with JSON output and JMESPath queries | [SKILL.md](skills/orq-cli/SKILL.md) |
 <!-- END_SKILLS_TABLE -->
 
@@ -225,6 +228,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 
 ```
 /orq:analytics --group-by deployment           # Spot high error rates
+"Review the checkout agent's setup"            → orq-review-agent
 "Analyze traces for the checkout agent"        → orq-analyze-traces
 "Build evaluators for the failure modes"       → orq-build-evaluator
 "Generate a dataset covering edge cases"       → orq-generate-synthetic-dataset
@@ -243,6 +247,14 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 ```
 
 ---
+
+## Data & privacy
+
+- **Skills and commands** run locally in your agent. They send nothing on their own.
+- **MCP server (`orq-workspace`)** talks to `https://my.orq.ai/v2/mcp`, authenticated with your `ORQ_API_KEY` as a bearer token. Tool calls you make (agents, deployments, datasets, experiments, traces) go to your orq.ai workspace.
+- **`orq-trace`** (separate plugin, opt-in) sends session, tool-call and LLM-response spans to orq.ai over OTLP, with secrets redacted. See [plugins/trace-hooks/README.md](plugins/trace-hooks/README.md#privacy--content-control) to strip content entirely or disable it per session.
+
+Privacy policy: <https://orq.ai/legal/privacy> · Terms: <https://orq.ai/legal/terms-of-service>
 
 ## Links
 

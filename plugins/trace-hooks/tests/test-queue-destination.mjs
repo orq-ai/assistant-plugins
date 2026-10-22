@@ -83,7 +83,7 @@ function startEndpoint() {
 // never ran at all.
 function runInChild(source, env) {
   return new Promise((resolve) => {
-    const child = spawn("node", ["--input-type=module", "-e", source], { env: { ...process.env, ...env } });
+    const child = spawn("node", ["--input-type=module", "-e", source], { env: { ...process.env, CLAUDE_PLUGIN_OPTION_ORQ_API_KEY: "", ...env } });
     let stderr = "";
     child.stderr.on("data", (chunk) => {
       stderr += chunk;

@@ -5,9 +5,14 @@
   "devDependencies": {
     "@orq-ai/evaluatorq": "latest",
     "@orq-ai/node": "latest",
-    "typescript": "^5"
+    "typescript": "^5",
+    "openai": "latest",
+    "@types/node": "latest"
   },
   "overrides": {
     "@orq-ai/node": "latest"
+  },
+  "scripts": {
+    "check-examples": "node check-markdown.mjs"
   }
 }

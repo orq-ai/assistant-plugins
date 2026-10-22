@@ -8,7 +8,8 @@ description: >
   and no idea where to start, or before building any evaluator — error analysis
   comes first. Do NOT use when the failure modes are already identified and you
   need evaluators (use orq-build-evaluator), datasets
-  (use orq-generate-synthetic-dataset), or a fix applied (use orq-improve-agent).
+  (use orq-generate-synthetic-dataset), a fix applied (use orq-improve-agent), or
+  a setup health check that reads no conversations (use orq-review-agent).
 allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces list-facet-values:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq traces conversation:*), Bash(orq traces conv:*), Bash(orq reporting query:*), Bash(orq agents retrieve:*), Bash(orq agents get-response:*), Bash(orq deployments get-config:*), Bash(orq tools retrieve:*), Bash(orq knowledge-bases retrieve:*), Bash(orq memory-stores retrieve:*), Bash(orq evals get:*), Bash(orq skills get:*), mcp__orq-workspace__list_traces, mcp__orq-workspace__list_spans, mcp__orq-workspace__get_span, mcp__orq-workspace__get_agent, mcp__orq-workspace__get_deployment, mcp__orq-workspace__get_analytics_overview, mcp__orq-workspace__query_analytics, mcp__orq-workspace__search_entities, mcp__orq-workspace__search_docs
 ---
 
@@ -140,13 +141,13 @@ There are no flags, no thresholds and no pass/fail per check. A 12% truncation r
 
 ## Window decisions (`scripts/decide.py`)
 
-Reading finds the failure modes. It cannot look at every trace in a window of thousands, and that is where the failures you never read are. A decision model can: it answers typed yes/no or choice questions about one trace for about $0.001, several questions in one call. `scripts/decide.py` runs one call per trace over the whole window. **The point is to surface failing traces to fix, not a precise percentage.** Discovery stays with you: a decision model answers the questions it is given and cannot name a failure nobody asked about.
+Reading finds the failure modes. It cannot look at every trace in a window of thousands, and that is where the failures you never read are. A decision model can: it answers typed yes/no or choice questions about one trace, several questions in one call. Cost depends on the trace length and model. `scripts/decide.py` runs one call per trace over the whole window. **The point is to surface failing traces to fix, not a precise percentage.** Discovery stays with you: a decision model answers the questions it is given and cannot name a failure nobody asked about.
 
-**Run it with uv from the working directory**, as `uv run <this skill's directory>/scripts/decide.py …`. It keeps everything under `./decide-runs/` (`--run-dir` moves it): one labels file per questions file and model pair, so a rewritten question or a switched model starts a fresh pass instead of reusing old answers. It needs `ORQ_API_KEY`; `ORQ_API_BASE_URL` overrides the host. A project key cannot see router traffic sent with no project (`trace-queries.md` §0), so on such a target `estimate` counts 0: use a workspace-wide key.
+**Run it with uv from the working directory**, as `uv run <this skill's directory>/scripts/decide.py …`. It keeps everything under `./decide-runs/` (`--run-dir` moves it): one cache per API host, questions (including thresholds) and model pair. A rewritten question or switched model starts a fresh cache. Each `label` records the active window before sending calls; `pick` and `rates` use only those ids, while calibration and overlapping windows can reuse readable answers for the same trace. To report an earlier window again, re-run its `label` command; cached successes make no paid calls. Missing population metadata stops reporting rather than treating cached rows as the whole window. It needs `ORQ_API_KEY`; `ORQ_API_BASE_URL` overrides the host. A project key cannot see router traffic sent with no project (`trace-queries.md` §0), so on such a target `estimate` counts 0: use a workspace-wide key.
 
 | Subcommand | Does | When |
 |---|---|---|
-| `probe` | one tiny call per model; exits 1 if one is unavailable ("rate limited" is not unavailable) | Once, before Phase 1 |
+| `probe` | one tiny call per model; requires a readable answer and exits 1 if one is unavailable ("rate limited" is not unavailable) | Once, before Phase 1 |
 | `estimate --search-body body.json [--questions q.json]` | counts the window, sizes a sample of conversations, projects the cost | Before every `label` |
 | `label --search-body body.json --questions q.json --budget-usd <approved>` | one call per trace; stops starting calls at the budget; resumable (re-run the same command). `--trace-ids <file>` (one full id per line) labels a list instead | Phase 1, Phase 4 |
 | `pick --questions sel.json` | flagged traces plus a random slice to read; writes `decide-runs/picks/{flagged,random}_ids.txt` | Phase 1 |
@@ -155,15 +156,17 @@ Reading finds the failure modes. It cannot look at every trace in a window of th
 
 `--search-body` is the `traces search` body you build for Phase 1 (`trace-queries.md` §1): RFC3339 `from`/`to` and the target in `filters`. Pass the same `--short-model` / `--long-model` to every command of a pass, or none.
 
+Contract sources, model ids and response fields: [`decisions-contract.md`](resources/decisions-contract.md). `probe` checks the configured deployment before a paid pass.
+
 **Routing.** A trace goes whole to Jev (`typesafe/jev-latest`) when its estimated size fits Jev's budget (28k tokens; the hard limit is 32k), and whole to `openai/gpt-6-luna` (1.05M context, about 2.4× the price per token) otherwise. Traces are never chunked or trimmed (the script's docstring says why). Each row records `model` and `route`.
 
-**Questions file** (`q.json`): `{key: {type, instructions, criteria?, threshold?}}`. `type` is `noul` (yes/no; flagged at or above `threshold`, default 0.5, never sent) or `choice` (`criteria` is `{label: description}`; the label is the mode, `none` or `pass` flags nothing). A missing answer, or a label outside `criteria`, counts as not labelled, never as clean. Write instructions as a question about the trace, from the mode's Fail definition: *"Did the assistant claim the refund was issued without a successful refund tool result?"*
+**Questions file** (`q.json`): `{key: {type, instructions, criteria?, threshold?}}`. `type` is `noul` (yes/no; flagged at or above `threshold`, default 0.5, never sent) or `choice` (`criteria` is `{label: description}`; the label is the mode, `none` or `pass` flags nothing). A missing, refused or malformed answer, including a non-finite probability or one outside [0, 1], counts as not labelled, never as clean. For calibration, an unlabelled analyst-positive trace counts as a miss; missing negatives are excluded from precision and kappa, so those describe readable comparisons plus the counted positive misses. Write instructions as a question about the trace, from the mode's Fail definition: *"Did the assistant claim the refund was issued without a successful refund tool result?"*
 
-**Spend gate.** A run labels the window twice: the Phase 1 selection pass and the Phase 4 window pass, plus the read traces once for calibration. Before the first `label`, run `estimate` and ask the user with `AskUserQuestion`, showing the trace count, the projected cost of both window passes, and where the traces go: whole conversations are sent to typesafe (Jev) and, for long traces, to OpenAI (Luna) through the orq router. Pass the approved amount as `--budget-usd`. The cap is a real cap: each call reserves its estimated cost before it starts, and when the router reports no cost the estimate is what counts (`cost_estimated: true` on the row, one warning per run). If a pass stops at the budget, say so and ask before re-running it with more. Over 5,000 traces `label` and `estimate` refuse unless `--max-traces` is given: ask the user whether to label only the newest N, and if so report the window as those traces.
+**Spend gate.** A run labels the window twice: the Phase 1 selection pass and the Phase 4 window pass, plus the read traces once for calibration. Before the first `label`, run `estimate` and ask the user with `AskUserQuestion`, showing the trace count, the projected cost of both window passes, and where the traces go: whole conversations are sent to typesafe (Jev) and, for long traces, to OpenAI (Luna) through the orq router. Pass the approved amount as `--budget-usd`; this allowance is per invocation, with cached successes skipped. The cap is approximate: each call reserves estimated input cost before it starts and settles to the reported bill. Token estimation, retries, output charges and calls already in flight can exceed the approved amount. Missing or invalid costs and ambiguous failures retain the input estimate (`cost_estimated: true` on the row, one warning per run). The first refused reservation stops the whole pass, including cheaper traces behind it; queued traces do not fetch conversations once the budget is exhausted. An overflow whose long-model retry cannot fit keeps an error row for the attempted short call. If a pass stops at the budget, say so and ask before re-running it with more. Over 5,000 traces `label` and `estimate` refuse unless `--max-traces` is given: ask the user whether to label only the newest N, and if so report the window as those traces.
 
 **What a window rate is.** It is the share of labelled traces the model flagged, not a corrected failure rate. Calibration measured how often the model misses or over-flags on the traces you read, and the interval covers only sampling spread, not those errors. Say both when you report it. Lead with what it is for: the flagged traces you had not read.
 
-**Count deterministic modes exactly too.** When a mode has a deterministic signature (a text marker in the output, an HTTP status code, a terminal reason), also count it with a trace search over the window and report the exact count beside the flag rate. A decision model can miss a large share of such a mode with no false alarms, and only the exact count shows it.
+**Count deterministic modes exactly too.** When a mode has a deterministic signature (a text marker in the output, an HTTP status code, a terminal reason), also count it with a trace search over the window and report the exact count beside the flag rate. The exact count gives an independent check on what the model missed. Keep such modes in the calibrated questions file: removing a question changes the instrument, and several questions share one request rather than a separate charge per mode.
 
 **Fallback.** If `probe` exits 1 (no key, HTTP 401/403/404, a gateway without `/v3/router/decisions`), or the user declines the spend, run the skill as before: random-first sampling in Phase 1, rates over `read` in Phase 4. Record which path ran (`decisions: unavailable | declined | used`).
 
@@ -175,49 +178,15 @@ Reading finds the failure modes. It cannot look at every trace in a window of th
 
 Runs **before** open coding. Two passes: a **sweep** over the whole window, then **detail** on ~10–20 spans drawn from the traces you were going to read anyway — no extra sampling budget.
 
-All sweep signals go through `orq traces aggregate` with the target in `filters` (`trace-queries.md` §1). Resolve every field name at runtime.
-
 **Gather and relay. Do not judge.** Collect the mechanical facts, format them, hand them to the coding agent. That is the whole phase.
 
-1. **Terminal states — how runs ended, as a distribution.**
-   - `attributes.gen_ai.response.finish_reasons` — `stop` / `length` / `tool_calls` / `max_iterations` / `max_time`. **On an orq agent this sweeps as all-null** (the null bucket, not "no failures"): take the run-level reason from `orq agents get-response` once per trace (`trace-queries.md` §3.5), and a single turn's reason from its `span.chat_completion` with `get-span` (§4).
-   - `status` — `ok` / `error` / `unset`, with the error messages. **On an orq agent the trace-level `status` stays `ok` even when every model call errored**, and a `status eq error` filter misses those runs. Find them with `traces search` on `attributes.http.response.status_code` (e.g. `eq "400"`), which matches at span level; the message is the errored span's `span.attributes.otel.status_description` (`trace-queries.md` §2)
-   - `attributes.orq.billing.threshold_exceeded`
+1. **Gather the list in [`config-context.md`](../orq-shared/resources/config-context.md)** (in `orq-shared`): terminal states, declared config with every referenced entity resolved, observed behaviour, and everything unreadable named in `unobservable` with a reason. `orq-review-agent` reads the same list. If `orq-shared` is not installed, say so: there is no local copy of the list.
 
-   `max_iterations` and `max_time` are **explicit terminal reasons** — the platform is saying the run hit the cap. No distribution-shape inference needed.
-
-2. **Declared config — what the agent is set to** (from `mcp__orq-workspace__get_agent`, `orq agents retrieve`, `orq deployments get-config`, or the user in local mode):
-   - `model.id` and `fallback_models`
-   - `model.parameters.*` — `temperature`, `top_p`, `max_tokens`, `reasoning_effort`, `tool_choice`, `parallel_tool_calls`
-   - `settings.*` — `max_iterations`, `max_execution_time`, `max_cost`, `tools[]`, `evaluators[]` **with each `sample_rate`**
-   - `knowledge_bases`, `memory_stores`
-
-   When the agent config references entity IDs (tools, knowledge bases, memory stores, evaluators), resolve them into full definitions to understand what the agent can actually do:
-   - `orq tools retrieve <id> -o json` — tool function schemas and descriptions, **custom tools only**. A built-in (`action_type`, e.g. `current_date`) returns `404 Tool collection not found`; read its schema from a chat-completion span's `gen_ai.tool.definitions` (`trace-queries.md` §4) instead
-   - `orq knowledge-bases retrieve <id> -o json` — KB config and datasource attachments
-   - `orq memory-stores retrieve <id> -o json` — memory store config
-   - `orq evals get <id> -o json` — evaluator definition and scoring criteria
-
-3. **Observed behaviour — what actually happened**, so declared and actual can be compared:
-   - model actually served vs. declared (is a fallback firing?)
-   - `openresponses.truncation`
-   - tool-call spread by `tool_name`
-   - prompt-cache hit ratio (`cached_tokens ÷ prompt_tokens`)
-   - latency and cost distribution
-   - existing `eval_passed` / `eval_score` rates, **each paired with its `settings.evaluators[].sample_rate`**. First check that results exist at all: filter `evaluator_key` with op `exists` (not `neq ""`, which also matches traces with no evaluator). An attached evaluator with zero results is `unobservable: [evaluator_rates]`, never a 0% or 100% pass rate — available off the traces, or grouped per evaluator in one call via `orq reporting query` with `genai.evaluator.pass_rate` / `.score.avg` / `.runs` and `group_by: ["evaluator"]`
-   - TTFT via `orq reporting query` (`genai.ttft.avg|p50|p95`) — **an all-zero result is `unobservable: [ttft]`, not "fast"**. It refuses an `agent` filter (HTTP 400), so per-agent TTFT is `unobservable: [ttft]` too
-
-   > **Reporting needs the agent `_id` and a cross-check.** The reporting `agent` filter takes the agent's ULID `_id`, not its key; the key matches nothing without erroring (empty when grouped, a scalar `0` when not). Before relaying any reporting number, compare the scoped `genai.requests` with the trace count from the sweep. If they differ, every reporting-sourced item goes in `unobservable` with the mismatch as the reason (`trace-queries.md` §5).
-
-   > **Relay evaluator rates as unvalidated.** A judge's agreement with human judgement drifts — with foundation-model updates, and with the team's own definition of the criterion. Relay the rate, relay the sample rate, and say neither is ground truth.
-
-4. **Name everything unreadable.** Anything that cannot be read goes in `unobservable` **with a reason**. Never omit it — absence must never read as "fine".
-
-5. **Present it as one compact block above the open-coding table**, ending with a standing instruction rather than a verdict:
+2. **Present it as one compact block above the open-coding table**, ending with a standing instruction rather than a verdict:
 
    > *These are mechanical facts about how this agent is configured and how its runs ended. Read them alongside the traces. Where a cluster of failures traces back to one of these, say so and name the knob — one config cause often produces several behavioural symptoms, and fixing the cause beats coding six of them.*
 
-**Phase 0 is complete when every item in steps 1–3 is either a measured value or listed in `unobservable` with a reason.** That criterion is exhaustive on purpose: it is the defence against a mid-deploy trace query returning a confident, empty, non-erroring result that a looser check would wave through as clean.
+**Phase 0 is complete when every item in `config-context.md` is either a measured value or listed in `unobservable` with a reason.**
 
 ### Phase 1: Collect Traces
 
@@ -240,7 +209,7 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
    **With decisions available, the failure-driven share comes from a selection pass over the whole window**, not from status filters alone. Status filters find loud failures; a wrong answer with `status=ok` needs someone to read the conversation, and a selection pass reads all of them.
 
    1. Failure-driven picks start with the free signals Phase 0 already swept: `status: error`, `max_iterations`, `max_time`, `finish_reasons: length`, guardrail triggers.
-   2. Write one generic question, with no taxonomy in it (`sel.json`): `{"failed": {"type": "noul", "instructions": "Did the assistant fail to do what the user asked, or claim something its tool results do not support?"}}`. `estimate`, ask the user (spend gate above), then `label --search-body body.json --questions sel.json --budget-usd <approved>`. **Adapt the question to the agent's stated constraints when its correct behaviour is to refuse or redirect.** On an agent whose job includes declining requests, the generic wording flags every correct refusal (precision 0.14 on one run). Name what correct looks like, e.g. *"…fail to do what the user asked, when the request was within the scope its instructions allow…"*, still without naming any failure mode.
+   2. Write one generic question, with no taxonomy in it (`sel.json`): `{"failed": {"type": "noul", "instructions": "Did the assistant fail to do what the user asked, or claim something its tool results do not support?"}}`. `estimate`, ask the user (spend gate above), then `label --search-body body.json --questions sel.json --budget-usd <approved>`. **Adapt the question to the agent's stated constraints when its correct behaviour is to refuse or redirect.** On an agent whose job includes declining requests, the generic wording can flag correct refusals. Name what correct looks like, e.g. *"…fail to do what the user asked, when the request was within the scope its instructions allow…"*, still without naming any failure mode.
    3. `pick --questions sel.json --flagged <n> --random <m>` draws the flagged picks at random from the flagged traces. The random half is drawn uniformly from every other trace in the window, including the ones the model could not label or never reached before the budget ran out, so silent failures the question misses, and the longest traces, still reach you.
 
    The selection question only decides what you read first. It is not a failure mode and never appears in the artifact as one.
@@ -260,6 +229,8 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
    | def456   | Pass      | "Good — maintained character on a technical topic" |
    | ghi789   | Fail      | "Called search instead of calculator" |
    ```
+
+   **Record the full 32-hex `trace_id`** (the ids above are placeholders). Step 20 links each one, and `orq-run-experiment` builds its dataset from them.
 
    **Record the passing ids too.** They are the other half of the regression set (Phase 5).
 
@@ -355,7 +326,7 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
                         agreement: { agent_positives: 12, recall: 0.92, precision: 0.82, kappa: 0.83 } }
         flagged: [9e1d33a0, 52c7be19]              # model-flagged, not read: newest first, up to 50
         fix: prompt              # prompt | config | tools | retrieval | structure | evaluator | code
-        evidence: [cc27bfcc, a6502141]
+        evidence: [<trace_id>, <trace_id>]       # full 32-hex trace_ids
 
       - name: Answers cut off mid-sentence
         rate: 0.075                                # 6 / 80
@@ -367,7 +338,7 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
         knob: model.parameters.max_tokens
         current: 8000
         suggest: 16000
-        evidence: [b59b6a76]
+        evidence: [<trace_id>]
 
       - name: Wrong tool on ambiguous queries
         rate: 0.05                                 # 4 / 80
@@ -376,9 +347,9 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
         fix: evaluator
         where: DecideTool
         classification: generalization-subjective  # evaluator modes only
-        evidence: [4d10ffa1]
+        evidence: [<trace_id>]
 
-    passing: [7f31aa02, 91b0cd44, e3c0187b]   # read and judged good — the don't-regress half
+    passing: [<trace_id>, <trace_id>, <trace_id>]   # read and judged good — the don't-regress half
     ---
 
     # Error analysis — support-bot
@@ -394,6 +365,7 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
 
     ## 1. Drops persona on factual questions — 12.5%
     ...definition, Pass/Fail criteria, a real trace excerpt...
+    Evidence: [<first 8 of trace_id>](<trace link>) · [<first 8 of trace_id>](<trace link>)
     ````
 
     **Contract rules:**
@@ -406,6 +378,7 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
     - **`unobservable` is a list, not a boolean.** A consumer must check it before claiming the run was clean.
     - **`passing` is the other half of the regression set.** `evidence` records what failed; `passing` records what was read and judged good. Without both, the closing experiment runs against whatever dataset happens to exist.
     - **The body leads with the work list.** One scannable table — mode, rate, lever, location — then the depth below it.
+    - **Link the evidence in the body, not the front matter.** Each mode's section links its `evidence` traces so a human can open them in one click; the front matter keeps bare ids for the skills that read it. **`evidence` and `passing` hold the full 32-hex `trace_id`**, never a short prefix: a link needs it, and so does the dataset `orq-run-experiment` builds from these ids. Record full ids in the Phase 2 table so you have them here. Format, host and key: [`orq-cli` → Building app URLs](../orq-cli/resources/command-map.md#building-app-urls); add the one-line "opens empty → set the Traces project selector to **All projects**" note under the table.
 
 21. **Hand off — the artifact is the router.** Name a destination per failure mode and let the user go wherever they want first. Do not forward on their behalf.
 

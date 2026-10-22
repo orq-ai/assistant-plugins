@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.10.0] - 2026-10-14
+## [3.11.0] - 2026-10-22
 
 ### Added
 
@@ -16,6 +16,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Error-analysis artifact: `rate` is now the best available rate and `rate_basis` says which (`window_flags` or `read`); `read_rate` always holds the read-based rate. New `decisions`, `traces.labelled`, per-mode `window_flags` and `flagged`.
 - `orq-improve-agent`, `orq-recommend-evaluators`: quote `rate` with its `rate_basis`, and treat `flagged` as unread examples, never as regression evidence.
+
+### Fixed
+
+- Calibration counts missing analyst-positive labels as misses and rejects unreadable probabilities. Budget reservations halt the whole pass on refusal, retain uncertain charges and attempted overflow retries, and reject non-finite limits. Active-window metadata is written before labelling; reports and picks filter the cache to that population and refuse missing metadata. Add an offline regression suite and pinned API contract sources.
+
+## [3.10.0] - 2026-10-22
+
+### Added
+
+- `orq-review-agent` skill (RES-887): a read-only health check of one orq agent. It checks run health, instructions, tools, `{{skill.X}}` references, evaluators and model choice against the suite's rubrics, gives each finding a high-level suggestion (never a rewritten prompt or diff), lists project evaluators the agent does not use and tools its instructions need but it lacks, writes one HTML report into a per-run directory (`agent-review-<key>-<timestamp>/`), posts a summary with the report link, shows the findings on request, then offers the skill that owns each fix. `allowed-tools` pre-approves no write verb. The model check (`scripts/model_check.py`, stdlib only) applies the RES-1338 A1 rule with the RES-887 guardrails, and lists a cheaper provider of the same model as its own finding. The rule text lives once in the script and is printed in every result. An unresolved model id lists the closest catalogue names, and a config contradiction certain to break every run is labelled `predicted broken` when there is no traffic to confirm it. Probed live on CLI 11.0.2; untested paths are marked `[unverified]`.
+- `orq-shared/resources/config-context.md`, `prompting-guidelines.md` and `tool-description-guide.md`: the Phase 0 relay list, the 11 prompting guidelines and the tool description guide, now shared by the skills that build, review and improve an agent.
+- `orq-shared/resources/model-slugs.md`: which catalogue field names a model (`id`, `refId`, `model_id`) and the rule for resolving an agent's model id, cited by `orq-cli`, `orq-evaluator-alignment`, `orq-recommend-evaluators` and `orq-review-agent`.
+- `tests/factual/orq-review-agent.csv` and `tests/evals/orq-review-agent/` (three fires cases, three near-miss cases, a read-only behavioural case on `support-bot` and a cross-project behavioural case).
+
+### Changed
+
+- `orq-analyze-traces` Phase 0, `orq-improve-agent` Phase 3a and `orq-build-agent` link to the shared rubrics instead of keeping their own copies. `orq-analyze-traces` now routes setup health checks to `orq-review-agent`. `orq-improve-agent` Phase 1 also checks that the declared model is available in the project (`orq models list`, resolved per `model-slugs.md`). `tool-description-guide.md` moved from `orq-build-agent/resources/` to `orq-shared/resources/`.
+
+## [3.9.3] - 2026-10-22
+
+### Fixed
+
+- Require evaluatorq 1.30.0 or newer for the Responses helper API, check the minimum in CI, and type-check SDK/HTTP examples directly from markdown to catch scope and schema regressions.
+- Show paired orq/OpenAI Responses examples for models, agents and comparison jobs. Prefer orq for new code and existing orq imports; reuse OpenAI if it is already imported and orq is not. Document async and response-parsing differences.
+- Replace the generated CLI command inventory, group listing and inventory-generation script with progressive `--help` discovery. Retain task-specific examples, behavior caveats and invocation regression checks.
+- Use `openai/gpt-6-luna` in direct model invocation examples and model command defaults instead of older GPT models.
+- Model and agent invocation guidance now defaults to `POST /v3/router/responses` and `orq responses create`, using `provider/model-id` for models and `agent/<key>` for managed agents. Prefer Responses over Chat Completions and avoid v2 inference. Other inference interfaces require an explicit user request and must never be automatic error fallbacks.
+- Update invocation, observability, simulation and comparison examples to Responses request/output shapes, including streaming, structured output and `previous_response_id` continuation. Framework guidance explicitly selects Responses (including LangChain `use_responses_api=True`). Configuration, deployment, evaluator and telemetry APIs retain their own contracts.
+- Route evaluator-alignment recommendation/rewrite helpers and reconstructed judge calls through Responses, preserving structured verdicts and pricing input/output tokens.
+- Add a CI guard against non-Responses inference examples and runtime calls and local synthetic CLI routing probes for both models and agents. Document the CLI SSE decoding limitation and use SDK/curl for consuming streams on the same route. Contract checked against current Orq documentation, LangChain's Responses reference and installed CLI help on 2026-10-22; the reported EU-model failure has not been reproduced against a live agent.
+
+## [3.9.2] - 2026-10-13
+
+### Changed
+
+- `orq-cli/resources/command-map.md` "Building app URLs" is the single definition of trace and span links in the app: `<host>/<workspace-key>/traces/(trace:<trace_id>)` and `…/(trace:<trace_id>//span:<span_id>)`, opened cold in a browser on prod on 2026-10-13. The snippet takes the host from `ORQ_UI_BASE_URL` or the session (`urls.api_base_url`, or `server` under `ORQ_API_KEY`) and fails loudly when there is none, or when the workspace key or an id is missing. It records that a link to a trace outside the user's selected Traces project opens on "No spans match your search" (switch to All projects), and that ids from an invocation's `telemetry` were not checked against the route (RES-1550).
+- `orq-invoke-deployment`, `orq-setup-observability`, `orq-analyze-traces`, `orq-compare-agents` and `orq-shared/resources/trace-queries.md` hand the user a link to the trace instead of "go to my.orq.ai → Traces", and point at that section. `orq-analyze-traces` now requires full 32-hex ids in `evidence` and `passing`.
+- `orq-cli` skill: with `ORQ_API_KEY` set, `orq auth whoami` on 11.0.2 reports `active_workspace_key: null` rather than the logged-in workspace; the constraint and the workspace-key snippet's error message say so.
+
+### Removed
+
+- The `traces?query=trace_id:is:<id>` deep link from `orq-cli`; the app no longer routes it.
+
+## [3.9.1] - 2026-10-16
+
+### Fixed
+
+- Claude Desktop skipped `orq-skills` and `orq-mcp` on marketplace sync ("plugin.json must be at .claude-plugin/plugin.json at the plugin root; found nested: plugins/trace-hooks/.claude-plugin/plugin.json"). The `orq-trace` manifest now lives inline in its `.claude-plugin/marketplace.json` entry (`strict: false`, version 0.5.1) and the nested `plugins/trace-hooks/.claude-plugin/plugin.json` is removed.
+- `.codex-plugin/plugin.json` `privacyPolicyURL` and `termsOfServiceURL` pointed at `orq.ai/privacy` (a redirect) and `orq.ai/terms` (404). They now use `https://orq.ai/legal/privacy` and `https://orq.ai/legal/terms-of-service`.
+
+- Anthropic's plugin directory validator rejected the repo ("Couldn't validate that repository") because of `.gitattributes`; the file is removed.
+- Its blocking findings are fixed: `commands/orq-manage-skills.md` had an unquoted `argument-hint` with two bracketed groups (invalid YAML); the `.claude-plugin/.mcp.json` and `.claude-plugin/skills` symlinks are removed (the plugin root is the repo root, so the manifest paths resolve without them; `docs/install-claude-cowork.md` and `validate-plugin-manifests.sh` updated, and the script now fails on any symlink under `.claude-plugin/`); the `orq-trace` tests no longer ship token-shaped literals (trace-hooks 0.5.2).
+
+- Narrowed the broad `allowed-tools` shell grants that Anthropic's plugin directory holds for review. `curl` is scoped to `https://api.orq.ai/v2/*` (or dropped where the skill never runs it); `eq`, `pip`, `python`, `npx`, `uv`, `jq` and `npm` are scoped to the documented commands; bare `Bash` in `create-skill` and `commands/quickstart.md` is replaced by specific rules; the `orq*` entries in `commands/` become the `mcp__orq-workspace__*` tools those commands call. Commands outside the allow-list now prompt instead of running silently. `Bash(orq:*)` stays broad in `orq-cli`, which documents the whole CLI.
+
+### Changed
+
+- The Claude Code manifest (`.claude-plugin/plugin.json`) now declares `orq-workspace` inline and takes the API key from a new sensitive `userConfig` option (`orq_api_key`, prompted on install/enable) instead of reading `ORQ_API_KEY` from the user's machine, which Anthropic's plugin directory flags. Root `.mcp.json` / `mcp.json` are unchanged, so Codex, Cursor and other harnesses still use `ORQ_API_KEY`. `validate-plugin-manifests.sh` asserts the new shape.
+
+### Added
+
+- Directory listing fields in `.claude-plugin/plugin.json` for submission to Anthropic's plugin directory: `icon`, `privacyPolicyUrl`, `termsOfServiceUrl`.
+- README "Data & privacy" section describing what each component sends.
 
 ## [3.9.0] - 2026-10-08
 

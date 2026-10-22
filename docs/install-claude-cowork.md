@@ -12,24 +12,10 @@ The plugin manifest lives at `.claude-plugin/plugin.json` and declares:
 
 ```json
 "skills": "./skills/",
-"mcpServers": "./.mcp.json"
+"mcpServers": { "orq-workspace": { "type": "http", "url": "https://my.orq.ai/v2/mcp", "headers": { "Authorization": "Bearer ${user_config.orq_api_key}" } } }
 ```
 
-| Client | Path resolution base | `./skills/` resolves to |
-|--------|----------------------|------------------------|
-| Claude Code (CLI) | Repo root | `<repo-root>/skills/` ✓ |
-| Claude Cowork (Desktop) | `plugin.json` location | `.claude-plugin/skills/` |
-
-Claude Cowork validates that paths exist at load time; Claude Code does not. To make both work with the same `plugin.json`, the repo includes symlinks inside `.claude-plugin/`:
-
-```
-.claude-plugin/skills     → ../skills      (symlink)
-.claude-plugin/.mcp.json  → ../.mcp.json   (symlink)
-```
-
-These symlinks allow Desktop to resolve `./skills/` and `./.mcp.json` correctly while keeping Claude Code behaviour unchanged.
-
-> **Windows:** Symlinks require `core.symlinks=true` and either Developer Mode or Admin privileges. Run `git config --global core.symlinks true` before cloning and enable [Windows Developer Mode](https://learn.microsoft.com/en-us/windows/apps/get-started/enable-your-device-for-development).
+Paths resolve from the plugin root, which is the repository root, so `./skills/` is `<repo-root>/skills/`. The MCP server is declared inline so the API key comes from the sensitive `orq_api_key` option instead of your shell; it replaces the same-named server in `<repo-root>/.mcp.json`, which Codex and Cursor still use with `ORQ_API_KEY`. No symlinks inside `.claude-plugin/` are needed (Anthropic's plugin directory validator rejects them).
 
 ---
 
@@ -38,9 +24,9 @@ These symlinks allow Desktop to resolve `./skills/` and `./.mcp.json` correctly 
 | Component | Delivered via |
 |-----------|--------------|
 | Skills | `./skills/` → orq agent skills loaded automatically |
-| MCP server | `./.mcp.json` → `orq-workspace` HTTP MCP server registered |
+| MCP server | inline in `plugin.json` → `orq-workspace` HTTP MCP server registered |
 
-The MCP server requires `ORQ_API_KEY` to be set in your environment. Export it before launching the Desktop app:
+Claude Code prompts for your orq.ai API key when you install or enable the plugin (or later via `/plugin configure`) and stores it in the credential store. If your Desktop build does not show that prompt, set `ORQ_API_KEY` in your environment before launching the app:
 
 ```bash
 export ORQ_API_KEY=your-key-here

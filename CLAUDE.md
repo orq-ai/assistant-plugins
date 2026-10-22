@@ -21,18 +21,28 @@ Exception: removing shipped content that was never the canonical surface (e.g. s
 
 ### How to bump
 
-1. Update `version` in all 4 plugin.json files (same value).
+1. Run `tests/scripts/set-version.sh X.Y.Z` — it updates `version` in all 4 plugin.json files (same value). This is the only place a version is edited; the git tag/release is created from it on merge.
 2. Add an entry to `CHANGELOG.md` under a new `## [X.Y.Z] - YYYY-MM-DD` heading. Use `### Added / Changed / Fixed / Removed` sections.
 3. Run `tests/scripts/validate-plugin-manifests.sh` — passes.
 4. Commit with message: `chore: bump version to X.Y.Z`.
+
+### Releases
+
+Merging to `main` runs `.github/workflows/release.yml`: it creates GitHub release `v<version>` from root `plugin.json`, with the matching `CHANGELOG.md` section as notes. No version bump means no release. The CHANGELOG entry (step 2 above) is therefore required, and `skills-ci` fails a PR without one. `orq-trace` (marketplace.json) is not released separately.
+
+**When to bump:** in the same PR as the change, whenever it alters shipped content (`skills/`, manifests, `mcp.json`, commands). Merging that PR is the release, so bump once per PR, never in a follow-up commit on `main`. Skip the bump for changes that ship nothing (CI, `tests/`, maintainer docs like this file); they merge without a release.
+
+**Changelog section:** add it in the same PR, as `## [X.Y.Z] - YYYY-MM-DD` directly under the intro (newest first) with `### Added / Changed / Fixed / Removed` bullets. Exactly that heading format matters: the release job copies everything under it, up to the next `## ` heading, into the release notes, and `skills-ci` fails when the section is missing or empty. Check it with `tests/scripts/changelog-section.sh X.Y.Z`.
+
+**How:** follow "How to bump" above. If a release goes wrong (workflow failed, wrong commit), fix forward with the next PATCH, or re-run the `release` workflow from the Actions tab (`workflow_dispatch`) after fixing the cause. Never move or delete a published tag; the workflow refuses to release over a tag that has no release.
 
 ## Plugin manifest rules
 
 - All 4 plugin.json `version` fields must match — `validate-skills.mjs` enforces this in CI.
 - Root `plugin.json` is a **closed** Agent Plugins 1.0.0 manifest: only `$schema`, `name`, `version`, `description`, `author`, `homepage`, `repository`, `license`, `keywords`, `extensions` are permitted. Never add `skills`/`mcpServers` to it — the spec fixes those locations (`skills/`, `mcp.json`). CI validates it with `ajv` against `tests/schemas/agent-plugins-1.0.0.plugin.schema.json`, a vendored copy of the published schema; re-vendor it if the spec revs.
 - **The per-harness manifests cannot be removed yet, and this is not just a scheduling matter.** The Codex `interface` blob (displayName, logo, brandColor, category, privacy/ToS URLs) and Cursor's `displayName` have nowhere to go in the portable manifest: they belong under `extensions["<reverse.domain>"]`, and no client has published a namespace — the spec defines no registry. Until one does, dropping `.codex-plugin/` or `.cursor-plugin/` loses store-listing metadata. Do not "finish the migration" without checking that first.
-- Only the repo root may be an Agent Plugins root. A nested `plugin.json` carrying the 1.0.0 `$schema` is rejected by CI — it would re-create the `plugins/orq` escape (symlinks that stayed inside the repo but left their own plugin root). Client-specific manifests (`.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/`, `plugins/trace-hooks/`) are unaffected; they are matched by `$schema`, not filename.
-- `mcp.json`, `.claude-plugin/.mcp.json`, `.claude-plugin/skills` are symlinks. Do not replace with copies; every tracked symlink must resolve inside the repo root (CI enforces).
+- Only the repo root may be an Agent Plugins root. A nested `plugin.json` carrying the 1.0.0 `$schema` is rejected by CI — it would re-create the `plugins/orq` escape (symlinks that stayed inside the repo but left their own plugin root). Client-specific manifests (`.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/`) are unaffected; they are matched by `$schema`, not filename.
+- `mcp.json` -> `.mcp.json` is the only intended symlink (the Agent Plugins 1.0.0 location). Do not replace it with a copy; every tracked symlink must resolve inside the repo root (CI enforces). Do **not** add symlinks under `.claude-plugin/`: Anthropic's directory validator blocks them (`ARCHIVE_SYMLINK_EXEC_SURFACE`), and `.claude-plugin/plugin.json` paths (`./skills/`, `./.mcp.json`) resolve from the repo root, which is the plugin root. `validate-plugin-manifests.sh` fails on any tracked symlink in `.claude-plugin/`.
 - New skill = add to: `skills/<name>/SKILL.md`, `agents/AGENTS.md` (path list + `<available_skills>` block), `README.md` skills table, `tests/skills.md` (smoke tests + Critical Files), and `skills-lock.json` (see below). All five are enforced by `validate-skills.mjs`: each surface is diffed against `skills/` in both directions, each must list a skill exactly once, and where the surface carries a target path (the `AGENTS.md` path list, the `README.md` table's `[SKILL.md](…)` link) the label and the target must agree — a registration pointing at another skill's file passes a name diff while every harness loads the wrong file. A missing surface file, or a `README.md` that has lost its table markers, is an error rather than a skipped check. One half is deliberately **not** covered: `tests/skills.md` is checked for a `## \`<name>\`` smoke-test section per skill, but its "Critical Files" list is free prose and nothing verifies a skill appears there — add it by hand.
 - New skill also ships `tests/factual/<name>.csv`: the drift checks for the MCP tools, CLI commands, SDK calls and URLs it names. Generate it with `uv run --no-project python tests/scripts/bootstrap_factual_tests.py --skill <name>`, prune false positives, and run `uv run tests/scripts/run_factual_tests.py --skill <name>`. A header-only CSV means "reviewed, nothing to check". `validate-skills.mjs` warns when it is missing (not yet blocking).
 - New skill also ships `tests/evals/<name>/` with at least one hand-written `*-fires` invocation case (format: any existing case; runner: `tests/scripts/run_evals.py`). `validate-skills.mjs` check 14 fails a new skill without one; skills that predate the evals are grandfathered in `EVALS_GRANDFATHERED` there, and an entry must be removed once the skill has cases.
@@ -75,7 +85,7 @@ Lock file for the [`vercel-labs/skills`](https://github.com/vercel-labs/skills) 
 
 Reading the index rather than the disk is a deliberate divergence from upstream, and the reason the hashes are reproducible at all:
 
-- **Line endings.** Under `core.autocrlf=true` the checkout is CRLF while the blobs are LF. Hashing the disk made all 15 skills report stale on Windows — the validator could not pass there — and `--fix` wrote CRLF hashes that CI then rejected. (`.gitattributes` now pins the working tree to LF as well, so the two agree.)
+- **Line endings.** Under `core.autocrlf=true` the checkout is CRLF while the blobs are LF. Hashing the disk made all 15 skills report stale on Windows — the validator could not pass there — and `--fix` wrote CRLF hashes that CI then rejected. The repo deliberately has no `.gitattributes`: Anthropic's plugin directory validator refuses the repo ("Couldn't validate that repository") when it carries `* text=auto eol=lf` (a file holding only `*.png binary` passes), so line endings are not pinned and the index-based hash is what keeps the lock reproducible. Do not re-add an `eol`/`text` rule.
 - **Ignored artifacts.** The disk walk picked up `.pytest_cache/`, `__pycache__/` and `runs/`, so running a skill's own pytest suite changed its hash. This is what forced the hand-corrected hash in `23406d3`.
 - **Cost of the divergence.** `npx skills add <local path>` still hashes the folder on disk, so installing from a dirty or CRLF checkout sees a different hash than the lock records. That costs one needless reinstall and nothing else — the hash is a skip-cache key, never an integrity check. Installing from GitHub, which is how consumers get this repo, matches exactly.
 
@@ -92,4 +102,4 @@ node tests/scripts/validate-skills.mjs --fix
 
 ## Sub-plugin versioning
 
-`plugins/trace-hooks` has its own independent version in `plugins/trace-hooks/.claude-plugin/plugin.json`. Bump it whenever files under `plugins/trace-hooks/` are touched in a commit — same semver rules apply. Do **not** bump the root 4-manifest version for trace-hooks-only changes.
+`plugins/trace-hooks` has its own independent version, in the `orq-trace` entry of `.claude-plugin/marketplace.json`. It deliberately has no `plugins/trace-hooks/.claude-plugin/plugin.json`: that entry is `strict: false` and carries the manifest inline, because Claude Desktop's marketplace sync skips the `./`-sourced plugins (`orq-skills`, `orq-mcp`) when it finds a nested `.claude-plugin/plugin.json` under their root. Do not re-add the nested file. Bump it whenever files under `plugins/trace-hooks/` are touched in a commit — same semver rules apply. Do **not** bump the root 4-manifest version for trace-hooks-only changes.

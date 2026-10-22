@@ -51,7 +51,7 @@ if sys.platform == 'win32':
 @dataclass(frozen=True)
 class Model:
     budget_tokens: int  # estimated state + longest question routed to this model
-    price_per_m: float  # USD per million input tokens, catalogue price on 2026-10-14; `estimate` only
+    price_per_m: float  # USD per million input tokens, catalogue price on 2026-10-14; estimates only
 
 
 # Jev and decider-4b reject state plus longest question above 32k tokens; the 4k margin absorbs the 4-characters
@@ -256,21 +256,31 @@ def estimated_cost(name: str, tokens: int) -> float:
 
 
 class Budget:
-    """Each call reserves its estimated cost before it starts and settles to the billed cost when it ends, so calls
-    already in flight cannot carry a pass past `--budget-usd`. No await sits between check and reserve, so the event
-    loop needs no lock here."""
+    """Reserve estimated input cost before sending a call. This is an approximate spend limit: token estimates,
+    output charges and retries can exceed it. The first refused reservation stops the whole pass."""
 
     def __init__(self, limit: float) -> None:
+        if not math.isfinite(limit) or limit <= 0:
+            raise ValueError('budget must be finite and above zero')
         self.limit, self.spent, self.held = limit, 0.0, 0.0
+        self.stopped = False
+
+    def exhausted(self) -> bool:
+        if self.spent + self.held >= self.limit:
+            self.stopped = True
+        return self.stopped
 
     def reserve(self, amount: float) -> bool:
-        if self.spent + self.held + amount > self.limit:
+        if not math.isfinite(amount) or amount < 0:
+            raise ValueError('reservation must be finite and nonnegative')
+        if self.stopped or self.spent + self.held + amount > self.limit:
+            self.stopped = True
             return False
         self.held += amount
         return True
 
     def settle(self, held: float, cost: float) -> None:
-        self.held -= held
+        self.held = max(0.0, self.held - held)
         self.spent += cost
 
 
@@ -292,11 +302,13 @@ def load_questions(path: Path) -> Questions:
     wire: dict[str, Any] = {}
     thresholds: dict[str, float] = {}
     for key, question in raw.items():
-        if question.get('type') not in ('noul', 'choice'):
+        if not isinstance(question, dict) or question.get('type') not in ('noul', 'choice'):
             fail(f'{path}: question {key!r} needs type noul or choice')
         if question['type'] == 'choice' and not isinstance(question.get('criteria'), dict):
             fail(f'{path}: choice question {key!r} needs a {{label: description}} criteria object')
         thresholds[key] = float(question.get('threshold', 0.5))
+        if not math.isfinite(thresholds[key]) or not 0 <= thresholds[key] <= 1:
+            fail(f'{path}: question {key!r} needs a finite threshold between 0 and 1')
         wire[key] = {k: v for k, v in question.items() if k != 'threshold'}
     return Questions(wire, thresholds, path)
 
@@ -304,7 +316,8 @@ def load_questions(path: Path) -> Questions:
 def run_file(args: argparse.Namespace, questions: Questions) -> Path:
     """One labels file per questions file and model pair, so a rewritten question or a switched model can never be
     answered by, or pooled with, an earlier pass."""
-    key = json.dumps([questions.wire, args.short_model, args.long_model], sort_keys=True, ensure_ascii=False)
+    key = json.dumps([base_url(), questions.wire, questions.thresholds, args.short_model, args.long_model],
+                     sort_keys=True, ensure_ascii=False)
     digest = hashlib.sha256(key.encode()).hexdigest()[:12]
     return args.run_dir / f'{questions.path.stem}-{digest}.jsonl'
 
@@ -322,11 +335,12 @@ def read_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def latest_rows(path: Path) -> dict[str, dict[str, Any]]:
-    """The last row per trace: a retried trace's success replaces its earlier error."""
+def latest_rows(path: Path, questions: Questions) -> dict[str, dict[str, Any]]:
+    """Keep the last readable success per trace, or the latest unsuccessful attempt if there was no success."""
     rows: dict[str, dict[str, Any]] = {}
     for row in read_rows(path):
-        if 'answers' in row or row['trace_id'] not in rows:
+        old = rows.get(row['trace_id'])
+        if verdicts(row, questions) is not None or old is None or verdicts(old, questions) is None:
             rows[row['trace_id']] = row
     return rows
 
@@ -335,7 +349,7 @@ def existing_rows(args: argparse.Namespace, questions: Questions) -> tuple[Path,
     path = run_file(args, questions)
     if not path.exists():
         fail(f'no labels for {questions.path} with these models in {args.run_dir}; run `label` first')
-    return path, latest_rows(path)
+    return path, latest_rows(path, questions)
 
 
 def meta_path(labels: Path) -> Path:
@@ -348,24 +362,42 @@ def load_meta(labels: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
 
 
+def require_window_ids(labels: Path) -> list[str]:
+    ids = load_meta(labels).get('ids')
+    if not isinstance(ids, list) or any(not isinstance(tid, str) for tid in ids):
+        fail(f'{meta_path(labels)}: window ids unavailable; re-run `label` to restore the population before reporting')
+    return ids
+
+
+def positive_budget(value: str) -> float:
+    amount = float(value)
+    if not math.isfinite(amount) or amount <= 0:
+        raise argparse.ArgumentTypeError('budget must be finite and above zero')
+    return amount
+
+
 def verdicts(row: dict[str, Any], questions: Questions) -> set[str] | None:
     """The modes a row flags, or None when any answer is missing, refused, or a label outside the criteria."""
     flagged: set[str] = set()
     answers = row.get('answers') or {}
+    if not isinstance(answers, dict) or row.get('error'):
+        return None
     for key, question in questions.wire.items():
         answer = answers.get(key)
         if not isinstance(answer, dict) or answer.get('type') != question['type']:
             return None
         if question['type'] == 'choice':
             label = answer.get('choice')
-            if label not in question['criteria']:
+            if not isinstance(label, str) or label not in question['criteria']:
                 return None
             if label not in ('none', 'pass'):
                 flagged.add(label)
         else:
-            if answer.get('noul') is None:
+            probability = answer.get('noul')
+            if (isinstance(probability, bool) or not isinstance(probability, (int, float))
+                    or not math.isfinite(probability) or not 0 <= probability <= 1):
                 return None
-            if answer['noul'] >= questions.thresholds[key]:
+            if probability >= questions.thresholds[key]:
                 flagged.add(key)
     return flagged
 
@@ -401,45 +433,55 @@ async def decide(http: httpx.AsyncClient, name: str, state: Any, questions: dict
 async def label_one(
     http: httpx.AsyncClient, trace_id: str, order: int, args: argparse.Namespace, wire: dict, budget: Budget
 ) -> dict | None:
-    """One trace's row, or None when the budget cannot cover its call (the trace stays unstarted)."""
+    """One trace's row, or None if no call started before the budget refused it.
+    A refused overflow retry returns an error row, preserving the attempted short call."""
     row: dict[str, Any] = {'trace_id': trace_id, 'order': order}
     try:
         state = build_state(await conversation(http, trace_id))
     except (RuntimeError, httpx.HTTPError, ValueError) as exc:
-        return {**row, 'error': f'fetch: {exc}', 'status': getattr(exc, 'status', None)}
+        return {**row, 'error': f'fetch: {exc}', 'error_kind': 'fetch', 'status': getattr(exc, 'status', None)}
     if not state['messages']:
-        return {**row, 'error': 'empty conversation'}
+        return {**row, 'error': 'empty conversation', 'error_kind': 'empty_conversation'}
     tokens = state_tokens(state, wire)
     row['estimated_tokens'] = tokens
     if tokens > model(args.long_model).budget_tokens:
-        return {**row, 'error': f'too long for {args.long_model} (about {tokens:,} tokens)'}
+        return {**row, 'error': f'too long for {args.long_model} (about {tokens:,} tokens)', 'error_kind': 'too_long'}
     name, reason = (
         (args.short_model, 'fits') if tokens <= model(args.short_model).budget_tokens else (args.long_model, 'over')
     )
     held, cost = 0.0, 0.0
     try:
-        if not budget.reserve(estimated_cost(name, tokens)):
+        estimate = estimated_cost(name, tokens)
+        if not budget.reserve(estimate):
             return None
-        held = estimated_cost(name, tokens)
+        held = estimate
+        cost = estimate  # ambiguous errors may still have been billed
+        row['cost_estimated'] = True
         result = await decide(http, name, state, wire)
         if result.get('overflow') and name == args.short_model:
             name, reason = args.long_model, 'short_overflowed'
-            if not budget.reserve(estimated_cost(name, tokens)):
-                return None
-            held += estimated_cost(name, tokens)
+            estimate = estimated_cost(name, tokens)
+            if not budget.reserve(estimate):
+                return {**row, 'model': args.short_model, 'route': 'short', 'cost': cost,
+                        'error': 'budget refused overflow retry', 'error_kind': 'budget_retry'}
+            held += estimate
+            cost += estimate
             result = await decide(http, name, state, wire)
         row.update(model=name, route='short' if name == args.short_model else 'long', reason=reason)
         if 'error' in result:
-            return {**row, 'error': result['error'], 'status': result['status']}
+            return {**row, 'error': result['error'], 'error_kind': 'decision_http',
+                    'status': result['status'], 'cost': cost}
         billed = result['usage'].get('total_cost')
-        if isinstance(billed, (int, float)):
-            cost = float(billed)
+        if (not isinstance(billed, bool) and isinstance(billed, (int, float))
+                and math.isfinite(billed) and billed >= 0):
+            cost = float(billed) + (held - estimate)
+            row['cost_estimated'] = held > estimate
             return {**row, 'answers': result['answers'], 'cost': cost}
-        # No billed cost on the response: count the estimate, so the budget cap still holds.
-        cost = estimated_cost(name, tokens)
+        # No usable billed cost: retain the reservation as approximate spend.
         return {**row, 'answers': result['answers'], 'cost': cost, 'cost_estimated': True}
     except (httpx.HTTPError, ValueError) as exc:
-        return {**row, 'model': name, 'error': f'decide: {type(exc).__name__}: {exc}'}
+        return {**row, 'model': name, 'cost': cost, 'error_kind': 'decision_error',
+                'error': f'decide: {type(exc).__name__}: {exc}'}
     finally:
         budget.settle(held, cost)
 
@@ -458,14 +500,14 @@ async def cmd_probe(args: argparse.Namespace) -> None:
             model(name)
             try:
                 result = await decide(http, name, PROBE_STATE, PROBE_QUESTION)
-            except httpx.HTTPError as exc:
+            except (httpx.HTTPError, ValueError) as exc:
                 result = {'error': f'{type(exc).__name__}: {exc}', 'status': None}
-            if 'answers' in result:
+            if verdicts(result, Questions(PROBE_QUESTION, {'probe': 0.5}, Path('probe'))) is not None:
                 status = 'available'
             elif result.get('status') == 429:
                 status = 'rate limited: retry in a minute, this is not unavailability'
             else:
-                status, ok = f'unavailable ({result["error"]})', False
+                status, ok = f'unavailable ({result.get("error") or "unreadable answer"})', False
             print(json.dumps({'model': name, 'status': status}))
     if not ok:
         sys.exit(1)
@@ -518,9 +560,18 @@ async def cmd_label(args: argparse.Namespace) -> None:
     model(args.long_model)
     out = run_file(args, questions)
     out.parent.mkdir(parents=True, exist_ok=True)
+    if out.exists() and out.stat().st_size:
+        with out.open('rb+') as handle:
+            handle.seek(-1, 2)
+            if handle.read(1) != b'\n':
+                handle.write(b'\n')  # preserve a torn row without joining it to the next valid row
     async with client() as http:
         window = await load_window(http, args)
-        done = {row['trace_id'] for row in read_rows(out) if 'answers' in row}
+        meta = {'window': window.source, 'traces': len(window.ids), 'capped_at_max_traces': window.capped,
+                'ids': window.ids}
+        # Freeze the population before any paid work, including interrupted and trace-id passes.
+        meta_path(out).write_text(json.dumps(meta, indent=2), encoding='utf-8')
+        done = {tid for tid, row in latest_rows(out, questions).items() if verdicts(row, questions) is not None}
         todo = [(order, trace_id) for order, trace_id in enumerate(window.ids) if trace_id not in done]
         print(f'✓ {len(window.ids)} traces, {len(window.ids) - len(todo)} already labelled → {out}', file=sys.stderr)
         semaphore = asyncio.Semaphore(args.concurrency)
@@ -534,37 +585,36 @@ async def cmd_label(args: argparse.Namespace) -> None:
         async def run(order: int, trace_id: str) -> None:
             nonlocal abort, warned_estimate
             async with semaphore:
-                if abort:
+                if abort or budget.exhausted():
                     totals['not_started'] += 1
                     return
                 try:
                     row = await label_one(http, trace_id, order, args, questions.wire, budget)
-                except Exception as exc:  # one malformed trace must not end a paid pass
+                except Exception as exc:  # noqa: BLE001 - preserve the paid pass when one trace is malformed
                     row = {'trace_id': trace_id, 'order': order, 'error': f'{type(exc).__name__}: {exc}'}
             if row is None:
                 totals['not_started'] += 1
                 return
+            if 'answers' in row and verdicts(row, questions) is None:
+                row.update(error='unreadable answer', error_kind='unreadable_answer')
             async with lock:
                 with out.open('a', encoding='utf-8') as handle:
                     handle.write(json.dumps(row, ensure_ascii=False) + '\n')
                 totals['error' if 'error' in row else row['route']] += 1
                 if row.get('cost_estimated') and not warned_estimate:
                     warned_estimate = True
-                    print('⚠ the router reported no cost; the budget counts estimated input cost', file=sys.stderr)
+                    print('⚠ some charges are unknown; the budget counts estimated input cost', file=sys.stderr)
                 if row.get('status') in (401, 403):
                     abort = row['error']
                 if sum(totals.values()) % 100 == 0:
                     print(f'… {sum(totals.values())}/{len(todo)} · ${budget.spent:.2f}', file=sys.stderr)
 
         await asyncio.gather(*(run(order, trace_id) for order, trace_id in todo))
-    meta = {'window': window.source, 'traces': len(window.ids), 'capped_at_max_traces': window.capped}
-    if args.search_body:
-        # Only a window pass describes the window; a `--trace-ids` pass (calibration) shares the labels file.
-        meta_path(out).write_text(json.dumps({**meta, 'ids': window.ids}, indent=2), encoding='utf-8')
-    rows = latest_rows(out)
+    rows = latest_rows(out, questions)
+    meta.pop('ids')
     report = {
         **meta,
-        'labelled': sum('answers' in row for row in rows.values()),
+        'labelled': sum(verdicts(rows.get(tid, {}), questions) is not None for tid in window.ids),
         'this_run': {
             **dict(totals),
             'cost_usd': round(budget.spent, 4),
@@ -574,7 +624,7 @@ async def cmd_label(args: argparse.Namespace) -> None:
         'stopped': abort
         or (
             f'budget of ${args.budget_usd} reached; re-run with a higher --budget-usd to finish'
-            if totals['not_started']
+            if budget.stopped or totals['not_started']
             else None
         ),
         'labels': str(out),
@@ -592,12 +642,12 @@ def cmd_pick(args: argparse.Namespace) -> None:
     key = args.question or next(iter(questions.wire))
     if key not in questions.wire or questions.wire[key]['type'] != 'noul':
         fail(f'{args.questions}: pick needs a noul question; {key!r} is not one')
-    rows = list(rows_by_id.values())
-    window_ids = load_meta(path).get('ids') or list(rows_by_id)
+    window_ids = require_window_ids(path)
+    rows = [rows_by_id[tid] for tid in window_ids if tid in rows_by_id]
     flagged = [
         row['trace_id']
         for row in rows
-        if 'answers' in row and ((row['answers'].get(key) or {}).get('noul') or 0) >= questions.thresholds[key]
+        if (flags := verdicts(row, questions)) is not None and key in flags
     ]
     rng = random.Random(args.seed)
     picked_flagged = rng.sample(flagged, min(args.flagged, len(flagged)))
@@ -610,7 +660,7 @@ def cmd_pick(args: argparse.Namespace) -> None:
     (picks / 'random_ids.txt').write_text(''.join(f'{i}\n' for i in picked_random), encoding='utf-8')
     report = {
         'traces': len(window_ids),
-        'labelled': sum('answers' in row for row in rows),
+        'labelled': sum(verdicts(row, questions) is not None for row in rows),
         'flagged': len(flagged),
         'picks': {'flagged': picked_flagged, 'random': picked_random},
         'written': str(picks),
@@ -642,16 +692,23 @@ def cmd_agreement(args: argparse.Namespace) -> None:
         flagged = verdicts(row, questions) if row and 'answers' in row else None
         if flagged is None:
             report['missing_or_unreadable'].append(trace_id)
-            continue
-        report['compared'] += 1
+        else:
+            report['compared'] += 1
         for mode in modes:
-            truth, guess = agent_mode == mode, mode in flagged
+            truth = agent_mode == mode
+            # A missing answer cannot hide an analyst-positive trace from the recall denominator.
+            if flagged is None and not truth:
+                continue
+            guess = flagged is not None and mode in flagged
             cell = 'tp' if truth and guess else 'fp' if guess else 'fn' if truth else 'tn'
-            for stratum in ('all', row['route'], *(('random',) if trace_id in random_ids else ())):
+            for stratum in ('all', (row or {}).get('route', 'unknown'),
+                            *(('random',) if trace_id in random_ids else ())):
                 cells.setdefault((mode, stratum), Counter())[cell] += 1
+                if flagged is None:
+                    cells[(mode, stratum)]['missing_positives'] += 1
     for mode in modes:
         strata = {}
-        for stratum in ('all', 'short', 'long', 'random'):
+        for stratum in ('all', 'short', 'long', 'unknown', 'random'):
             c = cells.get((mode, stratum))
             if c:
                 tp, fp, fn, tn = c['tp'], c['fp'], c['fn'], c['tn']
@@ -664,11 +721,14 @@ def cmd_agreement(args: argparse.Namespace) -> None:
                     'recall': round(tp / (tp + fn), 3) if tp + fn else None,
                     'precision': round(tp / (tp + fp), 3) if tp + fp else None,
                     'kappa': kappa(tp, fp, fn, tn),
+                    'missing_positives': c['missing_positives'],
                 }
         overall = strata.get('all', {'agent_positives': 0, 'recall': None})
-        if overall['agent_positives'] < MIN_POSITIVES:
+        if report['unknown_agent_labels']:
+            clears = 'no: fix unknown agent labels first'
+        elif overall['agent_positives'] < MIN_POSITIVES:
             clears = f'no: {overall["agent_positives"]} agent positives, {MIN_POSITIVES} needed'
-        elif (overall['recall'] or 0) < MIN_RECALL:
+        elif cells[(mode, 'all')]['tp'] / overall['agent_positives'] < MIN_RECALL:
             clears = f'no: recall {overall["recall"]} below {MIN_RECALL}'
         else:
             clears = 'yes'
@@ -690,7 +750,8 @@ def cmd_rates(args: argparse.Namespace) -> None:
     questions = load_questions(args.questions)
     path, rows = existing_rows(args, questions)
     meta = load_meta(path)
-    window_ids = meta.pop('ids', None)
+    window_ids = require_window_ids(path)
+    meta.pop('ids', None)
     modes = mode_names(questions)
     read = set(read_ids(args.read_ids)) if args.read_ids else set()
     labelled: Counter = Counter()
@@ -698,15 +759,19 @@ def cmd_rates(args: argparse.Namespace) -> None:
     routes: dict[str, Counter] = {mode: Counter() for mode in modes}
     not_labelled: Counter = Counter()
     multi = 0
-    for row in rows.values():
+    for order, trace_id in enumerate(window_ids):
+        if trace_id not in rows:
+            continue
+        row = rows[trace_id]
         flagged = verdicts(row, questions) if 'answers' in row else None
         if flagged is None:
-            not_labelled[(row.get('error') or 'unreadable answer').split(':')[0]] += 1
+            kind = row.get('error_kind') or ('other_error' if row.get('error') else 'unreadable_answer')
+            not_labelled[kind] += 1
             continue
         labelled[row['route']] += 1
         multi += len(flagged) > 1
         for mode in flagged:
-            flagged_by[mode].append((row.get('order', 0), row['trace_id']))
+            flagged_by[mode].append((order, row['trace_id']))
             routes[mode][row['route']] += 1
     n = sum(labelled.values())
     report = {
@@ -715,7 +780,7 @@ def cmd_rates(args: argparse.Namespace) -> None:
         'labelled_by_route': dict(labelled),
         'not_labelled': dict(not_labelled),
         # Window traces with no row at all: the pass stopped at its budget (or was interrupted) before reaching them.
-        'not_started': sum(trace_id not in rows for trace_id in window_ids) if window_ids is not None else None,
+        'not_started': sum(trace_id not in rows for trace_id in window_ids),
         'flagged_more_than_one_mode': multi,
         'modes': {
             mode: {
@@ -763,7 +828,7 @@ def main() -> None:
     p = sub.add_parser('label')
     run(p)
     window(p)
-    p.add_argument('--budget-usd', type=float, required=True, help='stop starting calls once this much is spent')
+    p.add_argument('--budget-usd', type=positive_budget, required=True, help='approximate input-cost limit in USD')
     p.add_argument('--concurrency', type=int, default=16)
     p = sub.add_parser('pick')
     run(p)
@@ -779,6 +844,9 @@ def main() -> None:
     p.add_argument('--read-ids', type=Path, help='traces already read, left out of the flagged lists')
 
     args = parser.parse_args()
+    for key in ('concurrency', 'sample', 'max_traces'):
+        if getattr(args, key, None) is not None and getattr(args, key) <= 0:
+            parser.error(f'--{key.replace("_", "-")} must be above zero')
     handlers = {'probe': cmd_probe, 'estimate': cmd_estimate, 'label': cmd_label}
     if args.command in handlers:
         asyncio.run(handlers[args.command](args))

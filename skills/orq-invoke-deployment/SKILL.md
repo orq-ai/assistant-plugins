@@ -6,12 +6,14 @@ description: >
   agent in a conversation, or call a model directly through the AI Router.
   Do NOT use for creating or editing deployments/agents (use orq-improve-agent
   or orq-build-agent). Do NOT use for running evaluations (use orq-run-experiment).
-allowed-tools: Bash(curl:*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__list_models, mcp__orq-workspace__list_traces
+allowed-tools: Bash(orq responses create:*), Bash(curl --fail-with-body -sS https://my.orq.ai/v3/router/responses), Bash(curl -s https://api.orq.ai/v2/*), Bash(curl -s -X POST https://api.orq.ai/v2/*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__list_models, mcp__orq-workspace__list_traces
 ---
 
 # Invoke Deployment
 
 You are an **orq.ai integration engineer**. Your job is to help users invoke orq.ai resources — deployments, agents, and models — and integrate those calls into their application code using the Python SDK or HTTP API. The API key is pre-configured — do NOT prompt the user for it, but DO verify the target exists with it (step 3).
+
+**Invocation policy (models and agents):** Default to `POST /v3/router/responses` or `orq responses create`. Set `model` to `provider/model-id` for a model or `agent/<key>` for a managed agent, and pass `input`. Use `openai/gpt-6-luna` for default model command examples unless the user specifies another model. Prefer Responses over Chat Completions; do not use v2 inference routes. Use another inference interface only when the user explicitly requests it. Legacy agent execution APIs remain deprecated. Never fall back to v2, Chat Completions, or legacy agent endpoints after a routing or model error. Use Responses for streaming and continuation too. Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK. Configuration, deployment, evaluator, and telemetry APIs retain their own contracts.
 
 ## Constraints
 
@@ -79,7 +81,7 @@ Invoke Progress:
 
 **Deployments:** [Overview](https://docs.orq.ai/docs/deployments/overview) · [Invoke API](https://docs.orq.ai/reference/deployments/invoke) · [Stream API](https://docs.orq.ai/reference/deployments/stream) · [Get Config](https://docs.orq.ai/reference/deployments/get-config)
 
-**Agents:** [Agent API](https://docs.orq.ai/docs/agents/agent-api) · [Create Response](https://docs.orq.ai/reference/agents/create-response)
+**Agents:** [Agent API](https://docs.orq.ai/docs/agents/agent-api) · [Create Response](https://docs.orq.ai/reference/responses/create-response)
 
 **Models (AI Router):** [Getting Started](https://docs.orq.ai/docs/router/getting-started) · [OpenAI-Compatible API](https://docs.orq.ai/docs/proxy/openai-compatible-api) · [Supported Models](https://docs.orq.ai/docs/proxy/supported-models)
 
@@ -96,7 +98,7 @@ Invoke Progress:
 - **`identity`** links requests to contacts in orq.ai — required `id`, optional `display_name`, `email`, `metadata`, `logo_url`, `tags`.
 - **`stream=True`** enables server-sent events for real-time token delivery.
 - **`documents`** inject external text chunks into a deployment at call time (ad-hoc RAG without a Knowledge Base).
-- **`task_id`** (agents) continues an existing multi-turn conversation — save it from the first response.
+- **`previous_response_id`** (agents) continues a stored conversation — save `id` from the previous response.
 
 ---
 
@@ -177,7 +179,7 @@ Follow these steps **in order**. Do NOT skip steps.
    | `invoke_options.mock_response` | Deployments | Return mock content without calling LLM (for testing) |
    | `thread` | Both | Group related invocations by thread ID |
    | `memory.entity_id` | Agents | Associate memory stores with a specific user/session |
-   | `background=True` | Agents | Return immediately with task ID (async execution) |
+   | `background=True` | Agents | Return an asynchronous response; poll its response ID until completed |
    | `variables` | Agents | Replace template variables in system prompt/instructions |
    | `knowledge_filter` | Deployments | Filter KB chunks by metadata (eq, ne, gt, in, etc.) |
 
@@ -187,10 +189,10 @@ Follow these steps **in order**. Do NOT skip steps.
 
 10. **Verify the response:**
    - Deployment: check `choices[0].message.content` for the output text
-   - Agent: check `response.output[0].parts[0].text` for the output text; save `response.task_id` for multi-turn
+   - Agent: read Responses message `output[].content[]` text (OpenAI SDK: `response.output_text`); check `status` and save `response.id` for `previous_response_id` continuation
    - If wrong output: check for missing inputs, wrong key, or prompt issues
 
-11. **Find the trace** — direct user to [my.orq.ai](https://my.orq.ai/) → Traces, or use `response.telemetry.trace_id`.
+11. **Find the trace** — use telemetry if the response exposes it; otherwise find the invocation with `orq traces search`. Do not assume a general Responses/OpenAI SDK object has the deployment SDK's `telemetry` property. Hand the user a link built from the trace ID: `<host>/<workspace-key>/traces/(trace:<trace_id>)`, or add `//span:<telemetry.span_id>` inside the parentheses to open the call's own span. These telemetry ids have not been checked against the route; if the link opens nothing, look the trace up with `orq traces search` and use its `trace_id`. Host, workspace key and pitfalls: [`orq-cli` → Building app URLs](../orq-cli/resources/command-map.md#building-app-urls). If it opens on "No spans match your search", the user's Traces project selector is filtering it out: switch it to **All projects**.
 
 ### Phase 4: Generate Integration Code
 
@@ -291,73 +293,128 @@ curl -s -X POST https://api.orq.ai/v2/deployments/invoke \
   }' | jq
 ```
 
-### Agent — Python SDK
+### Agent — Python orq SDK (preferred)
+
+Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK.
 
 ```python
 import os
 from orq_ai_sdk import Orq
 
-client = Orq(api_key=os.environ["ORQ_API_KEY"])
-
-# Single turn — note: agents use parts format, NOT OpenAI-style content
-response = client.agents.responses.create(
-    agent_key="<agent-key>",
-    message={"role": "user", "parts": [{"kind": "text", "text": "Hello, can you help me?"}]},
-    identity={"id": "user_<unique_id>", "display_name": "Jane Doe"},
-)
-print(response.output[0].parts[0].text)
-
-# Multi-turn: save task_id and pass it in follow-ups
-task_id = response.task_id
-follow_up = client.agents.responses.create(
-    agent_key="<agent-key>",
-    task_id=task_id,
-    message={"role": "user", "parts": [{"kind": "text", "text": "Tell me more."}]},
-)
-print(follow_up.output[0].parts[0].text)
+with Orq(api_key=os.environ["ORQ_API_KEY"], server_url="https://my.orq.ai") as orq:
+    response = orq.responses.create(model="agent/<agent-key>", input="Hello!", stream=False)
+    if response.status != "completed":
+        raise RuntimeError(f"Agent response {response.id}: {response.status}")
+    text = "".join(
+        part["text"]
+        for item in response.output or [] if item.get("type") == "message"
+        for part in item.get("content", []) if part.get("type") == "output_text"
+    )
+    print(text)
+    follow_up = orq.responses.create(
+        model="agent/<agent-key>", previous_response_id=response.id, input="Tell me more.", stream=False,
+    )
+    print(follow_up)
 ```
 
-### Agent — curl
+For async Python code, use `async with Orq(...) as orq` and `await orq.responses.create_async(...)`; see the [paired async examples](../orq-compare-agents/resources/job-patterns.md#orqai-agent).
+
+### Agent — Python OpenAI SDK (already imported)
+
+```python
+import os
+from openai import OpenAI
+
+client = OpenAI(api_key=os.environ["ORQ_API_KEY"], base_url="https://my.orq.ai/v3/router")
+response = client.responses.create(model="agent/<agent-key>", input="Hello, can you help me?")
+if response.status != "completed":
+    raise RuntimeError(f"Agent response {response.id}: {response.status}")
+print(response.output_text)
+
+follow_up = client.responses.create(
+    model="agent/<agent-key>", previous_response_id=response.id, input="Tell me more."
+)
+print(follow_up.output_text)
+
+# User-facing streaming stays on the same endpoint
+stream = client.responses.create(model="agent/<agent-key>", input="Hello!", stream=True)
+for event in stream:
+    if event.type == "response.output_text.delta":
+        print(event.delta, end="", flush=True)
+```
+
+### Agent — CLI and HTTP
 
 ```bash
-curl -s -X POST https://api.orq.ai/v2/agents/<agent-key>/responses \
+orq responses create --model "agent/<agent-key>" --input "Hello, can you help me?" -o json
+
+curl --fail-with-body -sS https://my.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "message": {
-      "role": "user",
-      "parts": [{"kind": "text", "text": "Hello, can you help me?"}]
-    },
-    "identity": {"id": "user_<unique_id>", "display_name": "Jane Doe"}
-  }' | jq
+  -d '{"model":"agent/<agent-key>","input":"Hello, can you help me?","identity":{"id":"synthetic-user"}}'
 ```
 
-### Agent — Node.js SDK
+### Agent — Node.js orq SDK (preferred)
 
 ```typescript
 import { Orq } from "@orq-ai/node";
 
-const client = new Orq({ apiKey: process.env.ORQ_API_KEY });
-
-const response = await client.agents.responses.create({
-  agentKey: "<agent-key>",
-  message: { role: "user", parts: [{ kind: "text", text: "Hello, can you help me?" }] },
-  identity: { id: "user_<unique_id>", displayName: "Jane Doe" },
+const orq = new Orq({ apiKey: process.env.ORQ_API_KEY, serverURL: "https://my.orq.ai" });
+const response = await orq.responses.create({ model: "agent/<agent-key>", input: "Hello!", stream: false });
+if (!("output" in response) || response.status !== "completed") {
+  throw new Error("Expected a completed non-streaming response");
+}
+const text = (response.output ?? [])
+  .filter(item => item.type === "message")
+  .flatMap(item => item.content ?? [])
+  .filter(part => part.type === "output_text")
+  .map(part => part.text).join("");
+console.log(text);
+const followUp = await orq.responses.create({
+  model: "agent/<agent-key>", previousResponseId: response.id, input: "Tell me more.", stream: false,
 });
-console.log(response.output[0].parts[0].text);
-
-// Multi-turn
-const followUp = await client.agents.responses.create({
-  agentKey: "<agent-key>",
-  taskId: response.taskId,
-  message: { role: "user", parts: [{ kind: "text", text: "Tell me more." }] },
-});
-console.log(followUp.output[0].parts[0].text);
+console.log(followUp);
 ```
 
-### Model (AI Router) — Python SDK
+### Agent — Node.js OpenAI SDK (already imported)
 
-Uses the `openai` library pointed at orq.ai — no orq SDK needed:
+```typescript
+import OpenAI from "openai";
+
+const client = new OpenAI({ apiKey: process.env.ORQ_API_KEY, baseURL: "https://my.orq.ai/v3/router" });
+const response = await client.responses.create({ model: "agent/<agent-key>", input: "Hello!" });
+if (response.status !== "completed") throw new Error(`Agent response ${response.id}: ${response.status}`);
+console.log(response.output_text);
+const followUp = await client.responses.create({
+  model: "agent/<agent-key>", previous_response_id: response.id, input: "Tell me more.",
+});
+console.log(followUp.output_text);
+```
+
+Install `orq-ai-sdk` (Python) or `@orq-ai/node` (Node.js) for the preferred SDK. Reuse `openai` when it is already imported and orq is not. The orq SDK takes the host (`server_url` / `serverURL`); OpenAI takes the router base URL ending in `/v3/router`. Both use general Responses. For production attribution, pass `identity` directly with orq, or use OpenAI Python `extra_body={"identity": {"id": "<user-id>"}}`. Keep `store: true` for continuation. See the [agent contract](resources/api-reference.md#agents) for parsing and streaming events.
+
+### Model (AI Router) — Python orq SDK (preferred)
+
+```python
+import os
+from orq_ai_sdk import Orq
+
+with Orq(api_key=os.environ["ORQ_API_KEY"], server_url="https://my.orq.ai") as orq:
+    response = orq.responses.create(
+        model="openai/gpt-6-luna", instructions="You are a helpful assistant.",
+        input="What is the capital of France?", stream=False,
+    )
+    if response.status != "completed":
+        raise RuntimeError(f"Model response {response.id}: {response.status}")
+    text = "".join(
+        part["text"]
+        for item in response.output or [] if item.get("type") == "message"
+        for part in item.get("content", []) if part.get("type") == "output_text"
+    )
+    print(text)
+```
+
+### Model (AI Router) — Python OpenAI SDK (already imported)
 
 ```python
 import os
@@ -365,33 +422,33 @@ from openai import OpenAI
 
 client = OpenAI(
     api_key=os.environ["ORQ_API_KEY"],
-    base_url="https://api.orq.ai/v2/router",
+    base_url="https://my.orq.ai/v3/router",
 )
 
-response = client.chat.completions.create(
-    model="openai/gpt-4.1",   # always use provider/model format
-    messages=[
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "What is the capital of France?"},
-    ],
+response = client.responses.create(
+    model="openai/gpt-6-luna",   # provider/model format; agent/<key> for managed agents
+    instructions="You are a helpful assistant.",
+    input="What is the capital of France?",
 )
-print(response.choices[0].message.content)
+if response.status != "completed":
+    raise RuntimeError(f"Model response {response.id}: {response.status}")
+print(response.output_text)
 ```
 
-### Model (AI Router) — curl
+### Model (AI Router) — CLI and curl
 
 ```bash
-curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
+orq responses create --model "openai/gpt-6-luna" --input "What is the capital of France?" -o json
+
+curl --fail-with-body -sS https://my.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "openai/gpt-4.1",
-    "messages": [
-      {"role": "system", "content": "You are a helpful assistant."},
-      {"role": "user", "content": "What is the capital of France?"}
-    ]
-  }' | jq
+  -d '{"model":"openai/gpt-6-luna","instructions":"You are a helpful assistant.","input":"What is the capital of France?"}'
 ```
+
+For TypeScript model calls, use either Node.js SDK example above with `model: "openai/gpt-6-luna"`.
+
+For either models or agents, stream with `stream: true` on this same endpoint and continue with `previous_response_id`. The CLI SSE decoding caveat in `orq-cli` applies to both.
 
 ---
 
@@ -402,12 +459,12 @@ curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
 | Invoking a deployment without `inputs` when prompt has `{{variables}}` | Always find and pass every `{{variable}}` in the prompt — missing ones silently omit content |
 | Passing `inputs` to a deployment that has no `{{variable}}` placeholders | `inputs` are silently ignored if the placeholder doesn't exist — use `messages` to append the user's question instead |
 | Hardcoding `ORQ_API_KEY` in source code | Use `os.environ["ORQ_API_KEY"]` / `process.env.ORQ_API_KEY` |
-| Using OpenAI message format for agents (`{"role": "user", "content": "..."}`) | Use A2A parts format: `{"role": "user", "parts": [{"kind": "text", "text": "..."}]}` |
+| Using legacy A2A `message.parts` for agents | Use Responses `input`, as plain text or input message items |
 | Skipping `identity.id` in production | Always pass identity — enables per-user analytics and cost attribution |
 | Using `stream=False` for user-facing UI | Use `stream=True` — streaming shows tokens in real time |
-| Not saving `task_id` for agent multi-turn | Store `response.task_id` and pass it in subsequent turns |
-| Using model name without provider prefix | Use `openai/gpt-4.1`, `anthropic/claude-sonnet-4-5` — not just `gpt-4.1` |
-| Not checking the trace after first invocation | Use `response.telemetry.trace_id` to find the trace and verify variable substitution and token counts |
+| Not saving the response ID for agent multi-turn | Store `response.id` and pass it as `previous_response_id` |
+| Using model name without provider prefix | Use `openai/gpt-6-luna`, `anthropic/claude-sonnet-4-5` — not just `gpt-6-luna` |
+| Not checking the trace after first invocation | Link the trace from `response.telemetry.trace_id` (step 11) and verify variable substitution and token counts |
 | Using `contact` field in agents | Use `identity` instead — `contact` is deprecated |
 
 ## Open in orq.ai
@@ -415,7 +472,7 @@ curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
 After completing this skill, direct the user to:
 - **Deployments:** [my.orq.ai](https://my.orq.ai/) → Deployments — review configuration and versions
 - **Agents:** [my.orq.ai](https://my.orq.ai/) → Agents — review agent config and tools
-- **Traces:** [my.orq.ai](https://my.orq.ai/) → Traces — inspect invocations, token usage, latency
+- **Traces:** a direct link to the invocation's trace (step 11), or [my.orq.ai](https://my.orq.ai/) → Traces — inspect invocations, token usage, latency
 - **Analytics:** [my.orq.ai](https://my.orq.ai/) → Analytics — per-deployment/agent cost and volume
 
 When this skill conflicts with live API responses or docs.orq.ai, trust the API.
