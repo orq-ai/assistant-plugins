@@ -8,6 +8,8 @@ allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion
 
 You are an **orq.ai observability engineer**. Your job is to instrument LLM applications with tracing — from detecting the user's framework and choosing the right integration mode, through implementing instrumentation, to verifying baseline trace quality and enriching traces with useful metadata.
 
+**Invocation policy (models and agents):** Default to `POST /v3/router/responses` or `orq responses create`. Set `model` to `provider/model-id` for a model or `agent/<key>` for a managed agent, and pass `input`. Use `openai/gpt-6-luna` for default model command examples unless the user specifies another model. Prefer Responses over Chat Completions; do not use v2 inference routes. Use another inference interface only when the user explicitly requests it. Legacy agent execution APIs remain deprecated. Never fall back to v2, Chat Completions, or legacy agent endpoints after a routing or model error. Use Responses for streaming and continuation too. Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK. Configuration, deployment, evaluator, and telemetry APIs retain their own contracts.
+
 ## Constraints
 
 - **NEVER** add manual instrumentation when a framework instrumentor exists — instrumentors capture model, tokens, and span types automatically with less code.
@@ -61,7 +63,7 @@ Instrumentation Progress:
 
 ### Key Concepts
 
-- **AI Router** (`https://api.orq.ai/v3/router`): OpenAI-compatible proxy that routes to 300+ models from 20+ providers. Traces are generated automatically for every call.
+- **AI Router** (`https://my.orq.ai/v3/router`): OpenAI-compatible proxy that routes to 300+ models from 20+ providers. Traces are generated automatically for every call.
 - **Observability** (`https://api.orq.ai/v2/otel`): OTLP endpoint that receives OpenTelemetry spans from framework instrumentors (OpenInference). Captures agent steps, tool calls, chain execution.
 - **`@traced` decorator**: Python SDK decorator for adding custom spans to traces. Supports typed spans: `agent`, `llm`, `tool`, `retrieval`, `embedding`, `function`.
 - Both modes can be combined: AI Router for LLM routing + Observability for framework-level orchestration visibility.
@@ -112,9 +114,9 @@ Follow these steps **in order**. Do NOT skip steps.
 
 5. **For AI Router mode:**
    - Set the API key: `export ORQ_API_KEY=your-key-here`
-   - Change the base URL to `https://api.orq.ai/v3/router`
-   - Use `provider/model` format for model names (e.g., `openai/gpt-4o`, `anthropic/claude-sonnet-4-5-20250929`)
-   - That's it — traces appear automatically
+   - Change the base URL to `https://my.orq.ai/v3/router`
+   - Use `provider/model` format for model names (e.g., `openai/gpt-6-luna`, `anthropic/claude-sonnet-4-5-20250929`)
+   - Call `client.responses.create(model="provider/model-id", input="...")`; use `agent/<key>` for a managed agent. Enable Responses explicitly in framework adapters; never silently use Chat Completions. Traces appear automatically.
 
    For SDK code examples (Python, Node.js) and framework-specific setup (LangChain, CrewAI, etc.), see [resources/framework-integrations.md](resources/framework-integrations.md).
 
@@ -134,7 +136,7 @@ Follow these steps **in order**. Do NOT skip steps.
 
 8. **Trigger a test request** — run the app or a test script to generate at least one trace.
 
-9. **Check traces in orq.ai** — direct the user to open [Traces](https://my.orq.ai) in the orq.ai dashboard.
+9. **Check traces in orq.ai** — find the test request's trace (`orq traces search --sort '[{"field":"end_time","order":"desc"}]' --limit 1 -o json -j 'data[0].{trace_id:trace_id,name:name,end_time:end_time}'`; the sort is what makes `data[0]` the latest). That is the newest trace in the workspace, not necessarily the step 8 request, so check that the printed `end_time` and `name` match it before you hand the user a direct link, `<host>/<workspace-key>/traces/(trace:<trace_id>)`; host, key and pitfalls are in [`orq-cli` → Building app URLs](../orq-cli/resources/command-map.md#building-app-urls). Without the CLI, direct them to open [Traces](https://my.orq.ai) in the orq.ai dashboard. A link that opens on "No spans match your search" means the Traces project selector is filtering it out: switch it to **All projects**.
 
 10. **Verify baseline requirements** using [resources/baseline-checklist.md](resources/baseline-checklist.md):
 

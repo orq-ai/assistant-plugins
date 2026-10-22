@@ -1,5 +1,7 @@
 # orq.ai API Reference for Deployment Invocation
 
+Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK.
+
 MCP tools and HTTP API endpoints used by the orq-invoke-deployment skill.
 
 > **Official documentation:** [Deployments](https://docs.orq.ai/docs/deployments/overview) · [Agents API](https://docs.orq.ai/docs/agents/agent-api) · [AI Router](https://docs.orq.ai/docs/router/getting-started)
@@ -70,7 +72,7 @@ All endpoints require `Authorization: Bearer $ORQ_API_KEY`.
 | `model` | Model used |
 | `provider` | Provider used |
 | `is_final` | Whether this is the final response chunk (streaming) |
-| `telemetry.trace_id` | Trace ID — use to find the trace in orq.ai |
+| `telemetry.trace_id` | Trace ID — link it as `<host>/<workspace-key>/traces/(trace:<trace_id>)` ([format, and the unverified-id caveat](../../orq-cli/resources/command-map.md#building-app-urls)) |
 | `telemetry.span_id` | Span ID |
 | `choices[].message.content` | Generated text content |
 | `choices[].message.tool_calls` | Tool call requests (if model used tools) |
@@ -141,207 +143,111 @@ curl -s https://api.orq.ai/v2/deployments \
 
 ## Agents
 
-### Create Response (invoke agent)
+### General Responses API
 
-**Endpoint:** `POST https://api.orq.ai/v3/router/responses`
+**Endpoint:** `POST https://my.orq.ai/v3/router/responses`
 
-Route to an agent by setting `model` to `agent/<agent-key>` (pin a version with `agent/<agent-key>@<version>`). This is the successor to the deprecated `POST /v2/agents/{agent_key}/responses`; both still serve.
+Use the configured host for staging or self-hosted environments; retain `/v3/router/responses`.
 
-**Required fields:** `model`, `input`
-
-**Request body:**
-
-| Field | Type | Description |
-|---|---|---|
-| `model` | string (required) | `agent/<agent-key>` to invoke an agent; pin with `agent/<agent-key>@4.0.0` |
-| `input` | string or array | The user message: a plain string for one turn, or an array of input items |
-| `previous_response_id` | string | Continue a conversation (from the previous response's `id`) |
-| `conversation` | string or object | Conversation to attach the turn to |
-| `variables` | object | Replace `{{variable}}` placeholders in the agent's prompt/instructions |
-| `identity.id` | string | Unique contact identifier (enables per-user analytics and cost attribution) |
-| `identity.display_name` | string | Contact display name |
-| `identity.email` | string | Contact email |
-| `memory` | object | Associate memory stores with a specific user/session |
-| `guardrails` | array | Guardrails to apply to the turn |
-| `fallbacks` | array | Fallback models if the primary fails |
-| `store` | boolean | Persist the response so `GET /v3/router/responses/{id}` (`responses.get`) can retrieve it |
-| `metadata` | object | Key-value pairs included in the trace |
-| `stream` | boolean | Return an SSE token stream (default: `false`) |
-
-**Response fields:**
-
-| Field | Description |
-|---|---|
-| `id` | Response ID (`resp_…`) — **pass as `previous_response_id` for multi-turn** |
-| `output[]` | List of output message items |
-| `output[].content[]` blocks where `type == "output_text"` | Generated assistant text — collect these across `output`; do not assume the last item's first block is text (it may be a tool or reasoning block) |
-| `status` | `queued`, `in_progress`, `completed`, `failed`, or `incomplete` |
-| `model` | Model used |
-| `usage.total_tokens` / `usage.input_tokens` / `usage.output_tokens` | Token counts |
-| `usage.total_cost` / `usage.input_cost` / `usage.output_cost` | Cost in USD |
-| `telemetry.trace_id` | Trace ID — use to find the trace in orq.ai |
+**Required fields:** `model: "agent/<key>"`, `input` (plain text or Responses input items).
+Use `variables` for template substitution, `identity` for attribution, and `stream: true` for SSE on this same endpoint. Do not send legacy A2A `message.parts` or `task_id`.
 
 ```bash
 # Single turn
-curl -s -X POST https://api.orq.ai/v3/router/responses \
+curl --fail-with-body -sS https://my.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "agent/<agent-key>",
-    "input": "Hello, can you help me?",
-    "identity": {"id": "user_<unique_id>", "display_name": "Jane Doe", "email": "jane@example.com"}
-  }' | jq
+  -d '{"model":"agent/<AGENT_KEY>","input":"Test query","identity":{"id":"synthetic-user"}}'
 
-# Multi-turn (pass the previous response id)
-curl -s -X POST https://api.orq.ai/v3/router/responses \
+# Continue using the previous response's id (original request must use store: true, the default)
+orq responses create --model "agent/<AGENT_KEY>" \
+  --input "Follow-up" --previous-response-id "<response_id>" -o json
+
+# Streaming uses the same route
+curl --fail-with-body -sS -N https://my.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "agent/<agent-key>",
-    "input": "Tell me more.",
-    "previous_response_id": "<resp_id_from_previous>"
-  }' | jq
-
-# With template variables (replaces {{variable}} in the agent prompt)
-curl -s -X POST https://api.orq.ai/v3/router/responses \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "agent/<agent-key>",
-    "input": "Help me.",
-    "variables": {"customer_tier": "premium", "language": "English"},
-    "identity": {"id": "user_<unique_id>"}
-  }' | jq
-
-# Streaming (SSE token deltas)
-curl -s -X POST https://api.orq.ai/v3/router/responses \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "agent/<agent-key>",
-    "input": "Hello!",
-    "identity": {"id": "user_<unique_id>"},
-    "stream": true
-  }'
-
-# Retrieve a stored response
-curl -s https://api.orq.ai/v3/router/responses/<resp_id> \
-  -H "Authorization: Bearer $ORQ_API_KEY" | jq
-
-# List agents
-curl -s https://api.orq.ai/v2/agents \
-  -H "Authorization: Bearer $ORQ_API_KEY" | jq
-
-# Get agent details
-curl -s https://api.orq.ai/v2/agents/<agent-key> \
-  -H "Authorization: Bearer $ORQ_API_KEY" | jq
+  -d '{"model":"agent/<AGENT_KEY>","input":"Hello","stream":true}'
 ```
 
-> **Deprecated, still serves: `POST https://api.orq.ai/v2/agents/{agent_key}/responses`.** Marked `@deprecated` in orq-python 4.12.22+; prefer the `/v3/router/responses` path above. Its body takes `message.role` + `message.parts` (A2A `[{kind: "text", text: "…"}]`), `task_id` for multi-turn, `variables`, `identity`, `thread`, `memory.entity_id`, `stream`, and `background`. It returns `task_id` (save for multi-turn), `output[0].parts[0].text`, `finish_reason`, and `telemetry.trace_id`, and its stream emits `response.started` / `part.delta` / `part.done` / `tool.*` / `response.done` events.
+For HTTP continuation, add `previous_response_id` to the same request body. For HTTP streaming, add `stream: true` and use `curl -N`.
+Read text from `output[]` message items and their `content[]` blocks of type `output_text`; tool and reasoning items may appear before messages. Save `id` for continuation. Streaming emits Responses events such as `response.output_text.delta`, not legacy `part.delta` events.
+Check `status` and errors before treating a call as completed; asynchronous/background results are not completed answers.
+
+**Contract source (2026-10-22):** [Run Agents](https://docs.orq.ai/ai-studio/ai-engineering/run-agents) · [Responses API](https://docs.orq.ai/ai-gateway/features/responses-api).
 
 ---
 
 ## Models (AI Router)
 
-### Create Chat Completion
+### Create Response
 
-**Endpoint:** `POST https://api.orq.ai/v3/router/chat/completions`
+**Endpoint:** `POST https://my.orq.ai/v3/router/responses`
 
-**Required fields:** `messages`, `model`
+**Required fields:** `model` in `provider/model-id` format and `input` (text or Responses input items). For managed agents the same endpoint accepts `model: "agent/<key>"`.
 
-**Model format:** Always `provider/model-id` — e.g., `openai/gpt-4.1`, `anthropic/claude-sonnet-4-5`, `google-ai/gemini-2.5-pro`
-
-**Key request fields:**
+Use Responses by default. Chat Completions or a v2 inference interface requires an explicit user request; do not select one as an error fallback. Preserve the configured host in staging/self-hosted environments.
 
 | Field | Description |
 |---|---|
-| `model` | Model in `provider/model-id` format |
-| `messages` | Array of `{role, content}` — roles: `system`, `developer`, `user`, `assistant`, `tool` |
-| `stream` | Enable SSE streaming (default: `false`) |
-| `variables` | Template variable substitution in messages using `{{variableName}}` syntax |
-| `temperature` | Sampling temperature 0–2 |
-| `max_completion_tokens` | Max output tokens |
-| `response_format` | `{type: "text"}`, `{type: "json_object"}`, or `{type: "json_schema", json_schema: {...}}` |
-| `tools` | Function definitions for tool calling |
-| `tool_choice` | `"none"`, `"auto"`, `"required"`, or `{type: "function", function: {name}}` |
-| `thinking` | Extended thinking: `{type: "enabled", budget_tokens: 1024}` or `{type: "adaptive"}` |
-| `reasoning_effort` | For reasoning models. The accepted ladder is the model's and changes per release — read it per model from `GET /v2/models`. `"none"` omits the parameter |
-| `guardrails` | Content safety: `[{id: "orq_pii_detection", execute_on: "input"}]` |
-| `fallbacks` | Fallback models: `[{model: "anthropic/claude-sonnet-4-5"}]` |
-| `retry` | `{count: 3, on_codes: [429, 500, 502, 503, 504]}` |
-| `cache` | `{type: "exact_match", ttl: 3600}` (max 3 days) |
-| `load_balancer` | `{type: "weight_based", models: [{model: "...", weight: 0.7}, ...]}` |
-| `timeout` | `{call_timeout: 30000}` (milliseconds) |
-| `metadata` | Key-value pairs for tracing (string values, max 512 chars) |
+| `instructions` | System instructions |
+| `input` | User input or Responses message/tool items |
+| `stream` | SSE using Responses events such as `response.output_text.delta` |
+| `previous_response_id` | Continue from a stored response `id` (keep `store: true`) |
+| `variables` | Template substitutions in instructions |
+| `max_output_tokens` | Output token cap |
+| `text.format` | Structured output format, e.g. `{type: "json_schema", name, schema, strict: true}` |
+| `reasoning` | Reasoning configuration; discover supported effort values per model |
+| `tools`, `tool_choice` | Responses tool definitions and selection; use the Responses schema |
+| `guardrails`, `fallbacks`, `retry`, `cache`, `load_balancer`, `timeout` | Router reliability and policy options; inspect current Responses docs or `orq responses create --help` for supported shapes |
+| `metadata`, `identity` | Trace metadata and end-user attribution |
 
-**Response:** Standard OpenAI-compatible response. Access text via `response.choices[0].message.content`.
+**Output:** Check `status` and errors. Extract message `output[].content[]` blocks of type `output_text` (OpenAI SDK: `response.output_text`). Save `id` for continuation. Do not parse Chat Completions `choices` or legacy A2A `parts` for these calls.
 
 ```bash
-# Basic call
-curl -s -X POST https://api.orq.ai/v3/router/chat/completions \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "openai/gpt-4.1",
-    "messages": [
-      {"role": "system", "content": "You are a helpful assistant."},
-      {"role": "user", "content": "What is the capital of France?"}
-    ]
-  }' | jq '.choices[0].message.content'
+# Basic model call
+orq responses create --model "openai/gpt-6-luna" --input "What is the capital of France?" -o json
 
-# With variables (template substitution)
-curl -s -X POST https://api.orq.ai/v3/router/chat/completions \
+# Template variables
+curl --fail-with-body -sS https://my.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "openai/gpt-4.1",
-    "messages": [
-      {"role": "system", "content": "You assist {{customer_name}}."},
-      {"role": "user", "content": "{{user_question}}"}
-    ],
-    "variables": {"customer_name": "Jane Doe", "user_question": "How do I reset my password?"}
-  }' | jq
-
-# With reliability features (fallback + retry)
-curl -s -X POST https://api.orq.ai/v3/router/chat/completions \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "openai/gpt-4.1",
-    "messages": [{"role": "user", "content": "Summarize this: ..."}],
-    "fallbacks": [{"model": "anthropic/claude-sonnet-4-5"}, {"model": "google-ai/gemini-2.5-flash"}],
-    "retry": {"count": 3, "on_codes": [429, 500, 502, 503]},
-    "timeout": {"call_timeout": 30000}
-  }' | jq
-
-# Structured JSON output
-curl -s -X POST https://api.orq.ai/v3/router/chat/completions \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "openai/gpt-4.1",
-    "messages": [{"role": "user", "content": "Extract name and email from: John Doe, john@example.com"}],
-    "response_format": {
-      "type": "json_schema",
-      "json_schema": {
-        "name": "contact",
-        "schema": {
-          "type": "object",
-          "properties": {"name": {"type": "string"}, "email": {"type": "string"}},
-          "required": ["name", "email"]
-        },
-        "strict": true
-      }
-    }
-  }' | jq
-
-# Streaming
-curl -s -X POST https://api.orq.ai/v3/router/chat/completions \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "anthropic/claude-sonnet-4-5",
-    "messages": [{"role": "user", "content": "Write me a haiku."}],
-    "stream": true
+    "model":"openai/gpt-6-luna",
+    "instructions":"You assist {{customer_name}}.",
+    "input":"How do I reset my password?",
+    "variables":{"customer_name":"Jane Doe"}
   }'
+
+# Reliability: change model only, retain the Responses interface
+curl --fail-with-body -sS https://my.orq.ai/v3/router/responses \
+  -H "Authorization: Bearer $ORQ_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"openai/gpt-6-luna","input":"Summarize this: ...",
+    "fallbacks":[{"model":"anthropic/claude-sonnet-4-5"}],
+    "retry":{"count":3,"on_codes":[429,500,502,503]},
+    "timeout":{"call_timeout":30000}
+  }'
+
+# Structured JSON output: text.format, not response_format
+curl --fail-with-body -sS https://my.orq.ai/v3/router/responses \
+  -H "Authorization: Bearer $ORQ_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"openai/gpt-6-luna",
+    "input":"Extract name and email from: John Doe, john@example.com",
+    "text":{"format":{
+      "type":"json_schema","name":"contact","strict":true,
+      "schema":{"type":"object","properties":{"name":{"type":"string"},"email":{"type":"string"}},"required":["name","email"],"additionalProperties":false}
+    }}
+  }'
+
+# Streaming stays on Responses for every model
+curl --fail-with-body -sS -N https://my.orq.ai/v3/router/responses \
+  -H "Authorization: Bearer $ORQ_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"openai/gpt-6-luna","input":"Write me a haiku.","stream":true}'
 ```
+
+**Contract sources:** [Responses API](https://docs.orq.ai/ai-gateway/features/responses-api) · [Create Response](https://docs.orq.ai/reference/responses/create-response).

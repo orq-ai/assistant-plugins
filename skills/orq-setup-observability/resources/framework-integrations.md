@@ -4,7 +4,7 @@
 
 | Mode | What It Does | When to Use |
 |------|-------------|-------------|
-| **AI Router** | Route LLM calls through `https://api.orq.ai/v3/router` — traces generated automatically | You want multi-provider access, fallbacks, caching, cost tracking with zero instrumentation code |
+| **AI Router** | Route LLM calls through `https://my.orq.ai/v3/router` — traces generated automatically | You want multi-provider access, fallbacks, caching, cost tracking with zero instrumentation code |
 | **Observability** | Send OpenTelemetry traces from your existing setup to `https://api.orq.ai/v2/otel` | You already call providers directly and want to add tracing without changing your LLM calls |
 | **Both** | AI Router for routing + Observability for framework-level spans | You want full pipeline visibility: framework orchestration spans + LLM call traces |
 | **Control Tower** | Full agent lifecycle management — deploy, monitor, and control agents from the orq.ai dashboard | Framework has native orq.ai integration for agent orchestration (currently: LangGraph, OpenAI Agents, Vercel AI SDK) |
@@ -42,29 +42,52 @@
 
 ## AI Router Quick Setup Pattern
 
-All AI Router integrations follow the same pattern — point your SDK's base URL to orq.ai:
+For model and agent generation, point a Responses-capable client at the v3 router and explicitly select Responses. Changing the base URL alone does not switch a Chat Completions client to Responses. If a framework cannot use Responses, use a Responses-backed callable or ask for an explicit interface exception.
 
-> **Base URL:** raw base-URL examples use `https://api.orq.ai/v3/router`. This applies when you point a third-party client (OpenAI SDK, LangChain) at orq. You do not set a base URL for the orq SDK itself — its methods target orq directly: `client.deployments.invoke` posts to `/v2/deployments/invoke` and `client.responses.create` posts to `/v3/router/responses`.
+Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK.
 
-**Python (OpenAI SDK):**
+**Python (orq SDK, preferred):**
+```python
+from orq_ai_sdk import Orq
+import os
+
+with Orq(api_key=os.environ["ORQ_API_KEY"], server_url="https://my.orq.ai") as orq:
+    response = orq.responses.create(model="openai/gpt-6-luna", input="Hello", stream=False)
+    print(response)
+```
+
+**Node.js (orq SDK, preferred):**
+```typescript
+import { Orq } from "@orq-ai/node";
+
+const orq = new Orq({ apiKey: process.env.ORQ_API_KEY, serverURL: "https://my.orq.ai" });
+const response = await orq.responses.create({ model: "openai/gpt-6-luna", input: "Hello", stream: false });
+console.log(response);
+```
+
+**Python (OpenAI SDK, already imported):**
 ```python
 from openai import OpenAI
 import os
 
 client = OpenAI(
-    base_url="https://api.orq.ai/v3/router",
+    base_url="https://my.orq.ai/v3/router",
     api_key=os.environ["ORQ_API_KEY"],
 )
+response = client.responses.create(model="openai/gpt-6-luna", input="Hello")
+print(response.output_text)
 ```
 
-**Node.js (OpenAI SDK):**
+**Node.js (OpenAI SDK, already imported):**
 ```typescript
 import OpenAI from "openai";
 
 const client = new OpenAI({
-    baseURL: "https://api.orq.ai/v3/router",
+    baseURL: "https://my.orq.ai/v3/router",
     apiKey: process.env.ORQ_API_KEY,
 });
+const response = await client.responses.create({ model: "openai/gpt-6-luna", input: "Hello" });
+console.log(response.output_text);
 ```
 
 **LangChain:**
@@ -73,15 +96,18 @@ from langchain_openai import ChatOpenAI
 import os
 
 llm = ChatOpenAI(
-    model="openai/gpt-4o",
+    model="openai/gpt-6-luna",
     api_key=os.environ["ORQ_API_KEY"],
-    base_url="https://api.orq.ai/v3/router",
+    base_url="https://my.orq.ai/v3/router",
+    use_responses_api=True,
 )
 ```
 
+Select a `langchain-openai` version with Responses support. See [ChatOpenAI Responses routing](https://reference.langchain.com/python/langchain-openai/langchain_openai/chat_models/base/ChatOpenAI).
+
 ## Observability (OpenTelemetry) Quick Setup Pattern
 
-**First-party one-liners (Python).** The orq SDK ships two zero-config setups that export to orq.ai without wiring OTLP yourself — the docs lead with these:
+**First-party one-liners (Python).** The orq SDK ships two zero-config setups that export to orq.ai without wiring OTLP yourself:
 
 ```python
 # LangChain / LangGraph

@@ -1,44 +1,20 @@
 # Known Gotchas
 
+Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK.
+
 Common pitfalls when running cross-framework agent comparisons with evaluatorq.
 
 ---
 
 ## orq.ai SDK
 
-### Invoking an agent: `responses.create(model="agent/<agent-key>")`
+### Agent calls use general Responses
 
-Invoke an agent through the router with `responses.create(model="agent/<agent-key>", input=…)` (`POST /v3/router/responses`), and read the text by collecting the `output_text` blocks across `response.output` (see [job-patterns.md](job-patterns.md)), not by assuming the last item's first block is text.
+Use `POST /v3/router/responses`, SDK `client.responses.create(model="agent/<key>", input=query)`, or `orq responses create --model "agent/<key>" --input "..." -o json`. The legacy agent-specific invoke/stream/Responses APIs are deprecated and must only be used when explicitly requested, even if a model fails on one of them.
 
-```python
-# Correct — route to the agent by model
-response = orq.responses.create(model="agent/my-agent", input=query)
-text = response.output[-1]["content"][0]["text"]
-```
+### Message and output format
 
-The old `agents.*` surface is `@deprecated` in orq-python 4.12.22+ but still serves. If you fall back to it, use `agents.responses.create(background=False)`, NOT `agents.invoke()` — `invoke()` returns an async A2A task (`status: "submitted"`), not the response:
-
-```python
-# Deprecated, still serves — and invoke() is the wrong one even here
-response = orq.agents.invoke(agent_key="my-agent", ...)   # returns task status, not output
-response = orq.agents.responses.create(                   # returns the response
-    agent_key="my-agent",
-    background=False,
-    message={"role": "user", "parts": [{"kind": "text", "text": query}]},
-)
-```
-
-### Message format
-
-The new router path takes a plain `input` string (or a structured input array). The deprecated `agents.*` path uses the A2A `parts` shape, not OpenAI-style `content`:
-
-```python
-# New path — just a string
-input="Hello"
-
-# Deprecated agents.* path — A2A parts, NOT {"role": "user", "content": "Hello"}
-message={"role": "user", "parts": [{"kind": "text", "text": "Hello"}]}
-```
+Use Responses `input` (text or message items), rather than legacy A2A `message.parts`. Read message `content` blocks of type `output_text`, or `response.output_text` with the OpenAI SDK; output may also contain tool and reasoning items. Continue with `previous_response_id=response.id` (keep `store: true`), rather than a task ID. Failed, incomplete or background responses are not completed quality results — check status first.
 
 ### Code tools: `additionalProperties: false`
 

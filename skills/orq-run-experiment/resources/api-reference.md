@@ -61,18 +61,12 @@ curl -s https://api.orq.ai/v2/agents \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" | jq
 
-# Invoke an agent (for generating test traces) — model="agent/<agent-key>"
-curl -s -X POST https://api.orq.ai/v3/router/responses \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model": "agent/<agent-key>", "input": "Test input"}' | jq
+# Invoke an agent (for generating test traces)
+orq responses create --model "agent/<AGENT_KEY>" --input "Test input" -o json
 
-# Multi-turn agent testing (pass the previous response id)
-curl -s -X POST https://api.orq.ai/v3/router/responses \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model": "agent/<agent-key>", "input": "Step 2", "previous_response_id": "<resp_id>"}' | jq
-# Deprecated, still serves: POST /v2/agents/<agent-key>/responses with a message.parts body and task_id multi-turn.
+# Continue with the response id
+orq responses create --model "agent/<AGENT_KEY>" --input "Step 2" \
+  --previous-response-id "<response_id>" -o json
 ```
 
 ### Tools

@@ -15,7 +15,7 @@ doc_url,https://docs.orq.ai/reference/deployments/invoke,,invoke page reachable
 doc_url,https://docs.orq.ai/reference/deployments/stream,,stream page reachable
 doc_url,https://docs.orq.ai/reference/deployments/get-config,,get-config page reachable
 doc_url,https://docs.orq.ai/docs/agents/agent-api,,agent-api page reachable
-doc_url,https://docs.orq.ai/reference/agents/create-response,,create-response page reachable
+doc_url,https://docs.orq.ai/reference/responses/create-response,,create-response page reachable
 doc_url,https://docs.orq.ai/docs/router/getting-started,,getting-started page reachable
 doc_url,https://docs.orq.ai/docs/proxy/openai-compatible-api,,openai-compatible-api page reachable
 doc_url,https://docs.orq.ai/docs/proxy/supported-models,,supported-models page reachable

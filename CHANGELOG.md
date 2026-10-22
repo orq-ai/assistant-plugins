@@ -5,13 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.9.2] - 2026-10-20
+## [3.9.4] - 2026-10-22
 
 ### Changed
 
-- Aligned the SDK-teaching skills with orq-python 4.12.22+ (RES-1221). `orq-invoke-deployment`, `orq-build-agent`, `orq-run-experiment` and `orq-compare-agents` now teach `client.responses.create(model="agent/<key>", input=…)` -> `POST /v3/router/responses` as the primary agent-invocation path (output read by collecting the `output_text` blocks across `response.output`, not by assuming the last item's first block is text; multi-turn via `previous_response_id`), with the deprecated `agents.responses.create` / `POST /v2/agents/<key>/responses` path retained as a clearly-marked fallback. Verified live against a workspace agent on orq-ai-sdk 4.15.14.
-- `orq-setup-observability`: raw router base-URL examples move `/v2/router` -> `/v3/router` (the OTLP `/v2/otel` endpoint is unchanged), with a note that the orq SDK's own `chat.completions` still posts v2 internally. Added the first-party observability one-liners `orq_ai_sdk.langchain.setup()` and `OpenAIAgentsInstrumentor().instrument()`.
-- Corrected the `@traced` guide: the decorator falls back to `ORQ_API_KEY` and raises `ValueError` when no key is available, rather than silently exporting nothing.
+- `orq-setup-observability`: added the first-party observability one-liners `orq_ai_sdk.langchain.setup()` and `OpenAIAgentsInstrumentor().instrument()` (RES-1221).
+- `orq-invoke-deployment`: stream deployments with `client.deployments.stream(...)` (an `EventStream`) instead of `invoke(stream=True)`, which returns a single response body and is not iterable (RES-1221).
+
+## [3.9.3] - 2026-10-22
+
+### Fixed
+
+- Require evaluatorq 1.30.0 or newer for the Responses helper API, check the minimum in CI, and type-check SDK/HTTP examples directly from markdown to catch scope and schema regressions.
+- Show paired orq/OpenAI Responses examples for models, agents and comparison jobs. Prefer orq for new code and existing orq imports; reuse OpenAI if it is already imported and orq is not. Document async and response-parsing differences.
+- Replace the generated CLI command inventory, group listing and inventory-generation script with progressive `--help` discovery. Retain task-specific examples, behavior caveats and invocation regression checks.
+- Use `openai/gpt-6-luna` in direct model invocation examples and model command defaults instead of older GPT models.
+- Model and agent invocation guidance now defaults to `POST /v3/router/responses` and `orq responses create`, using `provider/model-id` for models and `agent/<key>` for managed agents. Prefer Responses over Chat Completions and avoid v2 inference. Other inference interfaces require an explicit user request and must never be automatic error fallbacks.
+- Update invocation, observability, simulation and comparison examples to Responses request/output shapes, including streaming, structured output and `previous_response_id` continuation. Framework guidance explicitly selects Responses (including LangChain `use_responses_api=True`). Configuration, deployment, evaluator and telemetry APIs retain their own contracts.
+- Route evaluator-alignment recommendation/rewrite helpers and reconstructed judge calls through Responses, preserving structured verdicts and pricing input/output tokens.
+- Add a CI guard against non-Responses inference examples and runtime calls and local synthetic CLI routing probes for both models and agents. Document the CLI SSE decoding limitation and use SDK/curl for consuming streams on the same route. Contract checked against current Orq documentation, LangChain's Responses reference and installed CLI help on 2026-10-22; the reported EU-model failure has not been reproduced against a live agent.
+
+## [3.9.2] - 2026-10-13
+
+### Changed
+
+- `orq-cli/resources/command-map.md` "Building app URLs" is the single definition of trace and span links in the app: `<host>/<workspace-key>/traces/(trace:<trace_id>)` and `…/(trace:<trace_id>//span:<span_id>)`, opened cold in a browser on prod on 2026-10-13. The snippet takes the host from `ORQ_UI_BASE_URL` or the session (`urls.api_base_url`, or `server` under `ORQ_API_KEY`) and fails loudly when there is none, or when the workspace key or an id is missing. It records that a link to a trace outside the user's selected Traces project opens on "No spans match your search" (switch to All projects), and that ids from an invocation's `telemetry` were not checked against the route (RES-1550).
+- `orq-invoke-deployment`, `orq-setup-observability`, `orq-analyze-traces`, `orq-compare-agents` and `orq-shared/resources/trace-queries.md` hand the user a link to the trace instead of "go to my.orq.ai → Traces", and point at that section. `orq-analyze-traces` now requires full 32-hex ids in `evidence` and `passing`.
+- `orq-cli` skill: with `ORQ_API_KEY` set, `orq auth whoami` on 11.0.2 reports `active_workspace_key: null` rather than the logged-in workspace; the constraint and the workspace-key snippet's error message say so.
+
+### Removed
+
+- The `traces?query=trace_id:is:<id>` deep link from `orq-cli`; the app no longer routes it.
 
 ## [3.9.1] - 2026-10-16
 

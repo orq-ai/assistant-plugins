@@ -8,55 +8,95 @@ Pick the pattern matching each agent's framework, then assemble them into the co
 
 ## orq.ai Agent
 
-### Python
+### Python — orq SDK (preferred)
+
+Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK.
 
 ```python
+from orq_ai_sdk import Orq
+
 @job("OrqAgent")
 async def orq_agent_job(data: DataPoint, row: int):
-    with Orq(api_key=ORQ_API_KEY, server_url=ORQ_BASE_URL) as orq:
-        response = orq.responses.create(
-            model="agent/<agent-key>",
-            input=data.inputs["query"],
+    # orq takes the host; its SDK adds /v3/router/responses.
+    async with Orq(api_key=ORQ_API_KEY, server_url=ORQ_BASE_URL.rstrip("/")) as orq:
+        response = await orq.responses.create_async(
+            model="agent/<AGENT_KEY>", input=data.inputs["query"], stream=False,
         )
-
-    # output is a list of message items; collect the assistant text blocks
-    text = ""
-    for msg in response.output or []:
-        for block in msg.get("content", []):
-            if block.get("type") == "output_text":
-                text += block.get("text", "")
-
-    return {
-        "agent": "OrqAgent",
-        "query": data.inputs["query"],
-        "response": text,
-    }
+    if response.status != "completed":
+        raise RuntimeError(f"Agent response {response.id}: {response.status}")
+    text = "".join(
+        part["text"]
+        for item in response.output or [] if item.get("type") == "message"
+        for part in item.get("content", []) if part.get("type") == "output_text"
+    )
+    return {"agent": "OrqAgent", "query": data.inputs["query"], "response": text}
 ```
 
-> **Import:** Use `from orq_ai_sdk import Orq` (package: `pip install orq-ai-sdk`). The module name is `orq_ai_sdk`, NOT `orq`.
+### Python — existing OpenAI SDK
 
-### TypeScript
+```python
+from openai import AsyncOpenAI
+
+@job("OrqAgent")
+async def orq_agent_job(data: DataPoint, row: int):
+    # ORQ_BASE_URL is the host, e.g. https://my.orq.ai (keep staging hosts verbatim).
+    async with AsyncOpenAI(api_key=ORQ_API_KEY, base_url=f"{ORQ_BASE_URL.rstrip('/')}/v3/router") as client:
+        response = await client.responses.create(
+            model="agent/<AGENT_KEY>",
+            input=data.inputs["query"],
+        )
+    if response.status != "completed":
+        raise RuntimeError(f"Agent response {response.id}: {response.status}")
+    return {"agent": "OrqAgent", "query": data.inputs["query"], "response": response.output_text}
+```
+
+> Install `orq-ai-sdk` for the preferred pattern. Use the OpenAI alternative when it is already imported and orq is not; do not install both just for inference. Both call general Responses. Keep the orq SDK for platform evaluator calls when needed.
+
+### TypeScript — orq SDK (preferred)
 
 ```typescript
-const orqAgentJob = job("OrqAgent", async (data) => {
-  const orq = new Orq({ apiKey: process.env.ORQ_API_KEY });
-  // Mirrors POST /v3/router/responses (the authority); the Node SDK is generated from the same spec.
-  const response = await orq.responses.create({
-    model: "agent/<agent-key>",
-    input: data.inputs.query,
-  });
+import { Orq } from "@orq-ai/node";
 
-  let text = "";
-  for (const msg of response.output ?? []) {
-    for (const block of msg.content ?? []) {
-      if (block.type === "output_text") text += block.text;
-    }
+const orqAgentJob = job("OrqAgent", async (data) => {
+  const query = data.inputs.query;
+  if (typeof query !== "string") throw new Error("Expected a string inputs.query");
+  const host = (process.env.ORQ_BASE_URL ?? "https://my.orq.ai").replace(/\/$/, "");
+  const orq = new Orq({ apiKey: process.env.ORQ_API_KEY, serverURL: host });
+  const response = await orq.responses.create({
+    model: "agent/<AGENT_KEY>", input: query, stream: false,
+  });
+  if (!("output" in response) || response.status !== "completed") {
+    throw new Error("Expected a completed non-streaming response");
   }
-  return { agent: "OrqAgent", query: data.inputs.query, response: text };
+  const text = (response.output ?? [])
+    .filter(item => item.type === "message")
+    .flatMap(item => item.content ?? [])
+    .filter(part => part.type === "output_text")
+    .map(part => part.text).join("");
+  return { agent: "OrqAgent", query, response: text };
 });
 ```
 
-> **Important:** Invoke the agent with `responses.create(model="agent/<agent-key>")`. If you fall back to the deprecated `agents.*` surface, use `agents.responses.create()`, NOT `agents.invoke()` — `invoke()` returns an async A2A task (status: "submitted"), not the actual response. See [gotchas](gotchas.md).
+### TypeScript — existing OpenAI SDK
+
+```typescript
+import OpenAI from "openai";
+
+const orqAgentJob = job("OrqAgent", async (data) => {
+  const query = data.inputs.query;
+  if (typeof query !== "string") throw new Error("Expected a string inputs.query");
+  const host = (process.env.ORQ_BASE_URL ?? "https://my.orq.ai").replace(/\/$/, "");
+  const client = new OpenAI({ apiKey: process.env.ORQ_API_KEY, baseURL: `${host}/v3/router` });
+  const response = await client.responses.create({
+    model: "agent/<AGENT_KEY>",
+    input: query,
+  });
+  if (response.status !== "completed") throw new Error(`Agent response ${response.id}: ${response.status}`);
+  return { agent: "OrqAgent", query, response: response.output_text };
+});
+```
+
+> **Important:** Use the general `POST /v3/router/responses` route, or `orq responses create --model "agent/<key>"` from a shell. Legacy agent invocation APIs are deprecated and require an explicit user request; never use them as an EU-model workaround. See [gotchas](gotchas.md).
 
 ---
 

@@ -2,7 +2,7 @@
 
 MCP tools and HTTP API endpoints used by the orq-build-agent skill.
 
-> **Official documentation:** [Agents API Guide](https://docs.orq.ai/docs/agents/agent-api) · [Create Agent](https://docs.orq.ai/reference/agents/create-agent) · [Create Response](https://docs.orq.ai/reference/agents/create-response)
+> **Official documentation:** [Agents API Guide](https://docs.orq.ai/docs/agents/agent-api) · [Create Agent](https://docs.orq.ai/reference/agents/create-agent) · [Create Response](https://docs.orq.ai/reference/responses/create-response)
 
 ## Contents
 - MCP tools
@@ -72,41 +72,39 @@ curl -s -X PATCH https://api.orq.ai/v2/agents/<KEY> \
   -d '{"model": {"id": "openai/gpt-4.1"}}' | jq
 ```
 
-### Agent Responses
+### General Responses API
 
-**Endpoint:** `POST https://api.orq.ai/v3/router/responses` — route to the agent by setting `model` to `agent/<agent-key>`. Successor to the deprecated `POST /v2/agents/{agent_key}/responses`; both still serve.
+**Endpoint:** `POST https://my.orq.ai/v3/router/responses`
+
+Use the configured host for staging or self-hosted environments; retain `/v3/router/responses`.
+
+**Required fields:** `model: "agent/<key>"`, `input` (plain text or Responses input items).
+Use `variables` for template substitution, `identity` for attribution, and `stream: true` for SSE on this same endpoint. Do not send legacy A2A `message.parts` or `task_id`.
 
 ```bash
-# Invoke agent
-curl -s -X POST https://api.orq.ai/v3/router/responses \
+# Single turn
+curl --fail-with-body -sS https://my.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-  "model": "agent/<agent-key>",
-  "input": "Test query"
-}' | jq
+  -d '{"model":"agent/<AGENT_KEY>","input":"Test query","identity":{"id":"synthetic-user"}}'
 
-# Multi-turn (pass the previous response id)
-curl -s -X POST https://api.orq.ai/v3/router/responses \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-  "model": "agent/<agent-key>",
-  "input": "Follow-up",
-  "previous_response_id": "<resp_id>"
-}' | jq
+# Continue using the previous response's id (original request must use store: true, the default)
+orq responses create --model "agent/<AGENT_KEY>" \
+  --input "Follow-up" --previous-response-id "<response_id>" -o json
 
-# Call a specific version (pin in the model string)
-curl -s -X POST https://api.orq.ai/v3/router/responses \
+# Streaming uses the same route
+curl --fail-with-body -sS -N https://my.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-  "model": "agent/<agent-key>@4.0.0",
-  "input": "Query"
-}' | jq
+  -d '{"model":"agent/<AGENT_KEY>","input":"Hello","stream":true}'
 ```
 
-> **Deprecated, still serves:** `POST https://api.orq.ai/v2/agents/{agent_key}/responses` (agent_key in the URL path, version as `<agent-key>@4.0.0`), with a `message.parts` A2A body and `task_id` multi-turn. Marked `@deprecated` in orq-python 4.12.22+.
+For HTTP continuation, add `previous_response_id` to the same request body. For HTTP streaming, add `stream: true` and use `curl -N`.
+Read text from `output[]` message items and their `content[]` blocks of type `output_text`; tool and reasoning items may appear before messages. Save `id` for continuation. Streaming emits Responses events such as `response.output_text.delta`, not legacy `part.delta` events.
+Check `status` and errors before treating a call as completed; asynchronous/background results are not completed answers.
+
+**Contract source (2026-10-22):** [Run Agents](https://docs.orq.ai/ai-studio/ai-engineering/run-agents) · [Responses API](https://docs.orq.ai/ai-gateway/features/responses-api).
+
 
 ### Tools
 

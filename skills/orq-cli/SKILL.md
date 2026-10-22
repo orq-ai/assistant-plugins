@@ -20,6 +20,8 @@ The CLI is a Go binary generated from the orq.ai OpenAPI spec, so nearly every A
 
 **Every section below opens with a `Probed against` line naming the `orq` version it was last checked on, so the oldest of those lines is the ceiling on how far to trust the file: `grep -n 'Probed against' skills/orq-cli/SKILL.md`. A section with no such line makes no version claim. Treat `--help` as the source of truth either way.** The CLI's version is its own since 5.0.0 and no longer tracks the API line, so the number tells you nothing about the API — `orq version -o json` reports both.
 
+**Invocation policy (models and agents):** Default to `POST /v3/router/responses` or `orq responses create`. Set `model` to `provider/model-id` for a model or `agent/<key>` for a managed agent, and pass `input`. Use `openai/gpt-6-luna` for default model command examples unless the user specifies another model. Prefer Responses over Chat Completions; do not use v2 inference routes. Use another inference interface only when the user explicitly requests it. Legacy agent execution APIs remain deprecated. Never fall back to v2, Chat Completions, or legacy agent endpoints after a routing or model error. Use Responses for streaming and continuation too. Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK. Configuration, deployment, evaluator, and telemetry APIs retain their own contracts.
+
 ## Constraints
 
 - **NEVER** run any `orq` command with `--verbose` in output anyone else will see. It writes the whole profile config to **stderr** before any request, so every command dumps it. **On 8.6.9 the keys in that dump are masked** (`"api_key":"**HIDDEN**"`) and the HTTP `Authorization` header is `[REDACTED]`, so it no longer leaks credentials — but it still lists every profile name and host, which is not for a shared transcript. **On 5.1.0 it printed every stored key in plaintext**, and that version was verified to do so; the fix landed somewhere between 5.1.0 and 8.6.9 and was not bisected. On any CLI you have not checked, assume the 5.1.0 behaviour, and if a key did print, tell the user to rotate it.
@@ -29,7 +31,7 @@ The CLI is a Go binary generated from the orq.ai OpenAPI spec, so nearly every A
 - **NEVER** guess a flag or subcommand. Run `orq <group> --help` first; the help text lists every flag with its exact name and type.
 - **NEVER** parse default output. `--help` names `table` as the default format, but piped (not a terminal) it renders TOON, which is meant for humans; a real terminal was not probed. Pass **`-o json`** on anything a script or you will parse. There is no separate JSON flag (`--json` is `unknown flag`). `ORQ_OUTPUT_FORMAT=json` did produce JSON on 8.6.9, but an explicit `-o json` does not depend on the environment.
 - **NEVER** run `orq auth login` unattended without an API key. Its default is an interactive OAuth device flow that needs a browser; `--api-key` signs in with a key instead. If nobody can complete the browser flow, stop and say so — `ORQ_API_KEY` is **not** a substitute for the commands that need a session (see the auth matrix below).
-- **NEVER** assume which workspace is active. `ORQ_API_KEY` **overrides an active OAuth session** (5.1.0; not re-probed on 8.6.9, which needed a live session), so a stray exported key silently redirects every read to that key's workspace while `whoami` keeps reporting the one you logged into. Confirm with a count before trusting data (see "Which workspace am I really reading?").
+- **NEVER** assume which workspace is active. `ORQ_API_KEY` **overrides an active OAuth session** (5.1.0; not re-probed on 8.6.9, which needed a live session), so a stray exported key silently redirects every read to that key's workspace. On 5.1.0 `whoami` kept reporting the one you logged into; on 11.0.2 it reports the key instead (`method: api_key`, `active_workspace_key: null`), so neither tells you which workspace the key reads. Confirm with a count before trusting data (see "Which workspace am I really reading?").
 - **NEVER** report a count or a "complete" list from a default page. Every list command below except `agents` caps by default and sets `has_more: true` with nothing in the output to signal it. Check `has_more` or pass `--limit` (see "Lists truncate silently"). `agents list` is the exception on 8.6.9: it returns every agent when `--limit` is omitted.
 - **NEVER** treat an empty or small result as an answer. `0` rows is the characteristic symptom of a project-scoped key or a wrong workspace, and it reads exactly like a legitimately empty workspace. Rule out credentials first.
 - **NEVER** take `data[0]` from `traces search` as the latest trace unless you passed the sort. Only `[{"field":"end_time","order":"desc"}]` sorts and nothing else is accepted, so ordering is a contract only when you ask for it.
@@ -43,6 +45,19 @@ The CLI is a Go binary generated from the orq.ai OpenAPI spec, so nearly every A
 - **ALWAYS** prefer `-j` (JMESPath) over piping to `jq` **when it can express the projection**. It runs inside the CLI, so it needs no `jq` installed. Reach for `jq` when you need something JMESPath lacks (`@uri` encoding, text munging), or when reading a file rather than a command's output.
 
 **Why these constraints:** the generated command surface is large and drifts between versions, so guessed flags fail in ways that look like auth problems. Auth and output failures here are quiet: wrong-workspace reads succeed, logged-out commands exit 0, and one shadowed flag returns an empty list instead of an error.
+
+## Invoke models and agents through Responses
+
+```sh
+orq responses create --help
+orq responses create --model "openai/gpt-6-luna" --input "Hello" -o json
+orq responses create --model "agent/<key>" --input "Hello" -o json
+orq responses create --model "agent/<key>" --input "Tell me more" --previous-response-id "<response_id>" -o json
+```
+
+**Streaming caveat (local synthetic SSE check, 2026-10-22):** CLI `11.5.0-rc.20` (API `4.17.0-rc.14`) exposes `--stream` and sends the correct route/body, but fails on a `text/event-stream` response with `Not sure how to unmarshal text/event-stream`. For consuming SSE, use the SDK or `curl -N` with `stream: true` on `/v3/router/responses`; do not retry through a deprecated agent endpoint. This check used a local mock, not a live model.
+
+This uses `POST /v3/router/responses`. Keep the configured host/profile/project explicit when needed. Continue with `id`, not a legacy task ID. Read `output[].content[]` text blocks and check response status/errors. Command-map entries for legacy agent execution are inventory only, never invocation recommendations. If these flags are missing, inspect/update the CLI or use HTTP on the same route; do not fall back to v2 inference, Chat Completions, or deprecated agent commands.
 
 ## Companion Skills
 
@@ -256,7 +271,7 @@ Workspace entries carry `id`, `key`, `name`, `total_members`, `active`. The **ke
 
 That produces the nastiest failure in this skill, because nothing errors:
 
-- `orq auth whoami` reports the workspace you logged into — it only reads the session.
+- `orq auth whoami` does not tell you which workspace `ORQ_API_KEY` reads. On 5.1.0 it still reported the workspace you logged into (it only read the session); on 11.0.2 it reports `method: api_key` and `active_workspace_key: null`.
 - `orq agents list` reads the **key's** workspace — a different one.
 - On 5.1.0, `.env` and `.env.local` autoloaded from the working directory, so the key could arrive without anyone setting it in this shell. **8.6.9 did not autoload either file** (a `.env` and a `.env.local` holding a valid `ORQ_API_KEY`, `ORQ_API_KEY` unset in the shell: `missing API key`), so on a current CLI a key comes from the shell environment or a profile.
 
@@ -270,7 +285,7 @@ Use `orq projects list` as the canary, not `agents list`:
 
 ```sh
 [ -n "${ORQ_API_KEY:-}" ] && echo "key present — resource reads use ITS workspace, not the session's"
-orq auth whoami -o json -j active_workspace_key --raw           # session's workspace
+orq auth whoami -o json -j active_workspace_key --raw           # session's workspace; null on 11.0.2 when the key is set
 orq projects list -o json --limit 200 -j 'length(data)' --raw   # scope of whatever authenticated
 ```
 
@@ -292,7 +307,7 @@ Fall back to the session file only when the CLI is unavailable. Same value, unde
 jq -r .activeWorkspaceKey ~/.orq/sessions/my.orq.ai.json
 ```
 
-A snippet for scripts that need the key (for example to build `https://my.orq.ai/<key>/traces?query=…` deep-links). It has to tolerate the command succeeding while producing nothing, which is why the guard is not optional:
+A snippet for scripts that need the key (for example to build trace and span links; the URL shapes are in [resources/command-map.md → Building app URLs](resources/command-map.md#building-app-urls)). It has to tolerate the command succeeding while producing nothing, which is why the guard is not optional:
 
 ```sh
 # ORQ_WORKSPACE is read by the CLI itself as of 5.x (still listed on 8.6.9), so honouring it here agrees
@@ -304,7 +319,7 @@ if [ -z "$workspace_key" ]; then
   workspace_key="$(orq auth whoami -o json -j active_workspace_key --raw 2>/dev/null)"
 fi
 case "$workspace_key" in
-  ''|null) echo "no active orq workspace; run 'orq auth login'" >&2; exit 1 ;;
+  ''|null) echo "no active orq workspace; run 'orq auth login', or set ORQ_WORKSPACE when ORQ_API_KEY is set (whoami reports no key then)" >&2; exit 1 ;;
 esac
 ```
 
@@ -324,23 +339,13 @@ orq help-config                  # env vars and config files
 
 Every generated group is one API tag. `orq request <method> <path>` is the escape hatch for an endpoint with no generated command; it reuses the configured auth and server.
 
-`orq --help` sorts the groups into seven sections. Knowing the sections is the fastest way to guess where a capability lives before running `--help` on it:
-
-| Section | Groups |
-|---|---|
-| Get started | `auth`, `connect`, `disconnect`, `doctor`, `launch`, `orqi`, `setup`, `status`, `switch`, `update` |
-| AI Gateway | `budgets`, `chat`, `chunking`, `completions`, `embeddings`, `images`, `mcp-gateways`, `mcp-servers`, `model-catalog`, `models`, `moderations`, `ocr`, `pii`, `rerank`, `responses`, `smart-routers`, `speech`, `transcriptions`, `translations` |
-| Observability | `alerts`, `feedback`, `identities`, `logs`, `notifiers`, `traces` |
-| Managed agents | `agents`, `agents-responses`, `deployments`, `knowledge-bases`, `memory-stores`, `prompts`, `schedules`, `skills`, `tools` |
-| Optimization | `annotation-queues`, `datasets`, `evals` |
-| Administration | `api-keys`, `files`, `management-keys`, `projects`, `reporting`, `webhooks`, `workspace`, `workspace-security`, `workspace-settings` |
-| Utilities | `completion`, `default-format`, `help`, `help-config`, `help-input`, `request`, `server`, `version` |
+Discover one group at a time using the installed CLI's help. Do not copy a full command inventory into generated guidance.
 
 There is still no `experiments` group — use the MCP tools or the evaluatorq SDK for those.
 
-The **Get started** group is not generated from the API and behaves differently from everything else: those commands write to local config files rather than calling the platform. `orqi` (the orq.ai assistant, installed on first use) and `switch` are new since 5.1.0 and were only read from `--help`, not run. See "Wiring coding agents" below before running any of them.
+Local setup and coding-agent wiring commands can write config files. See "Wiring coding agents" below before running them.
 
-See [resources/command-map.md](resources/command-map.md) for the full command tree, JMESPath recipes, and body-input patterns.
+See [resources/command-map.md](resources/command-map.md) for behavior caveats, JMESPath recipes, and body-input patterns.
 
 ## Phase 5 — Run with machine-readable output
 
