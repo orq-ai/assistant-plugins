@@ -57,7 +57,7 @@ jobs:
           fi
       - name: Validate skills (frontmatter, lock invariants + hash freshness, version sync, content patterns)
         run: node tests/scripts/validate-skills.mjs
-      - name: Agent invocations use general Responses
+      - name: Model and agent invocations use general Responses
         run: node tests/scripts/validate-agent-invocations.mjs
       - name: CHANGELOG has an entry for the manifest version
         # The release workflow takes its notes from this section and fails

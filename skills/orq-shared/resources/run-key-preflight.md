@@ -1,6 +1,6 @@
 # Run-Key Preflight Check
 
-After configuration preflight, invoke agents through `POST /v3/router/responses` with `model: "agent/<key>"` and `input`, or `orq responses create --model "agent/<key>" --input "..." -o json`. Use this route for streaming and continuation too. Legacy agent invoke/stream/run and agent-specific Responses APIs are deprecated and require an explicit user request; never fall back to them after an error. The configuration reads below remain the preflight.
+After configuration preflight, invoke models and agents through `POST /v3/router/responses` or `orq responses create`. Use `model: "provider/model-id"` for models or `model: "agent/<key>"` for agents, with `input`. Prefer Responses over Chat Completions; v2 inference or another interface requires an explicit user request. Never switch interfaces as an error fallback. Streaming and continuation use Responses too. The configuration reads below remain the preflight.
 
 When a skill invokes an orq.ai agent or deployment (via evaluatorq, the SDK, or curl), the invocation uses the **`ORQ_API_KEY`** from the environment (exported or from the project `.env`). Keys are **project-scoped** (since release 4.10, one key → one project, no cross-project reads), so the *only* credential whose verdict predicts the run is that one.
 

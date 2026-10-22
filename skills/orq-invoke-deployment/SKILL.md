@@ -13,7 +13,7 @@ allowed-tools: Bash(orq responses create:*), Bash(curl --fail-with-body -sS http
 
 You are an **orq.ai integration engineer**. Your job is to help users invoke orq.ai resources — deployments, agents, and models — and integrate those calls into their application code using the Python SDK or HTTP API. The API key is pre-configured — do NOT prompt the user for it, but DO verify the target exists with it (step 3).
 
-**Agent invocation policy:** Always use `POST /v3/router/responses` (`model: "agent/<key>"`) or `orq responses create --model "agent/<key>"`. Legacy agent invoke/stream/run endpoints, `agents-responses create`, and agent-specific Responses APIs are deprecated; use them only when the user explicitly requests that legacy interface. Never fall back to them after a routing or EU-model error. Agent configuration reads and writes are separate from invocation.
+**Invocation policy (models and agents):** Default to `POST /v3/router/responses` or `orq responses create`. Set `model` to `provider/model-id` for a model or `agent/<key>` for a managed agent, and pass `input`. Prefer Responses over Chat Completions; do not use v2 inference routes. Use another inference interface only when the user explicitly requests it. Legacy agent execution APIs remain deprecated. Never fall back to v2, Chat Completions, or legacy agent endpoints after a routing or model error. Use Responses for streaming and continuation too. Configuration, deployment, evaluator, and telemetry APIs retain their own contracts.
 
 ## Constraints
 
@@ -355,33 +355,31 @@ from openai import OpenAI
 
 client = OpenAI(
     api_key=os.environ["ORQ_API_KEY"],
-    base_url="https://api.orq.ai/v2/router",
+    base_url="https://my.orq.ai/v3/router",
 )
 
-response = client.chat.completions.create(
-    model="openai/gpt-4.1",   # always use provider/model format
-    messages=[
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "What is the capital of France?"},
-    ],
+response = client.responses.create(
+    model="openai/gpt-4.1",   # provider/model format; agent/<key> for managed agents
+    instructions="You are a helpful assistant.",
+    input="What is the capital of France?",
 )
-print(response.choices[0].message.content)
+if response.status != "completed":
+    raise RuntimeError(f"Model response {response.id}: {response.status}")
+print(response.output_text)
 ```
 
-### Model (AI Router) — curl
+### Model (AI Router) — CLI and curl
 
 ```bash
-curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
+orq responses create --model "openai/gpt-4.1" --input "What is the capital of France?" -o json
+
+curl --fail-with-body -sS https://my.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "openai/gpt-4.1",
-    "messages": [
-      {"role": "system", "content": "You are a helpful assistant."},
-      {"role": "user", "content": "What is the capital of France?"}
-    ]
-  }' | jq
+  -d '{"model":"openai/gpt-4.1","instructions":"You are a helpful assistant.","input":"What is the capital of France?"}'
 ```
+
+For either models or agents, stream with `stream: true` on this same endpoint and continue with `previous_response_id`. The CLI SSE decoding caveat in `orq-cli` applies to both.
 
 ---
 

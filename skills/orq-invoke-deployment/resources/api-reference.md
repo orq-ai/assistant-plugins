@@ -178,105 +178,74 @@ Check `status` and errors before treating a call as completed; asynchronous/back
 
 ## Models (AI Router)
 
-### Create Chat Completion
+### Create Response
 
-**Endpoint:** `POST https://api.orq.ai/v2/router/chat/completions`
+**Endpoint:** `POST https://my.orq.ai/v3/router/responses`
 
-**Required fields:** `messages`, `model`
+**Required fields:** `model` in `provider/model-id` format and `input` (text or Responses input items). For managed agents the same endpoint accepts `model: "agent/<key>"`.
 
-**Model format:** Always `provider/model-id` — e.g., `openai/gpt-4.1`, `anthropic/claude-sonnet-4-5`, `google-ai/gemini-2.5-pro`
-
-**Key request fields:**
+Use Responses by default. Chat Completions or a v2 inference interface requires an explicit user request; do not select one as an error fallback. Preserve the configured host in staging/self-hosted environments.
 
 | Field | Description |
 |---|---|
-| `model` | Model in `provider/model-id` format |
-| `messages` | Array of `{role, content}` — roles: `system`, `developer`, `user`, `assistant`, `tool` |
-| `stream` | Enable SSE streaming (default: `false`) |
-| `variables` | Template variable substitution in messages using `{{variableName}}` syntax |
-| `temperature` | Sampling temperature 0–2 |
-| `max_completion_tokens` | Max output tokens |
-| `response_format` | `{type: "text"}`, `{type: "json_object"}`, or `{type: "json_schema", json_schema: {...}}` |
-| `tools` | Function definitions for tool calling |
-| `tool_choice` | `"none"`, `"auto"`, `"required"`, or `{type: "function", function: {name}}` |
-| `thinking` | Extended thinking: `{type: "enabled", budget_tokens: 1024}` or `{type: "adaptive"}` |
-| `reasoning_effort` | For reasoning models. The accepted ladder is the model's and changes per release — read it per model from `GET /v2/models`. `"none"` omits the parameter |
-| `guardrails` | Content safety: `[{id: "orq_pii_detection", execute_on: "input"}]` |
-| `fallbacks` | Fallback models: `[{model: "anthropic/claude-sonnet-4-5"}]` |
-| `retry` | `{count: 3, on_codes: [429, 500, 502, 503, 504]}` |
-| `cache` | `{type: "exact_match", ttl: 3600}` (max 3 days) |
-| `load_balancer` | `{type: "weight_based", models: [{model: "...", weight: 0.7}, ...]}` |
-| `timeout` | `{call_timeout: 30000}` (milliseconds) |
-| `metadata` | Key-value pairs for tracing (string values, max 512 chars) |
+| `instructions` | System instructions |
+| `input` | User input or Responses message/tool items |
+| `stream` | SSE using Responses events such as `response.output_text.delta` |
+| `previous_response_id` | Continue from a stored response `id` (keep `store: true`) |
+| `variables` | Template substitutions in instructions |
+| `max_output_tokens` | Output token cap |
+| `text.format` | Structured output format, e.g. `{type: "json_schema", name, schema, strict: true}` |
+| `reasoning` | Reasoning configuration; discover supported effort values per model |
+| `tools`, `tool_choice` | Responses tool definitions and selection; use the Responses schema |
+| `guardrails`, `fallbacks`, `retry`, `cache`, `load_balancer`, `timeout` | Router reliability and policy options; inspect current Responses docs or `orq responses create --help` for supported shapes |
+| `metadata`, `identity` | Trace metadata and end-user attribution |
 
-**Response:** Standard OpenAI-compatible response. Access text via `response.choices[0].message.content`.
+**Output:** Check `status` and errors. Extract message `output[].content[]` blocks of type `output_text` (OpenAI SDK: `response.output_text`). Save `id` for continuation. Do not parse Chat Completions `choices` or legacy A2A `parts` for these calls.
 
 ```bash
-# Basic call
-curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "openai/gpt-4.1",
-    "messages": [
-      {"role": "system", "content": "You are a helpful assistant."},
-      {"role": "user", "content": "What is the capital of France?"}
-    ]
-  }' | jq '.choices[0].message.content'
+# Basic model call
+orq responses create --model "openai/gpt-4.1" --input "What is the capital of France?" -o json
 
-# With variables (template substitution)
-curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
+# Template variables
+curl --fail-with-body -sS https://my.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "openai/gpt-4.1",
-    "messages": [
-      {"role": "system", "content": "You assist {{customer_name}}."},
-      {"role": "user", "content": "{{user_question}}"}
-    ],
-    "variables": {"customer_name": "Jane Doe", "user_question": "How do I reset my password?"}
-  }' | jq
-
-# With reliability features (fallback + retry)
-curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "openai/gpt-4.1",
-    "messages": [{"role": "user", "content": "Summarize this: ..."}],
-    "fallbacks": [{"model": "anthropic/claude-sonnet-4-5"}, {"model": "google-ai/gemini-2.5-flash"}],
-    "retry": {"count": 3, "on_codes": [429, 500, 502, 503]},
-    "timeout": {"call_timeout": 30000}
-  }' | jq
-
-# Structured JSON output
-curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "openai/gpt-4.1",
-    "messages": [{"role": "user", "content": "Extract name and email from: John Doe, john@example.com"}],
-    "response_format": {
-      "type": "json_schema",
-      "json_schema": {
-        "name": "contact",
-        "schema": {
-          "type": "object",
-          "properties": {"name": {"type": "string"}, "email": {"type": "string"}},
-          "required": ["name", "email"]
-        },
-        "strict": true
-      }
-    }
-  }' | jq
-
-# Streaming
-curl -s -X POST https://api.orq.ai/v2/router/chat/completions \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "anthropic/claude-sonnet-4-5",
-    "messages": [{"role": "user", "content": "Write me a haiku."}],
-    "stream": true
+    "model":"openai/gpt-4.1",
+    "instructions":"You assist {{customer_name}}.",
+    "input":"How do I reset my password?",
+    "variables":{"customer_name":"Jane Doe"}
   }'
+
+# Reliability: change model only, retain the Responses interface
+curl --fail-with-body -sS https://my.orq.ai/v3/router/responses \
+  -H "Authorization: Bearer $ORQ_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"openai/gpt-4.1","input":"Summarize this: ...",
+    "fallbacks":[{"model":"anthropic/claude-sonnet-4-5"}],
+    "retry":{"count":3,"on_codes":[429,500,502,503]},
+    "timeout":{"call_timeout":30000}
+  }'
+
+# Structured JSON output: text.format, not response_format
+curl --fail-with-body -sS https://my.orq.ai/v3/router/responses \
+  -H "Authorization: Bearer $ORQ_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"openai/gpt-4.1",
+    "input":"Extract name and email from: John Doe, john@example.com",
+    "text":{"format":{
+      "type":"json_schema","name":"contact","strict":true,
+      "schema":{"type":"object","properties":{"name":{"type":"string"},"email":{"type":"string"}},"required":["name","email"],"additionalProperties":false}
+    }}
+  }'
+
+# Streaming stays on Responses for every model
+curl --fail-with-body -sS -N https://my.orq.ai/v3/router/responses \
+  -H "Authorization: Bearer $ORQ_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"anthropic/claude-sonnet-4-5","input":"Write me a haiku.","stream":true}'
 ```
+
+**Contract sources:** [Responses API](https://docs.orq.ai/ai-gateway/features/responses-api) · [Create Response](https://docs.orq.ai/reference/responses/create-response).

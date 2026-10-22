@@ -116,8 +116,8 @@ from evaluatorq.common.llm_limit import llm_slot
 
 async def my_job(data, row):
     async with llm_slot():
-        response = await client.chat.completions.create(...)
-    return {"name": "my-job", "output": response.choices[0].message.content}
+        response = await client.responses.create(model="openai/gpt-4.1", input=data.inputs["query"])
+    return {"name": "my-job", "output": response.output_text}
 ```
 
 `red_team()`, `simulate()`, `generate_and_simulate()` and `generate()` take `llm_parallelism` with the same meaning.

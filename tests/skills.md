@@ -56,7 +56,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Ask: "Add orq.ai tracing to my app"
 - Verify Phase 1: scans the project, identifies OpenAI SDK, reports no existing tracing
 - Verify Phase 2: recommends **AI Router** mode (framework supports it, fastest path)
-- Verify Phase 3: changes `base_url` to `https://api.orq.ai/v2/router`, uses `provider/model` format (e.g., `openai/gpt-4o`)
+- Verify Phase 3: changes `base_url` to `https://my.orq.ai/v3/router`, uses `provider/model` format (e.g., `openai/gpt-4o`)
 - Verify: does NOT use `from orq_ai_sdk.tracing import traced` (wrong import path)
 - Verify: does NOT hardcode `service.name=my-app`
 
@@ -119,7 +119,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 - Ask: "Call GPT-4.1 directly through the AI Router"
 - Verify: uses `provider/model` format (e.g., `openai/gpt-4.1`), not bare model name
-- Verify: points OpenAI client at `base_url="https://api.orq.ai/v2/router"`
+- Verify: points OpenAI client at `base_url="https://my.orq.ai/v3/router"`, calls `responses.create(model="provider/model-id", input=...)`, and reads `output_text`
 - Verify: does NOT use orq SDK for this path — uses `openai.OpenAI()`
 
 ### Scenario 4: Streaming recommendation

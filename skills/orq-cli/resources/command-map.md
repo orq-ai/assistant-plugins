@@ -371,7 +371,7 @@ the groups called out under it changed.
 One group per API tag. Groups marked with a leading `→` are the ones worth
 knowing by heart.
 
-> Agent execution entries below are a historical command inventory. For all agent invocations use `orq responses create --model "agent/<key>" --input "..." -o json` on `/v3/router/responses`. Legacy invoke/stream/run and agent-specific Responses commands are deprecated and require an explicit user request; do not use them as fallbacks.
+> Inference entries below are a historical command inventory. Default model calls to `orq responses create --model "provider/model-id"`; do not select v2 inference or Chat Completions unless explicitly requested. For all agent invocations use `orq responses create --model "agent/<key>" --input "..." -o json` on `/v3/router/responses`. Legacy invoke/stream/run and agent-specific Responses commands are deprecated and require an explicit user request; do not use them as fallbacks.
 
 ```
 → agents             create delete get-response invoke list retrieve run

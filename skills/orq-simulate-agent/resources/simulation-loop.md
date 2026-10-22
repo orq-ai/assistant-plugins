@@ -19,18 +19,19 @@ Only `wrap_simulation_agent()` additionally accepts `agent_key=`.
 ```python
 from evaluatorq.simulation import from_orq_deployment, from_chat_completions
 from openai import AsyncOpenAI
+import os
 
 # (1) Orq agent/deployment — pass target="agent:<key>" directly OR build a callback:
 callback = from_orq_deployment("agent_xyz")
 
-# (2) Raw OpenAI / Azure / any OpenAI-compatible provider:
-client = AsyncOpenAI()
+# (2) Model through general Responses (the adapter accepts a messages-to-text callable):
+client = AsyncOpenAI(api_key=os.environ["ORQ_API_KEY"], base_url="https://my.orq.ai/v3/router")
 async def chat_fn(messages):
-    resp = await client.chat.completions.create(
-        model="azure/gpt-4o", messages=messages,
+    resp = await client.responses.create(
+        model="openai/gpt-4.1", input=messages,
     )
-    return resp.choices[0].message.content
-callback = from_chat_completions(chat_fn)
+    return resp.output_text
+callback = from_chat_completions(chat_fn)  # adapter name describes its callable interface, not the HTTP route
 
 # (3) Vercel AI SDK / LangChain / custom, write your own callback:
 async def callback(messages):

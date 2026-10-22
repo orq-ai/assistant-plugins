@@ -20,7 +20,7 @@ The CLI is a Go binary generated from the orq.ai OpenAPI spec, so nearly every A
 
 **Every section below opens with a `Probed against` line naming the `orq` version it was last checked on, so the oldest of those lines is the ceiling on how far to trust the file: `grep -n 'Probed against' skills/orq-cli/SKILL.md`. A section with no such line makes no version claim. Treat `--help` as the source of truth either way.** The CLI's version is its own since 5.0.0 and no longer tracks the API line, so the number tells you nothing about the API — `orq version -o json` reports both.
 
-**Agent invocation policy:** Always use `POST /v3/router/responses` (`model: "agent/<key>"`) or `orq responses create --model "agent/<key>"`. Legacy agent invoke/stream/run endpoints, `agents-responses create`, and agent-specific Responses APIs are deprecated; use them only when the user explicitly requests that legacy interface. Never fall back to them after a routing or EU-model error. Agent configuration reads and writes are separate from invocation.
+**Invocation policy (models and agents):** Default to `POST /v3/router/responses` or `orq responses create`. Set `model` to `provider/model-id` for a model or `agent/<key>` for a managed agent, and pass `input`. Prefer Responses over Chat Completions; do not use v2 inference routes. Use another inference interface only when the user explicitly requests it. Legacy agent execution APIs remain deprecated. Never fall back to v2, Chat Completions, or legacy agent endpoints after a routing or model error. Use Responses for streaming and continuation too. Configuration, deployment, evaluator, and telemetry APIs retain their own contracts.
 
 ## Constraints
 
@@ -46,17 +46,18 @@ The CLI is a Go binary generated from the orq.ai OpenAPI spec, so nearly every A
 
 **Why these constraints:** the generated command surface is large and drifts between versions, so guessed flags fail in ways that look like auth problems. Auth and output failures here are quiet: wrong-workspace reads succeed, logged-out commands exit 0, and one shadowed flag returns an empty list instead of an error.
 
-## Invoke an agent through Responses
+## Invoke models and agents through Responses
 
 ```sh
 orq responses create --help
+orq responses create --model "openai/gpt-4.1" --input "Hello" -o json
 orq responses create --model "agent/<key>" --input "Hello" -o json
 orq responses create --model "agent/<key>" --input "Tell me more" --previous-response-id "<response_id>" -o json
 ```
 
 **Streaming caveat (local synthetic SSE check, 2026-10-22):** CLI `11.5.0-rc.20` (API `4.17.0-rc.14`) exposes `--stream` and sends the correct route/body, but fails on a `text/event-stream` response with `Not sure how to unmarshal text/event-stream`. For consuming SSE, use the SDK or `curl -N` with `stream: true` on `/v3/router/responses`; do not retry through a deprecated agent endpoint. This check used a local mock, not a live model.
 
-This uses `POST /v3/router/responses`. Keep the configured host/profile/project explicit when needed. Continue with `id`, not a legacy task ID. Read `output[].content[]` text blocks and check response status/errors. Command-map entries for legacy agent execution are inventory only, never invocation recommendations. If these flags are missing, inspect/update the CLI or use HTTP on the same route; do not fall back to deprecated commands.
+This uses `POST /v3/router/responses`. Keep the configured host/profile/project explicit when needed. Continue with `id`, not a legacy task ID. Read `output[].content[]` text blocks and check response status/errors. Command-map entries for legacy agent execution are inventory only, never invocation recommendations. If these flags are missing, inspect/update the CLI or use HTTP on the same route; do not fall back to v2 inference, Chat Completions, or deprecated agent commands.
 
 ## Companion Skills
 

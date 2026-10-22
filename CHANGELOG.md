@@ -9,8 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Agent invocation guidance now uses `POST /v3/router/responses` and `orq responses create --model agent/<key>`, including streaming, comparison jobs, and continuation with `previous_response_id`. Deprecated agent execution APIs require an explicit user request and must never be automatic fallbacks for EU-model errors.
-- Replace legacy A2A request/output examples and agent-specific Responses documentation links. Require framework adapters to use general Responses as well. Document the CLI SSE decoding failure observed with a local mock and use SDK/curl for streams on the same route. Contract checked against current Run Agents and Responses documentation and installed CLI help on 2026-10-22; this does not establish the cause of reported EU-model failures.
+- Model and agent invocation guidance now defaults to `POST /v3/router/responses` and `orq responses create`, using `provider/model-id` for models and `agent/<key>` for managed agents. Prefer Responses over Chat Completions and avoid v2 inference. Other inference interfaces require an explicit user request and must never be automatic error fallbacks.
+- Update invocation, observability, simulation and comparison examples to Responses request/output shapes, including streaming, structured output and `previous_response_id` continuation. Framework guidance explicitly selects Responses (including LangChain `use_responses_api=True`). Configuration, deployment, evaluator and telemetry APIs retain their own contracts.
+- Route evaluator-alignment recommendation/rewrite helpers and reconstructed judge calls through Responses, preserving structured verdicts and pricing input/output tokens.
+- Add a CI guard against non-Responses inference examples and runtime calls and local synthetic CLI routing probes for both models and agents. Document the CLI SSE decoding limitation and use SDK/curl for consuming streams on the same route. Contract checked against current Orq documentation, LangChain's Responses reference and installed CLI help on 2026-10-22; the reported EU-model failure has not been reproduced against a live agent.
 
 ## [3.9.2] - 2026-10-13
 

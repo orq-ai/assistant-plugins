@@ -19,14 +19,21 @@ server=http.server.HTTPServer(('127.0.0.1',0),Handler)
 threading.Thread(target=server.serve_forever,daemon=True).start()
 env={k:v for k,v in os.environ.items() if not k.startswith('ORQ_')};env['ORQ_API_KEY']='synthetic-local-test'
 base=f'http://127.0.0.1:{server.server_port}'
-for extra in [[],['--previous-response-id','resp_previous'],['--stream']]:
- r=subprocess.run(['orq','responses','create','--server',base,'--model','agent/synthetic','--input','Hello','-o','json',*extra],env=env,capture_output=True,text=True,timeout=20)
- if r.returncode != 0:
-  assert '--stream' in extra and 'Not sure how to unmarshal text/event-stream' in r.stderr, r.stderr
-  print('CLI SSE decoding limitation: use SDK or curl -N on the same route')
- route,body=seen[-1];assert route=='/v3/router/responses',(route,body)
- assert body['model']=='agent/synthetic' and body['input']=='Hello'
- if '--previous-response-id' in extra: assert body['previous_response_id']=='resp_previous'
- if '--stream' in extra: assert body['stream'] is True
- print(json.dumps({'path':route,'body':body,'exit_code':r.returncode}))
+for model in ['agent/synthetic', 'synthetic/model']:
+ for extra in [[], ['--previous-response-id', 'resp_previous'], ['--stream']]:
+  before = len(seen)
+  r = subprocess.run(['orq', 'responses', 'create', '--server', base, '--model', model, '--input', 'Hello', '-o', 'json', *extra], env=env, capture_output=True, text=True, timeout=20)
+  if r.returncode != 0:
+   assert '--stream' in extra and 'Not sure how to unmarshal text/event-stream' in r.stderr, r.stderr
+   print('CLI SSE decoding limitation: use SDK or curl -N on the same route')
+  assert len(seen) == before + 1, 'Expected exactly one request'
+  route, body = seen[-1]
+  assert route == '/v3/router/responses', (route, body)
+  assert body['model'] == model and body['input'] == 'Hello'
+  if '--previous-response-id' in extra:
+   assert body['previous_response_id'] == 'resp_previous'
+  if '--stream' in extra:
+   assert body['stream'] is True
+  print(json.dumps({'path': route, 'body': body, 'exit_code': r.returncode}))
+
 server.shutdown()
