@@ -204,14 +204,14 @@ Use Responses by default. Chat Completions or a v2 inference interface requires 
 
 ```bash
 # Basic model call
-orq responses create --model "openai/gpt-4.1" --input "What is the capital of France?" -o json
+orq responses create --model "openai/gpt-6-luna" --input "What is the capital of France?" -o json
 
 # Template variables
 curl --fail-with-body -sS https://my.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model":"openai/gpt-4.1",
+    "model":"openai/gpt-6-luna",
     "instructions":"You assist {{customer_name}}.",
     "input":"How do I reset my password?",
     "variables":{"customer_name":"Jane Doe"}
@@ -222,7 +222,7 @@ curl --fail-with-body -sS https://my.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model":"openai/gpt-4.1","input":"Summarize this: ...",
+    "model":"openai/gpt-6-luna","input":"Summarize this: ...",
     "fallbacks":[{"model":"anthropic/claude-sonnet-4-5"}],
     "retry":{"count":3,"on_codes":[429,500,502,503]},
     "timeout":{"call_timeout":30000}
@@ -233,7 +233,7 @@ curl --fail-with-body -sS https://my.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model":"openai/gpt-4.1",
+    "model":"openai/gpt-6-luna",
     "input":"Extract name and email from: John Doe, john@example.com",
     "text":{"format":{
       "type":"json_schema","name":"contact","strict":true,
@@ -245,7 +245,7 @@ curl --fail-with-body -sS https://my.orq.ai/v3/router/responses \
 curl --fail-with-body -sS -N https://my.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"anthropic/claude-sonnet-4-5","input":"Write me a haiku.","stream":true}'
+  -d '{"model":"openai/gpt-6-luna","input":"Write me a haiku.","stream":true}'
 ```
 
 **Contract sources:** [Responses API](https://docs.orq.ai/ai-gateway/features/responses-api) · [Create Response](https://docs.orq.ai/reference/responses/create-response).

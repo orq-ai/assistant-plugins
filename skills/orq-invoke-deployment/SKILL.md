@@ -13,7 +13,7 @@ allowed-tools: Bash(orq responses create:*), Bash(curl --fail-with-body -sS http
 
 You are an **orq.ai integration engineer**. Your job is to help users invoke orq.ai resources — deployments, agents, and models — and integrate those calls into their application code using the Python SDK or HTTP API. The API key is pre-configured — do NOT prompt the user for it, but DO verify the target exists with it (step 3).
 
-**Invocation policy (models and agents):** Default to `POST /v3/router/responses` or `orq responses create`. Set `model` to `provider/model-id` for a model or `agent/<key>` for a managed agent, and pass `input`. Prefer Responses over Chat Completions; do not use v2 inference routes. Use another inference interface only when the user explicitly requests it. Legacy agent execution APIs remain deprecated. Never fall back to v2, Chat Completions, or legacy agent endpoints after a routing or model error. Use Responses for streaming and continuation too. Configuration, deployment, evaluator, and telemetry APIs retain their own contracts.
+**Invocation policy (models and agents):** Default to `POST /v3/router/responses` or `orq responses create`. Set `model` to `provider/model-id` for a model or `agent/<key>` for a managed agent, and pass `input`. Use `openai/gpt-6-luna` for default model command examples unless the user specifies another model. Prefer Responses over Chat Completions; do not use v2 inference routes. Use another inference interface only when the user explicitly requests it. Legacy agent execution APIs remain deprecated. Never fall back to v2, Chat Completions, or legacy agent endpoints after a routing or model error. Use Responses for streaming and continuation too. Configuration, deployment, evaluator, and telemetry APIs retain their own contracts.
 
 ## Constraints
 
@@ -359,7 +359,7 @@ client = OpenAI(
 )
 
 response = client.responses.create(
-    model="openai/gpt-4.1",   # provider/model format; agent/<key> for managed agents
+    model="openai/gpt-6-luna",   # provider/model format; agent/<key> for managed agents
     instructions="You are a helpful assistant.",
     input="What is the capital of France?",
 )
@@ -371,12 +371,12 @@ print(response.output_text)
 ### Model (AI Router) — CLI and curl
 
 ```bash
-orq responses create --model "openai/gpt-4.1" --input "What is the capital of France?" -o json
+orq responses create --model "openai/gpt-6-luna" --input "What is the capital of France?" -o json
 
 curl --fail-with-body -sS https://my.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"openai/gpt-4.1","instructions":"You are a helpful assistant.","input":"What is the capital of France?"}'
+  -d '{"model":"openai/gpt-6-luna","instructions":"You are a helpful assistant.","input":"What is the capital of France?"}'
 ```
 
 For either models or agents, stream with `stream: true` on this same endpoint and continue with `previous_response_id`. The CLI SSE decoding caveat in `orq-cli` applies to both.
@@ -394,7 +394,7 @@ For either models or agents, stream with `stream: true` on this same endpoint an
 | Skipping `identity.id` in production | Always pass identity — enables per-user analytics and cost attribution |
 | Using `stream=False` for user-facing UI | Use `stream=True` — streaming shows tokens in real time |
 | Not saving the response ID for agent multi-turn | Store `response.id` and pass it as `previous_response_id` |
-| Using model name without provider prefix | Use `openai/gpt-4.1`, `anthropic/claude-sonnet-4-5` — not just `gpt-4.1` |
+| Using model name without provider prefix | Use `openai/gpt-6-luna`, `anthropic/claude-sonnet-4-5` — not just `gpt-6-luna` |
 | Not checking the trace after first invocation | Link the trace from `response.telemetry.trace_id` (step 11) and verify variable substitution and token counts |
 | Using `contact` field in agents | Use `identity` instead — `contact` is deprecated |
 

@@ -8,7 +8,7 @@ allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion
 
 You are an **orq.ai observability engineer**. Your job is to instrument LLM applications with tracing — from detecting the user's framework and choosing the right integration mode, through implementing instrumentation, to verifying baseline trace quality and enriching traces with useful metadata.
 
-**Invocation policy (models and agents):** Default to `POST /v3/router/responses` or `orq responses create`. Set `model` to `provider/model-id` for a model or `agent/<key>` for a managed agent, and pass `input`. Prefer Responses over Chat Completions; do not use v2 inference routes. Use another inference interface only when the user explicitly requests it. Legacy agent execution APIs remain deprecated. Never fall back to v2, Chat Completions, or legacy agent endpoints after a routing or model error. Use Responses for streaming and continuation too. Configuration, deployment, evaluator, and telemetry APIs retain their own contracts.
+**Invocation policy (models and agents):** Default to `POST /v3/router/responses` or `orq responses create`. Set `model` to `provider/model-id` for a model or `agent/<key>` for a managed agent, and pass `input`. Use `openai/gpt-6-luna` for default model command examples unless the user specifies another model. Prefer Responses over Chat Completions; do not use v2 inference routes. Use another inference interface only when the user explicitly requests it. Legacy agent execution APIs remain deprecated. Never fall back to v2, Chat Completions, or legacy agent endpoints after a routing or model error. Use Responses for streaming and continuation too. Configuration, deployment, evaluator, and telemetry APIs retain their own contracts.
 
 ## Constraints
 
@@ -115,7 +115,7 @@ Follow these steps **in order**. Do NOT skip steps.
 5. **For AI Router mode:**
    - Set the API key: `export ORQ_API_KEY=your-key-here`
    - Change the base URL to `https://my.orq.ai/v3/router`
-   - Use `provider/model` format for model names (e.g., `openai/gpt-4o`, `anthropic/claude-sonnet-4-5-20250929`)
+   - Use `provider/model` format for model names (e.g., `openai/gpt-6-luna`, `anthropic/claude-sonnet-4-5-20250929`)
    - Call `client.responses.create(model="provider/model-id", input="...")`; use `agent/<key>` for a managed agent. Enable Responses explicitly in framework adapters; never silently use Chat Completions. Traces appear automatically.
 
    For SDK code examples (Python, Node.js) and framework-specific setup (LangChain, CrewAI, etc.), see [resources/framework-integrations.md](resources/framework-integrations.md).

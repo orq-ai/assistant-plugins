@@ -20,7 +20,7 @@ The CLI is a Go binary generated from the orq.ai OpenAPI spec, so nearly every A
 
 **Every section below opens with a `Probed against` line naming the `orq` version it was last checked on, so the oldest of those lines is the ceiling on how far to trust the file: `grep -n 'Probed against' skills/orq-cli/SKILL.md`. A section with no such line makes no version claim. Treat `--help` as the source of truth either way.** The CLI's version is its own since 5.0.0 and no longer tracks the API line, so the number tells you nothing about the API — `orq version -o json` reports both.
 
-**Invocation policy (models and agents):** Default to `POST /v3/router/responses` or `orq responses create`. Set `model` to `provider/model-id` for a model or `agent/<key>` for a managed agent, and pass `input`. Prefer Responses over Chat Completions; do not use v2 inference routes. Use another inference interface only when the user explicitly requests it. Legacy agent execution APIs remain deprecated. Never fall back to v2, Chat Completions, or legacy agent endpoints after a routing or model error. Use Responses for streaming and continuation too. Configuration, deployment, evaluator, and telemetry APIs retain their own contracts.
+**Invocation policy (models and agents):** Default to `POST /v3/router/responses` or `orq responses create`. Set `model` to `provider/model-id` for a model or `agent/<key>` for a managed agent, and pass `input`. Use `openai/gpt-6-luna` for default model command examples unless the user specifies another model. Prefer Responses over Chat Completions; do not use v2 inference routes. Use another inference interface only when the user explicitly requests it. Legacy agent execution APIs remain deprecated. Never fall back to v2, Chat Completions, or legacy agent endpoints after a routing or model error. Use Responses for streaming and continuation too. Configuration, deployment, evaluator, and telemetry APIs retain their own contracts.
 
 ## Constraints
 
@@ -50,7 +50,7 @@ The CLI is a Go binary generated from the orq.ai OpenAPI spec, so nearly every A
 
 ```sh
 orq responses create --help
-orq responses create --model "openai/gpt-4.1" --input "Hello" -o json
+orq responses create --model "openai/gpt-6-luna" --input "Hello" -o json
 orq responses create --model "agent/<key>" --input "Hello" -o json
 orq responses create --model "agent/<key>" --input "Tell me more" --previous-response-id "<response_id>" -o json
 ```

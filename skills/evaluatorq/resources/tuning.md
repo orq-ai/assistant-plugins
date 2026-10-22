@@ -116,7 +116,7 @@ from evaluatorq.common.llm_limit import llm_slot
 
 async def my_job(data, row):
     async with llm_slot():
-        response = await client.responses.create(model="openai/gpt-4.1", input=data.inputs["query"])
+        response = await client.responses.create(model="openai/gpt-6-luna", input=data.inputs["query"])
     return {"name": "my-job", "output": response.output_text}
 ```
 

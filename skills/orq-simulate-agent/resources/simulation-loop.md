@@ -28,7 +28,7 @@ callback = from_orq_deployment("agent_xyz")
 client = AsyncOpenAI(api_key=os.environ["ORQ_API_KEY"], base_url="https://my.orq.ai/v3/router")
 async def chat_fn(messages):
     resp = await client.responses.create(
-        model="openai/gpt-4.1", input=messages,
+        model="openai/gpt-6-luna", input=messages,
     )
     return resp.output_text
 callback = from_chat_completions(chat_fn)  # adapter name describes its callable interface, not the HTTP route

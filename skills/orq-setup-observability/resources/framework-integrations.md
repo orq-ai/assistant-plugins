@@ -53,7 +53,7 @@ client = OpenAI(
     base_url="https://my.orq.ai/v3/router",
     api_key=os.environ["ORQ_API_KEY"],
 )
-response = client.responses.create(model="openai/gpt-4.1", input="Hello")
+response = client.responses.create(model="openai/gpt-6-luna", input="Hello")
 print(response.output_text)
 ```
 
@@ -65,7 +65,7 @@ const client = new OpenAI({
     baseURL: "https://my.orq.ai/v3/router",
     apiKey: process.env.ORQ_API_KEY,
 });
-const response = await client.responses.create({ model: "openai/gpt-4.1", input: "Hello" });
+const response = await client.responses.create({ model: "openai/gpt-6-luna", input: "Hello" });
 console.log(response.output_text);
 ```
 
@@ -75,7 +75,7 @@ from langchain_openai import ChatOpenAI
 import os
 
 llm = ChatOpenAI(
-    model="openai/gpt-4o",
+    model="openai/gpt-6-luna",
     api_key=os.environ["ORQ_API_KEY"],
     base_url="https://my.orq.ai/v3/router",
     use_responses_api=True,
