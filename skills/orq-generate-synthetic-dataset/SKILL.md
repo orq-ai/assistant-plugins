@@ -8,7 +8,7 @@ description: >
   Do NOT use when sufficient real production data exists (use
   orq-analyze-traces instead). Do NOT use for evaluator creation (use
   orq-build-evaluator).
-allowed-tools: Bash(curl:*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__list_models, mcp__orq-workspace__list_datapoints, mcp__orq-workspace__get_llm_eval, mcp__orq-workspace__get_python_eval, mcp__orq-workspace__create_dataset, mcp__orq-workspace__create_datapoints, mcp__orq-workspace__update_datapoint
+allowed-tools: Bash(curl -s https://api.orq.ai/v2/*), Bash(curl -s "https://api.orq.ai/v2/*), Bash(curl -s -X POST https://api.orq.ai/v2/*), Bash(curl -s -X POST "https://api.orq.ai/v2/*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__list_models, mcp__orq-workspace__list_datapoints, mcp__orq-workspace__get_llm_eval, mcp__orq-workspace__get_python_eval, mcp__orq-workspace__create_dataset, mcp__orq-workspace__create_datapoints, mcp__orq-workspace__update_datapoint
 ---
 
 # Generate Synthetic Dataset

@@ -56,7 +56,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Ask: "Add orq.ai tracing to my app"
 - Verify Phase 1: scans the project, identifies OpenAI SDK, reports no existing tracing
 - Verify Phase 2: recommends **AI Router** mode (framework supports it, fastest path)
-- Verify Phase 3: changes `base_url` to `https://api.orq.ai/v2/router`, uses `provider/model` format (e.g., `openai/gpt-4o`)
+- Verify Phase 3: changes `base_url` to `https://my.orq.ai/v3/router`, uses `provider/model` format (e.g., `openai/gpt-6-luna`)
 - Verify: does NOT use `from orq_ai_sdk.tracing import traced` (wrong import path)
 - Verify: does NOT hardcode `service.name=my-app`
 
@@ -97,6 +97,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ## `orq-invoke-deployment`
 
+- Regression: an EU-model failure must not trigger a retry through deprecated agent invoke/stream/run APIs. Legacy execution requires an explicit user request. Streaming and continuation stay on general Responses.
+
 ### Scenario 1: Deployment invocation (happy path)
 
 - Ask: "Invoke my deployment `customer-support` with variable `customer_name` set to 'Jane'"
@@ -109,16 +111,17 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 ### Scenario 2: Agent invocation with multi-turn
 
 - Ask: "Send a message to my agent and then follow up"
-- Verify: uses `client.agents.responses.create()`, NOT `client.agents.invoke()`
-- Verify: message format uses A2A parts structure (`parts: [{kind: "text", text: ...}]`), not OpenAI-style `content`
-- Verify: saves `task_id` from first response and passes it in the follow-up call
+- Verify: shows orq and OpenAI SDK variants; prefers orq for new code or when imported, reuses OpenAI when it is already imported and orq is not. Python async orq uses `responses.create_async()`.
+- Verify: uses `/v3/router/responses` with `model="agent/<key>"`, or `orq responses create`
+- Verify: message format uses Responses `input`; text comes from message `content` blocks
+- Verify: saves `id` from the first response and passes `previous_response_id` in the follow-up call
 
 ### Scenario 3: Model (AI Router) invocation
 
-- Ask: "Call GPT-4.1 directly through the AI Router"
-- Verify: uses `provider/model` format (e.g., `openai/gpt-4.1`), not bare model name
-- Verify: points OpenAI client at `base_url="https://api.orq.ai/v2/router"`
-- Verify: does NOT use orq SDK for this path — uses `openai.OpenAI()`
+- Ask: "Call GPT-6 Luna directly through the AI Router"
+- Verify: uses `provider/model` format (e.g., `openai/gpt-6-luna`), not bare model name
+- Verify: both SDK variants use general Responses with `model="openai/gpt-6-luna"` and `input`; orq takes the host and OpenAI takes the `/v3/router` base URL.
+- Verify: prefers the orq SDK for new code or existing orq imports; reuses OpenAI only when it is already imported and orq is not.
 
 ### Scenario 4: Streaming recommendation
 
@@ -185,7 +188,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 - Ask: "Compare my two orq.ai agents `agent-gpt4o` and `agent-claude` head-to-head"
 - Verify Phase 1: identifies both agents, browses via `search_entities`, then verifies each key with the run key via the [run-key preflight](../skills/orq-shared/resources/run-key-preflight.md)
-- Verify Phase 4: generates evaluatorq script with two `@job` functions, each using `agents.responses.create()` (not `agents.invoke()`)
+- Verify Phase 4: generates evaluatorq script with two `@job` functions, each using general `responses.create(model="agent/<key>", input=...)`
 - Verify: script uses `from orq_ai_sdk import Orq` (not `from orq import ...`)
 - Verify: both jobs use the same evaluator for fair comparison
 
@@ -384,7 +387,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify Phase 1: confirms the agent under test and picks a target shape (`agent_key` / `target_callback` via `from_orq_deployment` or `from_chat_completions` / custom `AgentTarget`)
 - Verify Phase 2: builds a `Persona` with the real scalars (`patience`, `assertiveness`, `politeness`, `technical_level` as floats `[0-1]`), a `communication_style` enum, and `background` — not the old `role/tone/goals/constraints` shape
 - Verify Phase 3: builds a `Scenario` with `goal` plus at least one `Criterion` (`must_happen` or `must_not_happen`); does NOT hand-roll a `should_stop()` function
-- Verify Phase 4: uses `wrap_simulation_agent(model=...)` as an evaluatorq job or `simulate(sim_model=...)` directly with default-on auto-upload — not a custom loop around `agents.responses.create()`
+- Verify Phase 4: uses `wrap_simulation_agent(model=...)` as an evaluatorq job or `simulate(sim_model=...)` directly with default-on auto-upload — not a custom loop around `client.responses.create()`
 - Verify wrapper cleanup: puts scorers on `evaluatorq(..., evaluators=[...])`, does not pass `evaluators=` to `wrap_simulation_agent()`, and calls `await job.aclose()` in `finally`
 - Verify Phase 5: dry-runs one persona × one scenario at `max_turns=3`, prints `terminated_by` / `goal_completion_score` / `rules_broken`, asks the user to review before scaling
 - Verify Phase 6: surfaces direct-call spans under `orq.simulation.pipeline`, wrapped spans under `orq.job`, the `SimulationResult` fields, and the Experiment URL printed for uploaded runs

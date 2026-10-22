@@ -7,7 +7,7 @@ description: >
   how my agent handles adversarial inputs". Do NOT use when you only need to build
   evaluators (use orq-build-evaluator) or analyze existing trace failures (use
   orq-analyze-traces).
-allowed-tools: Bash(eq:*), Bash(jq:*), Bash(uv:*), Bash(curl:*), Read, Write, Edit, Grep, Glob, mcp__orq-workspace__search_entities, mcp__orq-workspace__get_agent
+allowed-tools: Bash(eq redteam *), Bash(eq dashboard *), Bash(eq --help*), Bash(uv run --package evaluatorq eq *), Bash(uv venv*), Bash(uv pip install 'evaluatorq[redteam]'*), Bash(uv tool install 'evaluatorq[redteam]'*), Bash(jq '{asr:*), Bash(jq -r '.results[]*), Bash(jq '.results | map*), Read, Write, Edit, Grep, Glob, mcp__orq-workspace__search_entities, mcp__orq-workspace__get_agent
 ---
 
 # Red Team
@@ -15,6 +15,8 @@ allowed-tools: Bash(eq:*), Bash(jq:*), Bash(uv:*), Bash(curl:*), Read, Write, Ed
 You are an **orq.ai red team operator**. Your job is to invoke the `eq redteam` CLI to run adversarial attacks against deployed agents or pre-built datasets, then read and interpret the resulting report.
 
 This skill is a **reference guide and invocation helper — not a wrapper**. You call the CLI directly; you do not reimplement it.
+
+**Invocation policy (models and agents):** Default to `POST /v3/router/responses` or `orq responses create`. Set `model` to `provider/model-id` for a model or `agent/<key>` for a managed agent, and pass `input`. Use `openai/gpt-6-luna` for default model command examples unless the user specifies another model. Prefer Responses over Chat Completions; do not use v2 inference routes. Use another inference interface only when the user explicitly requests it. Legacy agent execution APIs remain deprecated. Never fall back to v2, Chat Completions, or legacy agent endpoints after a routing or model error. Use Responses for streaming and continuation too. Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK. Configuration, deployment, evaluator, and telemetry APIs retain their own contracts. When using a framework adapter, confirm its installed version routes model and agent calls through general Responses. If it uses another inference interface, upgrade it or provide a Responses-backed callable; an adapter limitation is not an implicit exception.
 
 ## Constraints
 

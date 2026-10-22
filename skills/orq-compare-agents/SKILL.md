@@ -7,7 +7,7 @@ description: >
   Use when comparing agents, benchmarking, or wanting side-by-side evaluation.
   Do NOT use when comparing only orq.ai configurations with no external agents
   (use orq-run-experiment instead).
-allowed-tools: Bash(curl:*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__create_dataset, mcp__orq-workspace__create_datapoints, mcp__orq-workspace__create_llm_eval
+allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__create_dataset, mcp__orq-workspace__create_datapoints, mcp__orq-workspace__create_llm_eval
 ---
 
 # Compare Agents
@@ -19,6 +19,8 @@ Supported comparison modes:
 - **orq.ai vs orq.ai** — e.g., two orq.ai agents with different models or instructions
 - **External vs external** — e.g., LangGraph vs CrewAI, Vercel vs OpenAI Agents SDK
 - **Multiple agents** — compare 3+ agents in a single experiment
+
+**Invocation policy (models and agents):** Default to `POST /v3/router/responses` or `orq responses create`. Set `model` to `provider/model-id` for a model or `agent/<key>` for a managed agent, and pass `input`. Use `openai/gpt-6-luna` for default model command examples unless the user specifies another model. Prefer Responses over Chat Completions; do not use v2 inference routes. Use another inference interface only when the user explicitly requests it. Legacy agent execution APIs remain deprecated. Never fall back to v2, Chat Completions, or legacy agent endpoints after a routing or model error. Use Responses for streaming and continuation too. Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK. Configuration, deployment, evaluator, and telemetry APIs retain their own contracts.
 
 ## Constraints
 
@@ -85,7 +87,7 @@ Agent Comparison Progress:
 
 > **Official documentation:** [Evaluatorq Tutorial](https://docs.orq.ai/docs/tutorials/evaluator-q)
 
-[Experiments](https://docs.orq.ai/docs/experiments/creating) · [Evaluators](https://docs.orq.ai/docs/evaluators/overview) · [Agent Responses API](https://docs.orq.ai/reference/agents/create-response) · [Datasets](https://docs.orq.ai/docs/datasets/overview)
+[Experiments](https://docs.orq.ai/docs/experiments/creating) · [Evaluators](https://docs.orq.ai/docs/evaluators/overview) · [Agent Responses API](https://docs.orq.ai/reference/responses/create-response) · [Datasets](https://docs.orq.ai/docs/datasets/overview)
 
 ### Key Concepts
 
@@ -108,7 +110,7 @@ Agent Comparison Progress:
 - The orq.ai MCP server is connected
 - An `ORQ_API_KEY` environment variable is set
 - **Python:** `pip install evaluatorq orq-ai-sdk`
-- **TypeScript:** `npm install @orq-ai/evaluatorq`
+- **TypeScript:** `npm install @orq-ai/evaluatorq @orq-ai/node`
 - The agents to compare exist and are invocable (locally or via API)
 
 ---
@@ -162,7 +164,7 @@ Agent Comparison Progress:
    | Experiment Type | Jobs to Include |
    |---|---|
    | External vs orq.ai | One external job + one orq.ai job |
-   | orq.ai vs orq.ai | Two orq.ai jobs with different `agent_key` values |
+   | orq.ai vs orq.ai | Two orq.ai jobs with different `model="agent/<key>"` values |
    | External vs external | Two external jobs (e.g., LangGraph + CrewAI) |
    | Multi-agent | Three or more jobs of any type |
 
@@ -201,6 +203,6 @@ Agent Comparison Progress:
 After running the comparison:
 - **Experiment results:** [my.orq.ai](https://my.orq.ai/) → Experiments
 - **Agent details:** [my.orq.ai](https://my.orq.ai/) → Agents
-- **Traces:** [my.orq.ai](https://my.orq.ai/) → Traces
+- **Traces:** [my.orq.ai](https://my.orq.ai/) → Traces, or a direct link to a specific run's trace: `<host>/<workspace-key>/traces/(trace:<trace_id>)` ([host, key and pitfalls](../orq-cli/resources/command-map.md#building-app-urls)). If it opens on "No spans match your search", the Traces project selector is filtering it out: switch it to **All projects**.
 
 When this skill conflicts with live API responses or docs.orq.ai, trust the API.

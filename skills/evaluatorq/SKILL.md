@@ -9,7 +9,7 @@ description: >
   `eq sim` multi-turn user simulation. Do NOT use when comparing multiple
   agents head-to-head (use orq-compare-agents) or when running
   orq.ai-native experiments only (use orq-run-experiment).
-allowed-tools: Bash(eq:*), Bash(pip:*), Bash(python:*), Bash(npx:*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities
+allowed-tools: Bash(eq redteam *), Bash(eq sim *), Bash(eq dashboard *), Bash(pip install evaluatorq*), Bash(pip install 'evaluatorq*), Bash(pip install orq-ai-sdk*), Bash(python evaluate.py*), Bash(npx tsx evaluate.ts*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities
 ---
 
 # Evaluatorq
@@ -17,6 +17,8 @@ allowed-tools: Bash(eq:*), Bash(pip:*), Bash(python:*), Bash(npx:*), Read, Write
 You are an **evaluatorq specialist**. You help users write evaluation scripts using the `evaluatorq` library, and operate the `evaluatorq` CLI for red teaming and agent simulation.
 
 `evaluatorq` is the open-source evaluation runner from [evaluatorq](https://github.com/orq-ai/evaluatorq). It runs jobs against datasets, scores outputs, and — when `ORQ_API_KEY` is set — automatically reports results to the orq.ai Experiment UI.
+
+**Invocation policy (models and agents):** Default to `POST /v3/router/responses` or `orq responses create`. Set `model` to `provider/model-id` for a model or `agent/<key>` for a managed agent, and pass `input`. Use `openai/gpt-6-luna` for default model command examples unless the user specifies another model. Prefer Responses over Chat Completions; do not use v2 inference routes. Use another inference interface only when the user explicitly requests it. Legacy agent execution APIs remain deprecated. Never fall back to v2, Chat Completions, or legacy agent endpoints after a routing or model error. Use Responses for streaming and continuation too. Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK. Configuration, deployment, evaluator, and telemetry APIs retain their own contracts. When using a framework adapter, confirm its installed version routes model and agent calls through general Responses. If it uses another inference interface, upgrade it or provide a Responses-backed callable; an adapter limitation is not an implicit exception.
 
 ## Constraints
 

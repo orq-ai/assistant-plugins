@@ -187,6 +187,8 @@ Runs **before** open coding. Two passes: a **sweep** over the whole window, then
    | ghi789   | Fail      | "Called search instead of calculator" |
    ```
 
+   **Record the full 32-hex `trace_id`** (the ids above are placeholders). Step 20 links each one, and `orq-run-experiment` builds its dataset from them.
+
    **Record the passing ids too.** They are the other half of the regression set (Phase 5).
 
 10. **When stuck articulating what's wrong**, use these as prompts — not as categories to fill: hallucination · instruction non-compliance · persona/tone drift · tool misuse · context loss · over/under-verbosity · guardrail bypass · structural errors.
@@ -264,7 +266,7 @@ Runs **before** open coding. Two passes: a **sweep** over the whole window, then
       - name: Drops persona on factual questions   # so their COUNTS sum to `failed`, never past it
         rate: 0.125                                # 10 / 80
         fix: prompt              # prompt | config | tools | retrieval | structure | evaluator | code
-        evidence: [cc27bfcc, a6502141]
+        evidence: [<trace_id>, <trace_id>]       # full 32-hex trace_ids
 
       - name: Answers cut off mid-sentence
         rate: 0.075                                # 6 / 80
@@ -274,16 +276,16 @@ Runs **before** open coding. Two passes: a **sweep** over the whole window, then
         knob: model.parameters.max_tokens
         current: 8000
         suggest: 16000
-        evidence: [b59b6a76]
+        evidence: [<trace_id>]
 
       - name: Wrong tool on ambiguous queries
         rate: 0.05                                 # 4 / 80
         fix: evaluator
         where: DecideTool
         classification: generalization-subjective  # evaluator modes only
-        evidence: [4d10ffa1]
+        evidence: [<trace_id>]
 
-    passing: [7f31aa02, 91b0cd44, e3c0187b]   # read and judged good — the don't-regress half
+    passing: [<trace_id>, <trace_id>, <trace_id>]   # read and judged good — the don't-regress half
     ---
 
     # Error analysis — support-bot
@@ -299,6 +301,7 @@ Runs **before** open coding. Two passes: a **sweep** over the whole window, then
 
     ## 1. Drops persona on factual questions — 12.5%
     ...definition, Pass/Fail criteria, a real trace excerpt...
+    Evidence: [<first 8 of trace_id>](<trace link>) · [<first 8 of trace_id>](<trace link>)
     ````
 
     **Contract rules:**
@@ -309,6 +312,7 @@ Runs **before** open coding. Two passes: a **sweep** over the whole window, then
     - **`unobservable` is a list, not a boolean.** A consumer must check it before claiming the run was clean.
     - **`passing` is the other half of the regression set.** `evidence` records what failed; `passing` records what was read and judged good. Without both, the closing experiment runs against whatever dataset happens to exist.
     - **The body leads with the work list.** One scannable table — mode, rate, lever, location — then the depth below it.
+    - **Link the evidence in the body, not the front matter.** Each mode's section links its `evidence` traces so a human can open them in one click; the front matter keeps bare ids for the skills that read it. **`evidence` and `passing` hold the full 32-hex `trace_id`**, never a short prefix: a link needs it, and so does the dataset `orq-run-experiment` builds from these ids. Record full ids in the Phase 2 table so you have them here. Format, host and key: [`orq-cli` → Building app URLs](../orq-cli/resources/command-map.md#building-app-urls); add the one-line "opens empty → set the Traces project selector to **All projects**" note under the table.
 
 21. **Hand off — the artifact is the router.** Name a destination per failure mode and let the user go wherever they want first. Do not forward on their behalf.
 
