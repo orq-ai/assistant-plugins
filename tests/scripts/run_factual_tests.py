@@ -408,8 +408,9 @@ class FactualTestRunner:
         module, cls = parts
         stmt = (
             f"from {module} import {cls}; "
-            f"assert hasattr({cls}, '{assertion}') or any("
-            f"'{assertion}' in vars(c).get('__annotations__', {{}}) for c in {cls}.__mro__)"
+            f"ok = hasattr({cls}, '{assertion}') or any("
+            f"'{assertion}' in vars(c).get('__annotations__', {{}}) for c in {cls}.__mro__); "
+            f"raise SystemExit(0 if ok else 'no attribute {assertion} on {cls}')"
         )
         result = subprocess.run([sys.executable, "-c", stmt], capture_output=True, timeout=30, text=True)
         if result.returncode == 0:
@@ -426,10 +427,10 @@ class FactualTestRunner:
             "import inspect; "
             f"from {module} import {cls}; "
             f"m = getattr({cls}, '{method}', None); "
-            f"assert m is not None, 'no method {method} on {cls}'; "
+            f"m is None and exit('no method {method} on {cls}'); "
             f"params = inspect.signature(m).parameters; "
-            f"assert '{assertion}' in params, "
-            f"'{assertion} not a parameter of {method} (have: ' + ', '.join(params) + ')'"
+            f"'{assertion}' in params or exit("
+            f"'{assertion} not a parameter of {method} (have: ' + ', '.join(params) + ')')"
         )
         result = subprocess.run([sys.executable, "-c", stmt], capture_output=True, timeout=30, text=True)
         if result.returncode == 0:

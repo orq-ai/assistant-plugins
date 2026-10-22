@@ -312,6 +312,8 @@ with Orq(api_key=os.environ["ORQ_API_KEY"], server_url="https://my.orq.ai") as o
         for item in response.output or [] if item.get("type") == "message"
         for part in item.get("content", []) if part.get("type") == "output_text"
     )
+    if not text:
+        raise RuntimeError(f"Agent response {response.id} has no output_text block")
     print(text)
     follow_up = orq.responses.create(
         model="agent/<agent-key>", previous_response_id=response.id, input="Tell me more.", stream=False,
@@ -358,6 +360,8 @@ curl --fail-with-body -sS https://my.orq.ai/v3/router/responses \
 
 ### Agent — Node.js orq SDK (preferred)
 
+The Node field names (`previousResponseId`, `output[].content[].text`) follow the REST contract; the Node SDK was not introspected, so check its types before relying on them.
+
 ```typescript
 import { Orq } from "@orq-ai/node";
 
@@ -371,6 +375,7 @@ const text = (response.output ?? [])
   .flatMap(item => item.content ?? [])
   .filter(part => part.type === "output_text")
   .map(part => part.text).join("");
+if (!text) throw new Error(`Agent response ${response.id} has no output_text block`);
 console.log(text);
 const followUp = await orq.responses.create({
   model: "agent/<agent-key>", previousResponseId: response.id, input: "Tell me more.", stream: false,

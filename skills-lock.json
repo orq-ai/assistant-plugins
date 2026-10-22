@@ -34,7 +34,7 @@
     "orq-compare-agents": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "01bc79c05e8a8a6bd1c0f201810452c8f595356451358367aebf69198344d1dd"
+      "computedHash": "bc3eff6d21d0012cd03fd9052e32e311bff6f07c5584db6110c5024a5aa862e1"
     },
     "orq-evaluator-alignment": {
       "source": "orq-ai/assistant-plugins",
@@ -54,7 +54,7 @@
     "orq-invoke-deployment": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "984850ea3f35d268ce9fb3887a2e04bd5627c86b2dbec521a86ee0d38c8e25b8"
+      "computedHash": "57b5c04b2dc78ed0c82c28e4b813bf1fbf1620284137fdaec9bbcd7872f34aec"
     },
     "orq-manage-skills": {
       "source": "orq-ai/assistant-plugins",
@@ -84,7 +84,7 @@
     "orq-setup-observability": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "50e046a739be1285d5461176b2af27646bfc852f9f0d304d9e675dd9a44d8022"
+      "computedHash": "74ee708e5c189a7abb0e07b10152d2a14015f337009f76d2fc921fa291778bb3"
     },
     "orq-shared": {
       "source": "orq-ai/assistant-plugins",
