@@ -54,7 +54,7 @@
     "orq-invoke-deployment": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "783ee9ebdf14cd788d1de1a6681314c68ac8bbe95d5bda03fe7b2dd40adfd4ec"
+      "computedHash": "b24d53d9326858232696538f8bd0fbf78ffcc476b576bc53dead22e4c3e01282"
     },
     "orq-manage-skills": {
       "source": "orq-ai/assistant-plugins",

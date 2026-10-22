@@ -195,6 +195,8 @@ Use Responses by default. Chat Completions or a v2 inference interface requires 
 | `stream` | SSE using Responses events such as `response.output_text.delta` |
 | `previous_response_id` | Continue from a stored response `id` (keep `store: true`) |
 | `variables` | Template substitutions in instructions |
+| `conversation` | Object `{id}` — attach the call to a conversation (`conversation={"id": "<id>"}`), not a bare string |
+| `thread` | Object `{id, tags?}` — group related calls under a thread, as on deployments |
 | `max_output_tokens` | Output token cap |
 | `text.format` | Structured output format, e.g. `{type: "json_schema", name, schema, strict: true}` |
 | `reasoning` | Reasoning configuration; discover supported effort values per model |
