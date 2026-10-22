@@ -118,10 +118,10 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ### Scenario 3: Model (AI Router) invocation
 
-- Ask: "Call GPT-4.1 directly through the AI Router"
+- Ask: "Call GPT-6 Luna directly through the AI Router"
 - Verify: uses `provider/model` format (e.g., `openai/gpt-6-luna`), not bare model name
-- Verify: points OpenAI client at `base_url="https://my.orq.ai/v3/router"`, calls `responses.create(model="provider/model-id", input=...)`, and reads `output_text`
-- Verify: does NOT use orq SDK for this path — uses `openai.OpenAI()`
+- Verify: both SDK variants use general Responses with `model="openai/gpt-6-luna"` and `input`; orq takes the host and OpenAI takes the `/v3/router` base URL.
+- Verify: prefers the orq SDK for new code or existing orq imports; reuses OpenAI only when it is already imported and orq is not.
 
 ### Scenario 4: Streaming recommendation
 

@@ -109,8 +109,8 @@ Agent Comparison Progress:
 
 - The orq.ai MCP server is connected
 - An `ORQ_API_KEY` environment variable is set
-- **Python:** `pip install evaluatorq orq-ai-sdk openai`
-- **TypeScript:** `npm install @orq-ai/evaluatorq @orq-ai/node openai`
+- **Python:** `pip install evaluatorq orq-ai-sdk`
+- **TypeScript:** `npm install @orq-ai/evaluatorq @orq-ai/node`
 - The agents to compare exist and are invocable (locally or via API)
 
 ---

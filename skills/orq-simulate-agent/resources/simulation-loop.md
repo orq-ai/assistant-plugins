@@ -16,24 +16,53 @@ Only `wrap_simulation_agent()` additionally accepts `agent_key=`.
 
 ## Target shapes
 
+Prefer orq for new code or existing orq imports. Reuse OpenAI when it is already imported and orq is not. Both callbacks below produce the same text for the simulation adapter.
+
+**orq SDK (preferred):**
+
 ```python
 from evaluatorq.simulation import from_orq_deployment, from_chat_completions
+from orq_ai_sdk import Orq
+import os
+
+# Existing managed agent/deployment:
+callback = from_orq_deployment("agent_xyz")
+
+# Direct model through general Responses:
+async def chat_fn(messages):
+    async with Orq(api_key=os.environ["ORQ_API_KEY"], server_url="https://my.orq.ai") as orq:
+        response = await orq.responses.create_async(
+            model="openai/gpt-6-luna", input=messages, stream=False,
+        )
+    if response.status != "completed":
+        raise RuntimeError(f"Model response {response.id}: {response.status}")
+    return "".join(
+        part["text"]
+        for item in response.output or [] if item.get("type") == "message"
+        for part in item.get("content", []) if part.get("type") == "output_text"
+    )
+callback = from_chat_completions(chat_fn)  # adapter name describes its callable interface, not the HTTP route
+```
+
+**OpenAI SDK (already imported):**
+
+```python
+from evaluatorq.simulation import from_chat_completions
 from openai import AsyncOpenAI
 import os
 
-# (1) Orq agent/deployment — pass target="agent:<key>" directly OR build a callback:
-callback = from_orq_deployment("agent_xyz")
-
-# (2) Model through general Responses (the adapter accepts a messages-to-text callable):
-client = AsyncOpenAI(api_key=os.environ["ORQ_API_KEY"], base_url="https://my.orq.ai/v3/router")
 async def chat_fn(messages):
-    resp = await client.responses.create(
-        model="openai/gpt-6-luna", input=messages,
-    )
-    return resp.output_text
-callback = from_chat_completions(chat_fn)  # adapter name describes its callable interface, not the HTTP route
+    async with AsyncOpenAI(api_key=os.environ["ORQ_API_KEY"], base_url="https://my.orq.ai/v3/router") as client:
+        response = await client.responses.create(model="openai/gpt-6-luna", input=messages)
+    if response.status != "completed":
+        raise RuntimeError(f"Model response {response.id}: {response.status}")
+    return response.output_text
+callback = from_chat_completions(chat_fn)
+```
 
-# (3) Vercel AI SDK / LangChain / custom, write your own callback:
+For Vercel AI SDK, LangChain or a custom agent, write a callback:
+
+```python
 async def callback(messages):
     history = [{"role": m.role, "content": m.content or ""} for m in messages]
     return await my_agent.generate(history)

@@ -161,13 +161,26 @@ jobs:
             dir=$(dirname "$pkg")
             found=1
             echo "::group::tsc $dir"
-            (cd "$dir" && npm install --no-audit --no-fund && npx tsc --noEmit)
+            (cd "$dir" && npm install --no-audit --no-fund && npx tsc --noEmit && npm run --if-present check-examples)
             echo "::endgroup::"
           done
           if [ "$found" -eq 0 ]; then
             echo "::error::no skills/*/tests/ts/package.json found — the TS contract job would pass vacuously"
             exit 1
           fi
+
+  responses-minimum-dependency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Check Responses helpers at the declared evaluatorq minimum
+        run: >-
+          uv run --no-project
+          --with-requirements skills/orq-evaluator-alignment/tests/requirements.txt
+          --with evaluatorq==1.30.0
+          python -m pytest skills/orq-evaluator-alignment/tests/test_router_responses.py
+          skills/orq-evaluator-alignment/tests/test_judge_typed.py -q
 
   trace-hooks-tests:
     # The orq-trace plugin keeps secrets out of spans and binds queued batches

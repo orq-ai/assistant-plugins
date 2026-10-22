@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Require evaluatorq 1.30.0 or newer for the Responses helper API, check the minimum in CI, and type-check SDK/HTTP examples directly from markdown to catch scope and schema regressions.
 - Show paired orq/OpenAI Responses examples for models, agents and comparison jobs. Prefer orq for new code and existing orq imports; reuse OpenAI if it is already imported and orq is not. Document async and response-parsing differences.
 - Replace the generated CLI command inventory, group listing and inventory-generation script with progressive `--help` discovery. Retain task-specific examples, behavior caveats and invocation regression checks.
 - Use `openai/gpt-6-luna` in direct model invocation examples and model command defaults instead of older GPT models.

@@ -164,7 +164,7 @@ const crewJob = job("CrewAI", async (data) => {
     body: JSON.stringify({ query: data.inputs.query }),
   });
   const result = await res.json();
-  return { agent: "CrewAI", query, response: result.output };
+  return { agent: "CrewAI", query: data.inputs.query, response: result.output };
 });
 ```
 
