@@ -378,7 +378,7 @@ not traces.
 | `--search` matches the key only | Not the description |
 | `evals get` has no `key` field | The key created with comes back as `display_name`; `evals all` returns it as `key` |
 | `evals create` under-reports | The create response has `output_type: null` even for a boolean evaluator; `evals get <id>` shows the stored value |
-| `models list` takes no `--limit` | Unprojected it returns hundreds of entries (709 on 2026-09-24). Project it: `-j "[?refId=='openai/gpt-4.1'].refId"` |
+| `models list` takes no `--limit` | Unprojected it returns hundreds of entries (709 on 2026-09-24). Project it: `-j "[?refId=='openai/gpt-4.1'].refId"`. Match on `refId`, not `model_id` ([`model-slugs.md`](../../orq-shared/resources/model-slugs.md)) |
 | `evals invoke` verdicts | Read `value`. `passed` is the guardrail's decision when there is one, so it reads `passed` on a `false` value otherwise |
 
 ---
