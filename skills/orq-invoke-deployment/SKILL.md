@@ -21,7 +21,7 @@ You are an **orq.ai integration engineer**. Your job is to help users invoke orq
 - **NEVER** invoke a deployment without confirming all `{{variable}}` inputs are populated — missing inputs silently omit prompt content with no error.
 - **NEVER** skip `identity.id` in production calls — it links requests to contacts in orq.ai and enables per-user analytics and cost attribution.
 - **ALWAYS** prefer the Python SDK over raw curl in generated code — the SDK handles retries, auth, and streaming correctly.
-- **ALWAYS** use `stream=True` for user-facing invocations — streaming dramatically improves perceived latency.
+- **Prefer streaming for user-facing invocations** — it dramatically improves perceived latency. Stream deployments with `client.deployments.stream(...)` (an `EventStream`), not `invoke(stream=True)`, which is not iterable.
 - **ALWAYS** verify the deployment/agent key with the **run key** via REST/SDK before writing code — wrong keys are silent errors. Use `search_entities` to **browse** for keys, then verify with the run key (see [run-key preflight](../orq-shared/resources/run-key-preflight.md)).
 
 **Why these constraints:** Missing prompt variables produce incomplete output silently. Hardcoded API keys are a security risk. Wrong keys waste budget. Skipping identity makes traces unattributable.
@@ -96,7 +96,7 @@ Invoke Progress:
 - **`messages`** (deployments) append additional conversation turns after the deployment's configured prompt — use this to pass the user's actual question when the prompt template doesn't use `{{variable}}` substitution.
 - **`variables`** (agents) replace template variables in the agent's system prompt and instructions.
 - **`identity`** links requests to contacts in orq.ai — required `id`, optional `display_name`, `email`, `metadata`, `logo_url`, `tags`.
-- **`stream=True`** enables server-sent events for real-time token delivery.
+- **Streaming** is via `client.deployments.stream(...)`, which returns an `EventStream` you iterate for real-time tokens. `invoke(stream=True)` returns a single response body, not an iterator, so it does not stream.
 - **`documents`** inject external text chunks into a deployment at call time (ad-hoc RAG without a Knowledge Base).
 - **`previous_response_id`** (agents) continues a stored conversation — save `id` from the previous response.
 
@@ -162,10 +162,10 @@ Follow these steps **in order**. Do NOT skip steps.
 
 7. **Choose streaming vs. non-streaming.**
 
-   | Use case | Mode |
+   | Use case | How |
    |---|---|
-   | User-facing UI, chatbot | `stream=True` |
-   | Background job, batch, eval | `stream=False` |
+   | User-facing UI, chatbot | `client.deployments.stream(...)` — an `EventStream` you iterate |
+   | Background job, batch, eval | `client.deployments.invoke(...)` — a single response |
 
 8. **Determine additional options as needed.**
 
@@ -246,15 +246,17 @@ response = client.deployments.invoke(
 )
 print(response.choices[0].message.content)
 
-# Streaming (works with any pattern above)
-response = client.deployments.invoke(
+# Streaming (works with any pattern above) — use deployments.stream(), not
+# invoke(stream=True), which returns a single response body, not an iterator.
+# stream() returns an EventStream: a context manager you iterate, payload under .data.
+with client.deployments.stream(
     key="<deployment-key>",
     inputs={"variable_name": "value"},
     identity={"id": "user_<unique_id>"},
-    stream=True,
-)
-for chunk in response:
-    print(chunk, end="", flush=True)
+) as stream:
+    for event in stream:
+        if event.data and event.data.choices:
+            print(getattr(event.data.choices[0].message, "content", None) or "", end="", flush=True)
 ```
 
 ### Deployment — curl
@@ -310,6 +312,8 @@ with Orq(api_key=os.environ["ORQ_API_KEY"], server_url="https://my.orq.ai") as o
         for item in response.output or [] if item.get("type") == "message"
         for part in item.get("content", []) if part.get("type") == "output_text"
     )
+    if not text:
+        raise RuntimeError(f"Agent response {response.id} has no output_text block")
     print(text)
     follow_up = orq.responses.create(
         model="agent/<agent-key>", previous_response_id=response.id, input="Tell me more.", stream=False,
@@ -356,6 +360,8 @@ curl --fail-with-body -sS https://my.orq.ai/v3/router/responses \
 
 ### Agent — Node.js orq SDK (preferred)
 
+The Node field names (`previousResponseId`, `output[].content[].text`) follow the REST contract; the Node SDK was not introspected, so check its types before relying on them.
+
 ```typescript
 import { Orq } from "@orq-ai/node";
 
@@ -369,6 +375,7 @@ const text = (response.output ?? [])
   .flatMap(item => item.content ?? [])
   .filter(part => part.type === "output_text")
   .map(part => part.text).join("");
+if (!text) throw new Error(`Agent response ${response.id} has no output_text block`);
 console.log(text);
 const followUp = await orq.responses.create({
   model: "agent/<agent-key>", previousResponseId: response.id, input: "Tell me more.", stream: false,
@@ -461,7 +468,7 @@ For either models or agents, stream with `stream: true` on this same endpoint an
 | Hardcoding `ORQ_API_KEY` in source code | Use `os.environ["ORQ_API_KEY"]` / `process.env.ORQ_API_KEY` |
 | Using legacy A2A `message.parts` for agents | Use Responses `input`, as plain text or input message items |
 | Skipping `identity.id` in production | Always pass identity — enables per-user analytics and cost attribution |
-| Using `stream=False` for user-facing UI | Use `stream=True` — streaming shows tokens in real time |
+| Using `invoke()` for user-facing UI | Use `client.deployments.stream(...)` — streaming shows tokens in real time |
 | Not saving the response ID for agent multi-turn | Store `response.id` and pass it as `previous_response_id` |
 | Using model name without provider prefix | Use `openai/gpt-6-luna`, `anthropic/claude-sonnet-4-5` — not just `gpt-6-luna` |
 | Not checking the trace after first invocation | Link the trace from `response.telemetry.trace_id` (step 11) and verify variable substitution and token counts |

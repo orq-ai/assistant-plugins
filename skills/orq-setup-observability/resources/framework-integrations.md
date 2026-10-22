@@ -107,7 +107,22 @@ Select a `langchain-openai` version with Responses support. See [ChatOpenAI Resp
 
 ## Observability (OpenTelemetry) Quick Setup Pattern
 
-All observability integrations use OpenInference instrumentors with OTLP export to orq.ai:
+**First-party one-liners (Python).** The orq SDK ships two setups that export to orq.ai without wiring OTLP yourself for LangChain; the Agents one still needs a tracer provider:
+
+```python
+# LangChain / LangGraph (needs langchain-core) — zero config
+from orq_ai_sdk.langchain import setup
+setup()  # reads ORQ_API_KEY; pass api_key=… / api_url=… to override
+
+# OpenAI Agents SDK (needs openai-agents, opentelemetry-sdk, opentelemetry-exporter-otlp,
+# opentelemetry-instrumentation). The instrumentor uses the global TracerProvider and
+# nothing sets one, so configure OTLP export first (block below) or pass your own.
+# It also replaces the Agents SDK's default trace processors, so OpenAI platform traces stop.
+from orq_ai_sdk.openai_agents_instrumentation import OpenAIAgentsInstrumentor
+OpenAIAgentsInstrumentor().instrument(tracer_provider=tracer_provider)
+```
+
+For any other framework, use its OpenInference instrumentor with OTLP export to orq.ai:
 
 **Environment variables (all frameworks):**
 ```bash

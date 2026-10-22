@@ -29,6 +29,8 @@ async def orq_agent_job(data: DataPoint, row: int):
         for item in response.output or [] if item.get("type") == "message"
         for part in item.get("content", []) if part.get("type") == "output_text"
     )
+    if not text:
+        raise RuntimeError(f"Agent response {response.id} has no output_text block")
     return {"agent": "OrqAgent", "query": data.inputs["query"], "response": text}
 ```
 
@@ -73,6 +75,7 @@ const orqAgentJob = job("OrqAgent", async (data) => {
     .flatMap(item => item.content ?? [])
     .filter(part => part.type === "output_text")
     .map(part => part.text).join("");
+  if (!text) throw new Error(`Agent response ${response.id} has no output_text block`);
   return { agent: "OrqAgent", query, response: text };
 });
 ```

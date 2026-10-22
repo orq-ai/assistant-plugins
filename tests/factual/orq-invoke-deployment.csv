@@ -5,7 +5,11 @@ mcp_tool_exists,list_traces,,list_traces listed on MCP server
 mcp_tool_param,search_entities,type,search_entities takes type
 sdk_import,orq_ai_sdk.Orq,,Orq importable from orq_ai_sdk
 sdk_method,orq_ai_sdk.Orq,deployments,Orq client has .deployments
+sdk_method,orq_ai_sdk.Orq,responses,Orq client has .responses (the migrated primary path)
 sdk_method,orq_ai_sdk.Orq,agents,Orq client has .agents
+sdk_method,orq_ai_sdk.deployments.Deployments,stream,deployments.stream() exists (the iterable EventStream path)
+sdk_signature,orq_ai_sdk.deployments.Deployments.invoke,stream,deployments.invoke accepts a stream kwarg (returns a single body, not an iterator)
+sdk_signature,orq_ai_sdk.responses.Responses.create,memory,responses.create accepts a memory kwarg
 doc_url,https://docs.orq.ai/docs/deployments/overview,,overview page reachable
 doc_url,https://docs.orq.ai/reference/deployments/invoke,,invoke page reachable
 doc_url,https://docs.orq.ai/reference/deployments/stream,,stream page reachable
@@ -20,3 +24,6 @@ github_repo,orq-ai/orq-python,,orq-ai/orq-python exists
 github_repo,orq-ai/orq-node,,orq-ai/orq-node exists
 mcp_tool_args,search_entities,"{""type"": ""agent""}",search_entities(type=agent) matches the schema
 mcp_tool_args,search_entities,"{""type"": ""deployment""}",search_entities(type=deployment) matches the schema
+sdk_signature,orq_ai_sdk.responses.Responses.create,previous_response_id,responses.create accepts previous_response_id (agent multi-turn key)
+sdk_signature,orq_ai_sdk.responses.Responses.create,conversation,responses.create accepts conversation (object {id})
+sdk_signature,orq_ai_sdk.responses.Responses.create,thread,responses.create accepts thread (object {id, tags})
