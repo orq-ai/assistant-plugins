@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.3] - 2026-10-22
+
+### Fixed
+
+- Agent invocation guidance now uses `POST /v3/router/responses` and `orq responses create --model agent/<key>`, including streaming, comparison jobs, and continuation with `previous_response_id`. Deprecated agent execution APIs require an explicit user request and must never be automatic fallbacks for EU-model errors.
+- Replace legacy A2A request/output examples and agent-specific Responses documentation links. Require framework adapters to use general Responses as well. Document the CLI SSE decoding failure observed with a local mock and use SDK/curl for streams on the same route. Contract checked against current Run Agents and Responses documentation and installed CLI help on 2026-10-22; this does not establish the cause of reported EU-model failures.
+
 ## [3.9.2] - 2026-10-13
 
 ### Changed

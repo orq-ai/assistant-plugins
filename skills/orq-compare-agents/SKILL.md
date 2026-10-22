@@ -20,6 +20,8 @@ Supported comparison modes:
 - **External vs external** — e.g., LangGraph vs CrewAI, Vercel vs OpenAI Agents SDK
 - **Multiple agents** — compare 3+ agents in a single experiment
 
+**Agent invocation policy:** Always use `POST /v3/router/responses` (`model: "agent/<key>"`) or `orq responses create --model "agent/<key>"`. Legacy agent invoke/stream/run endpoints, `agents-responses create`, and agent-specific Responses APIs are deprecated; use them only when the user explicitly requests that legacy interface. Never fall back to them after a routing or EU-model error. Agent configuration reads and writes are separate from invocation.
+
 ## Constraints
 
 - **NEVER** create datasets inline in the comparison script — delegate to `orq-generate-synthetic-dataset` skill or use `{ dataset_id: "..." }` (Python) / `{ datasetId: "..." }` (TypeScript) to load from the platform.
@@ -85,7 +87,7 @@ Agent Comparison Progress:
 
 > **Official documentation:** [Evaluatorq Tutorial](https://docs.orq.ai/docs/tutorials/evaluator-q)
 
-[Experiments](https://docs.orq.ai/docs/experiments/creating) · [Evaluators](https://docs.orq.ai/docs/evaluators/overview) · [Agent Responses API](https://docs.orq.ai/reference/agents/create-response) · [Datasets](https://docs.orq.ai/docs/datasets/overview)
+[Experiments](https://docs.orq.ai/docs/experiments/creating) · [Evaluators](https://docs.orq.ai/docs/evaluators/overview) · [Agent Responses API](https://docs.orq.ai/reference/responses/create-response) · [Datasets](https://docs.orq.ai/docs/datasets/overview)
 
 ### Key Concepts
 
@@ -107,8 +109,8 @@ Agent Comparison Progress:
 
 - The orq.ai MCP server is connected
 - An `ORQ_API_KEY` environment variable is set
-- **Python:** `pip install evaluatorq orq-ai-sdk`
-- **TypeScript:** `npm install @orq-ai/evaluatorq`
+- **Python:** `pip install evaluatorq orq-ai-sdk openai`
+- **TypeScript:** `npm install @orq-ai/evaluatorq @orq-ai/node openai`
 - The agents to compare exist and are invocable (locally or via API)
 
 ---
@@ -162,7 +164,7 @@ Agent Comparison Progress:
    | Experiment Type | Jobs to Include |
    |---|---|
    | External vs orq.ai | One external job + one orq.ai job |
-   | orq.ai vs orq.ai | Two orq.ai jobs with different `agent_key` values |
+   | orq.ai vs orq.ai | Two orq.ai jobs with different `model="agent/<key>"` values |
    | External vs external | Two external jobs (e.g., LangGraph + CrewAI) |
    | Multi-agent | Three or more jobs of any type |
 

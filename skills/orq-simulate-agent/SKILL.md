@@ -24,11 +24,13 @@ plays the persona, the **agent under test** responds, and a **JudgeAgent**
 decides whether to continue or terminate based on goal achievement and rule
 violations. You almost never need to hand-roll the loop.
 
+**Agent invocation policy:** Always use `POST /v3/router/responses` (`model: "agent/<key>"`) or `orq responses create --model "agent/<key>"`. Legacy agent invoke/stream/run endpoints, `agents-responses create`, and agent-specific Responses APIs are deprecated; use them only when the user explicitly requests that legacy interface. Never fall back to them after a routing or EU-model error. Agent configuration reads and writes are separate from invocation. When using a framework adapter, confirm its installed version routes agent calls through general Responses. If it still uses legacy execution, upgrade it or provide a callable backed by `/v3/router/responses`; do not silently accept a deprecated route.
+
 ## Constraints
 
 - **NEVER** use the same model for the user simulator and the agent under test if a downstream LLM-as-judge is reading both. Collusion inflates scores. `simulate()` accepts one `sim_model=` kwarg that drives the simulator, judge, and first-message generator. The agent's own model lives inside the target (`target="agent:<key>"` or the callback). To customize the user simulator separately, build a `UserSimulatorAgent(model=...)` and pass it as `user_simulator=`.
 - **NEVER** let the simulator run unbounded. `simulate()` defaults to `max_turns=10`. Lower it for cheap exploration, raise it for memory tests.
-- **NEVER** hand-roll the loop around `orq.agents.responses.create()` when `simulate()` or `wrap_simulation_agent()` covers the case. The framework already handles parallelism, judge-based termination, OTel tracing, and result conversion.
+- **NEVER** hand-roll the loop around `client.responses.create()` when `simulate()` or `wrap_simulation_agent()` covers the case. The framework already handles parallelism, judge-based termination, OTel tracing, and result conversion.
 - **NEVER** invent persona scalars from a one-line brief. `patience`, `assertiveness`, `politeness`, `technical_level` are floats `[0-1]`. Pick them deliberately and write them down.
 - **NEVER** discard the conversation log. `SimulationResult.messages` is the primary artifact, OTel spans land in orq.ai automatically, and `wrap_simulation_agent()` returns a job that auto-uploads to orq.ai when you pass it to `evaluatorq(...)` with `ORQ_API_KEY` set. Close wrapped jobs with `await job.aclose()` after the run.
 - **ALWAYS** review at least one full transcript with the user before scaling to N personas. Simulated users go off the rails in ways only humans notice.

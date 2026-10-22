@@ -141,111 +141,38 @@ curl -s https://api.orq.ai/v2/deployments \
 
 ## Agents
 
-### Create Response (invoke agent)
+### General Responses API
 
-**Endpoint:** `POST https://api.orq.ai/v2/agents/{agent_key}/responses`
+**Endpoint:** `POST https://my.orq.ai/v3/router/responses`
 
-**Required fields:** `message`
+Use the configured host for staging or self-hosted environments; retain `/v3/router/responses`.
 
-**Request body:**
-
-| Field | Type | Description |
-|---|---|---|
-| `message.role` | string | `"user"` or `"tool"` |
-| `message.parts` | array | `[{kind: "text", text: "..."}]` for text; `[{kind: "file", file: {bytes/uri}}]` for files |
-| `task_id` | string | Continue an existing conversation (from previous response's `task_id`) |
-| `variables` | object | Replace `{{variable}}` placeholders in system prompt/instructions |
-| `identity.id` | string (required) | Unique contact identifier |
-| `identity.display_name` | string | Contact display name |
-| `identity.email` | string | Contact email |
-| `thread.id` | string | Thread ID to group related requests |
-| `thread.tags` | array | Thread tags |
-| `memory.entity_id` | string | Associate memory stores with a specific user/session |
-| `metadata` | object | Key-value pairs included in trace |
-| `stream` | boolean | Return SSE stream (default: `false`) |
-| `background` | boolean | Return immediately with `task_id` (async, default: `false`) |
-| `engine` | string | Override template engine: `text`, `jinja`, or `mustache` |
-
-**Response fields:**
-
-| Field | Description |
-|---|---|
-| `_id` | Unique response ID |
-| `task_id` | Agent execution task ID — **save this for multi-turn** |
-| `output[].role` | Message role (`agent`, `tool`, etc.) |
-| `output[0].parts[0].text` | Generated text content |
-| `model` | Model used |
-| `usage.total_tokens` | Total tokens used |
-| `usage.prompt_tokens` | Prompt tokens |
-| `usage.completion_tokens` | Completion tokens |
-| `finish_reason` | `stop`, `length`, `tool_calls`, `max_iterations`, `max_time` |
-| `pending_tool_calls` | Tool calls awaiting user response (when `finish_reason` is `function_call`) |
-| `telemetry.trace_id` | Trace ID — link it as `<host>/<workspace-key>/traces/(trace:<trace_id>)` ([format, and the unverified-id caveat](../../orq-cli/resources/command-map.md#building-app-urls)) |
-
-**Streaming events** (when `stream: true`):
-
-| Event type | Payload |
-|---|---|
-| `response.started` | `{responseId, taskId, model, workflowRunId}` |
-| `part.delta` | `{partId, delta: {kind: "text", text: "chunk"}}` — text token |
-| `part.done` | `{partId, part}` — part fully streamed |
-| `tool.started` | `{toolId, toolName, toolCallId, arguments}` |
-| `tool.done` | `{toolId, toolCallId, result}` |
-| `tool.failed` | `{toolId, toolCallId, error}` |
-| `tool.review.requested` | `{toolId, toolCallId, requiresApproval}` — human-in-loop |
-| `response.done` | `{finishReason, usage, pendingToolCalls}` |
-| `response.failed` | `{error, code}` |
+**Required fields:** `model: "agent/<key>"`, `input` (plain text or Responses input items).
+Use `variables` for template substitution, `identity` for attribution, and `stream: true` for SSE on this same endpoint. Do not send legacy A2A `message.parts` or `task_id`.
 
 ```bash
 # Single turn
-curl -s -X POST https://api.orq.ai/v2/agents/<agent-key>/responses \
+curl --fail-with-body -sS https://my.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "message": {
-      "role": "user",
-      "parts": [{"kind": "text", "text": "Hello, can you help me?"}]
-    },
-    "identity": {"id": "user_<unique_id>", "display_name": "Jane Doe", "email": "jane@example.com"}
-  }' | jq
+  -d '{"model":"agent/<AGENT_KEY>","input":"Test query","identity":{"id":"synthetic-user"}}'
 
-# Multi-turn (pass task_id from previous response)
-curl -s -X POST https://api.orq.ai/v2/agents/<agent-key>/responses \
+# Continue using the previous response's id (original request must use store: true, the default)
+orq responses create --model "agent/<AGENT_KEY>" \
+  --input "Follow-up" --previous-response-id "<response_id>" -o json
+
+# Streaming uses the same route
+curl --fail-with-body -sS -N https://my.orq.ai/v3/router/responses \
   -H "Authorization: Bearer $ORQ_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "task_id": "<task_id_from_previous>",
-    "message": {"role": "user", "parts": [{"kind": "text", "text": "Tell me more."}]}
-  }' | jq
-
-# With template variables (replaces {{variable}} in system prompt)
-curl -s -X POST https://api.orq.ai/v2/agents/<agent-key>/responses \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": {"role": "user", "parts": [{"kind": "text", "text": "Help me."}]},
-    "variables": {"customer_tier": "premium", "language": "English"},
-    "identity": {"id": "user_<unique_id>"}
-  }' | jq
-
-# Streaming
-curl -s -X POST https://api.orq.ai/v2/agents/<agent-key>/responses \
-  -H "Authorization: Bearer $ORQ_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": {"role": "user", "parts": [{"kind": "text", "text": "Hello!"}]},
-    "identity": {"id": "user_<unique_id>"},
-    "stream": true
-  }'
-
-# List agents
-curl -s https://api.orq.ai/v2/agents \
-  -H "Authorization: Bearer $ORQ_API_KEY" | jq
-
-# Get agent details
-curl -s https://api.orq.ai/v2/agents/<agent-key> \
-  -H "Authorization: Bearer $ORQ_API_KEY" | jq
+  -d '{"model":"agent/<AGENT_KEY>","input":"Hello","stream":true}'
 ```
+
+For HTTP continuation, add `previous_response_id` to the same request body. For HTTP streaming, add `stream: true` and use `curl -N`.
+Read text from `output[]` message items and their `content[]` blocks of type `output_text`; tool and reasoning items may appear before messages. Save `id` for continuation. Streaming emits Responses events such as `response.output_text.delta`, not legacy `part.delta` events.
+Check `status` and errors before treating a call as completed; asynchronous/background results are not completed answers.
+
+**Contract source (2026-10-22):** [Run Agents](https://docs.orq.ai/ai-studio/ai-engineering/run-agents) · [Responses API](https://docs.orq.ai/ai-gateway/features/responses-api).
 
 ---
 

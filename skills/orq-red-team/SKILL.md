@@ -16,6 +16,8 @@ You are an **orq.ai red team operator**. Your job is to invoke the `eq redteam` 
 
 This skill is a **reference guide and invocation helper — not a wrapper**. You call the CLI directly; you do not reimplement it.
 
+**Agent invocation policy:** Always use `POST /v3/router/responses` (`model: "agent/<key>"`) or `orq responses create --model "agent/<key>"`. Legacy agent invoke/stream/run endpoints, `agents-responses create`, and agent-specific Responses APIs are deprecated; use them only when the user explicitly requests that legacy interface. Never fall back to them after a routing or EU-model error. Agent configuration reads and writes are separate from invocation. When using a framework adapter, confirm its installed version routes agent calls through general Responses. If it still uses legacy execution, upgrade it or provide a callable backed by `/v3/router/responses`; do not silently accept a deprecated route.
+
 ## Constraints
 
 - **NEVER** reimplement red teaming logic — use the `eq redteam` CLI.
