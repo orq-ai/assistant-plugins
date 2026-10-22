@@ -1,5 +1,7 @@
 # Run-Key Preflight Check
 
+Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK.
+
 After configuration preflight, invoke models and agents through `POST /v3/router/responses` or `orq responses create`. Use `model: "provider/model-id"` for models or `model: "agent/<key>"` for agents, with `input`. Prefer Responses over Chat Completions; v2 inference or another interface requires an explicit user request. Never switch interfaces as an error fallback. Streaming and continuation use Responses too. The configuration reads below remain the preflight.
 
 When a skill invokes an orq.ai agent or deployment (via evaluatorq, the SDK, or curl), the invocation uses the **`ORQ_API_KEY`** from the environment (exported or from the project `.env`). Keys are **project-scoped** (since release 4.10, one key → one project, no cross-project reads), so the *only* credential whose verdict predicts the run is that one.

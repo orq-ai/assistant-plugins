@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Show paired orq/OpenAI Responses examples for models, agents and comparison jobs. Prefer orq for new code and existing orq imports; reuse OpenAI if it is already imported and orq is not. Document async and response-parsing differences.
 - Replace the generated CLI command inventory, group listing and inventory-generation script with progressive `--help` discovery. Retain task-specific examples, behavior caveats and invocation regression checks.
 - Use `openai/gpt-6-luna` in direct model invocation examples and model command defaults instead of older GPT models.
 - Model and agent invocation guidance now defaults to `POST /v3/router/responses` and `orq responses create`, using `provider/model-id` for models and `agent/<key>` for managed agents. Prefer Responses over Chat Completions and avoid v2 inference. Other inference interfaces require an explicit user request and must never be automatic error fallbacks.

@@ -1,5 +1,7 @@
 # Known Gotchas
 
+Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK.
+
 Common pitfalls when running cross-framework agent comparisons with evaluatorq.
 
 ---

@@ -111,6 +111,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 ### Scenario 2: Agent invocation with multi-turn
 
 - Ask: "Send a message to my agent and then follow up"
+- Verify: shows orq and OpenAI SDK variants; prefers orq for new code or when imported, reuses OpenAI when it is already imported and orq is not. Python async orq uses `responses.create_async()`.
 - Verify: uses `/v3/router/responses` with `model="agent/<key>"`, or `orq responses create`
 - Verify: message format uses Responses `input`; text comes from message `content` blocks
 - Verify: saves `id` from the first response and passes `previous_response_id` in the follow-up call

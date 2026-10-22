@@ -8,7 +8,31 @@ Pick the pattern matching each agent's framework, then assemble them into the co
 
 ## orq.ai Agent
 
-### Python
+### Python — orq SDK (preferred)
+
+Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK.
+
+```python
+from orq_ai_sdk import Orq
+
+@job("OrqAgent")
+async def orq_agent_job(data: DataPoint, row: int):
+    # orq takes the host; its SDK adds /v3/router/responses.
+    async with Orq(api_key=ORQ_API_KEY, server_url=ORQ_BASE_URL.rstrip("/")) as orq:
+        response = await orq.responses.create_async(
+            model="agent/<AGENT_KEY>", input=data.inputs["query"], stream=False,
+        )
+    if response.status != "completed":
+        raise RuntimeError(f"Agent response {response.id}: {response.status}")
+    text = "".join(
+        part["text"]
+        for item in response.output or [] if item.get("type") == "message"
+        for part in item.get("content", []) if part.get("type") == "output_text"
+    )
+    return {"agent": "OrqAgent", "query": data.inputs["query"], "response": text}
+```
+
+### Python — existing OpenAI SDK
 
 ```python
 from openai import AsyncOpenAI
@@ -26,22 +50,49 @@ async def orq_agent_job(data: DataPoint, row: int):
     return {"agent": "OrqAgent", "query": data.inputs["query"], "response": response.output_text}
 ```
 
-> Install `openai` alongside evaluatorq. This adapter uses the OpenAI-compatible general Responses endpoint; keep the orq SDK for platform evaluator calls.
+> Install `orq-ai-sdk` for the preferred pattern. Use the OpenAI alternative when it is already imported and orq is not; do not install both just for inference. Both call general Responses. Keep the orq SDK for platform evaluator calls when needed.
 
-### TypeScript
+### TypeScript — orq SDK (preferred)
+
+```typescript
+import { Orq } from "@orq-ai/node";
+
+const orqAgentJob = job("OrqAgent", async (data) => {
+  const query = data.inputs.query;
+  if (typeof query !== "string") throw new Error("Expected a string inputs.query");
+  const host = (process.env.ORQ_BASE_URL ?? "https://my.orq.ai").replace(/\/$/, "");
+  const orq = new Orq({ apiKey: process.env.ORQ_API_KEY, serverURL: host });
+  const response = await orq.responses.create({
+    model: "agent/<AGENT_KEY>", input: query, stream: false,
+  });
+  if (!("output" in response) || response.status !== "completed") {
+    throw new Error("Expected a completed non-streaming response");
+  }
+  const text = (response.output ?? [])
+    .filter(item => item.type === "message")
+    .flatMap(item => item.content ?? [])
+    .filter(part => part.type === "output_text")
+    .map(part => part.text).join("");
+  return { agent: "OrqAgent", query, response: text };
+});
+```
+
+### TypeScript — existing OpenAI SDK
 
 ```typescript
 import OpenAI from "openai";
 
 const orqAgentJob = job("OrqAgent", async (data) => {
+  const query = data.inputs.query;
+  if (typeof query !== "string") throw new Error("Expected a string inputs.query");
   const host = (process.env.ORQ_BASE_URL ?? "https://my.orq.ai").replace(/\/$/, "");
   const client = new OpenAI({ apiKey: process.env.ORQ_API_KEY, baseURL: `${host}/v3/router` });
   const response = await client.responses.create({
     model: "agent/<AGENT_KEY>",
-    input: data.inputs.query,
+    input: query,
   });
   if (response.status !== "completed") throw new Error(`Agent response ${response.id}: ${response.status}`);
-  return { agent: "OrqAgent", query: data.inputs.query, response: response.output_text };
+  return { agent: "OrqAgent", query, response: response.output_text };
 });
 ```
 
@@ -113,7 +164,7 @@ const crewJob = job("CrewAI", async (data) => {
     body: JSON.stringify({ query: data.inputs.query }),
   });
   const result = await res.json();
-  return { agent: "CrewAI", query: data.inputs.query, response: result.output };
+  return { agent: "CrewAI", query, response: result.output };
 });
 ```
 

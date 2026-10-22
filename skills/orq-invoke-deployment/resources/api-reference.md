@@ -1,5 +1,7 @@
 # orq.ai API Reference for Deployment Invocation
 
+Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK.
+
 MCP tools and HTTP API endpoints used by the orq-invoke-deployment skill.
 
 > **Official documentation:** [Deployments](https://docs.orq.ai/docs/deployments/overview) · [Agents API](https://docs.orq.ai/docs/agents/agent-api) · [AI Router](https://docs.orq.ai/docs/router/getting-started)

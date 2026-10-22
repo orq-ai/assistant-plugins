@@ -44,7 +44,28 @@
 
 For model and agent generation, point a Responses-capable client at the v3 router and explicitly select Responses. Changing the base URL alone does not switch a Chat Completions client to Responses. If a framework cannot use Responses, use a Responses-backed callable or ask for an explicit interface exception.
 
-**Python (OpenAI SDK):**
+Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK.
+
+**Python (orq SDK, preferred):**
+```python
+from orq_ai_sdk import Orq
+import os
+
+with Orq(api_key=os.environ["ORQ_API_KEY"], server_url="https://my.orq.ai") as orq:
+    response = orq.responses.create(model="openai/gpt-6-luna", input="Hello", stream=False)
+    print(response)
+```
+
+**Node.js (orq SDK, preferred):**
+```typescript
+import { Orq } from "@orq-ai/node";
+
+const orq = new Orq({ apiKey: process.env.ORQ_API_KEY, serverURL: "https://my.orq.ai" });
+const response = await orq.responses.create({ model: "openai/gpt-6-luna", input: "Hello", stream: false });
+console.log(response);
+```
+
+**Python (OpenAI SDK, already imported):**
 ```python
 from openai import OpenAI
 import os
@@ -57,7 +78,7 @@ response = client.responses.create(model="openai/gpt-6-luna", input="Hello")
 print(response.output_text)
 ```
 
-**Node.js (OpenAI SDK):**
+**Node.js (OpenAI SDK, already imported):**
 ```typescript
 import OpenAI from "openai";
 
