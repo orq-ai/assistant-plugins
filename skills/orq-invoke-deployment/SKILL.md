@@ -256,7 +256,7 @@ with client.deployments.stream(
 ) as stream:
     for event in stream:
         if event.data and event.data.choices:
-            print(event.data.choices[0].message.content, end="", flush=True)
+            print(getattr(event.data.choices[0].message, "content", None) or "", end="", flush=True)
 ```
 
 ### Deployment — curl
