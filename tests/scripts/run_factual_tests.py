@@ -17,6 +17,8 @@ Phase 1 test types (the mcp_* types need ORQ_API_KEY and skip without it):
                      key is a declared parameter
   sdk_import         Python import succeeds
   sdk_method         Python object has the named attribute
+  sdk_signature      target is module.Class.method; the method's signature has the
+                     named keyword parameter (assertion)
   cli_subcommand     `orq <subcommand> --help` resolves to that subcommand
   cli_flag           `orq <subcommand> --help` output mentions the flag
   doc_url            curl returns 2xx/3xx (non-gating: reported, never fails the run)
@@ -63,6 +65,7 @@ PHASE1_TYPES = frozenset(
         "mcp_tool_args",
         "sdk_import",
         "sdk_method",
+        "sdk_signature",
         "cli_subcommand",
         "cli_flag",
         "doc_url",
@@ -77,7 +80,9 @@ PHASE1_TYPES = frozenset(
 # The other third-party checks gate on "not found" only (see SkipCheck).
 NON_GATING_TYPES = frozenset({"doc_url"})
 # Types whose check reads the assertion; a blank one would pass vacuously.
-ASSERTION_TYPES = frozenset({"cli_flag", "mcp_tool_param", "pypi_extra", "sdk_method"})
+ASSERTION_TYPES = frozenset(
+    {"cli_flag", "mcp_tool_param", "pypi_extra", "sdk_method", "sdk_signature"}
+)
 NETWORK_RETRIES = 2
 REQUIRED_COLUMNS = ("test_type", "target", "assertion", "description")
 
@@ -403,8 +408,29 @@ class FactualTestRunner:
         module, cls = parts
         stmt = (
             f"from {module} import {cls}; "
-            f"assert hasattr({cls}, '{assertion}') or any("
-            f"'{assertion}' in vars(c).get('__annotations__', {{}}) for c in {cls}.__mro__)"
+            f"ok = hasattr({cls}, '{assertion}') or any("
+            f"'{assertion}' in vars(c).get('__annotations__', {{}}) for c in {cls}.__mro__); "
+            f"raise SystemExit(0 if ok else 'no attribute {assertion} on {cls}')"
+        )
+        result = subprocess.run([sys.executable, "-c", stmt], capture_output=True, timeout=30, text=True)
+        if result.returncode == 0:
+            return True, None
+        last_line = result.stderr.strip().split("\n")[-1] if result.stderr else "unknown error"
+        return False, last_line
+
+    def _check_sdk_signature(self, target: str, assertion: str) -> tuple[bool, str | None]:
+        parts = target.rsplit(".", 2)
+        if len(parts) != 3:
+            return False, f"bad target '{target}' (want module.Class.method)"
+        module, cls, method = parts
+        stmt = (
+            "import inspect; "
+            f"from {module} import {cls}; "
+            f"m = getattr({cls}, '{method}', None); "
+            f"m is None and exit('no method {method} on {cls}'); "
+            f"params = inspect.signature(m).parameters; "
+            f"'{assertion}' in params or exit("
+            f"'{assertion} not a parameter of {method} (have: ' + ', '.join(params) + ')')"
         )
         result = subprocess.run([sys.executable, "-c", stmt], capture_output=True, timeout=30, text=True)
         if result.returncode == 0:

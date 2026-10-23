@@ -21,6 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Calibration counts missing analyst-positive labels as misses and rejects unreadable probabilities. Budget reservations halt the whole pass on refusal, retain uncertain charges and attempted overflow retries, and reject non-finite limits. Active-window metadata is written before labelling; reports and picks filter the cache to that population and refuse missing metadata. Add an offline regression suite and pinned API contract sources.
 
+## [3.10.1] - 2026-10-22
+
+### Changed
+
+- `orq-setup-observability`: added the first-party observability one-liners `orq_ai_sdk.langchain.setup()` and `OpenAIAgentsInstrumentor().instrument()` (RES-1221).
+- `orq-invoke-deployment`: stream deployments with `client.deployments.stream(...)` (an `EventStream`) instead of `invoke(stream=True)`, which returns a single response body and is not iterable (RES-1221).
+- `orq-setup-observability`: the OpenAI Agents one-liner needs a configured `TracerProvider` (the instrumentor reads the global one and replaces the Agents SDK trace processors); documented, with the required packages.
+- Agent text-extraction snippets (`orq-invoke-deployment`, `orq-compare-agents`) raise when the response has no `output_text` block instead of returning an empty answer.
+- `orq-invoke-deployment` API reference: documented the `conversation` (`{id}`) and `thread` (`{id, tags}`) parameters of agent `Responses.create`, with factual rows.
+- `tests/scripts/run_factual_tests.py`: SDK probes use `SystemExit` instead of `assert`, so `python -O` cannot turn a failure into a pass. Added a `previous_response_id` signature row.
+
 ## [3.10.0] - 2026-10-22
 
 ### Added
