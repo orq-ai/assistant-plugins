@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Calibration counts missing analyst-positive labels as misses and rejects unreadable probabilities. Budget reservations halt the whole pass on refusal, retain uncertain charges and attempted overflow retries, and reject non-finite limits. Active-window metadata is written before labelling; reports and picks filter the cache to that population and refuse missing metadata. Add an offline regression suite and pinned API contract sources.
+- Preserve complete API-returned trace IDs in analysis evidence, including platform ULIDs as well as OpenTelemetry IDs; do not substitute record or span IDs.
 
 ## [3.10.1] - 2026-10-22
 
