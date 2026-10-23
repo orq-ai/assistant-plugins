@@ -2,7 +2,7 @@
 
 Contract checked against orquesta-web `main` at
 [`b94898e56f69bcbd4cb11bd8a555d23ca7bd358c`](https://github.com/orq-ai/orquesta-web/tree/b94898e56f69bcbd4cb11bd8a555d23ca7bd358c) on 2026-10-22.
-This is source evidence; no paid live `label` run was performed in this review.
+That source check was followed by live validation on 2026-10-23 against the existing synthetic `acme-support-full` fixture. Both model probes and the complete selection, calibration and window-labelling pipeline succeeded: 201 traces per window pass, 100 frozen coding-agent reference labels, and both short and long routes. A completed-window rerun made no new decision calls. These checks establish the live contract and workflow; agreement remains relative to coding-agent annotations.
 
 - [`publicopenapi/contract.go`](https://github.com/orq-ai/orquesta-web/blob/b94898e56f69bcbd4cb11bd8a555d23ca7bd358c/apps/responses-api/publicopenapi/contract.go) registers `POST /v3/router/decisions` and deprecates `/v3/router/classify` with the same contract.
 - [`types_classify.go`](https://github.com/orq-ai/orquesta-web/blob/b94898e56f69bcbd4cb11bd8a555d23ca7bd358c/apps/responses-api/publicopenapi/types_classify.go) defines request `model`, JSON `state`, and keyed `questions`; response `answers` keyed by question; `noul` probability, `choice` label and `refusal` variants; optional `usage.total_cost` in USD.
