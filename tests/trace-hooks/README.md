@@ -23,8 +23,7 @@ TEST_ORQ_API_KEY=<key> ./tests/trace-hooks/run-all.sh   # also runs the subproce
 ## Conventions
 
 - The hook reads no config file. Tests supply keys through
-  `CLAUDE_PLUGIN_OPTION_ORQ_API_KEY` / `ORQ_API_KEY` only, and use short
-  placeholders such as `test-key`; generate anything longer at runtime.
+  `CLAUDE_PLUGIN_OPTION_ORQ_API_KEY` / `ORQ_API_KEY` only.
 - All tests write to `/tmp/orq-trace-debug.log` (truncated each run). Inspect
   this file for hook output post-failure.
 - `claude -p` only loads plugins registered in
