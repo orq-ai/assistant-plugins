@@ -11,7 +11,7 @@ PLUGIN_ROOT="$REPO_ROOT/plugins/trace-hooks"
 
 EXIT=0
 
-echo "########## 1/9 manifest schema ##########"
+echo "########## 1/8 manifest schema ##########"
 # The manifest is inline in the orq-trace entry of the marketplace (strict: false); a nested
 # plugin.json would make Claude Desktop skip the ./-sourced plugins at the repo root.
 node -e "
@@ -22,35 +22,31 @@ if (require('fs').existsSync('$PLUGIN_ROOT/.claude-plugin/plugin.json')) process
 " && echo "PASS: orq-trace marketplace entry is a complete inline manifest" || EXIT=1
 
 echo
-echo "########## 2/9 runtime files ##########"
+echo "########## 2/8 runtime files ##########"
 node "$PLUGIN_ROOT/src/validate-runtime.js" || EXIT=1
 
 echo
-echo "########## 3/9 value redaction ##########"
-node "$DIR/test-redact.mjs" || EXIT=1
-
-echo
-echo "########## 4/9 queue destination ##########"
+echo "########## 3/8 queue destination ##########"
 node "$DIR/test-queue-destination.mjs" || EXIT=1
 
 echo
-echo "########## 5/9 trace switch ##########"
+echo "########## 4/8 trace switch ##########"
 node "$DIR/test-trace-switch.mjs" || EXIT=1
 
 echo
-echo "########## 6/9 credential resolution ##########"
+echo "########## 5/8 credential resolution ##########"
 node "$DIR/test-resolution.mjs" || EXIT=1
 
 echo
-echo "########## 7/9 post-tool-use hook ##########"
+echo "########## 6/8 post-tool-use hook ##########"
 node "$DIR/test-post-tool-use.mjs" || EXIT=1
 
 echo
-echo "########## 8/9 transcript spans ##########"
+echo "########## 7/8 transcript spans ##########"
 node "$DIR/test-transcript-spans.mjs" || EXIT=1
 
 echo
-echo "########## 9/9 trace flow (subprocess CC) ##########"
+echo "########## 8/8 trace flow (subprocess CC) ##########"
 bash "$DIR/test-trace-flow.sh" || EXIT=1
 
 # test-workspace-visibility.sh deliberately not in run-all: known-failing

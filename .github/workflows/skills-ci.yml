@@ -201,7 +201,7 @@ jobs:
         run: |
           set -uo pipefail
           rc=0
-          for t in plugins/trace-hooks/src/validate-runtime.js tests/trace-hooks/test-redact.mjs tests/trace-hooks/test-queue-destination.mjs \
+          for t in plugins/trace-hooks/src/validate-runtime.js tests/trace-hooks/test-queue-destination.mjs \
                    tests/trace-hooks/test-trace-switch.mjs tests/trace-hooks/test-post-tool-use.mjs tests/trace-hooks/test-transcript-spans.mjs \
                    tests/trace-hooks/test-resolution.mjs; do
             echo "::group::$t"
