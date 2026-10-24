@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.11.0] - 2026-10-22
+
+### Added
+
+- `orq-analyze-traces/scripts/decide.py` (RES-1629): one `POST /v3/router/decisions` call per trace over every trace in the window, to surface failing traces the analyst never read. Traces go whole to `typesafe/jev-latest` when they fit and to `openai/gpt-6-luna` otherwise, never chunked or trimmed. Subcommands `probe`, `estimate`, `label` (resumable, capped by a required `--budget-usd`, refuses windows over 5,000 traces without `--max-traces`), `pick`, `agreement` and `rates`. Never writes to the platform.
+- `orq-analyze-traces`: a Phase 1 selection pass over the window, a Phase 4 calibration against the analyst's own labels with a fixed clearing rule (10+ agent positives, recall 0.7+), and a window pass that reports each cleared mode's flag rate, interval and flagged trace ids. Spend is approved through `AskUserQuestion`. Falls back to the sample-based path when decisions are unavailable or declined.
+
+### Changed
+
+- Error-analysis artifact: `rate` is now the best available rate and `rate_basis` says which (`window_flags` or `read`); `read_rate` always holds the read-based rate. New `decisions`, `traces.labelled`, per-mode `window_flags` and `flagged`.
+- `orq-improve-agent`, `orq-recommend-evaluators`: quote `rate` with its `rate_basis`, and treat `flagged` as unread examples, never as regression evidence.
+
+### Fixed
+
+- Calibration counts missing analyst-positive labels as misses and rejects unreadable probabilities. Budget reservations halt the whole pass on refusal, retain uncertain charges and attempted overflow retries, and reject non-finite limits. Active-window metadata is written before labelling; reports and picks filter the cache to that population and refuse missing metadata. Add an offline regression suite and pinned API contract sources.
+- Preserve complete API-returned trace IDs in analysis evidence, including platform ULIDs as well as OpenTelemetry IDs; do not substitute record or span IDs.
+
 ## [3.10.1] - 2026-10-22
 
 ### Changed

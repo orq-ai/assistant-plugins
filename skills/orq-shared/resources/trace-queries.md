@@ -1,6 +1,6 @@
 # Trace Queries — the `orq` CLI contract
 
-Shared reference for `orq-analyze-traces` and `orq-improve-agent`. Everything here was probed live against `orq` CLI 4.13.1 on 2026-08-26, and re-verified against **4.14.0** the same day with no behavioural drift observed.
+Shared reference for `orq-analyze-traces` and `orq-improve-agent`. Everything here was probed live against `orq` CLI 4.13.1 on 2026-08-26, and re-verified against **4.14.0** the same day with no behavioural drift observed. The agent-target, reporting-scoping and sampling-filter claims dated 2026-10-14 were probed on **CLI 11.4.1** (API 4.14.20) against an orq-hosted agent.
 
 **Read this before your first `orq traces` call. The invocation details below are not optional** — three of them (`--from-file`, the required sort, the null-safe projection) fail loudly, and two (a stale field name, a mid-deploy empty result) fail *silently* by returning a confident empty answer.
 
@@ -21,8 +21,8 @@ The CLI and MCP overlap on most read operations but differ in two critical ways:
 - **Trace aggregates and search:** CLI `orq traces aggregate` / `search` with `--from-file` — the only path that supports `group_by`, `compute`, and arbitrary filters.
 - **Span tree (compact):** CLI `orq traces list-spans -j "data[].{...}"` — the projection keeps 83-span traces under 10 KB.
 - **Span detail (projected):** CLI `orq traces get-span -j 'span.summary'` for metadata, `span.attributes.*` for config knobs.
-- **Full conversation content:** CLI `orq traces conversation <trace-id> [<span-id>]` (**7.4.0+**; short alias `conv`; spelled `traces thread` before 11.4.0, deprecated from then) or `mcp__orq-workspace__get_span span_id=... mode=full`. `conversation` normalizes Chat Completions, OpenAI Responses and OpenTelemetry GenAI payloads into one message list and renders it far more compactly than the raw span — never reconstruct a conversation out of `get-span` attributes. Its `-o` is its own (`xml` default, plus `markdown`, `json`, `yaml`, `toon`); see `orq-cli/SKILL.md`, "Reading a conversation", for span selection, the filter flags and their fixed order. MCP `mode=full` remains the path for per-message `finish_reason`, which `conversation` does not carry; it is also the only reliable `finish_reason` source on agent traces when `agents get-response` is unavailable.
-- **Related entities:** CLI `orq tools retrieve`, `orq knowledge-bases retrieve`, `orq memory-stores retrieve`, `orq evals get` — resolve the IDs from the agent config into full definitions.
+- **Full conversation content:** CLI `orq traces conversation <trace-id> [<span-id>]` (**7.4.0+**; short alias `conv`; spelled `traces thread` before 11.4.0, deprecated from then) or `mcp__orq-workspace__get_span span_id=... mode=full`. `conversation` normalizes Chat Completions, OpenAI Responses and OpenTelemetry GenAI payloads into one message list and renders it far more compactly than the raw span — never reconstruct a conversation out of `get-span` attributes. Its `-o` is its own (`xml` default, plus `markdown`, `json`, `yaml`, `toon`); see `orq-cli/SKILL.md`, "Reading a conversation", for span selection, the filter flags and their fixed order. **The `xml` and `markdown` renders cut every block at 4,000 characters** by default and mark it `[truncated: N more characters]`, which hides most of a long system prompt or pasted log; pass `--max-chars 0`, or use `-o json` (uncut unless capped), when the full text matters (a 124 KB conversation rendered as 6.7 KB by default, 2026-10-14). `conversation` does not carry `finish_reason`. Per turn, read it from the `span.chat_completion` span with `get-span -j 'span.attributes.gen_ai.response.finish_reasons'` (§4) or MCP `mode=full`; for the run as a whole, `agents get-response` (§3.5).
+- **Related entities:** CLI `orq tools retrieve`, `orq knowledge-bases retrieve`, `orq memory-stores retrieve`, `orq evals get` — resolve the IDs from the agent config into full definitions. **`orq tools retrieve` only resolves custom tools.** A built-in tool in `settings.tools[]` (one carrying `action_type`, e.g. `current_date`) returns `HTTP 404 Tool collection not found` for its `id` (CLI 11.4.1, 2026-10-14). Its schema is on any chat-completion span instead: `get-span … -j 'span.attributes.gen_ai.tool.definitions'` (§4).
 
 Each consuming skill states what it is **best for** on top of this; the scope and projection rows above do not change per skill.
 
@@ -51,6 +51,8 @@ orq traces list-facets -o json     # the facetable subset
 
 **A mid-deploy query returns a confident, empty, non-erroring result.** During the 2026-08-26 rollout, `attributes.*` facets returned `[]` and `attributes.*` filters returned zero rows, both without an error. Re-probe before trusting a zero: run the same query with the filter removed and confirm the population is non-empty.
 
+**An `ORQ_API_KEY` in the environment overrides the CLI login, and can see less.** With the variable set, `orq auth whoami` reports `source: ORQ_API_KEY`; without it, the saved session (`scope: all_projects`). Router traffic sent with no project (`project_id eq ""`) is invisible to a project key: the same 7-day search returned 0 traces under the env key and 5 under the session (CLI 11.4.1, 2026-10-14), with no error either way. Run `orq auth whoami` first, and when a target is missing retry with `env -u ORQ_API_KEY orq …` before calling it absent. `decide.py` reads traces with `ORQ_API_KEY` only, so for no-project traffic it needs a workspace-wide key.
+
 ### Every capability claim in this file must carry the command that produced it
 
 This document has twice described behaviour that was never run: a capability cell filled in by inference, and a *"the only way to X"* sentence that a five-minute check refuted. Both read as verified because they sat beside genuinely verified text.
@@ -68,13 +70,13 @@ This document has twice described behaviour that was never run: a capability cel
 | **3. Config detail** | `orq traces get-span <trace-id> <span-id> -o json -j '<projection>'` | one call/span, **projected** | Per-span knobs layers 1–2 cannot see |
 | **3a. Span order** | `orq traces list-spans <trace-id> -o json -j '<projection>'` | one call/trace, **projected** | The ordered state sequence, for `where` |
 | **3b. Conversation** | `orq traces conversation <trace-id> [<span-id>]` (7.4.0+) | one call/trace, normalized | What was actually said — messages, tool calls, tool results, reasoning |
-| **4. Content + terminal state** | `orq agents get-response <agent-key> <agent_execution_span_id> -o json -j '<projection>'` | one call/trace, **projected** | **Agent targets only.** The real `finish_reason` and the message text, neither of which exists on any span — see §3.5 |
+| **4. Content + terminal state** | `orq agents get-response <agent-key> <agent_execution_span_id> -o json -j '<projection>'` | one call/trace, **projected** | **Agent targets only.** The run-level `finish_reason` (`max_iterations`, `max_time`, `length`, `stop`), which no span carries at trace level and `aggregate` therefore cannot sweep — see §3.5 |
 
 **Handing a trace or span to the user:** link it, `<host>/<workspace-key>/traces/(trace:<trace_id>//span:<span_id>)` (drop `//span:…` for the trace alone). Use `trace_id` from the row, never its `id`. Host, key and the "opens empty → Traces project selector to **All projects**" note: [`orq-cli` → Building app URLs](../../orq-cli/resources/command-map.md#building-app-urls).
 
 ### Why `aggregate` and not `list-facet-values`
 
-`list-facet-values` is cheaper but **takes no filter value** — its only flags are `--filter-operator`, `--from`, `--to`, `--limit`. A facet sweep is therefore always workspace-wide, and it covers only 28 of 57 fields (missing `agent_id`, `tool_name`, `duration_ms`, `cost.total`, `agent.iterations.count`, `eval_*`).
+`list-facet-values` is cheaper but **takes no filter value** — its only flags are `--filter-operator`, `--from`, `--to`, `--limit`. A facet sweep is therefore always workspace-wide, and it covers only the facetable subset (28 of 57 fields on 2026-08-26, 30 on 2026-10-14; missing `agent_id`, `tool_name`, `duration_ms`, `cost.total`, `agent.iterations.count`, `eval_*`). The field is positional: `orq traces list-facet-values agent_name --from … --to …`.
 
 Use facets for a quick unscoped orientation. Use **`aggregate` for anything a finding depends on** — it takes `filters`, groups on any field including `attributes.*`, and computes `count` / `avg` / `sum`.
 
@@ -92,7 +94,7 @@ Use facets for a quick unscoped orientation. Use **`aggregate` for anything a fi
 
 Returns one `{"group": {...}, "metrics": {"trace_id.count": N}}` row per group.
 
-> The target field is `agent_id` or `agent_name` — there is no `agent_key` in the trace registry, even though the agent CLI and `orq reporting query` both address an agent by its key. Resolve which one exists before filtering (§0).
+> **Filter an orq agent on `agent_name` with its key.** There is no `agent_key` field. On an orq-hosted agent (CLI 11.4.1, 2026-10-14), `agent_name eq "<key>"` matched all 57 of its traces, while `agent_id eq "<key>"` and `attributes.orq.agent.key eq "<key>"` each returned **zero rows without erroring**: `agent_id` holds the agent's ULID `_id`, not its key. Re-probe any zero against `agent_name` before trusting it (§0).
 
 > A group with no value for the `group_by` field comes back as `"group": {}`. That is the **null bucket**, not an error. Count it or drop it deliberately — never read it as a parse failure.
 
@@ -115,6 +117,10 @@ The same applies to `orq reporting query`: inline `--filters` JSON from PowerShe
 **`from` / `to` are required in a body file and bounded by 30-day retention** (`skills/orq-cli/SKILL.md`, "Traces expire after 30 days"). A `traces aggregate` body without them returns HTTP 400; only omitted *flags* on `orq reporting query` fall back to seven days (§5.1). **NEVER hard-code a `--from`** — it ages past the boundary and starts erroring. Compute the window at call time, or use the relative form. **In a body file it must be RFC3339**; only the *flag* form accepts `7d` / `now-24h` / `now`, because the CLI sends a `--from-file` body as written (§5.1).
 
 **`filters[].values` must be an array of STRINGS, even for a numeric field.** `values: [0]` is rejected with `HTTP 400: invalid value for string field values: 0`; `values: ["0"]` is accepted. A field's declared `type: "number"` in `list-fields` does not change this.
+
+**Trace-level `status` does not see span errors.** On an orq agent whose model calls returned HTTP 400 (both the primary and the fallback), the root span stayed `ok` and the two `span.chat_completion` spans were `error`. `status eq "error"` matched **0** of those traces in both `search` and `aggregate`, and `group_by: ["attributes.http.response.status_code"]` returned only the null bucket, because aggregation works on the trace row. **`traces search` with `{"field":"attributes.http.response.status_code","op":"eq","values":["400"]}` does match at span level**: 3 traces on 201, each a real error (CLI 11.4.1, 2026-10-14). The error text is on the errored span: `get-span … -j '{s:span.summary.status,why:span.attributes.otel.status_description,http:span.attributes.http.response.status_code}'`.
+
+**Null-safe existence checks: use `exists`, not `neq ""`.** `{"field":"evaluator_key","op":"neq","values":[""]}` matched all 201 traces of an agent that had no evaluator result at all, because a missing value is "not equal". `op: "exists"` (with `values: []`) returned 0, the true answer. `list-fields` lists `exists` / `not_exists` in each field's `operators`; check there before relying on them.
 
 **`traces search` has exactly one legal sort:**
 
@@ -173,13 +179,13 @@ The response is `{data[], has_more, next_page_token, object}`. Each row is a **f
 - **Sort client-side by `started_at`.** Rows came back ascending on the trace tested, but that is n=1 and undocumented.
 - `span.attributes.orq.span_type` and `span.attributes.gen_ai.tool.name` are **not here** — they are `get-span` territory, and `where` does not need `get-span` at all.
 
-> **Two limits on the probe behind this section.** It ran against Claude Code sessions and AI-Router passthroughs, **not an orq-hosted agent invocation**, so the richer span vocabulary of a real agent trace is unverified. On those traces the hierarchy was flat (every `parent_span_id` pointed at the root), so "after which state" rests on timestamp order rather than parent links.
+> **Limits on the probe behind this section.** It first ran against Claude Code sessions and AI-Router passthroughs, where the hierarchy was flat (every `parent_span_id` pointed at the root), so "after which state" rests on timestamp order there. On an **orq-hosted agent** (57 traces, CLI 11.4.1, 2026-10-14) the parent links are real: `trace` (`AgentInvoke`) → `span.agent_execution` (named after the agent key) → one `span.chat_completion` per model turn. No `span.agent_tool_execution` appeared, so a tool call shows up only as an extra chat-completion turn; read the call itself with `traces conversation` (§3.5).
 
 ---
 
 ## 3.5. `agents get-response` — the layer that is not a span
 
-**On an orq Agent target, the terminal state and the message text are not in the trace store at all.** `traces get`, `get-span`, `list-spans` and the MCP read path all return metadata only. Both live on the agents endpoint:
+**On an orq Agent target, the agent-level terminal state is not in the trace store.** It lives on the agents endpoint. The message text and tool calls *are* readable from traces now, through `orq traces conversation` (§1 layer 3b); and each model turn's own `finish_reasons` is on its `span.chat_completion` span (§4). What only this endpoint gives is the reason the **run** ended, which is how `max_iterations` and `max_time` show up:
 
 ```bash
 # task-id is the span.agent_execution span id. The "| [0]" and --raw are REQUIRED:
@@ -207,7 +213,7 @@ orq agents get-response <agent-key> "$AE" -o json -j 'finish_reason'
 
 The final assistant text is reliable: `output[0].parts[?kind=='text'].text` returned one well-formed message (9,221 chars on an agent required to write 800+ words), with no truncation or redaction markers in any sample.
 
-> **It does NOT give a tool-call inventory. Never use it as one.** A `tool_call` part appears only when the run was cut off *mid-call*. A normally-completed run shows none even when tools certainly ran — a control agent whose instructions mandate three `web_scraper` calls, with 5 chat-completion turns, returned **zero** `tool_call` parts. With `span.agent_tool_execution` never emitted either, **whether an agent's tools ran is currently unobservable from the CLI.** Record it as `unobservable`; do not infer it from either source.
+> **It does NOT give a tool-call inventory. Never use it as one.** A `tool_call` part appears only when the run was cut off *mid-call*. A normally-completed run shows none even when tools certainly ran — a control agent whose instructions mandate three `web_scraper` calls, with 5 chat-completion turns, returned **zero** `tool_call` parts. `span.agent_tool_execution` is not emitted either. **Read tool use from `orq traces conversation <trace-id>` instead:** it renders each `<tool_call name=…>` with its arguments and the tool-role result (verified on 57 agent traces, CLI 11.4.1, 2026-10-14; `current_date` calls and results appeared on every trace that had two chat-completion turns).
 
 **Every bad id returns the same 404.** `{"message":"Agent response not found for this task"}` comes back identically for a trace id, a root span id, a chat-completion span id, the correct span id with the wrong agent key, and a garbage string. The error cannot tell you which mistake you made — re-derive the id from `list-spans` rather than guessing.
 
@@ -223,7 +229,7 @@ The final assistant text is reliable: `output[0].parts[?kind=='text'].text` retu
 
 **Not in the registry at all — per-span only:** `temperature`, `top_p`, `max_tokens`, and the entire `openresponses.*` block.
 
-> **Queryable is not groupable is not computable.** The three capabilities are independent, and `list-fields` does not distinguish them — a field listed there may still be rejected by `group_by` or `compute`. Verified:
+> **Queryable is not groupable is not computable.** The three capabilities are independent. `list-fields` now carries `groupable` and `facet` booleans per field (CLI 11.4.1: `-j "data[?groupable].name"`), so read groupability from there; `compute` support is still not listed, and a filterable field can still match nothing. Verified:
 >
 > | Field | `filters` | `group_by` | `compute` |
 > |---|---|---|---|
@@ -237,7 +243,7 @@ Per span, on an **orq-hosted Responses-API span**:
 |---|---|
 | `span.attributes.gen_ai.request` | `temperature`, `top_p`, `max_tokens`, `model` |
 | `span.attributes.gen_ai.response` | `finish_reasons`, `model` |
-| `span.attributes.gen_ai.tool.definitions` | full tool array → tool-inventory count |
+| `span.attributes.gen_ai.tool.definitions` | full tool definitions → tool-inventory count. **An object keyed `"0"`, `"1"`, …, not an array** (agent span, 2026-10-14): project `values(span.attributes.gen_ai.tool.definitions)[].function.name` and count client-side |
 | `span.attributes.gen_ai.usage` | `prompt_tokens_details.cached_tokens`, `reasoning.output_tokens` |
 | `span.attributes.openresponses` | `truncation`, `reasoning` (`{"effort":"medium",…}`), `tool_choice`, `tools`, `parallel_tool_calls`, `max_output_tokens`, `frequency_penalty`, `presence_penalty`, `service_tier`, `status` |
 
@@ -248,8 +254,8 @@ Per span, on an **orq-hosted Responses-API span**:
 They exist on **orq-hosted invocation spans**. They are **absent** on:
 
 - **OTLP-ingested** third-party spans — `gen_ai` carries only model/provider/usage; no `request.temperature`, no `openresponses` (verified on an `orq.claude_code.session` trace).
-- **AI-Router passthrough** spans — same gap; the projection above returned `temp:null, max:null, finish:null` (verified on a `chat.cerebras` trace).
-- **orq Agent invocation** spans — `gen_ai.request` carries only `{temperature, max_tokens, model, stream}`. **No `top_p`, no `finish_reasons`, and no `openresponses` block at all**, so `truncation` and `reasoning_effort` are unreadable from spans. `span.agent_tool_execution` is never emitted, so tool activity is invisible too. Verified across 55 traces on each of two agents. **Everything in this bullet is available from `agents get-response` (§3.5) instead — treat it as the fallback before recording any of these as `unobservable`.**
+- **AI-Router chat-completions passthrough** spans — same gap; the projection above returned `temp:null, max:null, finish:null` (verified on a `chat.cerebras` trace). **Router `/v1/responses` traffic is different**: its `responses.*` spans carry the `openresponses` block, with `tools`, `truncation`, `temperature`, `reasoning`, `max_output_tokens` and `instructions` (5 of 5 `responses.openai` traces, 2026-10-14). The keys can be present with an empty value (`truncation: ""` on all 5), and an empty or missing value is `unobservable`, not a setting.
+- **orq Agent invocation** spans — `gen_ai.request` carries only `{temperature, max_tokens, model, stream}`. **No `top_p` and no `openresponses` block at all**, so `truncation` and `reasoning_effort` are unreadable from spans. Verified across 55 traces on each of two agents (2026-08-26). **Per-turn `finish_reasons` is there, on the `span.chat_completion` span** (`["length"]` on a turn that hit `max_tokens`; 2026-10-14). It is only null at the trace level that `aggregate` groups on, so it cannot be swept: sweep the run-level reason with `agents get-response` (§3.5) and read the turn-level one per span. Tool activity is read with `traces conversation` (§3.5).
 
 **Anything unreadable is `unobservable` with a reason. Absence never reads as a pass.**
 
@@ -262,7 +268,9 @@ A catalogue API over analytics rollups. It carries three signals the trace regis
 - **18 metrics:** `genai.requests` · `genai.tokens` · `genai.cost` · `genai.errors` · `genai.error_rate` · `genai.latency.p50|p95|p99` · **`genai.ttft.avg|p50|p95`** · **`genai.evaluator.runs|pass_rate|score.avg`** · `genai.guardrail.runs|block_rate|triggered` · `genai.usage`. Enumerate at runtime by passing an invalid `--metric` and reading the 400.
 - **`group_by` for `genai.requests`:** `model`, `provider`, `agent`, `deployment`, `evaluator`, `project`, `tool`. **Rejected:** `status`, `finish_reason`, `agent_name`, `entity`, `error_type` — which is exactly why it cannot do the terminal-state sweep. Dimensions are per-metric; probe rather than assume.
 - **Use `mode: "scalar"`.** It returns one flat row per group — `{dimensions:{…}, metrics:{…}, timestamp:null}` — instead of the time buckets `query_analytics` forces. Add `include_totals` for a window-wide total under `.totals.metrics`.
-- **Target scoping:** `filters: [{"field":"agent","op":"eq","values":["<key>"]}]`. `values` is a **list and must be non-empty**; a scalar `value` is a 400.
+- **Target scoping:** `filters: [{"field":"agent","op":"eq","values":["<agent _id>"]}]`. `values` is a **list and must be non-empty**; a scalar `value` is a 400. **The `agent` dimension holds the agent's ULID `_id`, not its key** (`group_by: ["agent"]` returns `{"agent":"01M4X7…"}`). Filtering on the key **matches nothing without erroring**: an empty `data` array when grouped, a scalar `0` when not (CLI 11.4.1, 2026-10-14). Take the `_id` from `agents retrieve`.
+- **Cross-check before relaying any reporting number.** On 2026-10-14 an agent with 57 traces in the window, filtered by its correct `_id`, reported `genai.requests 0`, `genai.cost 0` and `genai.latency.p50 0`, still 0 about 70 minutes after its first run. Agent invocations not being counted in the rollup is the likelier cause than lag; unresolved. **If the scoped `genai.requests` does not match the trace count from the sweep, record every reporting-sourced item as `unobservable` with that mismatch as the reason.** A zero here is not "free" or "no evaluator runs".
+- **Some metrics refuse agent scoping.** `genai.ttft.*` with an `agent` filter returns HTTP 400 `does not support entity dimensions`, and `genai.evaluator.*` returns HTTP 400 `filter field not allowed for metric: "agent"`. Per-agent TTFT is then `unobservable: [ttft]`; per-agent evaluator rates come from the trace fields `eval_passed` / `eval_score` instead.
 - The request body requires `from` / `to`, but the CLI fills in the last seven days when the flags are omitted. Pass an explicit relative window for repeatable scripts. The 30-day retention bound applies as in §2.
 
 **TTFT lives here, and an all-zero result is not "fast".** A live `genai.ttft.p50` scalar query returned 20 model groups with **every value `0`** and a window total of `0` — consistent with the metric being populated only for streaming requests. Treat an all-zero TTFT result as **`unobservable: [ttft]`**, never as a measurement.
@@ -422,6 +430,10 @@ If it replaces, `{"settings":{"max_iterations":20}}` destroys `tools[]`, `max_co
 | `id`, `display_name`, `conditions` | **omit** — on write, `id`/`key` mean a *custom* tool reference, not a built-in |
 
 **Never drop `tools[]` from the patch to dodge the 400.** That is precisely the silent tool deletion this rule exists to prevent. Translate, do not delete.
+
+**`fallback_models` is another read/write mismatch.** It is written at the top level (`{"fallback_models":["groq/openai/gpt-oss-120b"]}`; a list of `{"id": …}` objects is also accepted) but read back nested, at `model.fallback_models`. A top-level `fallback_models` projection on a retrieve or create response returns `null` even when the fallback is set. Verify a write at `model.fallback_models` (CLI 11.4.1, 2026-10-14).
+
+**Groq rejects a strict tool schema without `additionalProperties: false`.** orq sends every agent tool with `strict: true` (`get-span … -j 'values(span.attributes.gen_ai.tool.definitions)[].function.strict'` returned `true` for a built-in and a code tool). On a `groq/*` model, a tool whose `parameters` object lacks `"additionalProperties": false` fails every model call with HTTP 400 `` `additionalProperties:false` must be set on every object ``, the fallback included. The same call without `strict` succeeds (router probe, 2026-10-14). When adding or editing a code or function tool for an agent that may run on Groq, set it on every object in the schema.
 
 ### Version every write
 

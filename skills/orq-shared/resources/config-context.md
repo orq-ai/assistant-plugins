@@ -9,10 +9,12 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
    - `status` — `ok` / `error` / `unset`, with the error messages
    - `attributes.orq.billing.threshold_exceeded`
 
+   On managed agents, trace `status` may stay `ok` when a nested model call errors, and `finish_reasons` can sweep as all-null. Inspect span-level `attributes.http.response.status_code`; read run terminal reasons and per-turn finish reasons as described in [`trace-queries.md`](trace-queries.md) §§3.5–4.
+
    `max_iterations` and `max_time` are **explicit terminal reasons** — the platform is saying the run hit the cap. No distribution-shape inference needed.
 
 2. **Declared config — what the agent is set to** (from `mcp__orq-workspace__get_agent`, `orq agents retrieve`, `orq deployments get-config`, or the user in local mode):
-   - `model.id` and `fallback_models`
+   - `model.id` and `model.fallback_models`
    - `model.parameters.*` — `temperature`, `top_p`, `max_tokens`, `reasoning_effort`, `tool_choice`, `parallel_tool_calls`
    - `settings.*` — `max_iterations`, `max_execution_time`, `max_cost`, `tools[]`, `evaluators[]` **with each `sample_rate`**
    - `knowledge_bases`, `memory_stores`
@@ -31,6 +33,8 @@ All sweep signals go through `orq traces aggregate` with the target in `filters`
    - latency and cost distribution
    - existing `eval_passed` / `eval_score` rates, **each paired with its `settings.evaluators[].sample_rate`** — available off the traces, or grouped per evaluator in one call via `orq reporting query` with `genai.evaluator.pass_rate` / `.score.avg` / `.runs` and `group_by: ["evaluator"]`
    - TTFT via `orq reporting query` (`genai.ttft.avg|p50|p95`) — **an all-zero result is `unobservable: [ttft]`, not "fast"**
+
+   Check evaluator presence with `exists`, not `neq null`. An attached evaluator without results is unknown, never a 0% or 100% pass rate. Reporting takes the agent ULID `_id`; cross-check its scoped request count against the trace sweep before relaying numbers. A mismatch makes reporting metrics unobservable. Reporting cannot filter TTFT by agent; mark that scope unobservable ([`trace-queries.md`](trace-queries.md) §5).
 
    > **Relay evaluator rates as unvalidated.** A judge's agreement with human judgement drifts — with foundation-model updates, and with the team's own definition of the criterion. Relay the rate, relay the sample rate, and say neither is ground truth.
 
