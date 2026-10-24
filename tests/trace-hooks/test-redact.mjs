@@ -9,47 +9,30 @@
 
 import { deepRedact } from "../../plugins/trace-hooks/src/redact.js";
 
-// Fixtures are generated at runtime so the shipped source holds no key-shaped
-// text at all (directory scanners flag it, even when split into fragments):
-// prefixes are joined from short pieces and every body comes from a seeded
-// generator. The redactor sees the same shapes a real session carries.
-const j = (...parts) => parts.join("");
-let seed = 20261016;
-const next = () => (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0);
-const body = (n, alphabet) => {
-  let out = "";
-  while (out.length < n) out += alphabet[next() % alphabet.length];
-  return out;
-};
-const B64 = j("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz", "0123456789", "-_");
-const ALNUM = j("abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "0123456789");
-const UPPER = j("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "234567");
-const HEX = "0123456789abcdef";
-const b64 = (v) => Buffer.from(typeof v === "string" ? v : JSON.stringify(v)).toString("base64url");
-const JWT_HEAD = b64({ alg: "HS256" });
-const JWT_BODY = b64({ workspace_id: "ws-1" });
-const JWT_SIG = body(10, B64);
-const JWT_DASH_SIG = body(43, B64);
-const withDigit = (n, alphabet) => body(n - 1, alphabet) + "7";
-const dash = j("-");
+// These explicit example fixtures use obvious placeholders rather than
+// fabricated credential-like bodies. The redactor only needs the provider prefix and
+// minimum shape to exercise each matcher. Its `sk-` and bearer guards also
+// require a digit, so those cases include one digit derived from a test value.
+const digitForGuard = (testValue) => String(testValue);
+const jwtExample = `eyJ${"x".repeat(8)}.eyJEXAMPLE.${"x".repeat(8)}`;
 
 const SECRETS = [
-  ["anthropic key", j("sk", dash, "ant", dash, "api03", dash, withDigit(40, B64), dash, "AAAA")],
-  ["openai project key", j("sk", dash, "proj", dash, withDigit(32, B64))],
-  ["anthropic key with an underscore early in the body", j("sk", dash, "ant", dash, "api03", dash, "Ab_", withDigit(37, ALNUM))],
-  ["openai project key with an underscore early in the body", j("sk", dash, "proj", dash, "A_", withDigit(30, ALNUM))],
-  ["openai classic key", j("sk", dash, withDigit(24, ALNUM))],
-  ["orq key with prefix", j("sk", dash, "orq", dash, JWT_HEAD, ".", JWT_BODY, ".", JWT_SIG)],
-  ["orq key from the dashboard", j(JWT_HEAD, ".", JWT_BODY, ".", JWT_DASH_SIG)],
-  ["bearer header in a shell command", j('curl -H "Authorization: Bear', "er ", withDigit(24, ALNUM), '" https://api.orq.ai')],
-  ["github token", j("gh", "p_", withDigit(36, ALNUM))],
-  ["aws access key id", j("AK", "IA", withDigit(16, UPPER))],
-  ["private key block", j(dash.repeat(5), "BEGIN RSA ", "PRIV", "ATE KEY", dash.repeat(5), "\n", body(24, B64))],
-  ["slack token", j("xo", "xb", dash, body(11, "0123456789"), dash, body(8, ALNUM))],
-  ["stripe live key", j("sk", "_live_", withDigit(20, ALNUM))],
-  ["fine-grained github pat", j("github", "_pat_", "11", withDigit(20, ALNUM), "_", body(30, ALNUM))],
-  ["google api key", j("AI", "za", "Sy", withDigit(33, B64.slice(0, 64)))],
-  ["huggingface token", j("hf", "_", withDigit(34, ALNUM))],
+  ["anthropic key", `sk-ant-api03-${"x".repeat(40)}-EXAMPLE`],
+  ["openai project key", `sk-proj-${"x".repeat(20)}${digitForGuard(7)}`],
+  ["anthropic key with an underscore early in the body", `sk-ant-api03-x_${"x".repeat(30)}`],
+  ["openai project key with an underscore early in the body", `sk-proj-x_${"x".repeat(14)}${digitForGuard(7)}`],
+  ["openai classic key", `sk-${"x".repeat(15)}${digitForGuard(7)}`],
+  ["orq key with prefix", `sk-orq-${jwtExample}`],
+  ["orq key from the dashboard", jwtExample],
+  ["bearer header in a shell command", `curl -H "Authorization: Bearer ${"x".repeat(20)}${digitForGuard(7)}" https://api.orq.ai`],
+  ["github token", `ghp_${"x".repeat(36)}`],
+  ["aws access key id", `AKIA${"X".repeat(16)}`],
+  ["private key block", `-----BEGIN RSA PRIVATE KEY----- EXAMPLE`],
+  ["slack token", "xoxb-EXAMPLE"],
+  ["stripe live key", "sk_live_EXAMPLE"],
+  ["fine-grained github pat", `github_pat_${"x".repeat(30)}`],
+  ["google api key", `AIza${"x".repeat(35)}`],
+  ["huggingface token", `hf_${"x".repeat(30)}`],
   ["dotenv path", "/Users/dev/project/.env"],
 ];
 
@@ -60,7 +43,7 @@ const KEEP = [
   ["a plain sentence", "the session ran ls and counted the files"],
   ["a source path", "/Users/dev/orq-cli/cli/custom/launch/telemetry.go"],
   ["a long word", "internationalization and localization"],
-  ["a git sha", body(40, HEX)],
+  ["a git sha", "a".repeat(40)],
   ["a kebab-case script name", "npm run task-runner-configuration"],
   ["a kebab-case filename", "see risk-assessment-framework.md"],
   ["a kebab-case css class", '<li class="task-list-item-checkbox">'],
