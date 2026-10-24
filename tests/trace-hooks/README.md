@@ -1,14 +1,15 @@
 # trace-hooks tests
 
-Local smoke tests for the orq-trace plugin. Run after editing `src/`,
-`hooks/`, or `.claude-plugin/plugin.json`.
+Maintainer smoke tests for the orq-trace plugin. They live at the repository
+root so the plugin package does not include its own tests. Run them from the
+repository root after editing `plugins/trace-hooks/src/`, `plugins/trace-hooks/hooks/`, or the
+marketplace entry in `.claude-plugin/marketplace.json`.
 
 ## Quick start
 
 ```bash
-cd plugins/trace-hooks
-./tests/run-all.sh
-TEST_ORQ_API_KEY=<key> ./tests/run-all.sh   # also runs the subprocess trace-flow test
+./tests/trace-hooks/run-all.sh
+TEST_ORQ_API_KEY=<key> ./tests/trace-hooks/run-all.sh   # also runs the subprocess trace-flow test
 ```
 
 ## Individual tests
@@ -32,6 +33,6 @@ TEST_ORQ_API_KEY=<key> ./tests/run-all.sh   # also runs the subprocess trace-flo
 
 ## Adding a test
 
-1. Drop a `test-*.{sh,mjs}` script in this directory.
+1. Drop a `test-*.{sh,mjs}` script in `tests/trace-hooks/`.
 2. Add it to `run-all.sh` in the appropriate section.
 3. Update the table above.

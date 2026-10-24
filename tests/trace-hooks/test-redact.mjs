@@ -7,7 +7,7 @@
 //
 // Usage: node test-redact.mjs
 
-import { deepRedact } from "../src/redact.js";
+import { deepRedact } from "../../plugins/trace-hooks/src/redact.js";
 
 // Fixtures are generated at runtime so the shipped source holds no key-shaped
 // text at all (directory scanners flag it, even when split into fragments):

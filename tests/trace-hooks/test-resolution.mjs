@@ -15,7 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-const configJs = path.join(import.meta.dirname, "..", "src", "config.js");
+const configJs = path.join(import.meta.dirname, "../../plugins/trace-hooks/src/config.js");
 const configUrl = `file://${configJs.replaceAll("\\", "/")}`;
 const probe = `
   import { getApiKey, getBaseUrl, getOtlpEndpoint } from ${JSON.stringify(configUrl)};
