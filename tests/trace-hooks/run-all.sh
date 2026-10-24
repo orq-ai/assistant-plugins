@@ -6,7 +6,8 @@
 set -uo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-PLUGIN_ROOT="$(cd "$DIR/.." && pwd)"
+REPO_ROOT="$(cd "$DIR/../.." && pwd)"
+PLUGIN_ROOT="$REPO_ROOT/plugins/trace-hooks"
 
 EXIT=0
 
@@ -14,7 +15,7 @@ echo "########## 1/9 manifest schema ##########"
 # The manifest is inline in the orq-trace entry of the marketplace (strict: false); a nested
 # plugin.json would make Claude Desktop skip the ./-sourced plugins at the repo root.
 node -e "
-const m = JSON.parse(require('fs').readFileSync('$PLUGIN_ROOT/../../.claude-plugin/marketplace.json','utf8'));
+const m = JSON.parse(require('fs').readFileSync('$REPO_ROOT/.claude-plugin/marketplace.json','utf8'));
 const e = m.plugins.find(p => p.name === 'orq-trace');
 if (!e || e.strict !== false || !e.hooks || !e.version) process.exit(1);
 if (require('fs').existsSync('$PLUGIN_ROOT/.claude-plugin/plugin.json')) process.exit(1);

@@ -15,10 +15,10 @@ import os from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
-const stopHook = path.join(repoRoot, "hooks/stop.js");
-const sessionEndHook = path.join(repoRoot, "hooks/session-end.js");
-const sessionStartHook = path.join(repoRoot, "hooks/session-start.js");
+const pluginRoot = path.resolve(import.meta.dirname, "../../plugins/trace-hooks");
+const stopHook = path.join(pluginRoot, "hooks/stop.js");
+const sessionEndHook = path.join(pluginRoot, "hooks/session-end.js");
+const sessionStartHook = path.join(pluginRoot, "hooks/session-start.js");
 
 let passed = 0;
 let failed = 0;
@@ -590,7 +590,7 @@ await test("queue: an oversized payload is split and still lands as one trace", 
   delete process.env.CLAUDE_PLUGIN_OPTION_ORQ_API_KEY;
   process.env.OTEL_EXPORTER_OTLP_ENDPOINT = endpoint;
   const { drainQueue, currentDestination } = await import(
-    `file://${path.join(repoRoot, "src/otlp.js").replaceAll("\\", "/")}`
+    `file://${path.join(pluginRoot, "src/otlp.js").replaceAll("\\", "/")}`
   );
 
   // Queued batches carry the destination they were meant for, so these two are
@@ -624,7 +624,7 @@ await test("endpoint: ORQ_OTLP_ENDPOINT overrides the subdomain swap, prod uncha
   // this guards against was the wiring between the two modules going missing.
   const resolve = (env) => {
     const out = spawnSync("node", ["--input-type=module", "-e", `
-      import { getEndpoint } from ${JSON.stringify(`file://${path.join(repoRoot, "src/otlp.js").replaceAll("\\", "/")}`)};
+      import { getEndpoint } from ${JSON.stringify(`file://${path.join(pluginRoot, "src/otlp.js").replaceAll("\\", "/")}`)};
       console.log(getEndpoint());
     `], {
       encoding: "utf8",
@@ -1167,7 +1167,7 @@ await test("streaming: a message split across two windows emits once", async () 
 // --- Test 24: truncation must honour the cap and keep tool pairs intact ---
 await test("truncation: the cap holds and a tool result keeps its call", async () => {
   const { fitConversation, SPAN_CONVERSATION_MAX_BYTES: CAP } = await import(
-    `file://${path.join(repoRoot, "src/messages.js").replaceAll("\\", "/")}`
+    `file://${path.join(pluginRoot, "src/messages.js").replaceAll("\\", "/")}`
   );
   const sizeOf = (value) => Buffer.byteLength(JSON.stringify(value), "utf8");
 
@@ -1254,7 +1254,7 @@ await test("queue: a drain that fails halfway does not re-send delivered spans",
     // is the one the child resolves from its own environment.
     const child = spawn("node", ["--input-type=module", "-e", `
       import fs from "node:fs";
-      const { drainQueue, currentDestination } = await import(${JSON.stringify(`file://${path.join(repoRoot, "src/otlp.js").replaceAll("\\", "/")}`)});
+      const { drainQueue, currentDestination } = await import(${JSON.stringify(`file://${path.join(pluginRoot, "src/otlp.js").replaceAll("\\", "/")}`)});
       fs.writeFileSync(${JSON.stringify(path.join(queueDir, "1.json"))}, JSON.stringify({
         orqDestination: currentDestination(),
         payload: JSON.parse(fs.readFileSync(${JSON.stringify(payloadPath)}, "utf8")),
@@ -1328,7 +1328,7 @@ await test("queue round trip: spans queued while offline are delivered later", a
     child.stderr.on("data", () => {});
     child.on("close", resolve);
   });
-  const otlpUrl = JSON.stringify(`file://${path.join(repoRoot, "src/otlp.js").replaceAll("\\", "/")}`);
+  const otlpUrl = JSON.stringify(`file://${path.join(pluginRoot, "src/otlp.js").replaceAll("\\", "/")}`);
 
   // Endpoint is down: the span must end up queued.
   await runInChild(`
@@ -1478,7 +1478,7 @@ await test("session end: does not re-send a span an earlier Stop already emitted
 // --- Test 31: an oversized tool_call must not strand its response ---
 await test("truncation: a huge tool_call argument keeps its pair", async () => {
   const { fitConversation, SPAN_CONVERSATION_MAX_BYTES: CAP } = await import(
-    `file://${path.join(repoRoot, "src/messages.js").replaceAll("\\", "/")}`
+    `file://${path.join(pluginRoot, "src/messages.js").replaceAll("\\", "/")}`
   );
   const conversation = [
     { role: "user", parts: [{ type: "text", content: "write it" }] },
@@ -1697,7 +1697,7 @@ await test("tool output: neither the span nor its history loses what the tool pr
 // the cap, so they returned cap + 15 bytes. Now they share one helper.
 await test("truncation: shortening to a cap includes the marker in the cap", async () => {
   const { ELISION, truncateBytes } = await import(
-    `file://${path.join(repoRoot, "src/common.js").replaceAll("\\", "/")}`
+    `file://${path.join(pluginRoot, "src/common.js").replaceAll("\\", "/")}`
   );
 
   for (const [label, text, cap] of [

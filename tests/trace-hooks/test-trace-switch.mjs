@@ -14,8 +14,9 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const pluginRoot = path.resolve(here, "../../plugins/trace-hooks");
 const handlersUrl = JSON.stringify(
-  `file://${path.join(here, "..", "src", "handlers.js").replaceAll("\\", "/")}`,
+  `file://${path.join(pluginRoot, "src", "handlers.js").replaceAll("\\", "/")}`,
 );
 
 // Prints "ran" only if runSafely let the handler through.
