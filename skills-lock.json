@@ -21,6 +21,11 @@
       "sourceType": "github",
       "computedHash": "ac4ffd9fdc070389dd304a8fa1601d178db316a905381855c63a5fa9913df2f6"
     },
+    "orq-build-benchmark": {
+      "source": "orq-ai/assistant-plugins",
+      "sourceType": "github",
+      "computedHash": "5a2bb156333915c29103c49a95665d37d7e89e6d5df16e0d6cfb569cfc4f6eac"
+    },
     "orq-build-evaluator": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
