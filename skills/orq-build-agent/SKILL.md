@@ -16,6 +16,8 @@ allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, m
 
 You are an **orq.ai agent architect**. Your job is to design, create, and configure production-grade AI agents — from defining purpose and selecting models to configuring tools, knowledge bases, and memory stores.
 
+**Invocation policy (models and agents):** Default to `POST /v3/router/responses` or `orq responses create`. Set `model` to `provider/model-id` for a model or `agent/<key>` for a managed agent, and pass `input`. Use `openai/gpt-6-luna` for default model command examples unless the user specifies another model. Prefer Responses over Chat Completions; do not use v2 inference routes. Use another inference interface only when the user explicitly requests it. Legacy agent execution APIs remain deprecated. Never fall back to v2, Chat Completions, or legacy agent endpoints after a routing or model error. Use Responses for streaming and continuation too. Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK. Configuration, deployment, evaluator, and telemetry APIs retain their own contracts.
+
 ## Constraints
 
 - **NEVER** skip model selection — start with the most capable model, optimize cost only after the agent works correctly.
@@ -82,7 +84,7 @@ Agent Build Progress:
 ## Resources
 
 - **System instruction template:** See [resources/system-instruction-template.md](resources/system-instruction-template.md)
-- **Tool description guide:** See [resources/tool-description-guide.md](resources/tool-description-guide.md)
+- **Tool description guide:** See [`tool-description-guide.md`](../orq-shared/resources/tool-description-guide.md) (in `orq-shared`)
 - **Knowledge Base management:** See [resources/knowledge-base-management.md](resources/knowledge-base-management.md)
 - **Memory Store management:** See [resources/memory-store-management.md](resources/memory-store-management.md)
 - **API reference (MCP + HTTP):** See [resources/api-reference.md](resources/api-reference.md)
@@ -191,7 +193,7 @@ Follow these steps **in order**. Do NOT skip steps.
     - Match tools to the agent's tasks
     - Start with the minimum set needed
 
-12. **Write tool descriptions** following [resources/tool-description-guide.md](resources/tool-description-guide.md):
+12. **Write tool descriptions** following [`tool-description-guide.md`](../orq-shared/resources/tool-description-guide.md) (in `orq-shared`):
     - Each description must clearly state WHEN to use it
     - Include what the tool DOES NOT do (to prevent confusion)
     - Specify required vs optional parameters

@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -435,7 +436,16 @@ def test_ci_tests_against_the_evaluatorq_the_runner_pins() -> None:
     repo = Path(__file__).resolve().parents[2]
     pin = re.compile(r"evaluatorq==([\w.]+)")
     runner = pin.findall((repo / "tests/scripts/run_evals.py").read_text(encoding="utf-8"))
-    ci = pin.findall((repo / ".github/workflows/skills-ci.yml").read_text(encoding="utf-8"))
+    workflow = yaml.safe_load((repo / ".github/workflows/skills-ci.yml").read_text(encoding="utf-8"))
+    # Other jobs intentionally test different evaluatorq versions (e.g. the
+    # Responses compatibility floor); only the scoring step must match this runner.
+    scoring_runs = [
+        step["run"]
+        for job in workflow["jobs"].values()
+        for step in job.get("steps", [])
+        if "tests/scripts/test_run_evals.py" in step.get("run", "")
+    ]
+    ci = pin.findall("\n".join(scoring_runs))
     assert runner and ci and set(runner) == set(ci), f"run_evals.py pins {runner}, skills-ci.yml pins {ci}"
 
 

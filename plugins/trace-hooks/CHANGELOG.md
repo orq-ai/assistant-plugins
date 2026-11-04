@@ -2,6 +2,11 @@
 
 All notable changes to the `orq-trace` plugin are documented here. Follows [Semantic Versioning](https://semver.org/).
 
+## [0.6.1] - 2026-10-24
+
+### Changed
+- Moved maintainer tests out of the shipped plugin directory to `tests/trace-hooks/`; runtime behavior is unchanged.
+
 ## [0.6.0] - 2026-10-16
 
 ### Changed

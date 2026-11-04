@@ -1,0 +1,9 @@
+id: review-agent-fires
+skill: orq-review-agent
+kind: invocation
+# The agent tends to look up support-bot before choosing a skill; 4 turns leaves room for that.
+prompt: Can you review my orq agent support-bot and tell me whether it's set up well?
+expect_skill: orq-review-agent
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 4

@@ -21,10 +21,20 @@ Exception: removing shipped content that was never the canonical surface (e.g. s
 
 ### How to bump
 
-1. Update `version` in all 4 plugin.json files (same value).
+1. Run `tests/scripts/set-version.sh X.Y.Z` — it updates `version` in all 4 plugin.json files (same value). This is the only place a version is edited; the git tag/release is created from it on merge.
 2. Add an entry to `CHANGELOG.md` under a new `## [X.Y.Z] - YYYY-MM-DD` heading. Use `### Added / Changed / Fixed / Removed` sections.
 3. Run `tests/scripts/validate-plugin-manifests.sh` — passes.
 4. Commit with message: `chore: bump version to X.Y.Z`.
+
+### Releases
+
+Merging to `main` runs `.github/workflows/release.yml`: it creates GitHub release `v<version>` from root `plugin.json`, with the matching `CHANGELOG.md` section as notes. No version bump means no release. The CHANGELOG entry (step 2 above) is therefore required, and `skills-ci` fails a PR without one. `orq-trace` (marketplace.json) is not released separately.
+
+**When to bump:** in the same PR as the change, whenever it alters shipped content (`skills/`, manifests, `mcp.json`, commands). Merging that PR is the release, so bump once per PR, never in a follow-up commit on `main`. Skip the bump for changes that ship nothing (CI, `tests/`, maintainer docs like this file); they merge without a release.
+
+**Changelog section:** add it in the same PR, as `## [X.Y.Z] - YYYY-MM-DD` directly under the intro (newest first) with `### Added / Changed / Fixed / Removed` bullets. Exactly that heading format matters: the release job copies everything under it, up to the next `## ` heading, into the release notes, and `skills-ci` fails when the section is missing or empty. Check it with `tests/scripts/changelog-section.sh X.Y.Z`.
+
+**How:** follow "How to bump" above. If a release goes wrong (workflow failed, wrong commit), fix forward with the next PATCH, or re-run the `release` workflow from the Actions tab (`workflow_dispatch`) after fixing the cause. Never move or delete a published tag; the workflow refuses to release over a tag that has no release.
 
 ## Plugin manifest rules
 

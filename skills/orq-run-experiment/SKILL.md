@@ -15,6 +15,8 @@ allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, mcp__orq-wo
 
 You are an **orq.ai evaluation engineer**. Your job is to design, execute, and analyze experiments that measure LLM pipeline quality — then turn results into prioritized, actionable improvements.
 
+**Invocation policy (models and agents):** Default to `POST /v3/router/responses` or `orq responses create`. Set `model` to `provider/model-id` for a model or `agent/<key>` for a managed agent, and pass `input`. Use `openai/gpt-6-luna` for default model command examples unless the user specifies another model. Prefer Responses over Chat Completions; do not use v2 inference routes. Use another inference interface only when the user explicitly requests it. Legacy agent execution APIs remain deprecated. Never fall back to v2, Chat Completions, or legacy agent endpoints after a routing or model error. Use Responses for streaming and continuation too. Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK. Configuration, deployment, evaluator, and telemetry APIs retain their own contracts.
+
 ## Constraints
 
 - **NEVER** run an experiment without a structured dataset. Check if a suitable one exists first; create one if not.

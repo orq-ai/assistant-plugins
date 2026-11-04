@@ -1,38 +1,20 @@
 # Known Gotchas
 
+Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK.
+
 Common pitfalls when running cross-framework agent comparisons with evaluatorq.
 
 ---
 
 ## orq.ai SDK
 
-### `agents.invoke()` vs `agents.responses.create()`
+### Agent calls use general Responses
 
-`invoke()` returns an async A2A task with `status: "submitted"` — it does NOT return the agent's response. Use `responses.create(background=False)` to get a synchronous response with output.
+Use `POST /v3/router/responses`, SDK `client.responses.create(model="agent/<key>", input=query)`, or `orq responses create --model "agent/<key>" --input "..." -o json`. The legacy agent-specific invoke/stream/Responses APIs are deprecated and must only be used when explicitly requested, even if a model fails on one of them.
 
-```python
-# Wrong — returns task status, not output
-response = orq.agents.invoke(agent_key="my-agent", ...)
+### Message and output format
 
-# Correct — returns actual response
-response = orq.agents.responses.create(
-    agent_key="my-agent",
-    background=False,
-    message={"role": "user", "parts": [{"kind": "text", "text": query}]},
-)
-```
-
-### Message format
-
-The orq agent API uses A2A message format, not OpenAI-style:
-
-```python
-# Wrong
-message={"role": "user", "content": "Hello"}
-
-# Correct
-message={"role": "user", "parts": [{"kind": "text", "text": "Hello"}]}
-```
+Use Responses `input` (text or message items), rather than legacy A2A `message.parts`. Read message `content` blocks of type `output_text`, or `response.output_text` with the OpenAI SDK; output may also contain tool and reasoning items. Continue with `previous_response_id=response.id` (keep `store: true`), rather than a task ID. Failed, incomplete or background responses are not completed quality results — check status first.
 
 ### Code tools: `additionalProperties: false`
 

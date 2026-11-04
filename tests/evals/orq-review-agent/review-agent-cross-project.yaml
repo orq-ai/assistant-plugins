@@ -1,0 +1,14 @@
+id: review-agent-cross-project
+skill: orq-review-agent
+kind: behavioural
+# market-intel-desk lives in another project than the skill-evals key, so
+# `orq agents retrieve` 404s. Gotcha 1: stop and ask for the right key or
+# workspace instead of reviewing an empty config.
+prompt: Review my orq agent market-intel-desk.
+expect_skill: orq-review-agent
+expect_question_about: [key, workspace, project]
+forbid_tools: [create_*, update_*, delete_*, invoke_*]
+allow_tools: [search_entities, search_docs]
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 8

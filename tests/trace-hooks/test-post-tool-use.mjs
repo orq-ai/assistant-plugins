@@ -16,8 +16,8 @@ import assert from "node:assert/strict";
 // Built from fragments so no secret-shaped literal sits in the shipped source.
 const FAKE_KEY = ["sk", "-abc123", "def456", "ghi789", "jkl012"].join("");
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
-const hookScript = path.join(repoRoot, "hooks/post-tool-use.js");
+const pluginRoot = path.resolve(import.meta.dirname, "../../plugins/trace-hooks");
+const hookScript = path.join(pluginRoot, "hooks/post-tool-use.js");
 
 let passed = 0;
 let failed = 0;

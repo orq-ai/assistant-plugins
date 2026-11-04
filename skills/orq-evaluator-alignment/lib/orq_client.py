@@ -164,7 +164,8 @@ def _routable_slug(model_record: dict[str, Any]) -> str | None:
     an open-weights model served via groq has `model_id="openai/gpt-oss-120b"`,
     and that bare `openai/…` slug hits OpenAI's provider path → `403
     permission_error`, while its `refId="groq/openai/gpt-oss-120b"` routes. Fall
-    back to `model_id` when no `refId` is present.
+    back to `model_id` when no `refId` is present. The rule is written once in
+    `orq-shared/resources/model-slugs.md`; change it there first.
     """
     return model_record.get('refId') or model_record.get('model_id') or None
 

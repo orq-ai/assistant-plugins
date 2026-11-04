@@ -157,7 +157,7 @@ Recommend Evaluators Progress:
 
 ### Phase 4b: Candidates From Traces (`traces` / `error-analysis` modes)
 
-12. **With an artifact:** each `failure_modes[]` entry with `fix: evaluator` becomes a candidate, carrying its `rate`, `evidence`, and `classification` (`generalization-code-checkable` → `python_eval`, `generalization-subjective` → LLM judge). Modes with `fix: prompt` / `config` go under "Not an evaluator".
+12. **With an artifact:** each `failure_modes[]` entry with `fix: evaluator` becomes a candidate, carrying its `rate` (quoted with its `rate_basis`: `window_flags` is a decision model's flag share over the whole window, `read` the share of traces read), `evidence`, its `flagged` traces (unread, model-flagged: candidate examples for the evaluator's test set once a person labels them), and `classification` (`generalization-code-checkable` → `python_eval`, `generalization-subjective` → LLM judge). Modes with `fix: prompt` / `config` go under "Not an evaluator".
 
 13. **Without an artifact:** a bounded read of up to 20 recent traces, to confirm or rank Phase 4a candidates and to spot failures the config did not predict. Follow [`reading-traces.md`](resources/reading-traces.md) §Step 13 for the projection fallback chain, and delegate the reads to one subagent when the Task tool is available. Cite trace ids. Then write `grounding_reason` as that section describes.
 

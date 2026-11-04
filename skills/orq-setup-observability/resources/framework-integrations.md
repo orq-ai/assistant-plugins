@@ -4,7 +4,7 @@
 
 | Mode | What It Does | When to Use |
 |------|-------------|-------------|
-| **AI Router** | Route LLM calls through `https://api.orq.ai/v2/router` — traces generated automatically | You want multi-provider access, fallbacks, caching, cost tracking with zero instrumentation code |
+| **AI Router** | Route LLM calls through `https://my.orq.ai/v3/router` — traces generated automatically | You want multi-provider access, fallbacks, caching, cost tracking with zero instrumentation code |
 | **Observability** | Send OpenTelemetry traces from your existing setup to `https://api.orq.ai/v2/otel` | You already call providers directly and want to add tracing without changing your LLM calls |
 | **Both** | AI Router for routing + Observability for framework-level spans | You want full pipeline visibility: framework orchestration spans + LLM call traces |
 | **Control Tower** | Full agent lifecycle management — deploy, monitor, and control agents from the orq.ai dashboard | Framework has native orq.ai integration for agent orchestration (currently: LangGraph, OpenAI Agents, Vercel AI SDK) |
@@ -42,27 +42,52 @@
 
 ## AI Router Quick Setup Pattern
 
-All AI Router integrations follow the same pattern — point your SDK's base URL to orq.ai:
+For model and agent generation, point a Responses-capable client at the v3 router and explicitly select Responses. Changing the base URL alone does not switch a Chat Completions client to Responses. If a framework cannot use Responses, use a Responses-backed callable or ask for an explicit interface exception.
 
-**Python (OpenAI SDK):**
+Prefer the orq SDK for new code and when it is already imported. If orq is not imported and OpenAI already is, reuse OpenAI instead of adding a second SDK.
+
+**Python (orq SDK, preferred):**
+```python
+from orq_ai_sdk import Orq
+import os
+
+with Orq(api_key=os.environ["ORQ_API_KEY"], server_url="https://my.orq.ai") as orq:
+    response = orq.responses.create(model="openai/gpt-6-luna", input="Hello", stream=False)
+    print(response)
+```
+
+**Node.js (orq SDK, preferred):**
+```typescript
+import { Orq } from "@orq-ai/node";
+
+const orq = new Orq({ apiKey: process.env.ORQ_API_KEY, serverURL: "https://my.orq.ai" });
+const response = await orq.responses.create({ model: "openai/gpt-6-luna", input: "Hello", stream: false });
+console.log(response);
+```
+
+**Python (OpenAI SDK, already imported):**
 ```python
 from openai import OpenAI
 import os
 
 client = OpenAI(
-    base_url="https://api.orq.ai/v2/router",
+    base_url="https://my.orq.ai/v3/router",
     api_key=os.environ["ORQ_API_KEY"],
 )
+response = client.responses.create(model="openai/gpt-6-luna", input="Hello")
+print(response.output_text)
 ```
 
-**Node.js (OpenAI SDK):**
+**Node.js (OpenAI SDK, already imported):**
 ```typescript
 import OpenAI from "openai";
 
 const client = new OpenAI({
-    baseURL: "https://api.orq.ai/v2/router",
+    baseURL: "https://my.orq.ai/v3/router",
     apiKey: process.env.ORQ_API_KEY,
 });
+const response = await client.responses.create({ model: "openai/gpt-6-luna", input: "Hello" });
+console.log(response.output_text);
 ```
 
 **LangChain:**
@@ -71,15 +96,33 @@ from langchain_openai import ChatOpenAI
 import os
 
 llm = ChatOpenAI(
-    model="openai/gpt-4o",
+    model="openai/gpt-6-luna",
     api_key=os.environ["ORQ_API_KEY"],
-    base_url="https://api.orq.ai/v2/router",
+    base_url="https://my.orq.ai/v3/router",
+    use_responses_api=True,
 )
 ```
 
+Select a `langchain-openai` version with Responses support. See [ChatOpenAI Responses routing](https://reference.langchain.com/python/langchain-openai/langchain_openai/chat_models/base/ChatOpenAI).
+
 ## Observability (OpenTelemetry) Quick Setup Pattern
 
-All observability integrations use OpenInference instrumentors with OTLP export to orq.ai:
+**First-party one-liners (Python).** The orq SDK ships two setups that export to orq.ai without wiring OTLP yourself for LangChain; the Agents one still needs a tracer provider:
+
+```python
+# LangChain / LangGraph (needs langchain-core) — zero config
+from orq_ai_sdk.langchain import setup
+setup()  # reads ORQ_API_KEY; pass api_key=… / api_url=… to override
+
+# OpenAI Agents SDK (needs openai-agents, opentelemetry-sdk, opentelemetry-exporter-otlp,
+# opentelemetry-instrumentation). The instrumentor uses the global TracerProvider and
+# nothing sets one, so configure OTLP export first (block below) or pass your own.
+# It also replaces the Agents SDK's default trace processors, so OpenAI platform traces stop.
+from orq_ai_sdk.openai_agents_instrumentation import OpenAIAgentsInstrumentor
+OpenAIAgentsInstrumentor().instrument(tracer_provider=tracer_provider)
+```
+
+For any other framework, use its OpenInference instrumentor with OTLP export to orq.ai:
 
 **Environment variables (all frameworks):**
 ```bash

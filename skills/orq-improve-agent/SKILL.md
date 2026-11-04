@@ -9,7 +9,7 @@ description: >
   applied. Do NOT use to re-architect a pipeline (use orq-build-agent), to align
   a judge that already exists (use orq-evaluator-alignment), or to build the
   failure taxonomy in the first place (use orq-analyze-traces).
-allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces list-facet-values:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq traces conversation:*), Bash(orq traces conv:*), Bash(orq reporting query:*), Bash(orq agents retrieve:*), Bash(orq agents get-response:*), Bash(orq deployments get-config:*), Bash(orq agents update:*), Bash(orq tools retrieve:*), Bash(orq knowledge-bases retrieve:*), Bash(orq memory-stores retrieve:*), Bash(orq evals get:*), Bash(orq skills get:*), mcp__orq-workspace__search_entities, mcp__orq-workspace__get_agent, mcp__orq-workspace__get_span, mcp__orq-workspace__get_deployment, mcp__orq-workspace__list_traces, mcp__orq-workspace__search_docs
+allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, Bash(orq traces list-fields:*), Bash(orq traces list-facets:*), Bash(orq traces list-facet-values:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces get-span:*), Bash(orq traces list-spans:*), Bash(orq traces conversation:*), Bash(orq traces conv:*), Bash(orq reporting query:*), Bash(orq agents retrieve:*), Bash(orq models list:*), Bash(orq agents get-response:*), Bash(orq deployments get-config:*), Bash(orq agents update:*), Bash(orq tools retrieve:*), Bash(orq knowledge-bases retrieve:*), Bash(orq memory-stores retrieve:*), Bash(orq evals get:*), Bash(orq skills get:*), mcp__orq-workspace__search_entities, mcp__orq-workspace__get_agent, mcp__orq-workspace__get_span, mcp__orq-workspace__get_deployment, mcp__orq-workspace__list_traces, mcp__orq-workspace__search_docs
 ---
 
 # Improve Agent
@@ -115,7 +115,7 @@ Three distinct branches:
 
 ### Phase 1: Find the Evidence
 
-**Before any of the four: read the target's own config and test it against its own instructions.** Use `mcp__orq-workspace__get_agent key=...` (workspace-scoped, finds agents across projects) as the primary path; fall back to `orq agents retrieve <key> -o json` if MCP is unavailable. Then ask the single question: *does any setting make these instructions impossible to follow?* Instructions that mandate three sequential tool steps under `max_iterations: 2`, or an 800-word minimum under `max_tokens: 800`, are a contradiction visible without a single trace query.
+**Before any of the four: read the target's own config and test it against its own instructions.** Use `mcp__orq-workspace__get_agent key=...` (workspace-scoped, finds agents across projects) as the primary path; fall back to `orq agents retrieve <key> -o json` if MCP is unavailable. Then ask two questions: *is the declared model available in the project?* (resolve `model.id` against `orq models list -o json` with the steps in [`model-slugs.md`](../orq-shared/resources/model-slugs.md); no match means it is not; several matches is ambiguous, so ask rather than call it unavailable), and *does any setting make these instructions impossible to follow?* Instructions that mandate three sequential tool steps under `max_iterations: 2`, or an 800-word minimum under `max_tokens: 800`, are a contradiction visible without a single trace query.
 
 If the agent config references tool IDs, knowledge-base IDs, memory-store IDs, or eval IDs, resolve them into full definitions before proceeding:
 - `orq tools retrieve <id>` — tool schema and description
@@ -140,6 +140,8 @@ A contradiction found here is a **`fix: config` finding already**. Take it strai
    | **`mode: local`** | Nothing to compare. Proceed, and say the config is unverified. |
 
    **Check `unobservable` before claiming anything about what the analysis covered.**
+
+   **Quote each mode's `rate` with its `rate_basis`.** `window_flags` means the share of every trace in the window that a decision model flagged ("9.4% flagged of 3,390"), not a corrected failure rate; `read` means the share of the traces the analyst read ("12.5% of 80 read"). A mode's `flagged` list holds traces the model flagged and nobody read: open a few to find more failing examples to write the fix against, but never put them in the regression set unread.
 
 2. **No artifact, the user has traces** → recommend `orq-analyze-traces` first. **Do not silently re-run a mini error analysis inline.**
 
@@ -199,21 +201,7 @@ Route on `failure_modes[].fix`:
 
 #### Prompting Guidelines Framework
 
-Each guideline is a dimension to evaluate — identify what is missing or weak, then improve it.
-
-1. **Role assignment & expertise** — clear, emphasized role with specific domain expertise
-2. **Task definition** — clear explanation of what the system will do
-3. **Stress induction** — emphasis on the importance and criticality of the task
-4. **Guidelines** — the task broken into clear guidelines: task explanation, behavioral constraints, communication style, knowledge boundaries
-5. **Output format** — specified and stressed. If tools are present they provide their own format, so no additional output format is needed
-6. **Tool calling** — tools are part of the task. Never suggest removing them. Keep definitions in their original state; adjustments to *how they are referenced* are fair game
-7. **Reasoning** — for complex tasks, reasoning must be instructed and must appear before the final answer. If reasoning is instructed but the output format has no space for it, add one (e.g. a `reasoning` key in JSON)
-8. **Examples** — few-shot examples in `<example>` XML tags, with proper variable formatting inside
-9. **Remove unnecessary content** — no gratuitous markdown, emojis, XML tags, or contradictions
-10. **Proper variable usage** — `{{double curly brackets}}` should appear once near the end; earlier references use XML tags
-11. **Recap** — a one-sentence recap of the task and format at the end
-
-**Ground each suggestion in a trace.** With an artifact in hand, name the failure mode and the guideline together: *"Mode 1 (persona drift, 12.5%) → guideline 1: the role is stated once and never reinforced."* A guideline finding with no failing trace behind it is a **best-practice suggestion**, not a fix — say which it is.
+**The 11 guidelines and the grounding rule: [`prompting-guidelines.md`](../orq-shared/resources/prompting-guidelines.md)** (in `orq-shared`). `orq-review-agent` reports against the same file. If `orq-shared` is not installed, say so before rewriting: there is no local copy of the guidelines.
 
 Present the analysis, ask which suggestions to apply, then rewrite:
 
@@ -223,7 +211,7 @@ Present the analysis, ask which suggestions to apply, then rewrite:
 **Strengths:** [what the prompt does well]
 
 ### Suggestions
-1. [Guideline X] — [suggestion] — **Evidence-backed fix:** addresses failure mode [N] ([rate])
+1. [Guideline X] — [suggestion] — **Evidence-backed fix:** addresses failure mode [N] ([rate], [rate_basis])
 2. [Guideline Y] — [suggestion] — **Best-practice suggestion:** no failing example behind it
 ```
 
@@ -253,7 +241,7 @@ Every write — prompt or config — goes through the same gate:
 
 1. **Show the diff.** Original and new, side by side, with each change tied to the guideline or failure mode it addresses.
 2. **Get explicit approval** via `AskUserQuestion`. Approval for one change is not approval for the next.
-3. **Apply** with `--version-increment` and `--version-description` saying *what* changed and *why* (name the failure mode and its rate).
+3. **Apply** with `--version-increment` and `--version-description` saying *what* changed and *why* (name the failure mode and its rate, with its basis).
 4. **Verify and report.** Re-read the agent: **the intended knob changed, and `settings.tools[]` is unchanged.** Report the new version and the rollback path.
 
 Deployment mode stops at step 1 for config: show the recommended change and point at the UI.
