@@ -127,8 +127,8 @@ Pin down:
    - `document_input`: every answer is plain text about attached files.
    - `agentic`: any task's required output is anything other than plain text in a
      reply (a spreadsheet, a document, a slide deck, code files, any produced file).
-   When in doubt, `agentic`. Record the type; it drives how the dataset and
-   evaluators are built below.
+   When in doubt, `qa`: it is the easiest to grade, and `agentic` is the hardest.
+   Record the type; it drives how the dataset and evaluators are built below.
 
 When working from a repo or chat, name the repeating unit of work ("review one
 pull request", not "do what this conversation did"). Find more instances of that
