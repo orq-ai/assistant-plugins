@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 # A single text file over this many characters gets truncated on ingest and
-# spends the grader's context fast. Same order of magnitude as the Optima limit.
+# spends the grader's context fast.
 TEXT_CONTENT_MAX_LENGTH = 50_000
 # Read cap for the secret scan. A staged bundle is source docs, not media, so a file
 # past this is almost certainly a binary asset (video, large PDF) we cannot usefully
@@ -171,7 +171,8 @@ def check(bundle_dir: Path) -> Report:
                 '(a list item per instance) with its answer, not a TODO placeholder.'
             )
 
-    files = [p for p in bundle_dir.rglob('*') if p.is_file() and not _is_vcs_internal(p, bundle_dir)]
+    # is_symlink: a broken link is not a file, but must reach the stat guard and fail loud.
+    files = [p for p in bundle_dir.rglob('*') if (p.is_file() or p.is_symlink()) and not _is_vcs_internal(p, bundle_dir)]
     if not files:
         report.error('Bundle is empty.')
 
@@ -316,7 +317,7 @@ def _selftest() -> int:
         (root / 'dollar_key.txt').unlink()
 
         # An env-var reference is still exempt whatever its length.
-        for ref in ('${ORQ_API_KEY}', '$TOKEN', '<your-key>'):
+        for ref in ('${ORQ_API_KEY}', '$ORQ_API_KEY', '<your-key>'):
             (root / 'ref.txt').write_text(f'api_key={ref}', encoding='utf-8')
             assert not check(root).errors, f'env-var reference must stay exempt: {ref!r}'
         (root / 'ref.txt').unlink()

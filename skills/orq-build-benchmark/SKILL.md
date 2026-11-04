@@ -46,10 +46,8 @@ The skill turns work the team already did into a model benchmark that lives on o
 
 The detailed step diagram is under [The flow](#the-flow).
 
-This is the orq port of Artificial Analysis's `optima-eval-prep`. Steps 1 to 5
-(pick the subject, check gradeability, intake, stage sources, write the root
-docs) are the same work and where most of the value is. Step 6 is replaced:
-instead of packaging a ZIP for an external platform, you design the benchmark
+Steps 1 to 5 (pick the subject, check gradeability, intake, stage sources, write
+the root docs) are where most of the value is. In step 6 you design the benchmark
 yourself (with user approval) and build it on orq.
 
 ## The flow
@@ -227,7 +225,7 @@ bundle, or the brief says the task was restated without it.
 
 ## Build on orq
 
-This replaces Optima's package-and-upload step. Do it in order.
+Do it in order.
 
 ### 1. Propose the plan and get approval
 
@@ -300,6 +298,8 @@ def make_job(model: str):
         # input via your orq client / invoke_model and return its text output; keep
         # every candidate identical except the model id. This example dataset uses a
         # single 'text' input column (see step 2), so dp.inputs['text'] is the prompt.
+        # For an `agentic` task, return the produced file's text: the judge only reads
+        # what this returns.
         return await call_model(model, dp.inputs['text'])
     return run
 
@@ -310,6 +310,13 @@ rubric = llm_jury(
         '- <criterion 1 from intake>\n- <criterion 2 from intake>\n...'
     ),
     verdict_kind='numeric',
+    # Required: a numeric classify judge errors without these. The score runs 0 to 1, and
+    # these are its anchors, lowest first. Write them from the intake's good vs bad notes.
+    levels=[
+        '<what a rejected answer looks like>',
+        '<what a usable answer that needs edits looks like>',
+        '<what an answer the team would ship as is looks like>',
+    ],
     # The judge must NOT be one of CANDIDATES. A model scoring its own answer self-prefers
     # and inflates its grade, and nothing downstream guards against it. Pick a strong model
     # that is not under test.
@@ -334,9 +341,19 @@ invent model ids.
 
 ### 5. Read the results
 
+A run can report success while every rubric score errored, so check the summary for
+evaluator errors first. If a whole evaluator errored, fix it and rerun.
+
 Open the run in orq Experiments (the call prints the experiment URL) and compare
-candidates per category, not just overall. Report the winner with its margin and
-where it is weak.
+candidates per category, not just overall. Next to each score, report how many
+datapoints were scored, errored and skipped for that candidate.
+
+Report the winner with its margin and where it is weak, with two exceptions:
+
+- If the counts differ between candidates, do not name a winner. A mean over fewer
+  datapoints is not comparable.
+- If the gap is smaller than the spread of scores across datapoints, report those
+  candidates as tied.
 
 ## Later: native orq experiments
 
