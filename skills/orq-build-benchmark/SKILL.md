@@ -1,6 +1,6 @@
 ---
 name: orq-build-benchmark
-description: Turn a team's own work into a custom orq benchmark. Interview the user, stage real task instances, then build an orq dataset, orq evaluators, and run candidate models with evaluatorq, either graded against known answers (reported to orq Experiments) or as a pairwise arena (win rates) when there is no single right answer. Use when the user says "make an eval", "build a benchmark from my codebase / docs / tickets / this chat", "which model is best at [our task]", or "turn our work into a benchmark".
+description: Turn a team's own work into a custom orq benchmark. Interview the user, stage real task instances, then build an orq dataset, orq evaluators, and run candidate models with evaluatorq, graded against known answers and reported to orq Experiments. Use when the user says "make an eval", "build a benchmark from my codebase / docs / tickets / this chat", "which model is best at [our task]", or "turn our work into a benchmark".
 ---
 
 # orq build benchmark
@@ -27,26 +27,24 @@ The skill turns work the team already did into a model benchmark that lives on o
                            benchmark design
                            (you propose, user approves)
                                     │
-                    ┌───────────────┴───────────────┐
-                    ▼                                ▼
-              graded run                        arena run
-              (fixed answer:                    (no fixed answer:
-              rubric / exact-match)             pairwise jury, swap)
-                    │                                │
-                    ▼                                ▼
-              evaluatorq run                   evaluatorq run
-              1 job per model                  compare() per pair
-                    │                                │
-                    ▼                                ▼
-              orq Experiments                  win rates + BT ranking
-              (per-category scores)            (fit_bt over the pairs)
-                    └───────────────┬───────────────┘
+                                    ▼
+                               graded run
+                               (fixed answer:
+                               rubric / exact-match)
+                                    │
+                                    ▼
+                               evaluatorq run
+                               1 job per model
+                                    │
+                                    ▼
+                               orq Experiments
+                               (per-category scores)
+                                    │
                                     ▼
                        read results, pick the winner
 ```
 
-Stages 1 to 5 (subject, gradeability, intake, staging, root docs) are shared; the
-run stage forks by mode. The detailed step diagram is under [The flow](#the-flow).
+The detailed step diagram is under [The flow](#the-flow).
 
 This is the orq port of Artificial Analysis's `optima-eval-prep`. Steps 1 to 5
 (pick the subject, check gradeability, intake, stage sources, write the root
@@ -54,40 +52,20 @@ docs) are the same work and where most of the value is. Step 6 is replaced:
 instead of packaging a ZIP for an external platform, you design the benchmark
 yourself (with user approval) and build it on orq.
 
-## Two ways to grade
-
-Pick the mode during intake; it changes only the run step, not the staging.
-
-- **Graded benchmark (absolute).** Each model answers, and each answer is scored
-  on its own against a known correct answer, with a rubric judge or exact-match.
-  Use this when the task has a fixed right answer you can stage (a figure, a
-  clause, a label, an accepted output). This is the default.
-- **Arena (pairwise).** Each model answers, then models are judged head to head
-  and rolled up into win rates and a ranking. Use this when the task has no single
-  right answer but a person can still say which of two answers is better (writing
-  quality, tone, "which reply is more helpful"). No established answer is needed.
-
-Both modes stage the same sources and build the same orq dataset. When in doubt
-and a fixed answer exists, use the graded benchmark; reach for the arena only
-when quality is a matter of preference. You can run both on the same dataset.
-
 ## The flow
 
 ```mermaid
 flowchart TD
     A[1. Pick the subject<br/>chat / repo / docs / use case] --> B[2. Gradeability check<br/>reader-verifiable answer?]
-    B --> C[3. Intake<br/>task, inputs, good vs bad,<br/>categories, eval_type, mode]
+    B --> C[3. Intake<br/>task, inputs, good vs bad,<br/>categories, eval_type]
     C --> D[4. Stage sources<br/>real files, redact, declared stand-ins]
     D --> E[5. Root docs<br/>00_BRIEF / 01_SOURCES / 02_TASK_SEEDS]
     E --> F[check_bundle.py]
     F --> G[6. Propose plan<br/>get user approval]
     G --> H[Create orq dataset<br/>1 datapoint per seed]
     H --> I[Create or reuse evaluators<br/>marketplace first, then rubric / exact-match]
-    I --> J{mode}
-    J -->|graded| K[evaluatorq: 1 job per model<br/>reports to orq Experiments]
-    J -->|arena| L[pairwise jury, swap=True<br/>fit_bt ranking over model pairs]
+    I --> K[evaluatorq: 1 job per model<br/>reports to orq Experiments]
     K --> M[Read results, pick winner]
-    L --> M
 ```
 
 ## Rules
@@ -111,12 +89,10 @@ flowchart TD
 
 ## What the grader can check
 
-The grader is an orq evaluator. It reads the answer; it never executes it. For a
-graded benchmark, a use case only works if a fixed right answer can be verified by
-reading. Check this before staging anything. If a use case has no fixed answer but
-a reader can still say which of two answers is better, it is not out of scope: run
-it as an arena instead (see the run step). If it fails both, say so and propose the
-nearest gradeable reformulation.
+The grader is an orq evaluator. It reads the answer; it never executes it. A use
+case only works if a fixed right answer can be verified by reading. Check this
+before staging anything. If it fails, say so and propose the nearest gradeable
+reformulation.
 
 Two things fail it:
 
@@ -153,10 +129,6 @@ Pin down:
      reply (a spreadsheet, a document, a slide deck, code files, any produced file).
    When in doubt, `agentic`. Record the type; it drives how the dataset and
    evaluators are built below.
-8. The grading mode: `graded` (there is a fixed right answer to score against) or
-   `arena` (no single right answer, but a judge can pick the better of two). If
-   the good vs bad in item 3 reads as pass/fail against facts, use `graded`; if it
-   reads as "better/worse" on quality or tone, use `arena`. Record it.
 
 When working from a repo or chat, name the repeating unit of work ("review one
 pull request", not "do what this conversation did"). Find more instances of that
@@ -224,10 +196,7 @@ establishes a right answer, cross-reference its entry in `02_TASK_SEEDS.md`.
 `02_TASK_SEEDS.md` has one entry per candidate instance of the work:
 
 - input files (bundle paths);
-- the established answer or accepted output, or a pointer into `examples/`. An
-  `arena` row has no single right answer: instead record the better-vs-worse
-  observations the judge should weigh (what makes one reply stronger), which become
-  the pairwise criteria in 4b;
+- the established answer or accepted output, or a pointer into `examples/`;
 - the evidence, quoted or located exactly: `adjusted balance is $842,317.44
   (Reconciliation!D48 in claims/ledger_q4.xlsx)`;
 - wrong answers seen, or plausible near-misses worth penalizing;
@@ -265,12 +234,9 @@ This replaces Optima's package-and-upload step. Do it in order.
 From the seeds, propose: the task count, the categories, the grading rubric
 (criteria drawn verbatim from the "good vs bad" observations in intake), and the
 model-call budget so the user approves with the cost in view. For fixed label sets,
-name exact-match as the grader. State the call count explicitly: graded mode is
-about `datapoints x candidates` candidate calls plus one judge call each; arena mode
-is far larger, `datapoints x C(candidates, 2) x judges x 2` judge calls (the `x 2`
-is `swap=True`) on top of `datapoints x candidates` answer calls, so three candidates,
-three judges and 50 datapoints is 900 judge calls. Show this to the user and get
-approval before creating anything. Do not create orq objects until they say yes.
+name exact-match as the grader. State the call count explicitly: about
+`datapoints x candidates` candidate calls plus one judge call each. Show this to the
+user and get approval before creating anything. Do not create orq objects until they say yes.
 
 ### 2. Create the orq dataset
 
@@ -279,8 +245,8 @@ One datapoint per task seed. Use the orq MCP tools (`create_dataset` then
 
 - `inputs`: the task input. For `qa`, the question text. For `document_input`,
   the question plus the attached file content (or a reference the job can load).
-  For `agentic`, the instruction plus any input files. The step 4a and 4b templates
-  assume this example dataset has a single input column named `text` and so read
+  For `agentic`, the instruction plus any input files. The step 4 template
+  assumes this example dataset has a single input column named `text` and so read
   `dp.inputs['text']`; if you name the column differently, change that key to match.
 - `expected_output`: the established answer from the seed. For `agentic`
   file-producing tasks, put the acceptance criteria or a pointer to the accepted
@@ -308,19 +274,16 @@ Check the marketplace first, then fill the gaps.
 - Exact-match for fixed label sets: the built-in `exact_match` evaluator (orq), or
   evaluatorq's `exact_match_evaluator()`.
 
-### 4. Prerequisite: a current evaluatorq
+### 4. Run the candidates with evaluatorq
 
-Both templates below import evaluatorq. They need a recent build that exports
-`evaluatorq`, `job`, `llm_jury`, `exact_match_evaluator`, and `DatasetIdInput`
-(graded) plus `llm_jury_pairwise`, `fit_bt`, and `JudgedComparison` (arena). Install
-the current package from `orq-ai/evaluatorq` (`uv add "evaluatorq @ git+https://github.com/orq-ai/evaluatorq"`,
+The template below needs a recent evaluatorq build that exports `evaluatorq`, `job`,
+`llm_jury`, `exact_match_evaluator`, and `DatasetIdInput`. Install the current package
+from `orq-ai/evaluatorq` (`uv add "evaluatorq @ git+https://github.com/orq-ai/evaluatorq"`,
 or a published release once available). The older evaluatorq bundled in `orqkit` does
 not export all of these, so a template run fails at import against it. Confirm with
-`python -c "import evaluatorq; evaluatorq.fit_bt; evaluatorq.llm_jury"` before running.
+`python -c "import evaluatorq; evaluatorq.llm_jury"` before running.
 
-### 4a. Graded mode: run the candidates with evaluatorq
-
-Use this when the mode is `graded`. One `evaluatorq()` call, one job per candidate
+One `evaluatorq()` call, one job per candidate
 model or agent, evaluated on the dataset. Results upload to orq Experiments when
 `ORQ_API_KEY` is set. Template, grounded in the current evaluatorq API:
 
@@ -348,7 +311,7 @@ rubric = llm_jury(
     ),
     verdict_kind='numeric',
     # The judge must NOT be one of CANDIDATES. A model scoring its own answer self-prefers
-    # and inflates its grade, and graded mode has no self-vote guard. Pick a strong model
+    # and inflates its grade, and nothing downstream guards against it. Pick a strong model
     # that is not under test.
     model='<judge_model_not_in_CANDIDATES>',
 )
@@ -369,147 +332,15 @@ Every job runs against every datapoint, so each candidate is one column. Verify
 the candidate model ids against `list_models` (orq MCP) before running; do not
 invent model ids.
 
-### 4b. Arena mode: pairwise ranking
-
-Use this when the mode is `arena` (no fixed right answer, but a judge can pick the
-better of two). Same dataset. Each candidate answers every input, then the answers
-are judged head to head and rolled up into win rates. This is the same method as
-the research win-rate arena (RES-759): evaluatorq's pairwise jury with position-bias
-correction (`swap=True`). Template, grounded in the current evaluatorq API:
-
-With more than two candidates you want ONE ranking across all of them, not a pile
-of per-pair win rates. `build_report` aggregates by the positional A/B slot, so a
-flat list mixing different model pairs is meaningless (it would add gpt-vs-claude
-into the same "A" bucket as claude-vs-gemini). The evaluatorq way to rank N models
-is `fit_bt`: map each judge vote to a `JudgedComparison` keyed on the two model ids,
-then fit Bradley-Terry once over all of them. Template, grounded in the current
-evaluatorq API (mirrors `examples/pairwise/bt_sigma_ranking.py`):
-
-```python
-import asyncio
-from evaluatorq import JudgedComparison, fit_bt, llm_jury_pairwise
-
-CANDIDATES = ['openai/gpt-5', 'anthropic/claude-opus-4-1', 'google-ai/gemini-2.5-pro']
-
-# Judges MUST be disjoint from CANDIDATES. A model scoring a pair that holds its own
-# answer self-prefers and inflates its own skill, and nothing downstream corrects for
-# it. Pick strong models that are not under test. Verify each id against list_models
-# (orq MCP) before running; do not invent ids.
-JUDGES = ['openai/gpt-4.1', 'anthropic/claude-sonnet-4-5']
-if set(JUDGES) & set(CANDIDATES):  # raise, not assert: `python -O` strips an assert
-    raise SystemExit(
-        'judges overlap candidates: a judge rating its own answer biases the ranking; '
-        f'remove the overlap {sorted(set(JUDGES) & set(CANDIDATES))}'
-    )
-
-# Below this many counted votes the ranking is noise, so it is not printed. A starting
-# floor, not a measured one: 3 candidates x 2 judges x 10 datapoints gives 60 votes.
-MIN_KEPT_VOTES = 30
-
-comparator = llm_jury_pairwise(
-    judges=JUDGES,
-    criteria='Prefer the answer that ... <the better/worse observations from intake>',
-    swap=True,  # judge each pair both ways to cancel position bias
-)
-
-# load_datapoints and call_model: define these yourself. load_datapoints fetches the
-# dataset you created in step 2 (orq MCP list_datapoints / the orq CLI) as evaluatorq
-# DataPoints; call_model invokes one candidate and returns its text output. This
-# example dataset uses a single 'text' input column (see step 2), so dp.inputs['text']
-# is the prompt.
-VOTE_TO_P = {'A': 1.0, 'B': 0.0, 'tie': 0.5}
-
-async def main():
-    datapoints = load_datapoints('<orq_dataset_id>')
-    answers = {m: [await call_model(m, dp.inputs['text']) for dp in datapoints] for m in CANDIDATES}
-
-    records: list[JudgedComparison] = []
-    dropped_no_verdict = 0
-    dropped_self_vote = 0
-    for i, dp in enumerate(datapoints):
-        for a in range(len(CANDIDATES)):
-            for b in range(a + 1, len(CANDIDATES)):
-                model_a, model_b = CANDIDATES[a], CANDIDATES[b]
-                comparison = await comparator.compare(
-                    # compare() wants a string; dp.inputs is a dict, so pass the
-                    # dataset's input column ('text' here), not the whole dict.
-                    question=dp.inputs['text'],
-                    response_a=answers[model_a][i],
-                    response_b=answers[model_b][i],
-                )
-                # One JudgedComparison per judge vote, keyed on the model ids so the fit
-                # ranks models (not the A/B slot). swap=True already reconciled position
-                # bias inside each vote.
-                for vote in comparison.votes:
-                    # Backstop self-vote guard: with JUDGES disjoint from CANDIDATES (checked
-                    # above) this never fires, but if someone widens the panel to overlap the
-                    # candidates it drops a judge's vote on a pair holding its own answer, counts
-                    # the drop, and the warning below reports it so the ranking stays honest.
-                    if vote.model in (model_a, model_b):
-                        dropped_self_vote += 1
-                        continue
-                    if vote.vote is None:
-                        # A judge returned no usable verdict. Count it, never drop it silently:
-                        # the pairs a judge fails to parse are the hard ones, so a silent drop
-                        # skews the ranking toward the easy pairs.
-                        dropped_no_verdict += 1
-                        continue
-                    records.append(
-                        JudgedComparison(
-                            judge=vote.model,
-                            item_a=model_a,
-                            item_b=model_b,
-                            p_a=VOTE_TO_P[str(vote.vote)],
-                        )
-                    )
-
-    if dropped_no_verdict:
-        print(
-            f'warning: {dropped_no_verdict} judge vote(s) returned no verdict and were excluded; '
-            'hard pairs drop out first, so check judge coverage before trusting the ranking.'
-        )
-    if dropped_self_vote:
-        print(
-            f'warning: {dropped_self_vote} judge vote(s) were dropped as self-votes (a judge rating a '
-            'pair that holds its own answer); use judges outside CANDIDATES to keep the full panel.'
-        )
-
-    # How many votes actually counted. A ranking built on a handful of votes is noise,
-    # so show the kept fraction and refuse to rank below the floor.
-    total_votes = len(records) + dropped_no_verdict + dropped_self_vote
-    print(f'votes counted: {len(records)} of {total_votes} '
-          f'({len(records) / total_votes:.0%})' if total_votes else 'votes counted: 0 of 0')
-    if len(records) < MIN_KEPT_VOTES:
-        print(f'ranking not trusted: {len(records)} usable vote(s), under the floor of {MIN_KEPT_VOTES}. '
-              'Add datapoints or judges, and check judge coverage and that JUDGES is disjoint from CANDIDATES.')
-        return
-
-    fit = fit_bt(records, judge_sigma=True, hard=True)
-    print('ranking (best first):', ' > '.join(fit.ranking))
-    for model in fit.ranking:
-        print(f'  {model:<28} skill={fit.skills[model]:+.3f}')
-
-asyncio.run(main())
-```
-
-For the two-candidate case only, `build_report(comparisons)` over the list of
-`comparison` objects gives you the head-to-head win rates directly (the A/B slot is
-unambiguous there); import it from `evaluatorq` and skip the `fit_bt` step. Same rule
-on model ids: verify each against `list_models` before running; do not invent them.
-Reuse the "better vs worse" observations from intake as the judge criteria, the same
-way graded mode reuses the "good vs bad" ones.
-
 ### 5. Read the results
 
-Graded mode: open the run in orq Experiments (the call prints the experiment URL)
-and compare candidates per category, not just overall. Arena mode: read the
-Bradley-Terry ranking and skills from `fit_bt` (or, for two candidates only, the
-head-to-head win rates from `build_report`). Either way, report the winner with its
-margin and where it is weak.
+Open the run in orq Experiments (the call prints the experiment URL) and compare
+candidates per category, not just overall. Report the winner with its margin and
+where it is weak.
 
 ## Later: native orq experiments
 
-Once the orq experiments API is finished (ADR-18), move step 4a to a native
+Once the orq experiments API is finished (ADR-18), move step 4 to a native
 experiment on the same dataset and evaluators. Nothing in steps 1 to 3 changes.
 
 ## Hard rules recap

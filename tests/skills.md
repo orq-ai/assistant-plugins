@@ -226,7 +226,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Ask: "Build a benchmark from my codebase to find which model is best at our task"
 - Verify: interviews the user and stages real task instances with established answers before building anything
 - Verify: builds an orq dataset and evaluators, then runs candidate models with evaluatorq
-- Verify: grades against known answers (reported to orq Experiments), or runs a pairwise win-rate arena when there is no single right answer
+- Verify: grades against known answers and reports to orq Experiments
 - Verify: validates a staged bundle with `scripts/check_bundle.py` before upload
 
 ## `orq-evaluator-alignment`
