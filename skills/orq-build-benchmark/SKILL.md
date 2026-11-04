@@ -396,10 +396,15 @@ CANDIDATES = ['openai/gpt-5', 'anthropic/claude-opus-4-1', 'google-ai/gemini-2.5
 # it. Pick strong models that are not under test. Verify each id against list_models
 # (orq MCP) before running; do not invent ids.
 JUDGES = ['openai/gpt-4.1', 'anthropic/claude-sonnet-4-5']
-assert not (set(JUDGES) & set(CANDIDATES)), (
-    'judges overlap candidates: a judge rating its own answer biases the ranking; '
-    f'remove the overlap {sorted(set(JUDGES) & set(CANDIDATES))}'
-)
+if set(JUDGES) & set(CANDIDATES):  # raise, not assert: `python -O` strips an assert
+    raise SystemExit(
+        'judges overlap candidates: a judge rating its own answer biases the ranking; '
+        f'remove the overlap {sorted(set(JUDGES) & set(CANDIDATES))}'
+    )
+
+# Below this many counted votes the ranking is noise, so it is not printed. A starting
+# floor, not a measured one: 3 candidates x 2 judges x 10 datapoints gives 60 votes.
+MIN_KEPT_VOTES = 30
 
 comparator = llm_jury_pairwise(
     judges=JUDGES,
@@ -436,7 +441,7 @@ async def main():
                 # ranks models (not the A/B slot). swap=True already reconciled position
                 # bias inside each vote.
                 for vote in comparison.votes:
-                    # Backstop self-vote guard: with JUDGES disjoint from CANDIDATES (asserted
+                    # Backstop self-vote guard: with JUDGES disjoint from CANDIDATES (checked
                     # above) this never fires, but if someone widens the panel to overlap the
                     # candidates it drops a judge's vote on a pair holding its own answer, counts
                     # the drop, and the warning below reports it so the ranking stays honest.
@@ -470,13 +475,13 @@ async def main():
         )
 
     # How many votes actually counted. A ranking built on a handful of votes is noise,
-    # so show the kept fraction and refuse to rank on an empty set.
+    # so show the kept fraction and refuse to rank below the floor.
     total_votes = len(records) + dropped_no_verdict + dropped_self_vote
     print(f'votes counted: {len(records)} of {total_votes} '
           f'({len(records) / total_votes:.0%})' if total_votes else 'votes counted: 0 of 0')
-    if not records:
-        print('error: no usable votes; ranking would be meaningless. '
-              'Check judge coverage and that JUDGES is disjoint from CANDIDATES.')
+    if len(records) < MIN_KEPT_VOTES:
+        print(f'ranking not trusted: {len(records)} usable vote(s), under the floor of {MIN_KEPT_VOTES}. '
+              'Add datapoints or judges, and check judge coverage and that JUDGES is disjoint from CANDIDATES.')
         return
 
     fit = fit_bt(records, judge_sigma=True, hard=True)

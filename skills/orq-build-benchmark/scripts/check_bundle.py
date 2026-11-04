@@ -53,47 +53,30 @@ SECRET_PATTERNS = (
     ('private key block', re.compile(r'-----BEGIN [A-Z ]*PRIVATE KEY-----')),  # gitleaks:allow
     ('AWS access key id', re.compile(r'AKIA[0-9A-Z]{16}')),  # gitleaks:allow
     (
-        # Both a quoted literal and an unquoted value: a bare `.env`-style line
-        # (ORQ_API_KEY=... or api_key: sk-...) is the most common way a key lands in a
-        # bundle, and a quotes-only pattern missed it entirely. The value (group 1,
-        # surrounding quotes optional) is then run through the `_looks_like_secret`
-        # allowlist so ordinary prose like `password: required` does not read as a key.
+        # A `.env` line (ORQ_API_KEY=...), a YAML line (api_key: sk-...) and a JSON pair
+        # ("api_key": "sk-...") all count, so the label's closing quote is optional too.
+        # The value (group 1, surrounding quotes optional) is then run through the
+        # `_looks_like_secret` allowlist so prose like `password: required` is not a key.
         'assigned api key literal',
-        re.compile(r'(?i)(?:api[_-]?key|secret|token|password)\s*[:=]\s*[\'"]?([^\'"\s]{8,})[\'"]?'),  # gitleaks:allow
+        re.compile(r'(?i)(?:api[_-]?key|secret|token|password)[\'"]?\s*[:=]\s*[\'"]?([^\'"\s]{8,})[\'"]?'),  # gitleaks:allow
     ),
     ('confidential banner', re.compile(r'(?i)\b(do not distribute|strictly confidential|internal use only)\b')),
 )
 
-# A seed entry is a markdown list item or section heading, one per task instance;
-# a placeholder line (TODO / <fill in>) is not a seed. A bare section heading is not
-# a seed either (a `## Task seeds` title plus a `TODO:` line must not count as one),
-# so only list items count. The angle-bracket placeholder is lowercase-only so a
-# generic type in a real seed (`List<String>`) is not mistaken for a `<fill in>`.
+# A seed entry is a markdown list item, one per task instance. A heading is not a seed
+# (a `## Task seeds` title plus a `TODO:` line must not count as one), and neither is a
+# placeholder item. A placeholder word only counts at the start of the item or of a
+# field (`- TODO: add seed`, `answer: tbd`), so a seed about "the todo list page" stays
+# a seed. Likewise a `<fill-in>` only counts on its own: `Array<string>` is a generic
+# type, because a word runs straight into the bracket.
 SEED_ENTRY = re.compile(r'\s*([-*+]\s+|\d+[.)]\s+)\S')
-SEED_PLACEHOLDER = re.compile(r'(?i)\b(todo|fixme|tbd|fill in|placeholder)\b')
-# Case-sensitive on purpose (kept out of the (?i) pattern above): a lowercase `<name>`
-# is a fill-in placeholder, but a capitalised generic type in a real seed (`List<String>`)
-# is not.
-SEED_ANGLE_PLACEHOLDER = re.compile(r'<[a-z][a-z ._-]*>')
+SEED_PLACEHOLDER = re.compile(r'(?i)(?:^\s*(?:[-*+]|\d+[.)])\s+|:\s*)(todo|fixme|tbd|fill in|placeholder)\b')
+SEED_ANGLE_PLACEHOLDER = re.compile(r'(?<!\w)<[a-z][a-z ._-]*>')
 
-# Plain words a credential label can carry in prose or a field description
-# (`password: required`) that are not secrets. These are matched before the length
-# gate in `_looks_like_secret`, so short entries like `none` actually take effect.
-# `changeme`/`redacted`/`placeholder`/`example` are intentionally NOT here: they are
-# caught by the substring-marker check in `_looks_like_secret` instead.
-_NON_SECRET_VALUES = frozenset(
-    {
-        'required',
-        'optional',
-        'none',
-        'null',
-        'nil',
-        'empty',
-        'true',
-        'false',
-        'unset',
-    }
-)
+# Plain words a field description assigns to a credential label (`password: required`).
+# Only words of 8+ characters belong here: the value pattern needs 8+ characters, so a
+# shorter word (`none`) never reaches the scan.
+_NON_SECRET_VALUES = frozenset({'required', 'optional'})
 
 # Env-var references and bracketed placeholders, matched as a whole value so a real
 # secret that merely starts with `$` (`$ecretPass99xyz`) is still flagged:
@@ -116,15 +99,15 @@ def _looks_like_secret(value: str) -> bool:
     v = value.strip().strip('\'"')
     # An env-var reference or a bracketed placeholder is not a secret, whatever its
     # length: match the whole form (`${ORQ_API_KEY}`, `$TOKEN`, `<your-key>`) so a real
-    # key that merely starts with `$` (`$ecretPass99xyz`) is still flagged. Checked here,
-    # before trailing punctuation is stripped, so a closing `}` or `>` is not lost.
-    if PLACEHOLDER_REF.match(v):
+    # key that merely starts with `$` (`$ecretPass99xyz`) is still flagged. Try it again
+    # without sentence punctuation (`${ORQ_API_KEY}.`), which leaves the closing `}` on.
+    if PLACEHOLDER_REF.match(v) or PLACEHOLDER_REF.match(v.rstrip('.,;:')):
         return False
-    # Strip trailing sentence punctuation so an unquoted value at the end of a sentence
-    # (`password: required.`) matches the allowlist instead of capturing `required.`.
-    v = v.rstrip('.,;:)]}')
-    low = v.lower()
-    if low in _NON_SECRET_VALUES:  # checked before the length gate so short words (`none`) exempt
+    # The stripped value is for matching a word only (`password: required.`). The length
+    # gate reads the value as written: stripping first would make `Xk9mQ2.,` short enough
+    # to pass as clean.
+    low = v.rstrip('.,;:)]}').lower()
+    if low in _NON_SECRET_VALUES:
         return False
     if len(v) < 8:  # too short to be a credential; the regex already requires 8+, this is a backstop
         return False
@@ -146,6 +129,7 @@ def _count_seeds(text: str) -> int:
 class Report:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    seeds: int = 0
 
     def error(self, message: str) -> None:
         self.errors.append(message)
@@ -179,11 +163,13 @@ def check(bundle_dir: Path) -> Report:
             report.error(f'Missing required root doc: {doc}')
 
     seeds = bundle_dir / '02_TASK_SEEDS.md'
-    if seeds.is_file() and _count_seeds(seeds.read_text(encoding='utf-8', errors='replace')) < 1:
-        report.error(
-            '02_TASK_SEEDS.md has no seeds; stage at least one task instance '
-            '(a list item or heading per instance) with its answer, not a TODO placeholder.'
-        )
+    if seeds.is_file():
+        report.seeds = _count_seeds(seeds.read_text(encoding='utf-8', errors='replace'))
+        if report.seeds < 1:
+            report.error(
+                '02_TASK_SEEDS.md has no seeds; stage at least one task instance '
+                '(a list item per instance) with its answer, not a TODO placeholder.'
+            )
 
     files = [p for p in bundle_dir.rglob('*') if p.is_file() and not _is_vcs_internal(p, bundle_dir)]
     if not files:
@@ -272,7 +258,8 @@ def _print(report: Report) -> int:
     if report.errors:
         print(f'\n{len(report.errors)} error(s); fix before building on orq.')
         return 1
-    print('Bundle looks shippable.' + (f' ({len(report.warnings)} warning(s))' if report.warnings else ''))
+    warned = f' ({len(report.warnings)} warning(s))' if report.warnings else ''
+    print(f'Bundle looks shippable: {report.seeds} seed(s).{warned}')
     return 0
 
 
@@ -342,11 +329,24 @@ def _selftest() -> int:
         assert not check(root).errors, 'unquoted `password: required.` must not read as a key'
         (root / 'prose_dot.txt').unlink()
 
-        # Short allowlist words (`none`) take effect: they are checked before the length
-        # gate, so a label assigned one of them does not read as a key.
-        (root / 'short_word.txt').write_text('api_key: none', encoding='utf-8')
-        assert not check(root).errors, 'short allowlist word must exempt the value'
-        (root / 'short_word.txt').unlink()
+        # A short credential ending in punctuation is still a credential: the length gate
+        # must read the value as written, not the value with its `.,` stripped.
+        (root / 'short_key.txt').write_text('password=Xk9mQ2.,', encoding='utf-8')  # gitleaks:allow
+        assert any('api key' in e.lower() for e in check(root).errors), 'short key before punctuation must be caught'
+        (root / 'short_key.txt').unlink()
+
+        # A sentence-final reference is still a reference, not a key.
+        (root / 'ref_dot.txt').write_text('set api_key: ${ORQ_API_KEY}.', encoding='utf-8')
+        assert not check(root).errors, 'a reference at the end of a sentence must stay exempt'
+        (root / 'ref_dot.txt').unlink()
+
+        # A key in JSON has a quote between the label and the colon.
+        (root / 'config.json').write_text('{"api_key": "sk-orq-abcd1234efgh"}', encoding='utf-8')  # gitleaks:allow
+        assert any('api key' in e.lower() for e in check(root).errors), 'a quoted JSON key must be caught'
+        (root / 'config.json').unlink()
+        (root / 'schema.json').write_text('{"password": "required", "max_tokens": 12345678}', encoding='utf-8')
+        assert not check(root).errors, 'a JSON field description or token count is not a key'
+        (root / 'schema.json').unlink()
 
         # The `check-bundle:allow` marker overrides a real-looking match on its own line.
         (root / 'declared_standin.txt').write_text(
@@ -362,6 +362,9 @@ def _selftest() -> int:
             '## Task seeds\n\nTODO: fill in the task instances here later.\n', encoding='utf-8'
         )
         assert any('02_TASK_SEEDS' in e for e in check(root).errors), 'placeholder seeds must not pass'
+        for stub in ('- TODO: add seed', '- seed: <fill in>', '- seed: review one PR; answer: tbd'):
+            (root / '02_TASK_SEEDS.md').write_text(stub, encoding='utf-8')
+            assert any('02_TASK_SEEDS' in e for e in check(root).errors), f'stub counted as a seed: {stub!r}'
         (root / '02_TASK_SEEDS.md').write_text(
             '- seed: review one PR; answer: missing null check; evidence: line 42', encoding='utf-8'
         )
@@ -374,6 +377,9 @@ def _selftest() -> int:
             encoding='utf-8',
         )
         assert not check(root).errors, 'a seed with a generic type must count as a real seed'
+        real = '- seed: Array<string> breaks the todo list page; answer: guard it\n- seed: two; answer: b\n'
+        (root / '02_TASK_SEEDS.md').write_text(real, encoding='utf-8')
+        assert check(root).seeds == 2, 'seeds that mention a generic type or a todo must count'
         (root / '02_TASK_SEEDS.md').write_text(
             '- seed: review one PR; answer: missing null check; evidence: line 42', encoding='utf-8'
         )
@@ -423,6 +429,7 @@ def _selftest() -> int:
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             assert main(['x', str(root)]) == 0, 'clean bundle should exit 0'
+            assert '1 seed(s)' in buf.getvalue(), 'the seed count must print on success'
             (root / '02_TASK_SEEDS.md').unlink()
             assert main(['x', str(root)]) == 1, 'incomplete bundle should exit 1'
             assert main(['x']) == 2, 'wrong arg count (none) should exit 2, not 0'
