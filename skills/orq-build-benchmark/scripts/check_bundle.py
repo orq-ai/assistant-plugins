@@ -191,6 +191,9 @@ def check(bundle_dir: Path) -> Report:
         # Cap the read so one huge asset cannot exhaust memory, and guard the read so an
         # unreadable file (permissions, a broken symlink, a race) fails loud, not silent:
         # a file we did not scan must never be counted as clean.
+        if path.is_symlink() and path.is_dir():
+            unscanned.append(f'{rel} (symlink to a directory; the files under it were not scanned)')
+            continue
         try:
             size = path.stat().st_size
         except OSError as exc:

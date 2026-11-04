@@ -324,13 +324,15 @@ rubric = llm_jury(
 )
 
 async def main():
-    await evaluatorq(
+    results = await evaluatorq(
         'our-task-benchmark',
         data=DatasetIdInput(dataset_id='<orq_dataset_id>'),
         jobs=[make_job(m) for m in CANDIDATES],
         evaluators=[rubric],            # add exact_match_evaluator() for fixed-label tasks
         description='Which model is best at <our task>',
     )
+    # Step 5 reads these. Print them before reporting anything.
+    print({model: {**row, 'scored': len(row['scored'])} for model, row in rubric_scores(results).items()})
 
 asyncio.run(main())
 ```
@@ -341,19 +343,51 @@ invent model ids.
 
 ### 5. Read the results
 
-A run can report success while every rubric score errored, so check the summary for
-evaluator errors first. If a whole evaluator errored, fix it and rerun.
+A run can report success while every rubric score errored, so read the results that
+`evaluatorq()` returns. `rubric_scores` gives each candidate's scored, errored and
+skipped counts, and `paired_gap` compares two candidates on the datapoints both scored:
+
+```python
+import math
+import statistics
+
+
+def rubric_scores(results, evaluator='task-rubric'):
+    """Per candidate: scores by datapoint, plus how many errored or were skipped."""
+    table = {}
+    for index, point in enumerate(results):
+        for job in point.job_results or []:
+            row = table.setdefault(job.job_name, {'scored': {}, 'errored': 0, 'skipped': 0})
+            score = next((s for s in job.evaluator_scores or [] if s.evaluator_name == evaluator), None)
+            if job.error or (score is not None and score.error):
+                row['errored'] += 1
+            elif score is not None:
+                row['scored'][index] = float(score.score.value)
+    for row in table.values():
+        row['skipped'] = len(results) - len(row['scored']) - row['errored']
+    return table
+
+
+def paired_gap(a, b):
+    """Mean of a minus b on shared datapoints, and its standard error. None under two."""
+    diffs = [a['scored'][i] - b['scored'][i] for i in a['scored'] if i in b['scored']]
+    if len(diffs) < 2:
+        return None
+    return statistics.mean(diffs), statistics.stdev(diffs) / math.sqrt(len(diffs))
+```
+
+If a whole evaluator errored, fix it and rerun.
 
 Open the run in orq Experiments (the call prints the experiment URL) and compare
-candidates per category, not just overall. Next to each score, report how many
-datapoints were scored, errored and skipped for that candidate.
+candidates per category, not just overall. Next to each score, report that candidate's
+scored, errored and skipped counts from `rubric_scores`.
 
 Report the winner with its margin and where it is weak, with two exceptions:
 
 - If the counts differ between candidates, do not name a winner. A mean over fewer
   datapoints is not comparable.
-- If the gap is smaller than the spread of scores across datapoints, report those
-  candidates as tied.
+- If the gap from `paired_gap` is smaller than twice its standard error, or it returns
+  `None`, report those candidates as tied.
 
 ## Later: native orq experiments
 
