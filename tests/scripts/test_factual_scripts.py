@@ -80,6 +80,20 @@ def run(monkeypatch: pytest.MonkeyPatch, test_type: str, target: str, assertion:
     return factual.run_test(runner.TestCase(skill="t", test_type=test_type, target=target, assertion=assertion, description=""))
 
 
+# --- sdk_method: annotation-only attributes (lazy SDK sub-clients) ---
+
+
+@pytest.mark.parametrize(("assertion", "status"), [("responses", "passed"), ("real_method", "passed"), ("missing", "failed")])
+def test_sdk_method_sees_annotation_only_attributes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, assertion: str, status: str
+) -> None:
+    # orq_ai_sdk.Orq declares sub-clients like `responses` as bare annotations and
+    # loads them lazily, so hasattr on the class is False; the check must still pass.
+    (tmp_path / "fake_sdk.py").write_text("class Base:\n    responses: int\n\nclass Orq(Base):\n    def real_method(self): ...\n")
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    assert run(monkeypatch, "sdk_method", "fake_sdk.Orq", assertion).status == status
+
+
 @pytest.mark.parametrize("test_type", ["mcp_tool_param", "mcp_tool_args"])
 @pytest.mark.parametrize("target", ["no_schema", "null_schema"])
 def test_missing_or_null_schema_fails_as_drift(monkeypatch: pytest.MonkeyPatch, test_type: str, target: str) -> None:
