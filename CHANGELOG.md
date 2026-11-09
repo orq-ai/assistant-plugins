@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `orq-evaluator-alignment`: the aligned copy's create request no longer sends `display_name`. `POST /v2/evaluators` has no such field, so the server dropped it, and an earlier entry misreported that as orq overwriting the value with the key (BACK-2187). The `key` is the evaluator's only name; `GET` returns it as `display_name`.
+- `orq-evaluator-alignment`: the aligned copy's create request no longer sends `display_name`. `POST /v2/evaluators` has no such field, so the server dropped it, and an earlier entry misreported that as orq overwriting the value with the key. The `key` is the evaluator's only name; `GET` returns it as `display_name`.
 
 ## [3.11.1] - 2026-10-24
 

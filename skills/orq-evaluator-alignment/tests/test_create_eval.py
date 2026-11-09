@@ -69,7 +69,7 @@ def test_boolean_omits_description_when_none():
 
 
 def test_create_body_never_sends_display_name():
-    # BACK-2187: `POST /v2/evaluators` has no `display_name`; the server strips it.
+    # `POST /v2/evaluators` has no `display_name`; the server strips it.
     body = build(
         key='k', path='p', prompt='x', model='m', description=None, output_type='boolean',
     )
@@ -261,7 +261,7 @@ def test_create_forwards_scale_for_both_numeric_spellings(monkeypatch, spelling)
 
 
 def test_create_does_not_forward_display_name(monkeypatch):
-    # BACK-2187: create has no `display_name`; sending one was silently dropped.
+    # Create has no `display_name`; sending one was silently dropped.
     import asyncio
 
     import create_eval

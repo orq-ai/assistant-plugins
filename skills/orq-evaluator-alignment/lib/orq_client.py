@@ -236,7 +236,7 @@ def build_create_body(
     }
     if description is not None:
         body['description'] = description
-    # No `display_name`: create has no such field (BACK-2187). `key` is the name;
+    # No `display_name`: create has no such field. `key` is the name;
     # GET returns that same value under `display_name`.
 
     if output_type == 'boolean':
