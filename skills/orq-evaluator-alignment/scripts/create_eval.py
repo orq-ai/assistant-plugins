@@ -122,8 +122,8 @@ def source_name(evaluator: dict[str, Any]) -> str:
 def aligned_key(evaluator: dict[str, Any], timestamp: str) -> str:
     """The aligned copy's key: `<source-name>-aligned-<ts>`.
 
-    orq overwrites the `display_name` we send with the key, so the key *is* the name
-    the user reads in the evaluator list — it has to mirror the source's name rather
+    Create takes no name besides `key` (GET returns it as `display_name`), so the key
+    *is* the name the user reads in the evaluator list — it has to mirror the source's name rather
     than its opaque id. The timestamp keeps repeat alignment runs on one evaluator
     from colliding, and ties each copy back to the run that produced it.
     """
@@ -169,13 +169,6 @@ async def _create(evaluator: dict[str, Any], prompt: str, key: str, path: str) -
         if output_type == 'categorical'
         else None
     )
-    # Send a readable name too, but do NOT rely on it: orq overwrites `display_name`
-    # with the `key` on create (verified against the live API — a copy created with
-    # display_name='… (aligned)' reads back with the key as its display_name). The
-    # key is therefore the name the user sees, which is why `aligned_key` mirrors the
-    # source's name. This stays in the body so the copy is still labelled correctly
-    # if that behaviour changes.
-    display_name = f'{source_name(evaluator)} (aligned)'
     async with OrqClient() as client:
         result = await client.create_evaluator(
             key=key,
@@ -184,7 +177,6 @@ async def _create(evaluator: dict[str, Any], prompt: str, key: str, path: str) -
             model=evaluator['judge_model'],
             description=f'Human-aligned rewrite of evaluator {evaluator["id"]} (RES-978).',
             output_type=output_type,
-            display_name=display_name,
             categorical_labels=_source_labels(evaluator) if output_type == 'categorical' else None,
             # 'number' and 'numeric' are both accepted spellings across the codebase
             # (fetch_evaluator, instability, judge); gate on both so a source stored

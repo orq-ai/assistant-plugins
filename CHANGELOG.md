@@ -5,11 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.12.0] - 2026-11-04
+## [3.12.0] - 2026-11-09
 
 ### Added
 
 - `orq-build-benchmark` skill: turn a team's own work into a custom orq benchmark. Interviews the user, stages real task instances, then builds an orq dataset and evaluators and runs candidate models with evaluatorq, graded against known answers and reported to orq Experiments. Ships `scripts/check_bundle.py` to validate a staged bundle before upload.
+
+## [3.11.2] - 2026-11-09
+
+### Fixed
+
+- `orq-evaluator-alignment`: the aligned copy's create request no longer sends `display_name`. `POST /v2/evaluators` has no such field, so the server dropped it, and an earlier entry misreported that as orq overwriting the value with the key. The `key` is the evaluator's only name; `GET` returns it as `display_name`.
 
 ## [3.11.1] - 2026-10-24
 
@@ -426,7 +432,7 @@ Two shipped skills were removed and replaced under new names. Per the versioning
 - `orq-evaluator-alignment`: the instability report names the rows with off-contract repetitions, not just the dataset-wide total. A row can answer off-contract half the time and still band as `stable` on the rest, and the aggregate count could not say which row that was — which is the row a reader is about to trust.
 
 - `orq-evaluator-alignment`: the grey-zone payload no longer silently overrides the count the user chose. `build_queue` appends `low_flip_sample_size` (default 5) *stable* spot-check rows to the queue, and `assemble_payload` was taking the whole queue — so "review 3 with me" put 3 + 5 = 8 examples into context, five of which had no grey zone in them by construction. Those rows are a control group for annotation, not material to open-code; they are excluded by default and reported separately.
-- `orq-evaluator-alignment`: the aligned copy is named after its source instead of after an opaque id. `GET /v2/evaluators/{id}` returns an empty `key` for evaluators created through the current orq UI, so the old fallback produced keys like `01kzxt86ac82d1fvzw3s8wfv83-aligned-<ts>`. The name is now resolved `key` → `display_name` → `raw.key` → id, giving `groundedness-bool-testcase-aligned-<ts>`. The key is what matters here: orq overwrites the `display_name` sent on create with the key, verified against the live API.
+- `orq-evaluator-alignment`: the aligned copy is named after its source instead of after an opaque id. `GET /v2/evaluators/{id}` returns an empty `key` for evaluators created through the current orq UI, so the old fallback produced keys like `01kzxt86ac82d1fvzw3s8wfv83-aligned-<ts>`. The name is now resolved `key` → `display_name` → `raw.key` → id, giving `groundedness-bool-testcase-aligned-<ts>`. The key is what matters here: it is the only name `POST /v2/evaluators` takes, and `GET` returns it as `display_name`.
 - `orq-evaluator-alignment`: the aligned copy is created in the same project as its source rather than in a new folder named after the source's id. The evaluator record carries no `path` on either the detail or the list endpoint, so the source's folder cannot be read back directly; the new `resolve_project_key` maps the id it *does* carry to the project key that heads a create `path`. That id is `domain_id`, not `project_id`: `GET /v2/evaluators/{id}` runs through `normalizeEvalToInternalEvaluator`, an explicit field allowlist that never emits `project_id` — so the first cut of this fix resolved nothing and every copy still landed at the workspace root. Both spellings are read, the project record is matched on any of its id fields, and the lookup pages through `/v2/projects` instead of reading only the first page. Falls back to the workspace root when the project can't be resolved, instead of inventing a folder.
 - `orq-evaluator-alignment`: **a free-text numeric judge no longer gets the wrong score, silently.** `parse_numeric` fell back to the *first* numeric token in the completion, so `'On a scale of 1 to 5, I give this a 4'` parsed as **1.0** with status `ok` — inside the declared scale, so nothing downstream re-checked it, and the wrong score entered `mean`, `stdev` and the instability band. It now reads the verdict the way `parse_categorical` does (after the last `Value:`/`Score:` label, else the last line), scrubs scale mentions (`of 1`, `to 5`, `out of 5`, `/5`) first, and surfaces a verdict line still carrying two different candidates as `wrong_output_type` rather than guessing between them.
 - `orq-evaluator-alignment`: the preservation guard no longer passes a moved verdict space on a substring match. `endpoint not in proposed` is True for a rubric that only ever says `10`, so a rewrite moving the scale from `[1, 5]` to `[1, 10]` cleared the gate while both endpoints were in fact gone; the same shape let a dropped `spam` label read as preserved by a rubric mentioning `spammy`. Both are matched on their own boundaries now.
