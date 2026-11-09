@@ -65,20 +65,11 @@ def test_boolean_omits_description_when_none():
     assert 'description' not in body
 
 
-# --- display_name: the created evaluator reuses the source's human-readable name ---
+# --- display_name: not a create field; `key` is the evaluator's only name ---
 
 
-def test_display_name_sent_when_provided():
-    # orq shows `display_name` as the evaluator's name; without it, the ugly `key`
-    # (`<source>-aligned-<ts>`) shows instead. Pass the source's name through.
-    body = build(
-        key='sec-aligned-123', path='p', prompt='x', model='m', description=None,
-        output_type='boolean', display_name='Harmful or Illegal content',
-    )
-    assert body['display_name'] == 'Harmful or Illegal content'
-
-
-def test_display_name_omitted_when_none():
+def test_create_body_never_sends_display_name():
+    # BACK-2187: `POST /v2/evaluators` has no `display_name`; the server strips it.
     body = build(
         key='k', path='p', prompt='x', model='m', description=None, output_type='boolean',
     )
@@ -86,8 +77,8 @@ def test_display_name_omitted_when_none():
 
 
 # Naming and placement of the aligned copy live in tests/test_aligned_naming.py —
-# `source_name`, `aligned_key`, and `_resolve_path`. orq overwrites the
-# `display_name` we send with the `key`, so the key is what the user reads.
+# `source_name`, `aligned_key`, and `_resolve_path`. The `key` is the only name
+# create takes, so it is what the user reads.
 
 
 # --- categorical: labels sent in orq's rich [{value, description}] shape ---
@@ -267,6 +258,18 @@ def test_create_forwards_scale_for_both_numeric_spellings(monkeypatch, spelling)
     # A source stored as 'numeric' must not silently drop its scale on creation.
     assert _FakeClient.captured['scale'] == [1, 10]
     assert _FakeClient.captured['output_type'] == spelling
+
+
+def test_create_does_not_forward_display_name(monkeypatch):
+    # BACK-2187: create has no `display_name`; sending one was silently dropped.
+    import asyncio
+
+    import create_eval
+
+    monkeypatch.setattr(create_eval, 'OrqClient', _FakeClient)
+    evaluator = {'id': 'src-1', 'judge_model': 'm', 'output_type': 'boolean', 'key': 'harm'}
+    asyncio.run(create_eval._create(evaluator, prompt='X', key='harm-aligned', path='Evaluators/harm'))
+    assert 'display_name' not in _FakeClient.captured
 
 
 # --- create-time guards: all three checks, not just var_check_passed (RES-978 §5.1) ---
