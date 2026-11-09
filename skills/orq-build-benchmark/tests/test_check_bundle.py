@@ -84,10 +84,28 @@ def test_step5_gap_is_paired_and_refuses_under_two_shared_datapoints() -> None:
         _point(_job('a', 0.9), _job('b', 0.5)),
         _point(_job('a', 0.7), _job('b', 0.5)),
     ])
-    gap, standard_error = helpers['paired_gap'](table['a'], table['b'])
+    gap, standard_error, shared = helpers['paired_gap'](table['a'], table['b'])
     assert gap == pytest.approx(0.3)
     assert standard_error == pytest.approx(0.1)
+    assert shared == 2
     assert helpers['paired_gap']({'scored': {0: 1.0}}, {'scored': {0: 0.5}}) is None
+
+
+def test_step5_tie_rule_covers_an_exact_tie_and_both_directions() -> None:
+    helpers = _step5_helpers()
+    same = {'scored': {0: 0.5, 1: 0.7}}
+    assert helpers['tied'](helpers['paired_gap'](same, same)), 'identical scores must tie'
+    assert helpers['tied'](None), 'too few shared datapoints must tie'
+    assert helpers['tied']((-0.1, 0.05, 10)), 'a gap of exactly twice the error ties, whatever its sign'
+    assert not helpers['tied']((0.3, 0.1, 10))
+    assert not helpers['tied']((-0.3, 0.1, 10))
+
+
+def test_helpers_are_defined_before_the_template_calls_them() -> None:
+    text = (SKILL_DIR / 'SKILL.md').read_text(encoding='utf-8')
+    assert text.index('def rubric_scores') < text.index('rubric_scores(results)'), (
+        'the step 4 template prints rubric_scores, so its definition must come first'
+    )
 
 
 def test_rubric_template_satisfies_the_numeric_judge() -> None:

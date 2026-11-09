@@ -283,7 +283,49 @@ not export all of these, so a template run fails at import against it. Confirm w
 
 One `evaluatorq()` call, one job per candidate
 model or agent, evaluated on the dataset. Results upload to orq Experiments when
-`ORQ_API_KEY` is set. Template, grounded in the current evaluatorq API:
+`ORQ_API_KEY` is set.
+
+Start the script with these helpers. The template's last line prints from
+`rubric_scores`, and step 5 reads the results with all three: `rubric_scores` gives
+each candidate's scored, errored and skipped counts, `paired_gap` compares two
+candidates on the datapoints both scored, and `tied` applies the tie rule:
+
+```python
+import math
+import statistics
+
+
+def rubric_scores(results, evaluator='task-rubric'):
+    """Per candidate: scores by datapoint, plus how many errored or were skipped."""
+    table = {}
+    for index, point in enumerate(results):
+        for job in point.job_results or []:
+            row = table.setdefault(job.job_name, {'scored': {}, 'errored': 0, 'skipped': 0})
+            score = next((s for s in job.evaluator_scores or [] if s.evaluator_name == evaluator), None)
+            if job.error or (score is not None and score.error):
+                row['errored'] += 1
+            elif score is not None:
+                row['scored'][index] = float(score.score.value)
+    for row in table.values():
+        row['skipped'] = len(results) - len(row['scored']) - row['errored']
+    return table
+
+
+def paired_gap(a, b):
+    """Mean of a minus b on shared datapoints, its standard error, and how many were
+    shared. None under two."""
+    diffs = [a['scored'][i] - b['scored'][i] for i in a['scored'] if i in b['scored']]
+    if len(diffs) < 2:
+        return None
+    return statistics.mean(diffs), statistics.stdev(diffs) / math.sqrt(len(diffs)), len(diffs)
+
+
+def tied(gap):
+    """True when paired_gap cannot separate two candidates, in either direction."""
+    return gap is None or abs(gap[0]) <= 2 * gap[1]
+```
+
+Then the template, grounded in the current evaluatorq API:
 
 ```python
 import asyncio
@@ -344,37 +386,8 @@ invent model ids.
 ### 5. Read the results
 
 A run can report success while every rubric score errored, so read the results that
-`evaluatorq()` returns. `rubric_scores` gives each candidate's scored, errored and
-skipped counts, and `paired_gap` compares two candidates on the datapoints both scored:
+`evaluatorq()` returns with the helpers from step 4.
 
-```python
-import math
-import statistics
-
-
-def rubric_scores(results, evaluator='task-rubric'):
-    """Per candidate: scores by datapoint, plus how many errored or were skipped."""
-    table = {}
-    for index, point in enumerate(results):
-        for job in point.job_results or []:
-            row = table.setdefault(job.job_name, {'scored': {}, 'errored': 0, 'skipped': 0})
-            score = next((s for s in job.evaluator_scores or [] if s.evaluator_name == evaluator), None)
-            if job.error or (score is not None and score.error):
-                row['errored'] += 1
-            elif score is not None:
-                row['scored'][index] = float(score.score.value)
-    for row in table.values():
-        row['skipped'] = len(results) - len(row['scored']) - row['errored']
-    return table
-
-
-def paired_gap(a, b):
-    """Mean of a minus b on shared datapoints, and its standard error. None under two."""
-    diffs = [a['scored'][i] - b['scored'][i] for i in a['scored'] if i in b['scored']]
-    if len(diffs) < 2:
-        return None
-    return statistics.mean(diffs), statistics.stdev(diffs) / math.sqrt(len(diffs))
-```
 
 If a whole evaluator errored, fix it and rerun.
 
@@ -386,8 +399,9 @@ Report the winner with its margin and where it is weak, with two exceptions:
 
 - If the counts differ between candidates, do not name a winner. A mean over fewer
   datapoints is not comparable.
-- If the gap from `paired_gap` is smaller than twice its standard error, or it returns
-  `None`, report those candidates as tied.
+- If `tied(paired_gap(a, b))` is true, report those candidates as tied: the absolute
+  gap is at most twice its standard error, or fewer than two datapoints were shared.
+  Report the shared count `paired_gap` returns next to the gap.
 
 ## Later: native orq experiments
 
