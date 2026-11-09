@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-11-09
+
+### Added
+
+- `orq-quickstart` skill: onboarding that works in any coding agent, not only Claude Code. It gives the MCP registration for the harness it runs in (Claude Code, Codex, Cursor, others), proves the connection with a real `search_entities` read instead of checking `ORQ_API_KEY`, does not assume the MCP server is named `orq-workspace`, and marks paged snapshot counts as partial. `npx skills add` installs it, which it never did for the command.
+
+### Removed
+
+- The `/orq:quickstart` command (`commands/quickstart.md`). It is replaced by the `orq-quickstart` skill; in Claude Code, ask "run the orq quickstart" or use `/orq:orq-quickstart`.
+
 ## [3.11.2] - 2026-11-09
 
 ### Fixed

@@ -660,6 +660,26 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ---
 
+## `orq-quickstart`
+
+### Scenario 1: Already connected
+
+- Ask: "Run the orq quickstart" and say you are already set up
+- Verify: calls `search_entities` with `type: "agent"` before anything else
+- Verify: does NOT stop on an unset `ORQ_API_KEY` when the read succeeds
+- Verify: shows a snapshot of agents, deployments, prompts, datasets and experiments, and marks any type with `has_more: true` as "first page"
+- Verify: lists the installed orq skills from the session, not from memory
+
+### Scenario 2: Not set up
+
+- Simulate no orq.ai MCP tools in the session
+- Ask: "Set me up with orq.ai"
+- Verify: sends the user to my.orq.ai Settings → API Keys and never asks for the key in chat
+- Verify: gives the MCP registration for the harness it is running in (Codex: `codex mcp add`, Claude Code: plugin or `claude mcp add`)
+- Verify: tells the user to restart if the registration needs it, then stops
+
+---
+
 ## Critical Files
 
 - `skills/orq-shared/SKILL.md`
@@ -727,6 +747,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-manage-skills/resources/governance-guide.md`
 - `skills/orq-manage-skills/resources/known-caveats.md`
 - `skills/create-skill/SKILL.md`
+- `skills/orq-quickstart/SKILL.md`
 - `skills/create-skill/resources/template.md`
 - `skills/create-skill/resources/writing-guide.md`
 - `commands/orq-manage-skills.md`

@@ -1,0 +1,8 @@
+id: quickstart-fires
+skill: orq-quickstart
+kind: invocation
+prompt: I just signed up for orq.ai. Can you get me set up and check that it works?
+expect_skill: orq-quickstart
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 2
