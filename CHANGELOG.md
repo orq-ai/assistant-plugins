@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.0] - 2026-11-10
+
+### Changed
+
+- **Breaking:** renamed the `create-skill` skill to `orq-create-skill`, so every shipped skill carries the `orq-` prefix (or is `evaluatorq`). The orq CLI installs these skills into each agent's shared skills directory, where a generic name collides with a user's own `create-skill` and the installer then skips ours. Reinstall to pick up the new name; `npx skills remove create-skill` clears the old copy. Its scratchpad moves from `.create-skill/` to `.orq-create-skill/`.
+
 ## [4.0.0] - 2026-11-09
 
 ### Added
