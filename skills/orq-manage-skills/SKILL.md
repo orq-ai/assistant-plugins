@@ -144,7 +144,7 @@ tagged_skills  = [s for s in all_skills if "policy" in s.tags]
 
 ## Prerequisites
 
-- The orq.ai MCP server is connected (run the `quickstart` skill / `/orq:quickstart` to verify in Claude Code, or the equivalent onboarding flow in your assistant).
+- The orq.ai MCP server is connected (run the `orq-quickstart` skill to verify).
 - `ORQ_API_KEY` is set.
 - The user knows which **project** the Skill belongs to (run `search_directories` if not).
 - **Preflight: confirm the Skills API is available.** Try `list_skills` once at session start. If the tool is unknown OR returns "method not found" against `/v2/skills`, the workspace's backend doesn't expose the new entity yet. Two options:

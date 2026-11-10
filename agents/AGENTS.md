@@ -21,6 +21,7 @@ These skills are:
  - orq-invoke-deployment -> "skills/orq-invoke-deployment/SKILL.md"
  - orq-manage-skills -> "skills/orq-manage-skills/SKILL.md"
  - orq-recommend-evaluators -> "skills/orq-recommend-evaluators/SKILL.md"
+ - orq-quickstart -> "skills/orq-quickstart/SKILL.md"
  - orq-red-team -> "skills/orq-red-team/SKILL.md"
  - orq-review-agent -> "skills/orq-review-agent/SKILL.md"
  - orq-run-experiment -> "skills/orq-run-experiment/SKILL.md"
@@ -70,6 +71,8 @@ orq-simulate-agent: `Run multi-turn agent simulations using evaluatorq's first-c
 
 orq-shared: `Reference bundle shared by the other orq skills — the verified orq CLI trace query contract (trace-queries.md), the run-key preflight that resolves an agent or deployment key before any call (run-key-preflight.md), and the rubrics an agent is built, reviewed and improved against (config-context.md, prompting-guidelines.md, tool-description-guide.md). Read the file another skill points you at; do not invoke this skill on its own. Do NOT use to run CLI commands (use orq-cli), to analyze traces (use orq-analyze-traces), or to fix an agent (use orq-improve-agent).`
 
+orq-quickstart: `Onboarding for orq.ai in any coding agent — get an API key, register the orq.ai MCP server for the harness you are running in, prove the connection with a real workspace read, show a workspace snapshot, list the installed orq skills, and route the user to a first task. Use when the user is new to orq.ai, asks to set up or verify orq.ai, or another orq skill fails because the MCP server is missing or the credentials are rejected. Do NOT use to drive the orq CLI (use orq-cli) or to instrument an application with tracing (use orq-setup-observability).`
+
 </available_skills>
 
 Paths referenced within SKILL folders are relative to that SKILL. For example the orq-build-evaluator `resources/judge-prompt-template.md` would be referenced as `skills/orq-build-evaluator/resources/judge-prompt-template.md`.
@@ -80,12 +83,11 @@ Paths referenced within SKILL folders are relative to that SKILL. For example th
 
 You have slash commands available in the `commands/` directory:
 
- - quickstart -> "commands/quickstart.md" — Interactive onboarding guide for new users
  - workspace -> "commands/workspace.md" — Show workspace overview (agents, deployments, prompts, datasets, experiments)
  - traces -> "commands/traces.md" — Query and summarize traces with filters (debugging entry point)
  - models -> "commands/models.md" — List available AI models and capabilities
  - analytics -> "commands/analytics.md" — Show workspace analytics (requests, cost, tokens, errors, trends)
 
-Commands are quick-action tools. Skills are multi-step workflows. Use `/orq:quickstart` for onboarding, `/orq:workspace`, `/orq:traces`, `/orq:models`, or `/orq:analytics` for fast operations. Use skills when the user needs guided, multi-step work.
+Commands are quick-action tools. Skills are multi-step workflows. Use the `orq-quickstart` skill for onboarding, and `/orq:workspace`, `/orq:traces`, `/orq:models`, or `/orq:analytics` for fast operations. Use skills when the user needs guided, multi-step work.
 
 </commands>

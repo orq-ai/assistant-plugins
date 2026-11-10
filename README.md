@@ -57,10 +57,10 @@ Use this if you want easy access to all components — skills, MCP tools, and tr
 | `orq-mcp` | MCP server registration — Claude can call orq.ai APIs directly |
 | `orq-trace` | OTLP tracing hooks that capture Claude Code sessions into orq.ai |
 
-Verify with the interactive onboarding — checks `ORQ_API_KEY`, MCP reachability, and credentials:
+Verify with the onboarding skill — it registers the MCP server if needed and proves the connection with a real workspace read. Ask:
 
 ```
-/orq:quickstart
+Run the orq quickstart
 ```
 
 ---
@@ -156,7 +156,6 @@ Quick-action slash commands. Use `/orq:<command>` in Claude Code.
 
 | Command | What It Does | Usage |
 |---------|-------------|-------|
-| **quickstart** | Interactive onboarding — credentials, MCP setup, skills tour | `/orq:quickstart` |
 | **workspace** | Workspace overview — agents, deployments, prompts, datasets, experiments | `/orq:workspace [section]` |
 | **traces** | Query and summarize traces with filters | `/orq:traces [--deployment name] [--status error] [--last 24h]` |
 | **models** | List available AI models by provider | `/orq:models [search-term]` |
@@ -199,6 +198,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 | **create-skill** | Build or update an agent skill from an API, CLI, or MCP surface — probe the surface, verify every claim, write a tested contract, and register it | [SKILL.md](skills/create-skill/SKILL.md) |
 | **orq-shared** | Reference bundle the other skills read — the verified `orq` CLI trace query contract, the run-key preflight, and the prompting, tool-description and config-context rubrics; not invoked on its own | [SKILL.md](skills/orq-shared/SKILL.md) |
 | **orq-cli** | Drive the `orq` command-line interface — install check, auth, workspace selection, `orq doctor` troubleshooting, and read/write commands with JSON output and JMESPath queries | [SKILL.md](skills/orq-cli/SKILL.md) |
+| **orq-quickstart** | Onboarding in any coding agent — API key, MCP registration for your harness, a verified workspace read, a snapshot, and a first task | [SKILL.md](skills/orq-quickstart/SKILL.md) |
 <!-- END_SKILLS_TABLE -->
 
 ---

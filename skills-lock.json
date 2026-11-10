@@ -59,7 +59,12 @@
     "orq-manage-skills": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "6e59c4942dbffcf55e6c4512db412cb5c57458d6989fdf960a8960707a8caff3"
+      "computedHash": "cf0577c3ae27bbc6f4df5813e71a2c04428b07c44bb6c3cfb6a711abaca8117b"
+    },
+    "orq-quickstart": {
+      "source": "orq-ai/assistant-plugins",
+      "sourceType": "github",
+      "computedHash": "01d97f3dd1ea63cfc1682f972798ab5918d7a7323213c94365fcb477a2589cf0"
     },
     "orq-recommend-evaluators": {
       "source": "orq-ai/assistant-plugins",

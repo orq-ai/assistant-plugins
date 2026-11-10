@@ -167,4 +167,4 @@ If the MCP server is registered and your key is valid, you'll see a live respons
 - Re-check the `Authorization` header in your MCP config
 - Make sure the skill folders actually landed where your agent scans (run `ls` on the directory)
 
-For Claude Code users, `/orq:quickstart` runs all of these checks automatically.
+The `orq-quickstart` skill runs these checks for you: ask your agent to "run the orq quickstart".
