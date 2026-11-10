@@ -6,7 +6,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ---
 
-## `create-skill`
+## `orq-create-skill`
 
 ### Scenario 1: New CLI skill from scratch
 
@@ -14,7 +14,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify Phase 1: round 1 asks create-vs-update; round 2 asks for the surface (confirms `gh`) and scope mode (fast/thorough) in one call
 - Verify Phase 2: runs `gh --help` and subcommand help to build the inventory
 - Verify Phase 3: searches `skills/*/SKILL.md` for existing `gh` skills
-- Verify: writes the inventory to `.create-skill/<surface>.md`, not into `skills/` and not directly into the skill
+- Verify: writes the inventory to `.orq-create-skill/<surface>.md`, not into `skills/` and not directly into the skill
 
 ### Scenario 2: Update existing skill
 
@@ -44,7 +44,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Run inside this repo
 - Verify Phase 6: updates `agents/AGENTS.md`, the `README.md` table, `tests/skills.md`, `skills-lock.json`, and bumps all four `plugin.json` manifests plus `CHANGELOG.md`
 - Verify Phase 6: `node tests/scripts/validate-skills.mjs` passes afterwards
-- Verify Phase 7: `.create-skill/` no longer exists
+- Verify Phase 7: `.orq-create-skill/` no longer exists
 
 ---
 
@@ -746,8 +746,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-manage-skills/resources/authoring-guide.md`
 - `skills/orq-manage-skills/resources/governance-guide.md`
 - `skills/orq-manage-skills/resources/known-caveats.md`
-- `skills/create-skill/SKILL.md`
+- `skills/orq-create-skill/SKILL.md`
 - `skills/orq-quickstart/SKILL.md`
-- `skills/create-skill/resources/template.md`
-- `skills/create-skill/resources/writing-guide.md`
+- `skills/orq-create-skill/resources/template.md`
+- `skills/orq-create-skill/resources/writing-guide.md`
 - `commands/orq-manage-skills.md`
