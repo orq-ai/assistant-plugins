@@ -12,6 +12,7 @@ These skills are:
  - orq-build-agent -> "skills/orq-build-agent/SKILL.md"
  - orq-build-evaluator -> "skills/orq-build-evaluator/SKILL.md"
  - orq-create-skill -> "skills/orq-create-skill/SKILL.md"
+ - orq-grade-skill -> "skills/orq-grade-skill/SKILL.md"
  - orq-cli -> "skills/orq-cli/SKILL.md"
  - orq-evaluator-alignment -> "skills/orq-evaluator-alignment/SKILL.md"
  - orq-compare-agents -> "skills/orq-compare-agents/SKILL.md"
@@ -64,6 +65,8 @@ orq-red-team: `Run adversarial red teaming against deployed orq agents or static
 orq-manage-skills: `Manage orq.ai Skills (the platform entity, formerly Snippets — distinct from this repo's code-assistant skills) end-to-end: list, get, create, update, retire (tag as retired), and delete Skills via the /v2/skills API. Covers authoring guidance (display_name, description, tags, project_id, path), how Skills get consumed via {{skill.<display_name>}} (canonical) and {{snippet.<display_name>}} (backward-compat alias) placeholders in prompts and agent instructions, the reference-scan-before-delete workflow, the rename-breaks-references warning, and the +NEVER+ prose anti-pattern. Use when the user wants to create, audit, edit, or retire orq.ai Skills.`
 
 orq-create-skill: `Build or update an agent skill from an API, CLI, or MCP surface. Use when the user wants to document a new capability surface as a skill, or when an existing skill's contract is stale and needs re-verification. Do NOT use when editing an existing skill without re-probing the surface, or when documenting internal code conventions.`
+
+orq-grade-skill: `Produce a frozen baseline grading of one repository-tracked agent skill from real sessions that loaded it, with raw scores, usage patterns and evidence-backed filing decisions, without proposing edits. Sessions come from Orq traces tagged with a metadata key (default), local Claude Code sessions, or ATIF trajectory files. Use when the user asks how well a skill works in practice, whether agents follow it, or which of its instructions fail. Do NOT use to edit or rewrite a skill (use orq-create-skill), to grade an orq agent's own outputs (use orq-analyze-traces), or to run an experiment against a dataset (use orq-run-experiment).`
 
 orq-cli: `Drive the orq command-line interface — verify the install, authenticate, select a workspace, resolve the active workspace key, and run read/write commands against any orq.ai resource with JSON output and JMESPath queries. Use when a task needs shell access to orq.ai, when a script or CI job must read workspace data, or when the CLI itself is misbehaving (orq doctor). Do NOT use for writing application code that calls orq.ai (use orq-invoke-deployment) or for guided evaluation workflows (use orq-run-experiment).`
 
