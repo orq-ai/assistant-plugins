@@ -68,7 +68,7 @@ normalization, their causes match, and instruction lines overlap by at least
 half. It files an issue only with three distinct
 sessions or at p0/p1, so file even when you see it once. Cite each rule's own
 lines, not a wider block. `ignored_rule` evidence may come from any session
-that skipped the rule; other causes need grading-failed sessions. Model
+that skipped the rule; other causes need low-score sessions (efficiency or quality below 0.5). Model
 variance, infrastructure, generic restatements and fixes outside the skill are dont_file. Give each issue a
 `title` a non-engineer understands, under ten words ("Critics are not run at the
 same time"). State the behavior supported by every cited omission; keep individual

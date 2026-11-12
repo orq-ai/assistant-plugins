@@ -54,7 +54,7 @@ def test_file_pass_does_not_pool_evidence_for_different_claims() -> None:
     sessions = {
         f'session-{number}': support.loaded(f'session-{number}', support.FAILURE_TEXT) for number in range(6)
     }
-    grades = {session_id: {'grading_failed': True} for session_id in sessions}
+    grades = {session_id: {'low_score': True} for session_id in sessions}
     first = make_issue(
         'grader-a', 'The skill omits the dashboard verification step.', ['session-0', 'session-1', 'session-2']
     )

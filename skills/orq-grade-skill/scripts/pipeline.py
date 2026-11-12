@@ -299,7 +299,7 @@ def check(metric: str, verdict: dict[str, Any]) -> None:
         raise ValueError(f'Invalid {metric} rubric label/score')
 
 
-def failed(record: dict[str, Any]) -> bool:
+def low_score(record: dict[str, Any]) -> bool:
     return any(record[k]['score'] is not None and record[k]['score'] < 0.5 for k in ('efficiency', 'quality'))
 
 
@@ -359,7 +359,7 @@ def read_batch(
         for metric in RUBRICS:
             if record[metric] is not None:
                 check(metric, record[metric])
-        grades[grade.session_id] = record | {'grading_failed': failed(record)}
+        grades[grade.session_id] = record | {'low_score': low_score(record)}
     for finding in result.findings:
         for pointer in finding.issue.evidence if finding.issue else []:
             if pointer.session_id not in assigned:
@@ -435,12 +435,13 @@ def file_pass(
             clusters.append(issue)
     filed = []
     for issue in clusters:
-        # An ignored rule is the signal itself; other causes count only sessions that failed grading.
+        # An ignored rule is the signal itself; other causes count only low-score sessions
+        # (efficiency or quality below 0.5).
         # Uncounted pointers are dropped, not rejected: one stray citation should not fail a whole batch.
         counted = [
             p
             for p in issue['evidence']
-            if issue['cause'] == 'ignored_rule' or grades[p['session_id']]['grading_failed']
+            if issue['cause'] == 'ignored_rule' or grades[p['session_id']]['low_score']
         ]
         count = len({p['session_id'] for p in counted})
         if count >= 3 or (count and issue['priority'] in {'p0', 'p1'}):
@@ -469,7 +470,7 @@ def median_grades(
             spread[sid][metric] = max(scores) - min(scores) if scores else None
         usage = Counter(r['usage'] for r in records).most_common(1)[0][0]
         record |= {'usage': usage, 'usage_reason': next(r['usage_reason'] for r in records if r['usage'] == usage)}
-        grades[sid] = record | {'grading_failed': failed(record)}
+        grades[sid] = record | {'low_score': low_score(record)}
     return grades, spread
 
 

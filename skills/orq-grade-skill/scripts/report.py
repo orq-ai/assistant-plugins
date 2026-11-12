@@ -51,7 +51,7 @@ details > summary { cursor: pointer; color: #025558; font-weight: 600; font-size
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid #e0e8e8; vertical-align: top; }
 th { color: #025558; font-weight: 600; }
-.failed { color: #b2440b; font-weight: 600; }
+.low { color: #b2440b; font-weight: 600; }
 .card { border: 1px solid #c9d9d8; border-left: 4px solid #025558; padding: 10px 14px; margin: 12px 0; }
 .card.dont { border-left-color: #ff8f34; }
 pre { background: #f3f7f7; padding: 8px 10px; white-space: pre-wrap; margin: 6px 0; }
@@ -170,10 +170,10 @@ def scorecard(data: dict[str, Any]) -> str:
             f'<div class="muted">{loaded[metric]["scored"]} scored, {loaded[metric]["unavailable"]} unavailable</div>'
             '</div>'
         )
-    failed = sum(g['grading_failed'] for g in data['session_grades'].values())
+    low = sum(g['low_score'] for g in data['session_grades'].values())
     stats = [
         (len(data['session_grades']), 'sessions graded'),
-        (failed, 'grading failed'),
+        (low, 'low-score sessions'),
         (len(data['filed_issues']), 'issues filed'),
         (sum(f['decision'] == 'dont_file' for f in data['findings']), 'findings not filed'),
     ]
@@ -185,7 +185,7 @@ def scorecard(data: dict[str, Any]) -> str:
 
 def session_table(data: dict[str, Any], links: dict[str, str]) -> str:
     multi = data['passes'] > 1
-    head = ['session', 'efficiency', 'quality', 'compliance', 'usage', 'failed'] + (['spread e/q/c'] if multi else [])
+    head = ['session', 'efficiency', 'quality', 'compliance', 'usage', 'low score'] + (['spread e/q/c'] if multi else [])
     rows = []
     for sid, grade in data['session_grades'].items():
         cells = [
@@ -194,7 +194,7 @@ def session_table(data: dict[str, Any], links: dict[str, str]) -> str:
             verdict(grade['quality']),
             verdict(grade['skill_compliance']),
             esc(grade['usage']),
-            '<span class="failed">yes</span>' if grade['grading_failed'] else 'no',
+            '<span class="low">yes</span>' if grade['low_score'] else 'no',
         ]
         if multi:
             spread = data['session_spread'][sid]

@@ -88,8 +88,8 @@
           ],
           "default": null
         },
-        "grading_failed": {
-          "title": "Grading Failed",
+        "low_score": {
+          "title": "Low Score",
           "type": "boolean"
         }
       },
@@ -99,7 +99,7 @@
         "quality",
         "usage",
         "usage_reason",
-        "grading_failed"
+        "low_score"
       ],
       "title": "GradedSession",
       "type": "object"

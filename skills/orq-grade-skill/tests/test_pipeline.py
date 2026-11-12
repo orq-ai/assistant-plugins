@@ -427,9 +427,9 @@ def test_a_target_is_filed_only_by_a_majority_of_passes(client: Client) -> None:
     late = next(f for f in result['findings'] if f['issue']['id'] == 'late-load')
     assert (late['decision'], late['reason'][:23]) == ('dont_file', 'Filed in 1 of 3 passes;')
     grades, spread = result['session_grades'], result['session_spread']
-    assert (grades['control-0']['efficiency'], grades['control-0']['grading_failed']) == (FINE, False)
+    assert (grades['control-0']['efficiency'], grades['control-0']['low_score']) == (FINE, False)
     assert spread['control-0']['efficiency'] == pytest.approx(0.6)
-    assert (grades['control-1']['grading_failed'], spread['control-2']['efficiency']) == (True, 0.0)
+    assert (grades['control-1']['low_score'], spread['control-2']['efficiency']) == (True, 0.0)
     assert 'Agreement across passes' in (run / 'baseline.html').read_text()
 
 

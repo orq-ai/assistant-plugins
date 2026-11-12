@@ -89,7 +89,7 @@ class ScoreSummary(Record):
 
 
 class GradedSession(SessionGrade):
-    grading_failed: bool
+    low_score: bool  # efficiency or quality scored below 0.5
 
 
 class Baseline(Record):
