@@ -1,0 +1,107 @@
+{
+ "rows": [
+  {
+   "trace_id": "id000",
+   "session_id": "id000",
+   "thread_id": "",
+   "start_time": "2026-11-12T10:52:38.588Z",
+   "name": "responses.openai",
+   "cost": {
+    "total": 0.00053325
+   },
+   "attributes": {
+    "metadata": {
+     "skill-probe": "grade-me"
+    },
+    "gen_ai": {
+     "response": {
+      "id": "resp_id001"
+     }
+    },
+    "openresponses": {
+     "previous_response_id": "resp_id002"
+    }
+   }
+  },
+  {
+   "trace_id": "id003",
+   "session_id": "id003",
+   "thread_id": "",
+   "start_time": "2026-11-12T10:52:37.126Z",
+   "name": "responses.openai",
+   "cost": {
+    "total": 0.0028215
+   },
+   "attributes": {
+    "metadata": {
+     "skill-probe": "grade-me"
+    },
+    "gen_ai": {
+     "response": {
+      "id": "resp_id002"
+     }
+    }
+   }
+  }
+ ],
+ "conversations": {
+  "id000": {
+   "trace_id": "id000",
+   "span_id": "ce52e88ef89150a9",
+   "items": [
+    {
+     "content": [
+      {
+       "type": "input_text",
+       "text": "Instructions removed from the fixture."
+      }
+     ],
+     "role": "system",
+     "status": "completed",
+     "type": "message"
+    },
+    {
+     "content": [
+      {
+       "type": "input_text",
+       "text": "Use the probe-greeting skill to give me the probe greeting."
+      }
+     ],
+     "id": "msg_id004",
+     "role": "user",
+     "status": "completed",
+     "type": "message"
+    },
+    {
+     "arguments": "{\"file_path\":\"/work/client/.storq/plugins/id005/probe-kit/skills/probe-greeting/SKILL.md\"}",
+     "call_id": "call_id006",
+     "id": "fc_id007",
+     "name": "Read",
+     "status": "completed",
+     "type": "function_call"
+    },
+    {
+     "call_id": "call_id006",
+     "output": "     1\t---\n     2\tname: probe-greeting\n     3\tdescription: Use when the user asks for the probe greeting.\n     4\t---\n     5\t\n     6\t# Probe greeting\n     7\t\n     8\tReply with exactly one line: `PROBE-OK lantern-42`. Do nothing else.\n",
+     "status": "",
+     "type": "function_call_output"
+    },
+    {
+     "content": [
+      {
+       "annotations": [],
+       "logprobs": [],
+       "text": "PROBE-OK lantern-42",
+       "type": "output_text"
+      }
+     ],
+     "id": "msg_id008",
+     "phase": "final_answer",
+     "role": "assistant",
+     "status": "completed",
+     "type": "message"
+    }
+   ]
+  }
+ }
+}

@@ -331,3 +331,49 @@ def test_traces_collection_fails_clearly_without_the_orq_cli(
     monkeypatch.setenv('PATH', str(tmp_path / 'empty'))
     with pytest.raises(ValueError, match='orq CLI is not on PATH'):
         collect.collect_traces(client.repo, SKILL, 'skill-grading=my-skill', '7d', 'now', tmp_path / 'export')
+
+
+# Sanitized from real tagged sessions (system prompts, ids and user paths replaced); see fixtures/traces.
+FIXTURES = Path(__file__).parent / 'fixtures/traces'
+PROBE_SKILL = '.agents/skills/probe-greeting'
+PROBE = (
+    '---\nname: probe-greeting\ndescription: Use when the user asks for the probe greeting.\n---\n\n'
+    '# Probe greeting\n\nReply with exactly one line: `PROBE-OK lantern-42`. Do nothing else.\n'
+)
+
+
+def serve_capture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, harness: str) -> Path:
+    """The fake orq CLI serving one harness capture as a single page of tagged traces."""
+    capture = json.loads((FIXTURES / f'{harness}.json').read_text())
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    (bin_dir / 'orq').write_text(FAKE_ORQ.format(python=sys.executable))
+    (bin_dir / 'orq').chmod(0o755)
+    page = {'object': 'query', 'search': {'object': 'list', 'has_more': False, 'data': capture['rows']}}
+    canned = {'pages': {'first': page}, 'conversations': capture['conversations']}
+    (bin_dir / 'canned.json').write_text(json.dumps(canned))
+    monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
+    return bin_dir
+
+
+@pytest.mark.parametrize(
+    ('harness', 'loader', 'scanned'),
+    [('claude-code', 'Skill', 1), ('codex', 'exec', 3), ('orq-agent', 'read_skill', 1), ('storq', 'Read', 1)],
+)
+@pytest.mark.parametrize('version', ['same', 'edited'])
+def test_traces_tie_each_harness_load_to_the_exact_skill_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, harness: str, loader: str, scanned: int, version: str
+) -> None:
+    serve_capture(tmp_path, monkeypatch, harness)
+    repo = tmp_path / 'client'
+    (repo / PROBE_SKILL).mkdir(parents=True)
+    (repo / PROBE_SKILL / 'SKILL.md').write_text(PROBE if version == 'same' else PROBE.replace('42', '43'))
+    report = collect.collect_traces(repo, PROBE_SKILL, 'skill-probe=grade-me', '7d', 'now', tmp_path / 'export')
+    assert report['scanned'] == scanned  # Codex: its side agents and an untagged call stay separate sessions
+    if version == 'edited':
+        assert report['loaded_sessions'] == 0
+        return
+    assert report['loaded_sessions'] == 1
+    [session] = json.loads((tmp_path / 'export/sessions.json').read_text())
+    steps = AtifTrajectory.from_json(session['trajectory']).steps
+    assert [c.function_name for c in steps[session['loads'][0]['step'] - 1].tool_calls] == [loader]
