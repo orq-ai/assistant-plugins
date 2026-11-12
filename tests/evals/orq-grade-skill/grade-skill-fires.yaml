@@ -1,0 +1,8 @@
+id: grade-skill-fires
+skill: orq-grade-skill
+kind: invocation
+prompt: We wrote a release-notes skill for our coding agents and tagged their runs in orq. Grade how well that skill actually works across those sessions and tell me which of its instructions agents fail to follow.
+expect_skill: orq-grade-skill
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 2

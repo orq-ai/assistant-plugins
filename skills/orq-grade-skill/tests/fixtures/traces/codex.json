@@ -1,0 +1,704 @@
+{
+ "rows": [
+  {
+   "trace_id": "id000",
+   "session_id": "id000",
+   "thread_id": "",
+   "start_time": "2026-11-12T10:48:04.434Z",
+   "name": "responses.openai",
+   "cost": {
+    "total": 0
+   },
+   "attributes": {
+    "metadata": {
+     "skill-probe": "grade-me"
+    }
+   }
+  },
+  {
+   "trace_id": "id001",
+   "session_id": "id001",
+   "thread_id": "",
+   "start_time": "2026-11-12T10:48:03.624Z",
+   "name": "responses.openai",
+   "cost": {
+    "total": 0.00239595
+   },
+   "attributes": {
+    "metadata": {
+     "skill-probe": "grade-me"
+    },
+    "gen_ai": {
+     "response": {
+      "id": "resp_id002"
+     }
+    },
+    "openresponses": {
+     "prompt_cache_key": "id003"
+    }
+   }
+  },
+  {
+   "trace_id": "id004",
+   "session_id": "id004",
+   "thread_id": "",
+   "start_time": "2026-11-12T10:48:00.143Z",
+   "name": "responses.openai",
+   "cost": {
+    "total": 0.00763145
+   },
+   "attributes": {
+    "metadata": {
+     "skill-probe": "grade-me"
+    },
+    "gen_ai": {
+     "response": {
+      "id": "resp_id005"
+     }
+    },
+    "openresponses": {
+     "prompt_cache_key": "id006"
+    }
+   }
+  },
+  {
+   "trace_id": "id007",
+   "session_id": "id007",
+   "thread_id": "",
+   "start_time": "2026-11-12T10:48:01.931Z",
+   "name": "responses.openai",
+   "cost": {
+    "total": 0.00273525
+   },
+   "attributes": {
+    "metadata": {
+     "skill-probe": "grade-me"
+    },
+    "gen_ai": {
+     "response": {
+      "id": "resp_id008"
+     }
+    },
+    "openresponses": {
+     "prompt_cache_key": "id003"
+    }
+   }
+  },
+  {
+   "trace_id": "id009",
+   "session_id": "id009",
+   "thread_id": "",
+   "start_time": "2026-11-12T10:48:00.245Z",
+   "name": "responses.openai",
+   "cost": {
+    "total": 0.00293445
+   },
+   "attributes": {
+    "metadata": {
+     "skill-probe": "grade-me"
+    },
+    "gen_ai": {
+     "response": {
+      "id": "resp_id010"
+     }
+    },
+    "openresponses": {
+     "prompt_cache_key": "id003"
+    }
+   }
+  },
+  {
+   "trace_id": "id011",
+   "session_id": "id011",
+   "thread_id": "",
+   "start_time": "2026-11-12T10:47:57.477Z",
+   "name": "responses.openai",
+   "cost": {
+    "total": 0.00364635
+   },
+   "attributes": {
+    "metadata": {
+     "skill-probe": "grade-me"
+    },
+    "gen_ai": {
+     "response": {
+      "id": "resp_id012"
+     }
+    },
+    "openresponses": {
+     "prompt_cache_key": "id003"
+    }
+   }
+  },
+  {
+   "trace_id": "id013",
+   "session_id": "id013",
+   "thread_id": "",
+   "start_time": "2026-11-12T10:47:56.334Z",
+   "name": "responses.openai",
+   "cost": {
+    "total": 0.03762925
+   },
+   "attributes": {
+    "metadata": {
+     "skill-probe": "grade-me"
+    },
+    "gen_ai": {
+     "response": {
+      "id": "resp_id014"
+     }
+    },
+    "openresponses": {
+     "prompt_cache_key": "id006"
+    }
+   }
+  },
+  {
+   "trace_id": "id015",
+   "session_id": "id015",
+   "thread_id": "",
+   "start_time": "2026-11-12T10:47:55.823Z",
+   "name": "responses.openai",
+   "cost": {
+    "total": 0.00277575
+   },
+   "attributes": {
+    "metadata": {
+     "skill-probe": "grade-me"
+    },
+    "gen_ai": {
+     "response": {
+      "id": "resp_id016"
+     }
+    },
+    "openresponses": {
+     "prompt_cache_key": "id003"
+    }
+   }
+  },
+  {
+   "trace_id": "id017",
+   "session_id": "id017",
+   "thread_id": "",
+   "start_time": "2026-11-12T10:47:53.940Z",
+   "name": "responses.openai",
+   "cost": {
+    "total": 0.0027549
+   },
+   "attributes": {
+    "metadata": {
+     "skill-probe": "grade-me"
+    },
+    "gen_ai": {
+     "response": {
+      "id": "resp_id018"
+     }
+    },
+    "openresponses": {
+     "prompt_cache_key": "id003"
+    }
+   }
+  },
+  {
+   "trace_id": "id019",
+   "session_id": "id019",
+   "thread_id": "",
+   "start_time": "2026-11-12T10:47:46.870Z",
+   "name": "responses.openai",
+   "cost": {
+    "total": 0.00101238
+   },
+   "attributes": {
+    "metadata": {
+     "skill-probe": "grade-me"
+    },
+    "gen_ai": {
+     "response": {
+      "id": "resp_id020"
+     }
+    },
+    "openresponses": {
+     "prompt_cache_key": "id003"
+    }
+   }
+  },
+  {
+   "trace_id": "id021",
+   "session_id": "id021",
+   "thread_id": "",
+   "start_time": "2026-11-12T10:47:46.825Z",
+   "name": "responses.openai",
+   "cost": {
+    "total": 0.00130055
+   },
+   "attributes": {
+    "metadata": {
+     "skill-probe": "grade-me"
+    },
+    "gen_ai": {
+     "response": {
+      "id": "resp_id022"
+     }
+    },
+    "openresponses": {
+     "prompt_cache_key": "id003"
+    }
+   }
+  },
+  {
+   "trace_id": "id023",
+   "session_id": "id023",
+   "thread_id": "",
+   "start_time": "2026-11-12T10:47:52.129Z",
+   "name": "responses.openai",
+   "cost": {
+    "total": 0.0030411
+   },
+   "attributes": {
+    "metadata": {
+     "skill-probe": "grade-me"
+    },
+    "gen_ai": {
+     "response": {
+      "id": "resp_id024"
+     }
+    },
+    "openresponses": {
+     "prompt_cache_key": "id003"
+    }
+   }
+  },
+  {
+   "trace_id": "id025",
+   "session_id": "id025",
+   "thread_id": "",
+   "start_time": "2026-11-12T10:47:48.826Z",
+   "name": "responses.openai",
+   "cost": {
+    "total": 0.02035875
+   },
+   "attributes": {
+    "metadata": {
+     "skill-probe": "grade-me"
+    },
+    "gen_ai": {
+     "response": {
+      "id": "resp_id026"
+     }
+    },
+    "openresponses": {
+     "prompt_cache_key": "id003"
+    }
+   }
+  }
+ ],
+ "conversations": {
+  "id001": {
+   "trace_id": "id001",
+   "span_id": "2e87dc2f29fa4178",
+   "items": [
+    {
+     "id": "at_id027",
+     "role": "developer",
+     "type": "additional_tools",
+     "content": [
+      {
+       "type": "input_text",
+       "text": "Instructions removed from the fixture."
+      }
+     ]
+    },
+    {
+     "content": [
+      {
+       "type": "input_text",
+       "text": "Instructions removed from the fixture."
+      }
+     ],
+     "id": "msg_id028",
+     "role": "developer",
+     "status": "completed",
+     "type": "message"
+    },
+    {
+     "content": [
+      {
+       "type": "input_text",
+       "text": "Instructions removed from the fixture."
+      }
+     ],
+     "id": "msg_id029",
+     "role": "developer",
+     "status": "completed",
+     "type": "message"
+    },
+    {
+     "content": [
+      {
+       "type": "input_text",
+       "text": "Instructions removed from the fixture."
+      }
+     ],
+     "id": "msg_id030",
+     "role": "developer",
+     "status": "completed",
+     "type": "message"
+    },
+    {
+     "content": [
+      {
+       "type": "input_text",
+       "text": "Instructions removed from the fixture."
+      }
+     ],
+     "id": "msg_id031",
+     "role": "developer",
+     "status": "completed",
+     "type": "message"
+    },
+    {
+     "content": [
+      {
+       "type": "input_text",
+       "text": "Instructions removed from the fixture."
+      }
+     ],
+     "id": "msg_id032",
+     "role": "user",
+     "status": "completed",
+     "type": "message"
+    },
+    {
+     "content": [
+      {
+       "type": "input_text",
+       "text": "Use the probe-greeting skill to give me the probe greeting."
+      }
+     ],
+     "id": "msg_id033",
+     "role": "user",
+     "status": "completed",
+     "type": "message"
+    },
+    {
+     "encrypted_content": "redacted",
+     "id": "rs_id034",
+     "summary": [],
+     "type": "reasoning"
+    },
+    {
+     "content": [
+      {
+       "annotations": [],
+       "logprobs": [],
+       "text": "I\u2019m using the probe-greeting skill now, then I\u2019ll give you the greeting exactly as it specifies.",
+       "type": "output_text"
+      }
+     ],
+     "id": "msg_id035",
+     "phase": "commentary",
+     "role": "assistant",
+     "status": "completed",
+     "type": "message"
+    },
+    {
+     "call_id": "call_id036",
+     "id": "ctc_id037",
+     "input": "await tools.exec_command({cmd:\"cat /work/client/.agents/skills/probe-greeting/SKILL.md\", login:false, tty:false, workdir:\"/work/client\", yield_time_ms:1000, max_output_tokens:4000})",
+     "name": "exec",
+     "status": "completed",
+     "type": "custom_tool_call"
+    },
+    {
+     "call_id": "call_id036",
+     "id": "ctco_id038",
+     "output": "Script completed\nWall time 0.3 seconds\nOutput:\n",
+     "status": "",
+     "type": "custom_tool_call_output"
+    },
+    {
+     "content": [
+      {
+       "type": "input_text",
+       "text": "Instructions removed from the fixture."
+      }
+     ],
+     "id": "msg_id039",
+     "role": "developer",
+     "status": "completed",
+     "type": "message"
+    },
+    {
+     "encrypted_content": "redacted",
+     "id": "rs_id040",
+     "summary": [],
+     "type": "reasoning"
+    },
+    {
+     "content": [
+      {
+       "annotations": [],
+       "logprobs": [],
+       "text": "The first path didn\u2019t return content, so I\u2019m locating the skill file and reading it directly.",
+       "type": "output_text"
+      }
+     ],
+     "id": "msg_id041",
+     "phase": "commentary",
+     "role": "assistant",
+     "status": "completed",
+     "type": "message"
+    },
+    {
+     "call_id": "call_id042",
+     "id": "ctc_id043",
+     "input": "await tools.exec_command({cmd:\"rg --files /work/client /home/user/.agents/skills /home/user/.codex/skills | rg 'probe-greeting/SKILL.md$'\", login:false, tty:false, workdir:\"/work/client\", yield_time_ms:1000, max_output_tokens:4000})",
+     "name": "exec",
+     "status": "completed",
+     "type": "custom_tool_call"
+    },
+    {
+     "call_id": "call_id042",
+     "id": "ctco_id044",
+     "output": "Script completed\nWall time 0.3 seconds\nOutput:\n",
+     "status": "",
+     "type": "custom_tool_call_output"
+    },
+    {
+     "encrypted_content": "redacted",
+     "id": "rs_id045",
+     "summary": [],
+     "type": "reasoning"
+    },
+    {
+     "call_id": "call_id046",
+     "id": "ctc_id047",
+     "input": "await tools.exec_command({cmd:\"pwd && ls -la && find /work/client -maxdepth 4 -name SKILL.md | head -50\", login:false, tty:false, workdir:\"/work/client\", yield_time_ms:1000, max_output_tokens:4000})",
+     "name": "exec",
+     "status": "completed",
+     "type": "custom_tool_call"
+    },
+    {
+     "call_id": "call_id046",
+     "id": "ctco_id048",
+     "output": "Script completed\nWall time 0.3 seconds\nOutput:\n",
+     "status": "",
+     "type": "custom_tool_call_output"
+    },
+    {
+     "encrypted_content": "redacted",
+     "id": "rs_id049",
+     "summary": [],
+     "type": "reasoning"
+    },
+    {
+     "call_id": "call_id050",
+     "id": "ctc_id051",
+     "input": "await tools.exec_command({cmd:\"echo hi\", login:false, tty:false, workdir:\"/work/client\", yield_time_ms:1000, max_output_tokens:4000})",
+     "name": "exec",
+     "status": "completed",
+     "type": "custom_tool_call"
+    },
+    {
+     "call_id": "call_id050",
+     "id": "ctco_id052",
+     "output": "Script completed\nWall time 0.2 seconds\nOutput:\n",
+     "status": "",
+     "type": "custom_tool_call_output"
+    },
+    {
+     "encrypted_content": "redacted",
+     "id": "rs_id053",
+     "summary": [],
+     "type": "reasoning"
+    },
+    {
+     "content": [
+      {
+       "annotations": [],
+       "logprobs": [],
+       "text": "I\u2019m switching to the JS executor to inspect the skill content, since the shell wrapper isn\u2019t surfacing stdout here.",
+       "type": "output_text"
+      }
+     ],
+     "id": "msg_id054",
+     "phase": "commentary",
+     "role": "assistant",
+     "status": "completed",
+     "type": "message"
+    },
+    {
+     "call_id": "call_id055",
+     "id": "ctc_id056",
+     "input": "const res = await tools.exec_command({cmd:\"printf 'hi\\\\n'\", login:false, tty:false, workdir:\"/work/client\", yield_time_ms:1000, max_output_tokens:4000});\ntext(JSON.stringify(res));\n",
+     "name": "exec",
+     "status": "completed",
+     "type": "custom_tool_call"
+    },
+    {
+     "call_id": "call_id055",
+     "id": "ctco_id057",
+     "output": "Output removed from the fixture.",
+     "status": "",
+     "type": "custom_tool_call_output"
+    },
+    {
+     "encrypted_content": "redacted",
+     "id": "rs_id058",
+     "summary": [],
+     "type": "reasoning"
+    },
+    {
+     "call_id": "call_id059",
+     "id": "ctc_id060",
+     "input": "const res = await tools.exec_command({cmd:\"find /work/client -name 'SKILL.md' | rg 'probe-greeting|greeting' || true\", login:false, tty:false, workdir:\"/work/client\", yield_time_ms:1000, max_output_tokens:4000});\ntext(res.output);\n",
+     "name": "exec",
+     "status": "completed",
+     "type": "custom_tool_call"
+    },
+    {
+     "call_id": "call_id059",
+     "id": "ctco_id061",
+     "output": "Output removed from the fixture.",
+     "status": "",
+     "type": "custom_tool_call_output"
+    },
+    {
+     "encrypted_content": "redacted",
+     "id": "rs_id062",
+     "summary": [],
+     "type": "reasoning"
+    },
+    {
+     "call_id": "call_id063",
+     "id": "ctc_id064",
+     "input": "const res = await tools.exec_command({cmd:\"sed -n '1,200p' /work/client/.agents/skills/probe-greeting/SKILL.md\", login:false, tty:false, workdir:\"/work/client\", yield_time_ms:1000, max_output_tokens:4000});\ntext(res.output);\n",
+     "name": "exec",
+     "status": "completed",
+     "type": "custom_tool_call"
+    },
+    {
+     "call_id": "call_id063",
+     "id": "ctco_id065",
+     "output": [
+      {
+       "text": "Script completed\nWall time 0.2 seconds\nOutput:\n",
+       "type": "input_text"
+      },
+      {
+       "text": "---\nname: probe-greeting\ndescription: Use when the user asks for the probe greeting.\n---\n\n# Probe greeting\n\nReply with exactly one line: `PROBE-OK lantern-42`. Do nothing else.\n",
+       "type": "input_text"
+      }
+     ],
+     "status": "",
+     "type": "custom_tool_call_output"
+    },
+    {
+     "encrypted_content": "redacted",
+     "id": "rs_id066",
+     "summary": [],
+     "type": "reasoning"
+    },
+    {
+     "content": [
+      {
+       "annotations": [],
+       "logprobs": [],
+       "text": "PROBE-OK lantern-42",
+       "type": "output_text"
+      }
+     ],
+     "id": "msg_id067",
+     "phase": "final_answer",
+     "role": "assistant",
+     "status": "completed",
+     "type": "message"
+    }
+   ]
+  },
+  "id004": {
+   "trace_id": "id004",
+   "span_id": "6cb77e5c724664f7",
+   "items": [
+    {
+     "content": [
+      {
+       "type": "input_text",
+       "text": "Instructions removed from the fixture."
+      }
+     ],
+     "id": "msg_id068",
+     "role": "developer",
+     "status": "completed",
+     "type": "message"
+    },
+    {
+     "content": [
+      {
+       "type": "input_text",
+       "text": "Instructions removed from the fixture."
+      }
+     ],
+     "id": "msg_id069",
+     "role": "developer",
+     "status": "completed",
+     "type": "message"
+    },
+    {
+     "content": [
+      {
+       "type": "input_text",
+       "text": "Instructions removed from the fixture."
+      }
+     ],
+     "id": "msg_id070",
+     "role": "user",
+     "status": "completed",
+     "type": "message"
+    }
+   ]
+  },
+  "id000": {
+   "trace_id": "id000",
+   "span_id": "55a6c737f4fadec6",
+   "items": [
+    {
+     "content": [
+      {
+       "type": "input_text",
+       "text": "Instructions removed from the fixture."
+      }
+     ],
+     "id": "msg_id068",
+     "role": "developer",
+     "status": "completed",
+     "type": "message"
+    },
+    {
+     "content": [
+      {
+       "type": "input_text",
+       "text": "Instructions removed from the fixture."
+      }
+     ],
+     "id": "msg_id069",
+     "role": "developer",
+     "status": "completed",
+     "type": "message"
+    },
+    {
+     "content": [
+      {
+       "type": "input_text",
+       "text": "Instructions removed from the fixture."
+      }
+     ],
+     "id": "msg_id070",
+     "role": "user",
+     "status": "completed",
+     "type": "message"
+    }
+   ]
+  }
+ }
+}

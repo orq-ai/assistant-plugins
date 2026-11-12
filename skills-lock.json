@@ -46,6 +46,11 @@
       "sourceType": "github",
       "computedHash": "1a3118a66a16a47a212382bbaf88c69321792fb4ea649016be075ec09141cd9e"
     },
+    "orq-grade-skill": {
+      "source": "orq-ai/assistant-plugins",
+      "sourceType": "github",
+      "computedHash": "3f6ae18ab078a83535592ffec3f6e3fa407799f265fa7bf5448d902f24e57e73"
+    },
     "orq-improve-agent": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
