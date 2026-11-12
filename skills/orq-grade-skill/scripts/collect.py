@@ -10,7 +10,13 @@
 Inputs: Orq traces selected by a metadata tag (fetched with the `orq` CLI), Claude Code
 JSONL (converted here), ATIF files as-is, and Orq Responses conversations
 (`orq traces get-conversation <trace-id> -o json`) converted with evaluatorq's
-`responses_to_atif`. Loads are detected on the ATIF steps.
+`responses_to_atif`. Loads are detected on the ATIF steps; each one is tied to the exact
+skill text it returned:
+
+- `Skill` call (Claude Code): the body Claude Code injects right after the call.
+- `read_skill` (Orq agents): the skill text in the call's result.
+- Any other call naming `<skill>/SKILL.md` (`Read` in storq, `exec` shell reads in Codex): the
+  skill text inside its result; `cat -n` line numbers are removed first.
 """
 
 from __future__ import annotations
@@ -29,7 +35,7 @@ from evaluatorq.formats.convert_responses_atif import responses_to_atif
 from evaluatorq.formats.responses import ResponsesConversation
 
 CLAUDE_BASE = re.compile(r'Base directory for this skill: (\S+)\n\n')
-READ_TOOLS = {'read', 'Read'}
+NUMBERED = re.compile(r' *\d+\t(.*)')
 
 
 def skill_body(skill_md: str) -> str:
@@ -39,12 +45,17 @@ def skill_body(skill_md: str) -> str:
 
 
 def decoded(result: str) -> str:
-    """Orq read_skill results arrive JSON-string encoded."""
+    """Orq read_skill results arrive JSON-string encoded; `Read` results as `cat -n` listings."""
     try:
         value = json.loads(result)
     except ValueError:
+        value = result
+    result = value if isinstance(value, str) else result
+    lines = result.removesuffix('\n').split('\n')
+    numbered = [NUMBERED.fullmatch(line) for line in lines]
+    if not all(numbered):
         return result
-    return value if isinstance(value, str) else result
+    return '\n'.join(match.group(1) for match in numbered) + '\n' * result.endswith('\n')
 
 
 class Target:
@@ -57,7 +68,7 @@ class Target:
         self.hash, self.body = loop.digest(self.full), skill_body(self.full)
         self.loaded_from = loaded_from.resolve() if loaded_from else None
 
-    def loads(self, trajectory: AtifTrajectory, root: Path) -> tuple[list[int], str | None]:
+    def loads(self, trajectory: AtifTrajectory) -> tuple[list[int], str | None]:
         """Step ids whose tool call loaded exactly this version, plus the first rejection reason."""
         steps, reason = [], None
         injected = {
@@ -65,34 +76,38 @@ class Target:
             for step in trajectory.steps
             if step.source == 'user' and (step.extra or {}).get('source_tool_use_id')
         }
-        for step in trajectory.steps:
+        for index, step in enumerate(trajectory.steps):
             results = {r.source_call_id: r for r in step.observation.results} if step.observation else {}
             for call in step.tool_calls or []:
-                verdict = self.check(call.function_name, call.arguments, root, results.get(call.tool_call_id))
+                verdict = self.check(call.function_name, call.arguments, results.get(call.tool_call_id))
                 if call.function_name == 'Skill' and call.arguments.get('skill') == self.name:
-                    verdict = self.check_injection(injected.get(call.tool_call_id))
+                    # Local transcripts link the injected body to its call; traces only place it next.
+                    after = trajectory.steps[index + 1] if index + 1 < len(trajectory.steps) else None
+                    fallback = loop.content_text(after.message) if after and after.source == 'user' else None
+                    verdict = self.check_injection(injected.get(call.tool_call_id, fallback))
                 if verdict is True:
                     steps.append(step.step_id)
                 elif verdict:
                     reason = reason or verdict
         return sorted(set(steps)), reason
 
-    def check(self, name: str, arguments: dict[str, Any], root: Path, result: Any) -> bool | str | None:
-        """Orq and generic loaders: `read_skill` by name, or a whole-file read of the selected SKILL.md."""
+    def check(self, name: str, arguments: dict[str, Any], result: Any) -> bool | str | None:
+        """`read_skill` by name, or any call naming `<skill>/SKILL.md`, whose result holds this version's text.
+
+        The text is the identity, not the path: traces carry paths from another machine or harness
+        directory (`.storq/plugins/...`).
+        """
         if name == 'read_skill':
             if arguments.get('name') != self.name:
                 return None
-        elif name in READ_TOOLS:
-            raw = arguments.get('path') or arguments.get('file_path')
-            path = Path(raw) if isinstance(raw, str) else Path()
-            if (path if path.is_absolute() else root / path).resolve() != self.path:
-                return None
-        else:
+        elif f'{self.name}/SKILL.md' not in json.dumps(arguments):
             return None
         text = loop.content_text(result.content) if result else None
         if text is None or (result.extra or {}).get('is_error'):
             return 'Observed read lacks a complete result matching the selected skill version'
-        return decoded(text) in {self.full, self.body} or (
+        # ponytail: containment, so a shell read with a wrapper around the output counts; a skill
+        # whose whole body is one line could match a grep of that line.
+        return (self.body or self.full) in decoded(text) or (
             'Observed read lacks a complete result matching the selected skill version'
         )
 
@@ -103,7 +118,7 @@ class Target:
         match = CLAUDE_BASE.match(injected)
         core = injected[match.end() :] if match else ''
         core = core[: core.rfind('\n\nARGUMENTS:')] if '\n\nARGUMENTS:' in core else core
-        if not match or self.loaded_from is None or Path(match.group(1)).resolve() != self.loaded_from:
+        if not match or (self.loaded_from and Path(match.group(1)).resolve() != self.loaded_from):
             return 'Skill loaded from a different directory'
         return core == self.body or 'Injected body is a different version of the skill'
 
@@ -224,7 +239,7 @@ def collect_responses(repo: Path, skill: str, index_path: Path, output: Path) ->
         session_id = entry.get('session_id') if root and Path(root).resolve() == target.repo else None
         trajectory = converted(
             lambda items, sid: responses_to_atif(ResponsesConversation(items=items), agent_name='orq', session_id=sid),
-            items,
+            function_items(items),
             session_id,
         )
         candidates.append((entry['trace_id'], session_id, root, trajectory))
@@ -235,6 +250,25 @@ def collect_responses(repo: Path, skill: str, index_path: Path, output: Path) ->
     meta = {'harness': 'responses', 'scanned': len(index), 'source_index': str(index_path.resolve())}
     meta['source_index_sha256'] = loop.digest(index_path.read_text())
     return write(target, candidates, output, meta, limits)
+
+
+def function_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Codex's freeform tool items as function calls, so ATIF keeps them as tool calls with results.
+
+    The input goes under `script`, a key evaluatorq's transcript renders for shell-like tools such as `exec`.
+    ponytail: `responses_to_atif` keeps `custom_tool_call` only in step extras; drop this once it converts them.
+    """
+    out = []
+    for item in items:
+        if item.get('type') == 'custom_tool_call':
+            call = {k: v for k, v in item.items() if k != 'input'}
+            item = call | {'type': 'function_call', 'arguments': json.dumps({'script': item.get('input', '')})}
+        elif item.get('type') == 'custom_tool_call_output':
+            item = item | {'type': 'function_call_output'}
+        if item.get('status') == '':  # Codex and storq outputs; an empty status fails Responses validation
+            item = {k: v for k, v in item.items() if k != 'status'}
+        out.append(item)
+    return out
 
 
 METADATA_KEY = re.compile(r'[A-Za-z0-9_-]{1,64}')
@@ -269,6 +303,30 @@ def tagged_traces(key: str, value: str, since: str, until: str) -> tuple[str, li
             return oql, rows
 
 
+def session_keys(rows: list[dict[str, Any]]) -> dict[str, str]:
+    """Trace id to session key, from the fields each harness fills in its router calls."""
+    responses = {response_id(r): r for r in rows if response_id(r)}
+
+    def key(row: dict[str, Any]) -> str:
+        if row.get('session_id') not in {None, '', row['trace_id']}:
+            return row['session_id']  # Claude Code
+        call = (row.get('attributes') or {}).get('openresponses') or {}
+        if row.get('thread_id') or call.get('prompt_cache_key'):
+            return row.get('thread_id') or call['prompt_cache_key']  # thread id; Codex
+        seen = set()
+        while (parent := responses.get(call.get('previous_response_id'))) and response_id(parent) not in seen:
+            row = parent  # storq: walk previous_response_id to the chain's first call
+            seen.add(response_id(row))
+            call = row['attributes'].get('openresponses') or {}
+        return response_id(row) or row['trace_id']
+
+    return {row['trace_id']: key(row) for row in rows}
+
+
+def response_id(row: dict[str, Any]) -> str | None:
+    return (((row.get('attributes') or {}).get('gen_ai') or {}).get('response') or {}).get('id')
+
+
 def collect_traces(
     repo: Path, skill: str, metadata: str, since: str, until: str, output: Path
 ) -> dict[str, Any]:
@@ -281,8 +339,9 @@ def collect_traces(
         raise ValueError('--trace-metadata takes KEY=VALUE')
     oql, rows = tagged_traces(key, value, since, until)
     latest: dict[str, dict[str, Any]] = {}
+    keys = session_keys(rows)
     for row in rows:
-        session_id = row.get('session_id') or row.get('thread_id') or row['trace_id']
+        session_id = keys[row['trace_id']]
         if session_id not in latest or row.get('start_time', '') > latest[session_id].get('start_time', ''):
             latest[session_id] = row
     exports = output.parent / f'{output.name}-traces'
@@ -309,7 +368,10 @@ def collect_traces(
         'limitations': [
             'Traces selected by one metadata tag in one time window; not an exhaustive workspace scan',
             'One trace per session (the latest); its conversation is assumed to hold the whole session',
-            'Repository identity is not recorded in traces; reads resolve against the client repo and are not checked',
+            'Sessions are grouped by session id, else thread id, else prompt cache key (Codex), else the '
+            'previous_response_id chain (storq); a trace with none of these is its own session',
+            'Repository identity and skill paths are not checked in traces; a load is identified by the exact skill '
+            'text it returned',
         ],
     }
     loop.write_json(output / 'collection.json', report)
@@ -339,7 +401,7 @@ def write(
         if not session_id or session_id in seen:
             skipped.append({'source': source, 'reason': 'Missing, duplicate or unattributable session id'})
             continue
-        loads, reason = target.loads(trajectory, Path(cwd) if cwd else target.repo)
+        loads, reason = target.loads(trajectory)
         if not loads:
             skipped.append({'source': source, 'reason': reason or 'No confirmed load of the selected skill'})
             continue

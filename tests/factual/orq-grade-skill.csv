@@ -12,3 +12,7 @@ doc_url,https://docs.orq.ai/docs/ai-gateway/request-metadata,,request-metadata p
 doc_url,https://docs.orq.ai/ai-studio/observability/oql,,oql page reachable
 pypi_package,evaluatorq,,evaluatorq on PyPI
 pypi_package,pydantic,,pydantic on PyPI
+cli_subcommand,launch codex,,orq launch codex exists
+cli_flag,launch codex,--metadata,orq launch codex accepts --metadata
+cli_subcommand,responses create,,orq responses create exists
+cli_flag,responses create,--metadata,orq responses create accepts --metadata

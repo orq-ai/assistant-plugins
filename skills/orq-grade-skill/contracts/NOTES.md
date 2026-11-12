@@ -20,22 +20,47 @@ trace ids, and the cohort needs at least 10 sessions at one skill version.
 ## Load detection per harness
 
 Detection runs on ATIF steps (`collect.Target.loads`). A name mention, catalog
-listing or launch acknowledgement is never a load. The loaded text must equal
-the client's SKILL.md, whole or without frontmatter.
+listing or launch acknowledgement is never a load. The loaded text must contain
+the client's SKILL.md without frontmatter, byte for byte; paths are not checked,
+so the text is the version identity.
 
 - **Orq traces** (`collect.py --trace-metadata KEY=VALUE [--since 7d --until now]`):
   runs `orq traces query-oql` with `fetch traces | filter metadata.KEY == "VALUE"`,
-  keeps the latest trace per `session_id` (else `thread_id`, else the trace id),
-  exports each with `orq traces get-conversation <trace-id> -o json` into
-  `<out>-traces/` with an `index.json`, and collects that index as below. The
-  client repo stands in for `repo_root`, which traces do not record.
+  groups traces into sessions and keeps the latest trace of each, exports it
+  with `orq traces get-conversation <trace-id> -o json` into `<out>-traces/`
+  with an `index.json`, and collects that index as below. The client repo stands
+  in for `repo_root`, which traces do not record. Shapes captured from real
+  tagged sessions (fixtures in `tests/fixtures/traces/`):
+  - Claude Code (`orq launch claude --metadata`): one trace per model call, all
+    with Claude Code's `session_id`. Load: `Skill` call with `{"skill": name}`,
+    output `Launching skill: <name>`, then a user message
+    `Base directory for this skill: <dir>\n\n<body>`.
+  - Codex (`orq launch codex --metadata`): `session_id` is the trace id; calls
+    share `openresponses.prompt_cache_key`, which also covers Codex's side
+    calls. Load: `custom_tool_call` `exec` whose JavaScript input runs
+    `tools.exec_command({cmd: "cat|sed ... <name>/SKILL.md"})`, the file text in
+    its `custom_tool_call_output`. `responses_to_atif` keeps these items only in
+    step extras, so `collect.function_items` turns them into function calls
+    (`{"script": input}`) first.
+  - Orq agents (`orq responses create --model agent/<key> --metadata`): one
+    trace per run. Load: `read_skill` `{"name": name}`, output the body as a
+    JSON string.
+  - storq (`storq --metadata '{"KEY":"VALUE"}'`): one trace per call, chained by
+    `openresponses.previous_response_id`. Load: `Read`
+    `{"file_path": ".../.storq/plugins/<thread>/<bundle>/skills/<name>/SKILL.md"}`,
+    output as `cat -n` lines.
+
+  Session key: `session_id` when it differs from the trace id, else `thread_id`,
+  else `prompt_cache_key`, else the first response of the `previous_response_id`
+  chain, else the trace id.
 - **Orq** (`collect.py --responses <index>`): index entries are
   `{trace_id, session_id, repo_root, conversation_file}`, the file holding
   `orq traces get-conversation <trace-id> -o json`; evaluatorq's
-  `responses_to_atif` converts it. A load is a `read` of the selected SKILL.md
-  path (relative paths resolve against `repo_root`) or native `read_skill` with
-  `name` equal to the skill dir, paired with its result by call id;
-  `read_skill` results arrive JSON-string encoded. Spans carry
+  `responses_to_atif` converts it. A load is native `read_skill` with `name`
+  equal to the skill dir, or any call whose arguments name `<skill>/SKILL.md`
+  (`Read`, `read`, a shell command), paired with its result by call id; a
+  `Skill` call is paired with the user message right after it. `read_skill`
+  results arrive JSON-string encoded, `Read` results as `cat -n` lines. Spans carry
   `gen_ai.skill.{id,name,version}`; combined id+version OQL filters have
   returned nothing where single-attribute filters matched, so discover by
   identity and check the version on the span.
@@ -49,9 +74,8 @@ the client's SKILL.md, whole or without frontmatter.
   thinking blocks.
 - **ATIF files** (`collect.py --atif <file>...`): taken as-is; session id from
   `session_id`, cwd from `extra.cwd`. All detectors above apply.
-- **Codex**: no adapter. SKILL.md arrives through `exec_command` or a custom
-  `exec` wrapper (`cat .../SKILL.md`), paired by `call_id`, in
-  `~/.codex/sessions/**/*.jsonl`. Full output is required.
+- **Codex local files**: no adapter for `~/.codex/sessions/**/*.jsonl`; collect
+  Codex through Orq traces. Full output of the read is required.
 
 ## Run directory
 

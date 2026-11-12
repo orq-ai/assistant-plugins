@@ -53,8 +53,10 @@ names (`grader-`) for measured accounting.
 The default source is Orq traces. Tag every agent run you want graded with one
 metadata pair, then collect by that pair:
 
-- Coding agents launched through the Orq router: `orq launch claude --metadata skill-grading=my-skill`
-  (the same `--metadata key=value` flag works for the other `orq launch` agents).
+- Claude Code and Codex launched through the Orq router:
+  `orq launch claude --metadata skill-grading=my-skill` (or `orq launch codex ...`).
+- Orq agents: `orq responses create --model agent/<key> --metadata skill-grading=my-skill --input ...`.
+- storq: `storq ... --metadata '{"skill-grading":"my-skill"}'`.
 - Your own calls to the Orq router: send the request header
   `X-ORQ-METADATA-skill-grading: my-skill`, or put the pair in the request
   body's `metadata` ([request metadata](https://docs.orq.ai/docs/ai-gateway/request-metadata)).
