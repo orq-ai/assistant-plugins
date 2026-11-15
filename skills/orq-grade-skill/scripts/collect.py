@@ -239,7 +239,7 @@ def collect_responses(repo: Path, skill: str, index_path: Path, output: Path) ->
         session_id = entry.get('session_id') if root and Path(root).resolve() == target.repo else None
         trajectory = converted(
             lambda items, sid: responses_to_atif(ResponsesConversation(items=items), agent_name='orq', session_id=sid),
-            function_items(items),
+            valid_items(items),
             session_id,
         )
         candidates.append((entry['trace_id'], session_id, root, trajectory))
@@ -252,23 +252,9 @@ def collect_responses(repo: Path, skill: str, index_path: Path, output: Path) ->
     return write(target, candidates, output, meta, limits)
 
 
-def function_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Codex's freeform tool items as function calls, so ATIF keeps them as tool calls with results.
-
-    The input goes under `script`, a key evaluatorq's transcript renders for shell-like tools such as `exec`.
-    ponytail: `responses_to_atif` keeps `custom_tool_call` only in step extras; drop this once it converts them.
-    """
-    out = []
-    for item in items:
-        if item.get('type') == 'custom_tool_call':
-            call = {k: v for k, v in item.items() if k != 'input'}
-            item = call | {'type': 'function_call', 'arguments': json.dumps({'script': item.get('input', '')})}
-        elif item.get('type') == 'custom_tool_call_output':
-            item = item | {'type': 'function_call_output'}
-        if item.get('status') == '':  # Codex and storq outputs; an empty status fails Responses validation
-            item = {k: v for k, v in item.items() if k != 'status'}
-        out.append(item)
-    return out
+def valid_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Items without the empty `status` Codex and storq write, which fails Responses validation."""
+    return [{k: v for k, v in item.items() if k != 'status'} if item.get('status') == '' else item for item in items]
 
 
 METADATA_KEY = re.compile(r'[A-Za-z0-9_-]{1,64}')
