@@ -249,8 +249,12 @@ One datapoint per task seed. Use the orq MCP tools (`create_dataset` then
 - `expected_output`: the established answer from the seed. For `agentic`
   file-producing tasks, put the acceptance criteria or a pointer to the accepted
   artifact here; the rubric judge grades the produced file against it.
-- `metadata`: `category`, `evidence` (the exact quote or cell reference), and
-  `eval_type`.
+- `category`, `evidence` (the exact quote or cell reference) and `eval_type`: put
+  these in `inputs` as extra columns next to `text`. A datapoint stores only
+  `inputs`, `expected_output` and `messages`; a `metadata` field is accepted with
+  a 200 and then dropped, so a category kept there is gone when you read the
+  results. The job only reads `dp.inputs['text']`, so the extra columns do not
+  reach the candidate.
 
 ### 3. Create or reuse the evaluators
 
@@ -354,6 +358,9 @@ rubric = llm_jury(
         'Score the answer against these criteria drawn from the team\'s own review notes:\n'
         '- <criterion 1 from intake>\n- <criterion 2 from intake>\n...'
     ),
+    # Numeric on purpose. The binary pass or fail rule in `orq-run-experiment` is for
+    # finding failure modes in one system. A benchmark ranks candidates against each
+    # other, and pass or fail ties most of them on a small set.
     verdict_kind='numeric',
     # Required: a numeric classify judge errors without these. The score runs 0 to 1, and
     # these are its anchors, lowest first. Write them from the intake's good vs bad notes.
