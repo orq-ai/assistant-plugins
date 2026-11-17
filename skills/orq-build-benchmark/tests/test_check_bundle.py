@@ -42,10 +42,10 @@ def test_directory_symlink_says_what_it_is(tmp_path: Path) -> None:
     assert any('symlink to a directory' in e for e in errors), errors
 
 
-def _step5_helpers() -> dict:
+def _step4_helpers() -> dict:
     text = (SKILL_DIR / 'SKILL.md').read_text(encoding='utf-8')
     block = re.search(r'```python\n(import math\n.*?)```', text, re.DOTALL)
-    assert block, 'step 5 must ship its helpers'
+    assert block, 'step 4 must ship its helpers'
     namespace: dict = {}
     exec(block.group(1), namespace)  # noqa: S102 - our own SKILL.md, tested as written
     return namespace
@@ -68,8 +68,8 @@ def _point(*jobs: JobResult) -> DataPointResult:
     return DataPointResult(data_point=DataPoint(inputs={'text': 'q'}), job_results=list(jobs))
 
 
-def test_step5_counts_scored_errored_and_skipped() -> None:
-    table = _step5_helpers()['rubric_scores']([
+def test_step4_helpers_count_scored_errored_and_skipped() -> None:
+    table = _step4_helpers()['rubric_scores']([
         _point(_job('a', 0.9), _job('b', 0.4)),
         _point(_job('a', 0.8), _job('b', error='boom')),
         _point(_job('a', score_error='no levels'), _job('b')),
@@ -78,22 +78,35 @@ def test_step5_counts_scored_errored_and_skipped() -> None:
     assert (len(table['b']['scored']), table['b']['errored'], table['b']['skipped']) == (1, 1, 1)
 
 
-def test_step5_gap_is_paired_and_refuses_under_two_shared_datapoints() -> None:
-    helpers = _step5_helpers()
+def test_step4_gap_is_paired_and_refuses_under_the_shared_floor() -> None:
+    helpers = _step4_helpers()
+    floor = helpers['MIN_SHARED']
+    shared_points = [_point(_job('a', 0.9 if i % 2 else 0.7), _job('b', 0.5)) for i in range(floor)]
     table = helpers['rubric_scores']([
-        _point(_job('a', 0.9), _job('b', 0.5)),
-        _point(_job('a', 0.7), _job('b', 0.5)),
+        *shared_points,
+        # Only `a` scored these two, so the pairing has to drop them: a's own mean
+        # moves, the paired gap and the shared count do not.
+        _point(_job('a', 0.0), _job('b', error='boom')),
+        _point(_job('a', 0.0), _job('b')),
     ])
+    assert len(table['a']['scored']) == floor + 2
     gap, standard_error, shared = helpers['paired_gap'](table['a'], table['b'])
-    assert gap == pytest.approx(0.3)
-    assert standard_error == pytest.approx(0.1)
-    assert shared == 2
-    assert helpers['paired_gap']({'scored': {0: 1.0}}, {'scored': {0: 0.5}}) is None
+    assert shared == floor
+    expected = [0.4 if i % 2 else 0.2 for i in range(floor)]
+    assert gap == pytest.approx(sum(expected) / floor)
+    assert standard_error > 0
+
+    one_short = helpers['rubric_scores'](shared_points[: floor - 1])
+    assert helpers['paired_gap'](one_short['a'], one_short['b']) is None, 'under the floor there is no gap'
+    # Two datapoints with the same difference have no measured variance. Without the
+    # floor that is a standard error of zero, and `tied` would name a winner on them.
+    two = {'scored': {0: 1.0, 1: 1.0}}, {'scored': {0: 0.5, 1: 0.5}}
+    assert helpers['tied'](helpers['paired_gap'](*two))
 
 
-def test_step5_tie_rule_covers_an_exact_tie_and_both_directions() -> None:
-    helpers = _step5_helpers()
-    same = {'scored': {0: 0.5, 1: 0.7}}
+def test_step4_tie_rule_covers_an_exact_tie_and_both_directions() -> None:
+    helpers = _step4_helpers()
+    same = {'scored': {i: 0.5 + i / 10 for i in range(helpers['MIN_SHARED'])}}
     assert helpers['tied'](helpers['paired_gap'](same, same)), 'identical scores must tie'
     assert helpers['tied'](None), 'too few shared datapoints must tie'
     assert helpers['tied']((-0.1, 0.05, 10)), 'a gap of exactly twice the error ties, whatever its sign'

@@ -285,8 +285,8 @@ One `evaluatorq()` call, one job per candidate
 model or agent, evaluated on the dataset. Results upload to orq Experiments when
 `ORQ_API_KEY` is set.
 
-Start the script with these helpers. The template's last line prints from
-`rubric_scores`, and step 5 reads the results with all three: `rubric_scores` gives
+Start the script with these helpers. The template prints from `rubric_scores`
+inside `main()`, and step 5 reads the results with all three: `rubric_scores` gives
 each candidate's scored, errored and skipped counts, `paired_gap` compares two
 candidates on the datapoints both scored, and `tied` applies the tie rule:
 
@@ -311,11 +311,14 @@ def rubric_scores(results, evaluator='task-rubric'):
     return table
 
 
+MIN_SHARED = 5  # below this a standard error says little, so no gap is reported
+
+
 def paired_gap(a, b):
     """Mean of a minus b on shared datapoints, its standard error, and how many were
-    shared. None under two."""
+    shared. None under MIN_SHARED."""
     diffs = [a['scored'][i] - b['scored'][i] for i in a['scored'] if i in b['scored']]
-    if len(diffs) < 2:
+    if len(diffs) < MIN_SHARED:
         return None
     return statistics.mean(diffs), statistics.stdev(diffs) / math.sqrt(len(diffs)), len(diffs)
 
@@ -397,11 +400,13 @@ scored, errored and skipped counts from `rubric_scores`.
 
 Report the winner with its margin and where it is weak, with two exceptions:
 
-- If the counts differ between candidates, do not name a winner. A mean over fewer
-  datapoints is not comparable.
+- Compare two candidates with `paired_gap`, never by their overall means. When the
+  counts differ, a mean over fewer datapoints is not comparable, but the paired gap
+  still is: it only uses the datapoints both candidates scored. One error in fifty
+  does not block a winner.
 - If `tied(paired_gap(a, b))` is true, report those candidates as tied: the absolute
-  gap is at most twice its standard error, or fewer than two datapoints were shared.
-  Report the shared count `paired_gap` returns next to the gap.
+  gap is at most twice its standard error, or fewer than `MIN_SHARED` datapoints were
+  shared. Report the shared count `paired_gap` returns next to the gap.
 
 ## Later: native orq experiments
 
