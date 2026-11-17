@@ -12,7 +12,7 @@ These skills are:
  - orq-build-agent -> "skills/orq-build-agent/SKILL.md"
  - orq-build-evaluator -> "skills/orq-build-evaluator/SKILL.md"
  - orq-build-benchmark -> "skills/orq-build-benchmark/SKILL.md"
- - create-skill -> "skills/create-skill/SKILL.md"
+ - orq-create-skill -> "skills/orq-create-skill/SKILL.md"
  - orq-cli -> "skills/orq-cli/SKILL.md"
  - orq-evaluator-alignment -> "skills/orq-evaluator-alignment/SKILL.md"
  - orq-compare-agents -> "skills/orq-compare-agents/SKILL.md"
@@ -22,6 +22,7 @@ These skills are:
  - orq-invoke-deployment -> "skills/orq-invoke-deployment/SKILL.md"
  - orq-manage-skills -> "skills/orq-manage-skills/SKILL.md"
  - orq-recommend-evaluators -> "skills/orq-recommend-evaluators/SKILL.md"
+ - orq-quickstart -> "skills/orq-quickstart/SKILL.md"
  - orq-red-team -> "skills/orq-red-team/SKILL.md"
  - orq-review-agent -> "skills/orq-review-agent/SKILL.md"
  - orq-run-experiment -> "skills/orq-run-experiment/SKILL.md"
@@ -65,13 +66,15 @@ orq-red-team: `Run adversarial red teaming against deployed orq agents or static
 
 orq-manage-skills: `Manage orq.ai Skills (the platform entity, formerly Snippets — distinct from this repo's code-assistant skills) end-to-end: list, get, create, update, retire (tag as retired), and delete Skills via the /v2/skills API. Covers authoring guidance (display_name, description, tags, project_id, path), how Skills get consumed via {{skill.<display_name>}} (canonical) and {{snippet.<display_name>}} (backward-compat alias) placeholders in prompts and agent instructions, the reference-scan-before-delete workflow, the rename-breaks-references warning, and the +NEVER+ prose anti-pattern. Use when the user wants to create, audit, edit, or retire orq.ai Skills.`
 
-create-skill: `Build or update an agent skill from an API, CLI, or MCP surface. Use when the user wants to document a new capability surface as a skill, or when an existing skill's contract is stale and needs re-verification. Do NOT use when editing an existing skill without re-probing the surface, or when documenting internal code conventions.`
+orq-create-skill: `Build or update an agent skill from an API, CLI, or MCP surface. Use when the user wants to document a new capability surface as a skill, or when an existing skill's contract is stale and needs re-verification. Do NOT use when editing an existing skill without re-probing the surface, or when documenting internal code conventions.`
 
 orq-cli: `Drive the orq command-line interface — verify the install, authenticate, select a workspace, resolve the active workspace key, and run read/write commands against any orq.ai resource with JSON output and JMESPath queries. Use when a task needs shell access to orq.ai, when a script or CI job must read workspace data, or when the CLI itself is misbehaving (orq doctor). Do NOT use for writing application code that calls orq.ai (use orq-invoke-deployment) or for guided evaluation workflows (use orq-run-experiment).`
 
 orq-simulate-agent: `Run multi-turn agent simulations using evaluatorq's first-class simulation primitives (simulate(), generate_and_simulate(), wrap_simulation_agent()). Drive an agent under test with a UserSimulatorAgent and built-in JudgeAgent that terminates on goal achievement or rule violations. Use when generating realistic multi-turn data, stress-testing conversational agents, or producing seed transcripts. Do NOT use when real production conversations exist (use orq-analyze-traces) or for adversarial red-teaming sweeps (call evaluatorq.red_team() directly).`
 
 orq-shared: `Reference bundle shared by the other orq skills — the verified orq CLI trace query contract (trace-queries.md), the run-key preflight that resolves an agent or deployment key before any call (run-key-preflight.md), and the rubrics an agent is built, reviewed and improved against (config-context.md, prompting-guidelines.md, tool-description-guide.md). Read the file another skill points you at; do not invoke this skill on its own. Do NOT use to run CLI commands (use orq-cli), to analyze traces (use orq-analyze-traces), or to fix an agent (use orq-improve-agent).`
+
+orq-quickstart: `Onboarding for orq.ai in any coding agent — get an API key, register the orq.ai MCP server for the harness you are running in, prove the connection with a real workspace read, show a workspace snapshot, list the installed orq skills, and route the user to a first task. Use when the user is new to orq.ai, asks to set up or verify orq.ai, or another orq skill fails because the MCP server is missing or the credentials are rejected. Do NOT use to drive the orq CLI (use orq-cli) or to instrument an application with tracing (use orq-setup-observability).`
 
 </available_skills>
 
@@ -83,12 +86,11 @@ Paths referenced within SKILL folders are relative to that SKILL. For example th
 
 You have slash commands available in the `commands/` directory:
 
- - quickstart -> "commands/quickstart.md" — Interactive onboarding guide for new users
  - workspace -> "commands/workspace.md" — Show workspace overview (agents, deployments, prompts, datasets, experiments)
  - traces -> "commands/traces.md" — Query and summarize traces with filters (debugging entry point)
  - models -> "commands/models.md" — List available AI models and capabilities
  - analytics -> "commands/analytics.md" — Show workspace analytics (requests, cost, tokens, errors, trends)
 
-Commands are quick-action tools. Skills are multi-step workflows. Use `/orq:quickstart` for onboarding, `/orq:workspace`, `/orq:traces`, `/orq:models`, or `/orq:analytics` for fast operations. Use skills when the user needs guided, multi-step work.
+Commands are quick-action tools. Skills are multi-step workflows. Use the `orq-quickstart` skill for onboarding, and `/orq:workspace`, `/orq:traces`, `/orq:models`, or `/orq:analytics` for fast operations. Use skills when the user needs guided, multi-step work.
 
 </commands>

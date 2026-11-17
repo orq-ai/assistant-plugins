@@ -1,0 +1,5 @@
+test_type,target,assertion,description
+mcp_tool_exists,search_entities,,search_entities listed on MCP server
+doc_url,https://github.com/orq-ai/assistant-plugins/blob/main/MANUAL_INSTALL.md,,MANUAL_INSTALL.md page reachable
+doc_url,https://docs.orq.ai/docs/quick-start,,quick-start page reachable
+github_repo,orq-ai/assistant-plugins,,orq-ai/assistant-plugins exists

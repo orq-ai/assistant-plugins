@@ -5,11 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.12.0] - 2026-11-09
+## [5.1.0] - 2026-11-17
 
 ### Added
 
 - `orq-build-benchmark` skill: turn a team's own work into a custom orq benchmark. Interviews the user, stages real task instances, then builds an orq dataset and evaluators and runs candidate models with evaluatorq, graded against known answers and reported to orq Experiments. Ships `scripts/check_bundle.py` to validate a staged bundle before upload.
+
+## [5.0.0] - 2026-11-10
+
+### Changed
+
+- **Breaking:** renamed the `create-skill` skill to `orq-create-skill`, so every shipped skill carries the `orq-` prefix (or is `evaluatorq`). The orq CLI installs these skills into each agent's shared skills directory, where a generic name collides with a user's own `create-skill` and the installer then skips ours. Reinstall to pick up the new name; `npx skills remove create-skill` clears the old copy. Its scratchpad moves from `.create-skill/` to `.orq-create-skill/`.
+
+## [4.0.0] - 2026-11-09
+
+### Added
+
+- `orq-quickstart` skill: onboarding that works in any coding agent, not only Claude Code. It gives the MCP registration for the harness it runs in (Claude Code, Codex, Cursor, others), proves the connection with a real `search_entities` read instead of checking `ORQ_API_KEY`, does not assume the MCP server is named `orq-workspace`, and marks paged snapshot counts as partial. `npx skills add` installs it, which it never did for the command.
+
+### Removed
+
+- The `/orq:quickstart` command (`commands/quickstart.md`). It is replaced by the `orq-quickstart` skill; in Claude Code, ask "run the orq quickstart" or use `/orq:orq-quickstart`.
 
 ## [3.11.2] - 2026-11-09
 

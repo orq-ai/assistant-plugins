@@ -11,11 +11,16 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-# The symlink checks below read the git index, which is how they tell a link
-# from a file on a checkout that could not materialise it. Outside a checkout
-# every one of them would read "not a symlink" and pass, so stop instead.
-if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  echo "FAIL: $ROOT_DIR is not a git checkout; the symlink checks need the git index"
+# The symlink checks below ask this checkout's git index which paths are links:
+# content_path, to resolve a link git could not materialise, and the
+# .claude-plugin/ loop, through `git ls-files`. Run from anywhere but the top of
+# its own checkout, those reads describe another repository or none: with no
+# repository the loop fails, but content_path quietly validates an unresolved
+# path, and inside an unrelated parent repository the whole run passes with
+# nothing checked. So the plugin root must be the top of its own checkout.
+# `pwd -P`: git reports the physical path, and macOS keeps TMPDIR under a link.
+if [ "$(git rev-parse --show-toplevel 2>/dev/null)" != "$(pwd -P)" ]; then
+  echo "FAIL: $ROOT_DIR is not the top of its own git checkout; the symlink checks need its git index"
   exit 1
 fi
 

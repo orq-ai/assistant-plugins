@@ -7,6 +7,10 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 schema="$repo_root/tests/schemas/agent-plugins-1.0.0.plugin.schema.json"
 tmp_root="$(mktemp -d)"
+# Keep every fixture's git to its own folder: no parent repository above TMPDIR,
+# and no GIT_DIR or index inherited from the caller.
+export GIT_CEILING_DIRECTORIES="$tmp_root"
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 failures=0
 run_count=0
 # Derived from the script itself so adding a case can't silently desync. A case run
@@ -96,11 +100,20 @@ expect_pass() {
 
 # The root plugin.json rules are not in the shell script: CI checks them with ajv
 # against the vendored schema. These run the same command on a mutated manifest.
+ajv_validate="npx -y ajv-cli@5 validate --spec=draft2020"
 schema_check() {
   local json="$1" file="$tmp_root/schema-case.json"
   printf '%s\n' "$json" > "$file"
-  npx -y ajv-cli@5 validate --spec=draft2020 -s "$schema" -d "$file" 2>&1
+  $ajv_validate -s "$schema" -d "$file" 2>&1
 }
+
+# The cases below prove a rule only while CI runs this same command, so check it.
+run_count=$((run_count + 1))
+ci_command="$ajv_validate -s tests/schemas/agent-plugins-1.0.0.plugin.schema.json -d plugin.json"
+if ! grep -qF -- "run: $ci_command" "$repo_root/.github/workflows/skills-ci.yml"; then
+  echo "FAIL [CI command]: skills-ci.yml no longer runs '$ci_command'; update schema_check to match"
+  failures=$((failures + 1))
+fi
 
 # expect_schema_fail <label> <json> <pattern> — ajv rejects it with a matching error.
 expect_schema_fail() {
@@ -218,7 +231,15 @@ expect_fail "orq-build-agent SKILL.md missing" "$d" "skills/orq-build-agent/SKIL
 # --- git pre-flight: the symlink checks read the index ---
 d=$(build_fixture no-git)
 rm -rf "$d/.git"
-expect_fail "not a git checkout" "$d" "is not a git checkout; the symlink checks need the git index"
+expect_fail "not a git checkout" "$d" "is not the top of its own git checkout"
+# Inside an unrelated parent repository the index reads come back empty and
+# every check used to pass, so the fixture must not borrow the parent's git.
+d=$(build_fixture nested-parent)
+rm -rf "$d/.git"
+git -C "$tmp_root" init -q
+# Lift the ceiling for this one case, or git would never find the parent.
+GIT_CEILING_DIRECTORIES="" expect_fail "inside a parent repository" "$d" "is not the top of its own git checkout"
+rm -rf "$tmp_root/.git"
 d=$(build_fixture broken-git)
 printf 'garbage' > "$d/.git/index"
 expect_fail "broken git index" "$d" "git ls-files failed, so .claude-plugin/ could not be checked for symlinks"

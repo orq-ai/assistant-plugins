@@ -1,11 +1,6 @@
 {
   "version": 1,
   "skills": {
-    "create-skill": {
-      "source": "orq-ai/assistant-plugins",
-      "sourceType": "github",
-      "computedHash": "12d2a2e9d5852de4c49349cfa842809634e832c30dcfb3aeba9574921df75f52"
-    },
     "evaluatorq": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
@@ -41,6 +36,11 @@
       "sourceType": "github",
       "computedHash": "bc3eff6d21d0012cd03fd9052e32e311bff6f07c5584db6110c5024a5aa862e1"
     },
+    "orq-create-skill": {
+      "source": "orq-ai/assistant-plugins",
+      "sourceType": "github",
+      "computedHash": "0a9cb3644611d26051dca56fbd8db2134b50c0f33409e677cb20802b1a51eb5e"
+    },
     "orq-evaluator-alignment": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
@@ -64,7 +64,12 @@
     "orq-manage-skills": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "6e59c4942dbffcf55e6c4512db412cb5c57458d6989fdf960a8960707a8caff3"
+      "computedHash": "cf0577c3ae27bbc6f4df5813e71a2c04428b07c44bb6c3cfb6a711abaca8117b"
+    },
+    "orq-quickstart": {
+      "source": "orq-ai/assistant-plugins",
+      "sourceType": "github",
+      "computedHash": "01d97f3dd1ea63cfc1682f972798ab5918d7a7323213c94365fcb477a2589cf0"
     },
     "orq-recommend-evaluators": {
       "source": "orq-ai/assistant-plugins",

@@ -406,10 +406,13 @@ class FactualTestRunner:
         if len(parts) != 2:
             return False, f"bad target '{target}' (want module.Class)"
         module, cls = parts
+        # Lazy SDK sub-clients exist only as annotations. inspect.get_annotations, not
+        # vars(c)['__annotations__'], which Python 3.14 (PEP 649) no longer populates.
         stmt = (
+            "import inspect; "
             f"from {module} import {cls}; "
             f"ok = hasattr({cls}, '{assertion}') or any("
-            f"'{assertion}' in vars(c).get('__annotations__', {{}}) for c in {cls}.__mro__); "
+            f"'{assertion}' in inspect.get_annotations(c) for c in {cls}.__mro__); "
             f"raise SystemExit(0 if ok else 'no attribute {assertion} on {cls}')"
         )
         result = subprocess.run([sys.executable, "-c", stmt], capture_output=True, timeout=30, text=True)

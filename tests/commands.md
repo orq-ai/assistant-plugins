@@ -27,11 +27,6 @@ Tests the orq-skills slash commands. These verify our command `.md` files produc
 - Run with `--group-by model` → verify drill-down by model
 - Run with `--last 7d` → verify broader time range
 
-## `/orq:quickstart`
-
-- Verify it detects MCP is available and skips MCP setup step
-- Verify it shows workspace snapshot on successful connection
-
 ## `/orq:orq-manage-skills`
 
 - Run with no args → verify it asks which action (list/get/create/update/delete) via `AskUserQuestion`
@@ -47,5 +42,4 @@ Tests the orq-skills slash commands. These verify our command `.md` files produc
 - `commands/models.md`
 - `commands/traces.md`
 - `commands/analytics.md`
-- `commands/quickstart.md`
 - `commands/orq-manage-skills.md`
