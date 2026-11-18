@@ -244,7 +244,7 @@ One datapoint per task seed. Use the orq MCP tools (`create_dataset` then
 - `inputs`: the task input. For `qa`, the question text. For `document_input`,
   the question plus the attached file content (or a reference the job can load).
   For `agentic`, the instruction plus any input files. The step 4 template
-  assumes this example dataset has a single input column named `text` and so read
+  assumes this example dataset keeps the prompt in an input column named `text` and so read
   `dp.inputs['text']`; if you name the column differently, change that key to match.
 - `expected_output`: the established answer from the seed. For `agentic`
   file-producing tasks, put the acceptance criteria or a pointer to the accepted
@@ -254,7 +254,10 @@ One datapoint per task seed. Use the orq MCP tools (`create_dataset` then
   `inputs`, `expected_output` and `messages`; a `metadata` field is accepted with
   a 200 and then dropped, so a category kept there is gone when you read the
   results. The job only reads `dp.inputs['text']`, so the extra columns do not
-  reach the candidate.
+  reach the candidate. The rubric judge does read them: `llm_jury` renders the
+  whole `inputs` object as JSON for the judge, so it sees `evidence` and
+  `category` next to the prompt. Leave out of `inputs` anything the judge must
+  not see.
 
 ### 3. Create or reuse the evaluators
 
@@ -346,9 +349,9 @@ def make_job(model: str):
         # call_model: define this yourself. Invoke the candidate on the datapoint
         # input via your orq client / invoke_model and return its text output; keep
         # every candidate identical except the model id. This example dataset uses a
-        # single 'text' input column (see step 2), so dp.inputs['text'] is the prompt.
-        # For an `agentic` task, return the produced file's text: the judge only reads
-        # what this returns.
+        # 'text' input column for the prompt (see step 2), so dp.inputs['text'] is the prompt.
+        # For an `agentic` task, return the produced file's text: that text is the
+        # answer the judge grades.
         return await call_model(model, dp.inputs['text'])
     return run
 
