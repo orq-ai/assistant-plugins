@@ -241,7 +241,7 @@ evaluators=[
     string_contains_evaluator(case_insensitive=True, name="contains-check"),
     exact_match_evaluator(name="exact-match"),
     {"name": "custom", "scorer": my_scorer},
-    llm_jury(name="quality", criteria="The answer is correct.", preset="Balanced Trio"),
+    llm_jury(name="quality", criteria="The answer is correct.", preset="balanced-trio"),
 ]
 ```
 

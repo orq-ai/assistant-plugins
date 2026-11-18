@@ -65,10 +65,10 @@ await evaluatorq("qa-eval", data=[...], jobs=[...], evaluators=[correctness])
 **Presets** seat a cross-family panel, its aggregation rule and a majority quorum in one argument:
 
 ```python
-llm_jury(name="correctness", criteria="...", preset="Balanced Trio")
+llm_jury(name="correctness", criteria="...", preset="balanced-trio")
 ```
 
-`"Balanced Trio"` (default choice, cheapest sensible panel), `"Strong Jury"` (≈5× the cost; for verdicts that outlive the run — customer-facing benchmarks, preference data you will train on), `"Open-Weight / Portable"`, `"EU Region"`, `"Single-Provider Trio"` (for one-vendor workspaces; three tiers of one provider correlate and cannot vote away self-preference). Inspect them with `from evaluatorq import PRESETS, get_preset`; `get_preset(n).seated_efforts()` reports the reasoning effort each seat was costed at. Presets are pointwise panels, so `assignment="cyclic"` with one is rejected.
+`"balanced-trio"` (default choice, cheapest sensible panel), `"strong-jury"` (≈5× the cost; for verdicts that outlive the run — customer-facing benchmarks, preference data you will train on), `"open-weight-portable"`, `"eu-region"`, `"single-provider-trio"` (for one-vendor workspaces; three tiers of one provider correlate and cannot vote away self-preference). Inspect them with `from evaluatorq import PRESETS, get_preset`; `get_preset(n).seated_efforts()` reports the reasoning effort each seat was costed at. Presets are pointwise panels, so `assignment="cyclic"` with one is rejected.
 
 **Cyclic assignment** gives each datapoint one judge, rotating through the panel: judge bias still cancels across the dataset, at single-judge cost. Use it for run-level numbers (a benchmark mean, a pass rate). Do **not** use it when an individual verdict must stand on its own — each per-item verdict is one judge's opinion, and `stats` / `raw_agreement` come back `None`.
 

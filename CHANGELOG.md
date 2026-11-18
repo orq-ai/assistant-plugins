@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `orq-build-benchmark` skill: turn a team's own work into a custom orq benchmark. Interviews the user, stages real task instances, then builds an orq dataset and evaluators and runs candidate models with evaluatorq, graded against known answers and reported to orq Experiments. Ships `scripts/check_bundle.py` to validate a staged bundle before upload.
 
+### Fixed
+
+- `evaluatorq` and `orq-compare-agents` skills: jury presets are named by their current ids (`balanced-trio`, `strong-jury`, `open-weight-portable`, `eu-region`, `single-provider-trio`). evaluatorq renamed them; the old display names still resolve, with a deprecation warning.
+
 ## [5.0.0] - 2026-11-10
 
 ### Changed
