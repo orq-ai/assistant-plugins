@@ -1,0 +1,4 @@
+# Opts this skill into skills-ci. Unpinned on purpose, like the other skills: the
+# rubric test should fail when evaluatorq's rules move out from under the template.
+pytest>=8.0
+evaluatorq>=1.39.0

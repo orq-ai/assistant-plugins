@@ -199,11 +199,11 @@ def test_documented_presets_are_all_seated():
 
     names = set(PRESETS)
     for preset in (
-        "Balanced Trio",
-        "Strong Jury",
-        "Open-Weight / Portable",
-        "EU Region",
-        "Single-Provider Trio",
+        "balanced-trio",
+        "strong-jury",
+        "open-weight-portable",
+        "eu-region",
+        "single-provider-trio",
     ):
         assert preset in names, f"preset {preset!r} is documented but no longer shipped"
 

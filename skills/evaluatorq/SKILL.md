@@ -27,7 +27,7 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 - **NEVER** invent evaluator IDs — fetch them from the user or **browse** via `search_entities` MCP tool (`type: "evaluator"`).
 - **ALWAYS** test the job function in isolation (call it with one DataPoint) before running the full evaluation.
 - **ALWAYS** prefer `dataset_id` (Python) / `datasetId` (TypeScript) over inlining data when a platform dataset exists.
-- **NEVER** build a judge panel out of `orq/*` router ids, and default to a cross-family panel — correlated judges cannot vote away a shared bias. The `"Single-Provider Trio"` preset is the one deliberate exception, for one-vendor workspaces, and buys less independence than any cross-family preset.
+- **NEVER** build a judge panel out of `orq/*` router ids, and default to a cross-family panel — correlated judges cannot vote away a shared bias. The `"single-provider-trio"` preset is the one deliberate exception, for one-vendor workspaces, and buys less independence than any cross-family preset.
 - **ALWAYS** read the accepted `reasoning_effort` values for that model out of the catalogue (`GET /v2/models`) rather than assuming a scale — the ladder differs per model and changes per release, and an unsupported value is dropped silently, not raised — see [resources/tuning.md](resources/tuning.md).
 - **CLI only:** Check `ORQ_API_KEY` is set before running `eq redteam` or `eq sim`.
 
@@ -271,7 +271,7 @@ from evaluatorq import llm_jury
 correctness = llm_jury(
     name="correctness",
     criteria="The answer is factually correct and directly answers the question.",
-    preset="Balanced Trio",          # or judges=[...] — 3 models from 3 provider families
+    preset="balanced-trio",          # or judges=[...] — 3 models from 3 provider families
     # verdict_kind="numeric", threshold=0.7      # numeric mode
     # labels=[...], passing_labels=[...]         # labeled mode
     reasoning_effort=...,            # the JUDGE's budget — accepted values are per model, see resources/tuning.md
