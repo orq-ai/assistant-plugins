@@ -43,6 +43,7 @@ What this skill leans on each for:
 
 ## Constraints
 
+- **ALWAYS** show a trace or span to the user as a Studio link (`[<first 8 chars>](<url>)`), never a bare id. Format, workspace key and host: [`orq-trace-format`](../orq-trace-format/SKILL.md).
 - **NEVER** apply a prompt rewrite or a config change without showing a diff and getting explicit approval.
 - **NEVER** change what a prompt does — only improve how it is expressed.
 - **NEVER** remove or modify tool/function definitions. This extends to `settings.tools[]` on an agent.

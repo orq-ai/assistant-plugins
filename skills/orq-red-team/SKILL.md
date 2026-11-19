@@ -20,6 +20,7 @@ This skill is a **reference guide and invocation helper — not a wrapper**. You
 
 ## Constraints
 
+- **ALWAYS** show a trace or span to the user as a Studio link (`[<first 8 chars>](<url>)`), never a bare id. Format, workspace key and host: [`orq-trace-format`](../orq-trace-format/SKILL.md).
 - **NEVER** reimplement red teaming logic — use the `eq redteam` CLI.
 - **NEVER** run against a deployment the user does not own or is not explicitly authorized to test. Confirm authorization before the first run.
 - **NEVER** run without confirming the target key with the user first.

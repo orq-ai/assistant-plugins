@@ -43,6 +43,7 @@ What this skill leans on each for:
 
 ## Constraints
 
+- **ALWAYS** show a trace or span to the user as a Studio link (`[<first 8 chars>](<url>)`), never a bare id. Format, workspace key and host: [`orq-trace-format`](../orq-trace-format/SKILL.md).
 - **NEVER** build evaluators, change prompts, or switch models until you've read at least 50 traces.
   **One carve-out:** a *config* observation grounded in an explicit terminal state — `finish_reasons: length`, `max_iterations`, `max_time`, `status: error` — comes from a population sweep, not from reading behaviour, and does not need the 50. The platform is reporting its own cap. Prompt rewrites, model switches and evaluator builds keep the full 50.
 - **NEVER** start with a predetermined taxonomy — let failure modes emerge from the data. Phase 0 emits no verdicts, so nothing in it can become a predetermined code.
@@ -378,7 +379,7 @@ Runs **before** open coding. Two passes: a **sweep** over the whole window, then
     - **`unobservable` is a list, not a boolean.** A consumer must check it before claiming the run was clean.
     - **`passing` is the other half of the regression set.** `evidence` records what failed; `passing` records what was read and judged good. Without both, the closing experiment runs against whatever dataset happens to exist.
     - **The body leads with the work list.** One scannable table — mode, rate, lever, location — then the depth below it.
-    - **Link the evidence in the body, not the front matter.** Each mode's section links its `evidence` traces so a human can open them in one click; the front matter keeps bare ids for the skills that read it. **`evidence` and `passing` hold the complete API-returned `trace_id`**, never a short prefix or a record/span ID: a link needs it, and so does the dataset `orq-run-experiment` builds from these ids. Record full ids in the Phase 2 table so you have them here. Format, host and key: [`orq-cli` → Building app URLs](../orq-cli/resources/command-map.md#building-app-urls); add the one-line "opens empty → set the Traces project selector to **All projects**" note under the table.
+    - **Link the evidence in the body, not the front matter.** Each mode's section links its `evidence` traces so a human can open them in one click; the front matter keeps bare ids for the skills that read it. **`evidence` and `passing` hold the complete API-returned `trace_id`**, never a short prefix or a record/span ID: a link needs it, and so does the dataset `orq-run-experiment` builds from these ids. Record full ids in the Phase 2 table so you have them here. Format, host and key: [`orq-trace-format`](../orq-trace-format/SKILL.md); add the one-line "opens empty → set the Traces project selector to **All projects**" note under the table.
 
 21. **Hand off — the artifact is the router.** Name a destination per failure mode and let the user go wherever they want first. Do not forward on their behalf.
 

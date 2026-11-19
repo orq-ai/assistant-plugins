@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.0] - 2026-11-19
+
+### Added
+
+- `orq-trace-format` skill: show orq traces and spans to people as clickable Studio links (`[<first 8 chars>](<url>)`) instead of raw trace ids. It is now the single home of the trace and span URL format, the workspace key and host resolution, and the "opens empty → All projects" fix, moved out of `orq-cli/resources/command-map.md` (which keeps a pointer under "Building app URLs").
+
+### Changed
+
+- 14 trace-touching skills gain an **ALWAYS** constraint to link traces and spans rather than print bare ids, pointing at `orq-trace-format`. Their existing "Building app URLs" links now point there too.
+- `/orq:traces` lists traces in a Markdown table with each trace linked in Studio, instead of an ASCII table of full 32-character trace ids.
+
 ## [5.1.0] - 2026-11-17
 
 ### Added
