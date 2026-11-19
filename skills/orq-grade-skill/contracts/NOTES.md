@@ -39,9 +39,8 @@ so the text is the version identity.
     share `openresponses.prompt_cache_key`, which also covers Codex's side
     calls. Load: `custom_tool_call` `exec` whose JavaScript input runs
     `tools.exec_command({cmd: "cat|sed ... <name>/SKILL.md"})`, the file text in
-    its `custom_tool_call_output`. `responses_to_atif` keeps these items only in
-    step extras, so `collect.function_items` turns them into function calls
-    (`{"script": input}`) first.
+    its `custom_tool_call_output`. `responses_to_atif` maps them to a tool call
+    with `{"input": <script>}` and its result.
   - Orq agents (`orq responses create --model agent/<key> --metadata`): one
     trace per run. Load: `read_skill` `{"name": name}`, output the body as a
     JSON string.
