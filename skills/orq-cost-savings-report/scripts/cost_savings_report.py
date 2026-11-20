@@ -1725,7 +1725,8 @@ PROVIDER_NAME = {"openai": "OpenAI", "anthropic": "Anthropic", "google-ai": "Goo
 
 
 def _lever(info: dict) -> str:
-    """'router' when the headline scope routes this model over a pool, 'switch' when it moves it whole, else ''."""
+    """'router' when the headline scope routes this model over a pool, 'switch' (change model) when it moves it
+    whole, else ''."""
     if len(info.get("pool") or []) > 1:
         return "router"
     return "switch" if info.get("switch") else ""
@@ -1742,7 +1743,7 @@ def _action(model: str, info: dict, savings: float) -> tuple[str, str]:
     if len(pool) > 1:
         return "Route over " + " and ".join(_short(p) for p in pool), tag
     if switch:
-        return f"Switch to {_short(switch)}", tag
+        return f"Change to {_short(switch)}", tag
     return "Route", tag
 
 
@@ -1792,7 +1793,7 @@ def _actions_chart(report: dict, per_month: float) -> str:
         what, tag = _action(s["model"], i, saved)
         lever = _lever(i) if saved > 0 else ""
         seg = "ss" if lever == "switch" else "sr"
-        chip = (f"<span class=lever title='{lever}'><i class={'s' if lever == 'switch' else 'r'}></i></span>"
+        chip = (f"<span class=lever title='{'Change model' if lever == 'switch' else 'Smart Router'}'><i class={'s' if lever == 'switch' else 'r'}></i></span>"
                 if lever else "")
         a, b = saved / top * 100, max(0.0, spend - saved) / top * 100
         tip = f"{_short(s['model'])}: {_usd0(saved * per_month)} of {_usd0(spend * per_month)} a month saved"
@@ -1811,7 +1812,7 @@ def _actions_chart(report: dict, per_month: float) -> str:
                     f"<i class=ns style='width:{w:.2f}%'></i></div>"
                     f"<div class=val><b>n/a</b><span>{_usd0(nc_spend * per_month)}/mo</span></div></div>")
     legend = ("<ul class=legend><li><span class='sw sr'></span>Saved by routing over a pool</li>"
-              "<li><span class='sw ss'></span>Saved by switching the model</li>"
+              "<li><span class='sw ss'></span>Saved by changing the model</li>"
               "<li><span class='sw kept'></span>Still spent</li><li><span class='sw ns'></span>Not sampled</li></ul>")
     return legend + "<div class=chart>" + "".join(rows) + "</div>"
 
@@ -1837,17 +1838,17 @@ def _scenario_chart(rows: list[dict]) -> str:
             if ci:
                 marks += (f"<i class='ci {cls}' style='left:{pos(ci[0]):.2f}%;width:{pos(ci[1]) - pos(ci[0]):.2f}%;"
                           f"top:{top}px'></i>")
-            label = f"{'Router' if key == 'router' else 'Switch'} {_usd0(v)} a month, 90% CI {_ci(ci)}"
+            label = f"{'Smart Router' if key == 'router' else 'Change model'} {_usd0(v)} a month, 90% CI {_ci(ci)}"
             marks += (f"<i class='dot {cls}{' o' if approx else ''}' style='left:{pos(v):.2f}%;top:{top - 0.5}px' "
                       f"role=img aria-label='{html.escape(label)}'></i>")
         sub = "Token counts approximate" if approx else ("" if same_cov else f"{_pct(r['coverage'])} of spend covered")
         out.append(f"<div class=row><div class=who>{html.escape(r['scope'])}"
                    f"{f'<span>{sub}</span>' if sub else ''}</div><div class=plot>{marks}</div>"
-                   f"<div class=val><b>{_usd0(r['router'])}/mo</b><span>or switch {_usd0(r['switch'])}/mo</span>"
+                   f"<div class=val><b>{_usd0(r['router'])}/mo</b><span>or change model {_usd0(r['switch'])}/mo</span>"
                    f"</div></div>")
     out.append(axis_row.format(""))
     legend = ("<ul class=legend><li><span class='sw r' style='border-radius:50%'></span>Smart Router</li>"
-              "<li><span class='sw s' style='border-radius:50%'></span>Switch models</li>"
+              "<li><span class='sw s' style='border-radius:50%'></span>Change model</li>"
               "<li>Band: 90% CI</li><li>Hollow: other providers, token counts approximate</li>"
               "<li>Axis: saving per month</li></ul>")
     return legend + "<div class='chart dots'>" + "".join(out) + "</div>"
@@ -1859,7 +1860,7 @@ def _pool_tables(report: dict) -> str:
         cap = SCOPE_LABEL.get(sc["scope"], sc["scope"]) + (" (headline)" if sc["headline"] else "")
         out.append(_table(sc["models"], [("Model in use", "model", str),
                                          ("Router pool", "pool", lambda p: ", ".join(p or []) or "none"),
-                                         ("Switch to", "switch", _txt),
+                                         ("Change to", "switch", _txt),
                                          ("Enable first", "enable", lambda e: ", ".join(e or []) or "nothing"),
                                          ("Note", "reason", lambda x: x or "")], cap))
     return "".join(out)
@@ -1871,7 +1872,7 @@ def _details(title: str, hint: str, body: str) -> str:
 
 GLOSSARY = [
     ("Smart Router", "orq's router. For each call it picks the cheapest model in a pool that can handle the ask."),
-    ("Switch", "Replace a model with a cheaper, at least as strong model for all of its calls."),
+    ("Change model", "Replace a model with a cheaper, at least as strong model for all of its calls."),
     ("Pool", "The models the router may pick from: one at least as strong as today's, plus cheaper tiers."),
     ("Index", ("A benchmark score for overall model strength. Higher is stronger. Not a measure of fit for "
               "your workload.")),
@@ -1912,7 +1913,7 @@ def render(report: dict, narrative: dict[str, str], redact: bool, show_examples:
             f"{_usd0(sp.get('per_month'))}/mo spend. Picks a model for each call.</p>"
             f"<p class=m>{_usd0(enabled.get('router'))}/mo using only models already enabled.</p></div>"
             "<p class=or>or</p>"
-            "<div class=opt><p class=key><i class=s></i>Switch models</p>"
+            "<div class=opt><p class=key><i class=s></i>Change model</p>"
             f"<p class=big>{_usd0(head_row.get('switch'))}<small>/mo</small></p>"
             f"<p class=m>90% CI {_usd0(sw_ci[0])} to {_usd0(sw_ci[1])}. Replaces each beaten model for all of "
             "its calls.</p>"
@@ -1934,8 +1935,8 @@ def render(report: dict, narrative: dict[str, str], redact: bool, show_examples:
              _md(narrative["summary"]),
              "<h2 id=change>Saving per model</h2>",
              ("<p class=m>Each sampled model, largest saving first. The bar is the model's monthly spend; the "
-              "coloured part is what the router saves on it. Where a model has no pool, the router switches it "
-              "whole, so the router and switch figures share those rows.</p>"),
+              "coloured part is what the router saves on it. Where a model has no pool, the router sends all of its "
+              "calls to the replacement model, so the router and change-model figures share those rows.</p>"),
              _actions_chart(report, per_month),
              _details("Why each move", "the reasoning per model", _md(narrative["routing"])),
              "<h2 id=scopes>Every scope, and how sure</h2>",
@@ -1947,8 +1948,8 @@ def render(report: dict, narrative: dict[str, str], redact: bool, show_examples:
               f"{_usd0((h.get('without_top3') or 0) * per_month)}/mo, so no single call drives it.</p>"),
              _details("Scenario figures as a table", "monthly, with 90% CI",
                       _table(scen, [("Scope", "scope", str), ("Router", "router", _usd),
-                                    ("Router 90% CI", "router_ci", _ci), ("Switch", "switch", _usd),
-                                    ("Switch 90% CI", "switch_ci", _ci), ("Coverage", "coverage", _pct)],
+                                    ("Router 90% CI", "router_ci", _ci), ("Change model", "switch", _usd),
+                                    ("Change model 90% CI", "switch_ci", _ci), ("Coverage", "coverage", _pct)],
                              "Monthly savings per scope"))]
     caching_line = (f"<p><b>Caching:</b> {_usd(ca.get('savings_found'))} in the {ca.get('threads_scanned', 0)} "
                     "costliest threads scanned, not scaled to the window.</p>")

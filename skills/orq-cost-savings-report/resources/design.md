@@ -14,7 +14,7 @@ Spec for `scripts/cost_savings_report.py`. Statements marked **V** were checked 
 | Routing policy | The Smart Router's `jev-general-v1` decision, reproduced client-side and unchanged |
 | Profile | Balanced headline; cost and quality as scenario columns |
 | Pool | Frontier pool from evaluatorq's `model_frontier` (no pool member dominated by another), in four scopes: same or any provider, enabled or all available; headline is same provider, all available |
-| Switch | Second lever: move a model's traffic to the cheapest model that dominates it; never added to routing |
+| Change model | Second lever (JSON key `switch`): move a model's traffic to the cheapest model that dominates it; never added to routing. The page says "change model", not "switch", so it is not confused with routing |
 | Transport | The script shells out to the `orq` CLI with `-o json`, so it reuses the user's CLI login and workspace |
 
 ## Layout

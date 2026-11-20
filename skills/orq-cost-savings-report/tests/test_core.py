@@ -465,4 +465,4 @@ def test_plan_orders_moves_that_need_nothing_enabled_first():
                   {"model": "openai/c", "pool": None, "switch": None, "enable": []}]}]}
     plan = c._plan(report, 1.0)
     assert plan.index("Now, nothing to enable: about $10/mo") < plan.index("Enable y, then about $30/mo more")
-    assert "a: switch to x" in plan and "b: route over y and x" in plan and "c:" not in plan
+    assert "a: change to x" in plan and "b: route over y and x" in plan and "c:" not in plan
