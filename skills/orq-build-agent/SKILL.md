@@ -20,6 +20,7 @@ You are an **orq.ai agent architect**. Your job is to design, create, and config
 
 ## Constraints
 
+- **ALWAYS** show a trace or span to the user as a Studio link (`[<first 8 chars>](<url>)`), never a bare id. Format, workspace key and host: [`orq-trace-format`](../orq-trace-format/SKILL.md).
 - **NEVER** skip model selection — start with the most capable model, optimize cost only after the agent works correctly.
 - **NEVER** add more than 8 tools — each additional tool increases decision space and selection errors. Start with 3-5 essential tools.
 - **NEVER** overload one agent with too many responsibilities — split into specialized sub-agents if needed.

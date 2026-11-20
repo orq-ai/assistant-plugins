@@ -688,6 +688,28 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ---
 
+## `orq-trace-format`
+
+### Scenario 1: Traces in a reply
+
+- Ask: "Show me the failing traces from the last day"
+- Verify: every trace in the reply is a `[<first 8 chars>](<url>)` link of the form `<host>/<workspace-key>/traces/(trace:<trace_id>)`, with no bare 32-hex id beside it
+- Verify: host and workspace key come from `ORQ_WORKSPACE` / `orq auth whoami`, not a hardcoded `my.orq.ai/<guess>`
+- Verify: the reply carries the "opens empty → Traces project selector to **All projects**" line
+
+### Scenario 2: No workspace key
+
+- Simulate `ORQ_API_KEY` set and no `ORQ_WORKSPACE` (`whoami` returns `null` for the key)
+- Ask: "Link me the trace for this run"
+- Verify: never builds `<host>/null/...`; says the key is unknown and asks for it or shows the full id once
+
+### Scenario 3: Never the dead route
+
+- Ask: "Give me a link to trace b422a93c8b34ddfa70eaf5c7e3705c19"
+- Verify: does NOT emit `traces?query=trace_id:is:...` or the `/v2/traces/<id>/v3spans` API URL
+
+---
+
 ## Critical Files
 
 - `skills/orq-shared/SKILL.md`
@@ -758,6 +780,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-manage-skills/resources/known-caveats.md`
 - `skills/orq-create-skill/SKILL.md`
 - `skills/orq-quickstart/SKILL.md`
+- `skills/orq-trace-format/SKILL.md`
+- `commands/traces.md`
 - `skills/orq-create-skill/resources/template.md`
 - `skills/orq-create-skill/resources/writing-guide.md`
 - `commands/orq-manage-skills.md`

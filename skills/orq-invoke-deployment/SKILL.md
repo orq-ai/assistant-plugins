@@ -17,6 +17,7 @@ You are an **orq.ai integration engineer**. Your job is to help users invoke orq
 
 ## Constraints
 
+- **ALWAYS** show a trace or span to the user as a Studio link (`[<first 8 chars>](<url>)`), never a bare id. Format, workspace key and host: [`orq-trace-format`](../orq-trace-format/SKILL.md).
 - **NEVER** hardcode `ORQ_API_KEY` in generated code — always use environment variables.
 - **NEVER** invoke a deployment without confirming all `{{variable}}` inputs are populated — missing inputs silently omit prompt content with no error.
 - **NEVER** skip `identity.id` in production calls — it links requests to contacts in orq.ai and enables per-user analytics and cost attribution.
@@ -192,7 +193,7 @@ Follow these steps **in order**. Do NOT skip steps.
    - Agent: read Responses message `output[].content[]` text (OpenAI SDK: `response.output_text`); check `status` and save `response.id` for `previous_response_id` continuation
    - If wrong output: check for missing inputs, wrong key, or prompt issues
 
-11. **Find the trace** — use telemetry if the response exposes it; otherwise find the invocation with `orq traces search`. Do not assume a general Responses/OpenAI SDK object has the deployment SDK's `telemetry` property. Hand the user a link built from the trace ID: `<host>/<workspace-key>/traces/(trace:<trace_id>)`, or add `//span:<telemetry.span_id>` inside the parentheses to open the call's own span. These telemetry ids have not been checked against the route; if the link opens nothing, look the trace up with `orq traces search` and use its `trace_id`. Host, workspace key and pitfalls: [`orq-cli` → Building app URLs](../orq-cli/resources/command-map.md#building-app-urls). If it opens on "No spans match your search", the user's Traces project selector is filtering it out: switch it to **All projects**.
+11. **Find the trace** — use telemetry if the response exposes it; otherwise find the invocation with `orq traces search`. Do not assume a general Responses/OpenAI SDK object has the deployment SDK's `telemetry` property. Hand the user a link built from the trace ID: `<host>/<workspace-key>/traces/(trace:<trace_id>)`, or add `//span:<telemetry.span_id>` inside the parentheses to open the call's own span. These telemetry ids have not been checked against the route; if the link opens nothing, look the trace up with `orq traces search` and use its `trace_id`. Host, workspace key and pitfalls: [`orq-trace-format`](../orq-trace-format/SKILL.md). If it opens on "No spans match your search", the user's Traces project selector is filtering it out: switch it to **All projects**.
 
 ### Phase 4: Generate Integration Code
 
