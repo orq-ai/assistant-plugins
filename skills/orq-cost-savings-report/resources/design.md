@@ -131,7 +131,7 @@ Any decision failure (`decision_timeout`, error, `prompt_limit`, `empty_input`) 
 
 Savings = price(span, current model) - price(span, picked model), both from the pricing function on the span's token breakdown (uncached input, cache read, cache write, output). Negative savings are kept. A picked model without a cache-read price takes cached tokens at its input price. Output tokens are assumed similar.
 
-Cache carry-over: a prompt cache belongs to one model. For each sampled span, fetch the previous span of its thread (thread search, then `list-spans`) and score its routing input too. If the previous turn's pick differs from this turn's pick, this turn's cache-read tokens are priced as a cache write on the picked model (uncached input if it has no cache-write price). If the previous span cannot be found, assume it ran on this turn's pick (no penalty): with frontier pools the pick is often a better model than the current one, and assuming the current model would charge a cold cache on nearly every such turn while the same move as a switch is charged none. This is optimistic; the report counts found and missing previous turns. A previous turn that fell back is assumed on the router's default: the current model when it is in the pool, else the top seat.
+No cold-cache penalty: the picked model is priced on the same uncached, cached and output tokens as the original span. A cold cache only matters when a router upgrades a thread mid-conversation to a more expensive model, which this report does not model, so no previous turn is fetched and no extra decisions are made.
 
 
 ### 7. Pricing function
@@ -236,9 +236,9 @@ Join `orq models list` to the catalog on `provider + "/" + model_id`; its `id` i
 
 ### Model garden
 
-Every model comes from evaluatorq's `model_frontier` (`evaluatorq>=1.98`, PyPI), applied to the `orq models list` cards the script already loads: `garden_from_cards`, `dominates`, `pareto_frontier`, `region_compatible`, `unseatable_reason`, `model_identity`, `MIN_INDEX_GAIN` (2.0) and `MIN_TIER_RATIO` (2.75). Index is the score at the catalogue default reasoning effort; price is the 3:1 input/output blend per 1M. Dominance: at least as intelligent and no more expensive, strictly better on one.
+Every model comes from evaluatorq's `model_frontier` (`evaluatorq>=1.98`, PyPI), applied to the `orq models list` cards the script already loads: `garden_from_cards`, `dominates`, `pareto_frontier`, `region_compatible`, `unseatable_reason`, `model_identity` and `MIN_TIER_RATIO` (2.75). Index is the score at the catalogue default reasoning effort; price is the 3:1 input/output blend per 1M. Dominance: at least as intelligent and no more expensive, strictly better on one.
 
-A model is a candidate when it is scored, priced in the catalog (input and output), not free and seatable; "disabled in the model catalogue" is allowed, because the all-available scopes recommend enabling it.
+A model is a candidate when it is scored, priced in the catalog (input and output), not free, seatable and not pre-release; "disabled in the model catalogue" is allowed, because the all-available scopes recommend enabling it. Pre-release means a name segment `preview`, `beta`, `alpha` or `experimental` (split on `-`, `_`, `.`): the catalog has no release-stage field, and these segments are the providers' own naming.
 
 ### Scopes
 
@@ -253,14 +253,14 @@ Every scope reuses the same sampled spans and decisions; only the local re-prici
 
 ### Switch rule
 
-The switch target is the cheapest candidate that dominates the customer's model. A different model must also gain `MIN_INDEX_GAIN` index points (sub-point gaps are benchmark noise); the same weights on another host need not. A switch moves every turn, so no carry-over cache penalty.
+The switch target is the cheapest candidate that dominates the customer's model. No minimum index gain: a model that is as smart and much cheaper is the recommendation.
 
 ### Pool rule
 
 1. Top seat: the switch target, else the customer's model. Hard asks are never sent below the model in use.
 2. Lower seats: candidates on the scope's Pareto frontier, weaker than the top seat, a different model, each at least `MIN_TIER_RATIO` cheaper than the seat above.
 3. Of the trios that pass, the one whose weakest seat has the highest index wins, ties on total index (RES-1285 criteria, as `derive_trio`).
-4. No trio: the best pair, flagged relaxed (hard resolves to medium, so medium and hard asks go to the top seat). No pair: no pool, listed.
+4. No trio: the best pair, flagged relaxed (hard resolves to medium, so medium and hard asks go to the top seat). No pair: no pool, listed; the router scenario then serves the top seat, so its figure equals the switch.
 5. Disabled members and the switch target are listed under "enable first".
 
 No pool contains a model another member dominates: lower seats are on the frontier and weaker than the top seat, and the script asserts it.
@@ -335,7 +335,7 @@ Unit tests on synthetic fixtures, no network:
 - Bands: pools of 2 to 5 models, index ties, empty bands, pick-in-band tie-breaks, invalid pools, and a 2-model pool whose index order reverses the table order.
 - Tier resolution: all regression ids above, plus disabled and unpriced models and the region tie-break.
 - Pricing: each `when` variable and operator, `||`, the modulo off-peak form, partial overrides, overlapping variants (the US-region batch long-context case picks the three-condition variant), a span that shows nothing stays on base, unknown variables, missing tier variant, missing TTL, `service_tier` `default`.
-- Savings: pick equals current model; negative savings; carry-over on a switch, on a switch back, with the previous turn missing, and with no cache-write price.
+- Savings: pick equals current model; negative savings; same tokens on the picked model; a model with no pool takes its switch figure in the router scenario.
 - Sampling and estimator: allocation with a minimum of 5, weights, weighted ratio on a hand-computed fixture, cell bootstrap, top-3-excluded figure, coverage.
 - Caching: read and write per turn, TTL expiry, already-cached and already-written tokens, mixed-model threads.
 - Span filter: root and `span.agent` dropped, leaf spans kept, cache hits and decision models dropped, already-routed spans kept with savings 0.

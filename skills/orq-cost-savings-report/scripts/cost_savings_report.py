@@ -68,6 +68,7 @@ LLM_SPAN_TYPES = {"span.chat_completion", "span.responses"}
 DECISION_MODEL_RE = re.compile(r"^(typesafe/|orq/decider-)")
 NON_CHAT_RE = re.compile(r"embed|rerank|tts|transcri|whisper|moderation|ocr|dall-e|image", re.I)
 
+PRERELEASE_RE = re.compile(r"(?:^|[-_.])(preview|beta|alpha|experimental)(?:$|[-_.])", re.IGNORECASE)  # name segment
 SCOPES = ("same_provider:all", "same_provider:enabled", "any_provider:all", "any_provider:enabled")
 HEADLINE_SCOPE = "same_provider:all"
 REGION_RE = re.compile(r"^(global|us|eu|apac|ap|jp|au|ca|uk|[a-z]{2}-[a-z]+-[0-9]+)\.")
@@ -195,14 +196,10 @@ def pick(pool: list[PoolModel], tier: str, profile: str) -> PoolModel:
 def switch_target(incumbent: mf.ScoredModel, cands: list[mf.ScoredModel]) -> mf.ScoredModel | None:
     """The cheapest candidate that dominates the incumbent, by evaluatorq's rule.
 
-    Dominance is at least as intelligent and no more expensive, strictly better on one (3:1 input/output blend). A
-    different model must also gain MIN_INDEX_GAIN index points; the same weights on another host need not."""
+    Dominance is at least as intelligent and no more expensive, strictly better on one (3:1 input/output blend)."""
     if incumbent.free:
         return None
-    own = mf.model_identity(incumbent.router_id)
-    better = [m for m in cands if m.router_id != incumbent.router_id and m.dominates(incumbent)
-              and (mf.model_identity(m.router_id) == own
-                   or m.default_index - incumbent.default_index >= mf.MIN_INDEX_GAIN)]
+    better = [m for m in cands if m.router_id != incumbent.router_id and m.dominates(incumbent)]
     return min(better, key=lambda m: (m.price, -m.default_index, m.router_id)) if better else None
 
 
@@ -498,13 +495,11 @@ def write_price(prices: dict, ttl: str | None) -> float | None:
     return prices[min(keys, key=lambda k: _ttl_seconds(k.removeprefix("cache_write_")))]
 
 
-def price_tokens(t: Tokens, prices: dict, cache_broken: bool = False) -> float:
+def price_tokens(t: Tokens, prices: dict) -> float:
     inp, out = prices.get("input", 0.0), prices.get("output", 0.0)
     read_p = prices.get("cache_read", inp)
     w = write_price(prices, t.ttl)
     w = inp if w is None else w
-    if cache_broken:
-        return t.uncached * inp + (t.cache_read + t.cache_write) * w + t.output * out
     return t.uncached * inp + t.cache_read * read_p + t.cache_write * w + t.output * out
 
 
@@ -817,7 +812,10 @@ class Analyzer:
         return (((c.get("metadata") or {}).get("autorouter") or {}).get("v2")) or {}
 
     def poolable(self, m: str) -> bool:
-        """Scored, priced, comparable and seatable (disabled is allowed: the all-available scopes recommend it)."""
+        """Scored, priced, comparable, seatable and not pre-release (disabled is allowed: the all-available scopes
+        recommend it)."""
+        if PRERELEASE_RE.search(split_model(m)[1]):
+            return False
         g, v, e = self.garden.get(m), self.v2(m), self.cat.get(m)
         p = (e or {}).get("pricing") or {}
         return bool(g and not g.free and mf.unseatable_reason(g) in (None, "disabled in the model catalogue")
@@ -951,30 +949,6 @@ class Analyzer:
                     "weight": float(len(leaves)), "span": full, "trace_spans": spans}
         return None
 
-    def previous_turn(self, d: dict) -> dict | None:
-        """The leaf LLM span that ran just before this one in its thread (same trace first)."""
-        summ = d["span"].get("summary") or {}
-        started = summ.get("started_at") or ""
-        earlier = sorted([s for s in self.leaf_llm(d["trace_spans"]) if (s.get("started_at") or "") < started],
-                         key=lambda s: s.get("started_at") or "")
-        if earlier:
-            p = earlier[-1]
-            return self.get_span(d["trace_id"], p["span_id"], d["project"])
-        thread = ((d["span"].get("attributes") or {}).get("orq") or {}).get("thread_id")
-        if not thread:
-            return None
-        traces = self.search(d["project"], parse_ts(self.frm), parse_ts(started),
-                             [{"field": "thread_id", "op": "eq", "values": [thread]}])
-        traces = [t for t in traces if (t.get("trace_id") or t.get("id")) != d["trace_id"]]
-        traces.sort(key=lambda t: t.get("started_at") or t.get("start_time") or "", reverse=True)
-        for t in traces[:3]:
-            tid = t.get("trace_id") or t.get("id")
-            leaves = sorted(self.leaf_llm(self.list_spans(tid, d["project"])), key=lambda s: s.get("started_at") or "")
-            leaves = [s for s in leaves if (s.get("started_at") or "") < started]
-            if leaves:
-                return self.get_span(tid, leaves[-1]["span_id"], d["project"])
-        return None
-
     # ---- decisions
 
     def decide(self, text: str) -> dict:
@@ -1039,17 +1013,10 @@ class Analyzer:
         for m in empty:
             self.report["checks"]["caveats"].append({"check": "stratum search empty", "detail": m})
 
-        # previous turns and routing inputs
-        with ThreadPoolExecutor(WORKERS) as ex:
-            prevs = list(ex.map(lambda d: self._safe(lambda: self.previous_turn(d)), drawn))
-        for d, p in zip(drawn, prevs, strict=True):
-            attrs = d["span"].get("attributes") or {}
-            d["input"], d["source"] = routing_input(attrs)
-            d["prev"] = None
-            if p:
-                pt, ps = routing_input(p.get("attributes") or {})
-                d["prev"] = {"input": pt, "source": ps}
-        texts = {t for d in drawn for t in [d["input"], (d["prev"] or {}).get("input")] if t}
+        # routing inputs
+        for d in drawn:
+            d["input"], d["source"] = routing_input(d["span"].get("attributes") or {})
+        texts = {d["input"] for d in drawn if d["input"]}
         tokens = sum(len(t) / 4 + DECISION_OVERHEAD_TOKENS for t in texts)
         cost = tokens * DECISION_PRICE_PER_M / 1e6
         self.report["routing_decision_cost"] = {"calls": len(texts), "estimated_usd": cost}
@@ -1102,16 +1069,16 @@ class Analyzer:
                    "weight": d["weight"], "cur_price": cur_price, "billed": billed, "source": d["source"],
                    "ask_chars": len(d["input"] or ""), "prompt_tokens": toks.prompt, "flags": [],
                    "picks": {}, "savings": {p: 0.0 for p in PROFILES}, "tier": {}, "fallback": None,
-                   "prev_found": d["prev"] is not None, "ask_preview": (d["input"] or "")[:200],
+                   "ask_preview": (d["input"] or "")[:200],
                    "scenario_savings": {}, "unpriced": [], "_tokens": toks, "_env": env}
             if cur.flag:
                 row["flags"].append(cur.flag)
 
             ctx = (row, summ, attrs, toks, cur_price)
-            for sc in SCOPES:  # a switch moves every turn, so the cache stays warm
+            for sc in SCOPES:
                 sw = pools[m][sc]["switch"]
                 key = f"switch|{sc}"
-                row["scenario_savings"][key] = self._reprice(ctx, sw, False, key) if sw else 0.0
+                row["scenario_savings"][key] = self._reprice(ctx, sw, key) if sw else 0.0
             if has_auto_router(attrs):
                 row["fallback"] = "already_routed"
             elif d["input"] is None:
@@ -1123,30 +1090,25 @@ class Analyzer:
                 else:
                     row["score"] = dec["score"]
                     row["tier"] = {p: tier_of(dec["score"], p) for p in PROFILES}
-            prev_dec = None
-            if row["fallback"] is None and d["prev"] and d["prev"]["input"]:
-                prev_dec = self.decide(d["prev"]["input"])
             for sc in SCOPES:
                 pool = pools[m][sc]["pool"]
                 for p in PROFILES:
                     key = f"router|{sc}|{p}"
-                    row["scenario_savings"][key] = 0.0
-                    if row["fallback"] is not None or not pool:
+                    if row["fallback"] == "already_routed":
+                        row["scenario_savings"][key] = 0.0
                         continue
-                    choice = pick(pool, row["tier"][p], p).id
+                    if not pool:  # no pool to route over: the router serves the top seat, which is the switch
+                        row["scenario_savings"][key] = row["scenario_savings"][f"switch|{sc}"]
+                        if sc == HEADLINE_SCOPE:
+                            row["picks"][p] = pools[m][sc]["switch"] or m
+                        continue
+                    # an unscored turn goes to the router's default model, the top seat
+                    choice = pool[0].id if row["fallback"] is not None else pick(pool, row["tier"][p], p).id
+                    row["scenario_savings"][key] = 0.0
                     if sc == HEADLINE_SCOPE:
                         row["picks"][p] = choice
-                    default = m if any(x.id == m for x in pool) else pool[0].id  # the router's default model
-                    if d["prev"] is None:
-                        prev_pick = choice  # previous turn not found: assumed on the same model, no penalty
-                    elif prev_dec is None or not prev_dec.get("ok"):
-                        prev_pick = default  # previous turn fell back to the router's default
-                    else:
-                        prev_pick = pick(pool, tier_of(prev_dec["score"], p), p).id
-                    if choice == m and prev_pick == m:
-                        continue
-                    broken = prev_pick != choice
-                    row["scenario_savings"][key] = self._reprice(ctx, choice, broken, key)
+                    if choice != m:
+                        row["scenario_savings"][key] = self._reprice(ctx, choice, key)
             row["savings"] = {p: row["scenario_savings"][f"router|{HEADLINE_SCOPE}|{p}"] for p in PROFILES}
             head = pools[m][HEADLINE_SCOPE]
             row["pool"] = [x.id for x in head["pool"]] if head["pool"] else None
@@ -1155,14 +1117,15 @@ class Analyzer:
             self.samples.append(row)
         self.pools = pools
 
-    def _reprice(self, ctx: tuple, target: str, broken: bool, key: str) -> float:
-        """Saving from serving this span on `target`; a missing tier price marks the scenario unpriced."""
+    def _reprice(self, ctx: tuple, target: str, key: str) -> float:
+        """Saving from serving this span on `target` with the same input, cached and output tokens; a missing tier
+        price marks the scenario unpriced."""
         row, summ, attrs, toks, cur_price = ctx
         pp = choose_price((self.cat.get(target) or {}).get("pricing") or {}, span_env(summ, attrs, target))
         if pp.flag:
             row["flags"].append(f"{target}: {pp.flag}")
             row["unpriced"].append(key)
-        return cur_price - price_tokens(toks, pp.prices, cache_broken=broken)
+        return cur_price - price_tokens(toks, pp.prices)
 
     def pilot_checks(self, drawn: list[dict]) -> None:
         rows = self.samples
@@ -1272,9 +1235,6 @@ class Analyzer:
                              "ci90": scen[f"router|{HEADLINE_SCOPE}|{p}"]["ci90"]} for p in PROFILES},
             "strata": strata, "not_covered": sorted(not_covered, key=lambda r: -r["spend"]),
             "buckets": self.buckets(), "fallbacks": self._count("fallback"),
-            "carry_over": {"missing_assumed": "same model as this turn, no cache penalty",
-                           "previous_found": sum(r["prev_found"] for r in self.samples),
-                           "previous_missing": sum(not r["prev_found"] for r in self.samples)},
             "moves": self.moves(),
             "underpowered": self.underpowered(), "pareto": self.pareto([s["model"] for s in strata]),
         }

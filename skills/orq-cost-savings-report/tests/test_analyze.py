@@ -120,15 +120,13 @@ def test_analyze_end_to_end(tmp_path):
     # headline scope (same provider, all available): the pool tops out at disabled gpt-6.1-sol, which beats sol
     assert easy["picks"]["balanced"] == LUNA
     assert easy["savings"]["balanced"] == pytest.approx(s1 - (2000 * 0.1e-6 + 100 * 0.5e-6))
-    # the hard turn moves to 6.1-sol, but the previous turn (same trace) went to luna: 6.1-sol's cache is cold
+    # the hard turn moves to 6.1-sol with the same uncached, cached and output tokens: no cold-cache penalty
+    warm = s2 - (500 * 2e-6 + 1500 * 0.2e-6 + 100 * 10e-6)
     assert hard["picks"]["balanced"] == SOL61
-    assert hard["savings"]["balanced"] == pytest.approx(s2 - (500 * 2e-6 + 1500 * 2.5e-6 + 100 * 10e-6))
-    # enabled only: hard stays on sol with a cold cache
-    assert hard["scenario_savings"]["router|same_provider:enabled|balanced"] == pytest.approx(
-        s2 - (500 * 3e-6 + 1500 * 3.75e-6 + 100 * 15e-6))
-    # a switch moves every turn, so the cache stays warm
-    assert hard["scenario_savings"]["switch|same_provider:all"] == pytest.approx(
-        s2 - (500 * 2e-6 + 1500 * 0.2e-6 + 100 * 10e-6))
+    assert hard["savings"]["balanced"] == pytest.approx(warm)
+    # enabled only: hard stays on sol, nothing saved
+    assert hard["scenario_savings"]["router|same_provider:enabled|balanced"] == 0.0
+    assert hard["scenario_savings"]["switch|same_provider:all"] == pytest.approx(warm)
     assert hard["scenario_savings"]["switch|same_provider:enabled"] == 0.0
     assert all(r["weight"] == 2.0 for r in rep["samples"])
 
@@ -160,14 +158,14 @@ def test_analyze_end_to_end(tmp_path):
     assert (tmp_path / "narrative-slots.md").read_text().count("## ") == 4
 
 
-def test_missing_previous_turn_carries_no_cache_penalty(tmp_path, monkeypatch):
-    monkeypatch.setattr(sys.modules[__name__], "LEAVES", {"s2": LEAVES["s2"]})
+def test_router_without_pool_serves_the_switch_target(tmp_path, monkeypatch):
+    monkeypatch.setattr(c, "frontier_pool", lambda top, cands: ([top], True))
     _, rep = run(tmp_path)
-    hard = rep["samples"][0]
-    assert not hard["prev_found"] and hard["picks"]["balanced"] == SOL61
-    warm = sol_cost(LEAVES["s2"]["usage"]) - (500 * 2e-6 + 1500 * 0.2e-6 + 100 * 10e-6)
-    assert hard["savings"]["balanced"] == pytest.approx(warm)
-    assert hard["scenario_savings"]["switch|same_provider:all"] == pytest.approx(warm)
+    for r in rep["samples"]:
+        assert r["pool"] is None
+        for sc in c.SCOPES:
+            assert r["scenario_savings"][f"router|{sc}|balanced"] == r["scenario_savings"][f"switch|{sc}"]
+    assert rep["samples"][0]["scenario_savings"]["switch|same_provider:all"] > 0
 
 
 def test_render_merges_narrative(tmp_path):
@@ -240,3 +238,11 @@ def test_render_refuses_stopped_report(tmp_path, monkeypatch):
 def test_sample_cap():
     with pytest.raises(SystemExit):
         c.main(["analyze", "--out", "/tmp/x", "--sample", "101"])
+
+
+def test_unscored_turn_goes_to_the_top_seat(tmp_path, monkeypatch):
+    monkeypatch.setattr(c.Analyzer, "decide", lambda self, text: {"ok": False, "error": "decision_timeout"})
+    _, rep = run(tmp_path)
+    for r in rep["samples"]:
+        assert r["fallback"] == "decision_timeout" and r["picks"]["balanced"] == SOL61
+        assert r["savings"]["balanced"] == pytest.approx(r["scenario_savings"]["switch|same_provider:all"])

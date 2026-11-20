@@ -120,7 +120,7 @@
     },
     "routing": {
       "type": "object",
-      "required": ["headline", "profiles", "strata", "not_covered", "buckets", "fallbacks", "carry_over", "underpowered", "pareto"],
+      "required": ["headline", "profiles", "strata", "not_covered", "buckets", "fallbacks", "underpowered", "pareto"],
       "properties": {
         "headline": {
           "type": "object",

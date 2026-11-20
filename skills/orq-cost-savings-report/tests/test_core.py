@@ -151,11 +151,18 @@ def test_switch_target_is_cheapest_dominating_model():
     assert c.switch_target(SOL, [SOL, TERRA, LUNA]) is None
 
 
-def test_switch_target_needs_index_gain_unless_same_weights():
-    near = sm("acme/acme-sol", 41, 1, 5)  # dominates sol by one index point: benchmark noise
-    assert c.switch_target(SOL, [near]) is None
-    rehost = sm("azure/gpt-6-sol", 40, 2, 10)  # same weights, cheaper host: no gain needed
-    assert c.switch_target(SOL, [near, rehost]).router_id == "azure/gpt-6-sol"
+def test_switch_target_needs_no_index_gain():
+    near = sm("acme/acme-sol", 40.5, 0.1, 0.5)  # half a point smarter, 20x cheaper: still the switch
+    rehost = sm("azure/gpt-6-sol", 40, 2, 10)  # same weights, cheaper host
+    assert c.switch_target(SOL, [near, rehost]).router_id == "acme/acme-sol"
+    assert c.switch_target(SOL, [sm("acme/acme-dim", 39.5, 0.1, 0.5)]) is None  # cheaper but weaker
+
+
+def test_prerelease_names():
+    for name in ["gemini-3.1-pro-preview", "grok-4.20-beta-latest-reasoning", "hy4-preview", "x-alpha", "m-experimental"]:
+        assert c.PRERELEASE_RE.search(name), name
+    for name in ["muse-spark-1.3-contributor", "gpt-6-sol", "alphabet-1", "betamax", "previewer-2"]:
+        assert not c.PRERELEASE_RE.search(name), name
 
 
 def test_frontier_pool_three_tiers_far_enough_apart():
@@ -295,12 +302,10 @@ def test_write_price_uses_span_ttl_else_shortest():
     assert c.write_price({}, None) is None
 
 
-def test_cache_broken_prices_reads_as_writes_or_input():
+def test_price_tokens_reads_at_cache_price_else_input():
     t = c.Tokens(uncached=100, cache_read=1000, cache_write=0, output=10, ttl=None, prompt=1100)
     prices = {"input": 1.0, "output": 2.0, "cache_read": 0.1, "cache_write_5m": 1.25}
     assert c.price_tokens(t, prices) == pytest.approx(100 + 100 + 20)
-    assert c.price_tokens(t, prices, cache_broken=True) == pytest.approx(100 + 1250 + 20)
-    assert c.price_tokens(t, {"input": 1.0, "output": 2.0}, cache_broken=True) == pytest.approx(100 + 1000 + 20)
     assert c.price_tokens(t, {"input": 1.0, "output": 2.0}) == pytest.approx(100 + 1000 + 20)  # no read price
 
 
