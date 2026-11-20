@@ -13,7 +13,8 @@ Spec for `scripts/cost_savings_report.py`. Statements marked **V** were checked 
 | Excluded from the sample | `span.cache_retrieval` (response cache hits), embedding models, decision models (`typesafe/*`, `orq/decider-*`) |
 | Routing policy | The Smart Router's `jev-general-v1` decision, reproduced client-side and unchanged |
 | Profile | Balanced headline; cost and quality as scenario columns |
-| Pool | Same provider and host the customer uses; hardcoded tier table; only models enabled in the workspace |
+| Pool | Frontier pool from evaluatorq's `model_frontier` (no pool member dominated by another), in four scopes: same or any provider, enabled or all available; headline is same provider, all available |
+| Switch | Second lever: move a model's traffic to the cheapest model that dominates it; never added to routing |
 | Transport | The script shells out to the `orq` CLI with `-o json`, so it reuses the user's CLI login and workspace |
 
 ## Layout
@@ -120,7 +121,7 @@ The question text and thresholds are one frozen policy (`jev-general-v1`); chang
 
 Pool validity: every member has `autorouter.v2` metadata with a nonzero `intelligence_index`, and a pool has at least 2 members; otherwise "no routing", listed.
 
-The tier table decides only which models are in the pool. Band position and "stronger" always come from the live index. Sort strongest first, ties by model id. `easy` gets the weakest `len/2` models; the rest split between `medium` and `hard`, hard getting the smaller half. With 3 models that is one per band; with 2, `hard` is empty and resolves to `medium`. An empty target band uses the nearest stronger band, else the strongest present. Inside a band, balanced and cost pick the lowest `autorouter.v2.price`, then the highest index, then model id; quality picks the highest index.
+The pool rule (below) decides only which models are in the pool. Band position and "stronger" always come from the live index. Sort strongest first, ties by model id. `easy` gets the weakest `len/2` models; the rest split between `medium` and `hard`, hard getting the smaller half. With 3 models that is one per band; with 2, `hard` is empty and resolves to `medium`. An empty target band uses the nearest stronger band, else the strongest present. Inside a band, balanced and cost pick the lowest `autorouter.v2.price`, then the highest index, then model id; quality picks the highest index.
 
 ### 5. Fallback
 
@@ -130,7 +131,7 @@ Any decision failure (`decision_timeout`, error, `prompt_limit`, `empty_input`) 
 
 Savings = price(span, current model) - price(span, picked model), both from the pricing function on the span's token breakdown (uncached input, cache read, cache write, output). Negative savings are kept. A picked model without a cache-read price takes cached tokens at its input price. Output tokens are assumed similar.
 
-Cache carry-over: a prompt cache belongs to one model. For each sampled span, fetch the previous span of its thread (thread search, then `list-spans`) and score its routing input too. If the previous turn's pick differs from this turn's pick, this turn's cache-read tokens are priced as a cache write on the picked model (uncached input if it has no cache-write price). If the previous span cannot be found, assume it differs whenever this turn's pick is not the current model. The report counts both cases. Savings are therefore exactly 0 only when the pick and the previous turn's pick both equal the current model.
+Cache carry-over: a prompt cache belongs to one model. For each sampled span, fetch the previous span of its thread (thread search, then `list-spans`) and score its routing input too. If the previous turn's pick differs from this turn's pick, this turn's cache-read tokens are priced as a cache write on the picked model (uncached input if it has no cache-write price). If the previous span cannot be found, assume it ran on this turn's pick (no penalty): with frontier pools the pick is often a better model than the current one, and assuming the current model would charge a cold cache on nearly every such turn while the same move as a switch is charged none. This is optimistic; the report counts found and missing previous turns. A previous turn that fell back is assumed on the router's default: the current model when it is in the pool, else the top seat.
 
 
 ### 7. Pricing function
@@ -231,43 +232,48 @@ Caveat checks. Failures are listed; the run continues:
 | Index and band price | `orq models list` | `metadata.autorouter.v2.intelligence_index`, `metadata.autorouter.v2.price` (3:1 input/output blend per 1M) |
 | Recency | both | `created` |
 
-Join `orq models list` to the catalog on `provider + "/" + model_id`; its `id` is a UUID. The catalog's own `artificial_analysis_intelligence_index` disagrees with the router's index and is not used. A project-scoped API key hides disabled models, which only empties the "enable to compare" list.
+Join `orq models list` to the catalog on `provider + "/" + model_id`; its `id` is a UUID. The catalog's own `artificial_analysis_intelligence_index` disagrees with the router's index and is not used. A project-scoped API key hides disabled models, so the all-available scopes equal the enabled ones; the report adds a `garden is project-scoped` caveat.
 
-### Tier table (hardcoded v1)
+### Model garden
 
-Each cell is a regex on the normalized model name.
+Every model comes from evaluatorq's `model_frontier` (`evaluatorq>=1.98`, PyPI), applied to the `orq models list` cards the script already loads: `garden_from_cards`, `dominates`, `pareto_frontier`, `region_compatible`, `unseatable_reason`, `model_identity`, `MIN_INDEX_GAIN` (2.0) and `MIN_TIER_RATIO` (2.75). Index is the score at the catalogue default reasoning effort; price is the 3:1 input/output blend per 1M. Dominance: at least as intelligent and no more expensive, strictly better on one.
 
-| Provider | Frontier | Tier 1 | Tier 2 | Tier 3 |
-|---|---|---|---|---|
-| OpenAI | `^gpt-[0-9.]+-astra$` | `^gpt-[0-9.]+-sol$` | `^gpt-[0-9.]+-terra$` | `^gpt-[0-9.]+-luna$` |
-| Anthropic | `^claude-fable(-[0-9]+)*$` | `^claude-opus(-[0-9]+)*$` | `^claude-sonnet(-[0-9]+)*$` | `^claude-haiku(-[0-9]+)*$` |
-| Google | `^gemini-4-neon(-preview.*)?$` | `^gemini-4-carbon(-preview.*)?$` | `^gemini-4-hydrogen(-preview.*)?$` | `^gemini-3\.8-flash(-preview.*)?$` |
-| zai | | `^glm-[0-9.]+$` | `^glm-[0-9.]+-flash$` | |
-| DeepSeek | | `^deepseek-v[0-9.]+-pro(-[0-9]+)?$` | `^deepseek(-v[0-9.]+)?-flash(-[0-9]+)?$` | |
+A model is a candidate when it is scored, priced in the catalog (input and output), not free and seatable; "disabled in the model catalogue" is allowed, because the all-available scopes recommend enabling it.
 
-Normalizing a model id:
-1. Drop the provider (`baseten/`, `aws/`, `google/`).
-2. Drop a region prefix (`eu.`, `us.`, `global.`, `us-east-1.` and similar), then a vendor prefix (`anthropic.`, `openai.`).
-3. Drop version suffixes: `@<date>`, `-v<n>:<n>`, `-global`, and dated snapshots `-YYYY-MM-DD`.
+### Scopes
 
-Regression cases: `anthropic/claude-opus-5-5` → opus; `openai/gpt-6.2-sol` → sol; `baseten/deepseek-v4.1-flash-1017` → DeepSeek flash; `google/claude-opus-4-5@20251101` → opus; `aws/eu.anthropic.claude-haiku-5-5` → haiku; `openai/gpt-6-luna-2026-08-01` → luna.
+| Scope | Candidates |
+|---|---|
+| Same provider, all available (headline) | Same host and region as the customer's model, enabled or disabled |
+| Same provider, enabled | Same, enabled only |
+| Any provider, all available | Any host, same region (`region_of` and evaluatorq's EU pinning) |
+| Any provider, enabled | Same, enabled only |
 
-Resolution per cell, on the customer's host: keep models that are enabled, priced and valid for a pool; prefer the customer's own region, then no region prefix; then the newest by `created`, then the lowest price. The customer's own model fills its own cell, so the pool is the router the customer would set up around the model they use. No match leaves the cell empty. Newer disabled models in the lineage are listed as "enable to compare", never recommended.
+Every scope reuses the same sampled spans and decisions; only the local re-pricing differs. Any-provider figures reuse the sampled token counts; other families tokenize differently, and the report says so.
+
+### Switch rule
+
+The switch target is the cheapest candidate that dominates the customer's model. A different model must also gain `MIN_INDEX_GAIN` index points (sub-point gaps are benchmark noise); the same weights on another host need not. A switch moves every turn, so no carry-over cache penalty.
 
 ### Pool rule
 
-- Customer on frontier: pool is frontier, tier 1, tier 2.
-- Customer on tier 1: pool is tier 1, 2, 3.
-- Two-tier provider on the stronger table tier: pool is both tiers.
-- Customer on tier 2 or below: no downgrade analysis. The under-powered section reports the share of asks rated `hard` under balanced and the extra cost of sending them to the next model above the current one by live index in the same lineage; with none, the share only.
-- Providers not in the table: a "not covered" row with their spend.
-- Host: map the customer's model to its canonical id with `offering_of`, then take tier models on the same host; first-party when the customer uses first-party.
+1. Top seat: the switch target, else the customer's model. Hard asks are never sent below the model in use.
+2. Lower seats: candidates on the scope's Pareto frontier, weaker than the top seat, a different model, each at least `MIN_TIER_RATIO` cheaper than the seat above.
+3. Of the trios that pass, the one whose weakest seat has the highest index wins, ties on total index (RES-1285 criteria, as `derive_trio`).
+4. No trio: the best pair, flagged relaxed (hard resolves to medium, so medium and hard asks go to the top seat). No pair: no pool, listed.
+5. Disabled members and the switch target are listed under "enable first".
 
-Table tier and index order can disagree. Example (V): deepseek-flash has a higher index and a lower price than deepseek-v4-pro. A v4-pro customer's 2-model pool then puts v4-pro in `easy` and flash in `medium` (hard resolves to medium), so easy asks stay on v4-pro and the rest move to flash. A flash customer gets the under-powered section with no stronger model, so the share only. The Pareto line flags v4-pro as dominated.
+No pool contains a model another member dominates: lower seats are on the frontier and weaker than the top seat, and the script asserts it.
+
+Example (synthetic): traffic on gpt-6-sol where a disabled gpt-6.1-terra scores higher at a lower blended price. The all-available pool tops out at gpt-6.1-terra; an older gpt-5.6-terra that gpt-6-luna dominates is never seated in any scope.
+
+### Under-powered asks
+
+For every sampled model where at least half the scored asks are `hard` under balanced: that share, and the extra cost of sending the hard asks to the next model above it by index (same host and region, enabled or not, flagged).
 
 ### Pareto check
 
-One line per model: does any enabled model in the same workspace have an index at least as high and a band price at most as high, one strictly better. Computed in the script from `orq models list`, so it always uses the analysed workspace's enabled models. States the fact only.
+Per used model: the models that dominate it, same region, any provider, enabled first, with index and blended price. States the fact only.
 
 ## Prompt caching gaps
 

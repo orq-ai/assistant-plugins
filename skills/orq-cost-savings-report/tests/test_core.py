@@ -132,31 +132,57 @@ def test_two_model_pool_index_order_reverses_table_order():
     assert c.pick(pool, "hard", "balanced").id == "deepseek/deepseek-flash"
 
 
-def test_pool_valid():
-    assert not c.pool_valid([pm(1, 10, 1)])
-    assert not c.pool_valid([pm(1, 10, 1), pm(2, 0, 1)])
-    assert c.pool_valid([pm(1, 10, 1), pm(2, 20, 1)])
-
-
 # ---- model names
 
 
-@pytest.mark.parametrize(
-    "model_id,tier",
-    [
-        ("anthropic/claude-opus-5-5", ("anthropic", 1)),
-        ("openai/gpt-6.2-sol", ("openai", 1)),
-        ("deepseek/deepseek-v4.1-flash-1017", ("deepseek", 2)),
-        ("anthropic/claude-opus-4-5@20251101", ("anthropic", 1)),
-        ("anthropic/eu.anthropic.claude-haiku-5-5", ("anthropic", 3)),
-        ("openai/gpt-6-luna-2026-08-01", ("openai", 3)),
-        ("google/gemini-4-carbon-preview-06", ("google", 1)),
-        ("zai/glm-5.3", ("zai", 1)),
-        ("mistral/mistral-large", (None, None)),
-    ],
-)
-def test_table_tier_regression_ids(model_id, tier):
-    assert c.table_tier(model_id) == tier
+def sm(name, idx, inp, out, enabled=True, region=None):
+    """A ScoredModel; prices are USD per 1M tokens, the blend is (3 * input + output) / 4."""
+    return c.mf.ScoredModel(router_id=name, intelligence_index=idx, input_price=inp, output_price=out,
+                            enabled=enabled, region=region)
+
+
+SOL, SOL61 = sm("openai/gpt-6-sol", 40, 3, 15), sm("openai/gpt-6.1-sol", 50, 2, 10)  # blends 6 and 4
+TERRA, LUNA = sm("openai/gpt-6-terra", 30, 1, 5), sm("openai/gpt-6-luna", 20, 0.1, 0.5)  # blends 2 and 0.2
+
+
+def test_switch_target_is_cheapest_dominating_model():
+    pricier = sm("openai/gpt-6.2-sol", 55, 2.4, 12)  # dominates sol too, blend 4.8
+    assert c.switch_target(SOL, [SOL, TERRA, LUNA, pricier, SOL61]).router_id == SOL61.router_id
+    assert c.switch_target(SOL, [SOL, TERRA, LUNA]) is None
+
+
+def test_switch_target_needs_index_gain_unless_same_weights():
+    near = sm("acme/acme-sol", 41, 1, 5)  # dominates sol by one index point: benchmark noise
+    assert c.switch_target(SOL, [near]) is None
+    rehost = sm("azure/gpt-6-sol", 40, 2, 10)  # same weights, cheaper host: no gain needed
+    assert c.switch_target(SOL, [near, rehost]).router_id == "azure/gpt-6-sol"
+
+
+def test_frontier_pool_three_tiers_far_enough_apart():
+    members, relaxed = c.frontier_pool(SOL, [SOL, TERRA, LUNA])
+    assert [m.router_id for m in members] == [SOL.router_id, TERRA.router_id, LUNA.router_id] and not relaxed
+
+
+def test_frontier_pool_drops_tier_under_ratio_and_flags_pair():
+    # terra's blend (2) is only 2x under 6.1-sol's (4), under the 2.75x rule: the pool is a flagged pair
+    members, relaxed = c.frontier_pool(SOL61, [SOL61, SOL, TERRA, LUNA])
+    assert [m.router_id for m in members] == [SOL61.router_id, LUNA.router_id] and relaxed
+
+
+def test_frontier_pool_never_seats_dominated_model():
+    old_terra = sm("openai/gpt-5.6-terra", 18, 2, 12)  # luna beats it on index and price
+    members, _ = c.frontier_pool(SOL, [SOL, old_terra, LUNA])
+    assert old_terra.router_id not in [m.router_id for m in members]
+    assert not c.has_dominated(members)
+    # a dominated incumbent at the top is not seated over the cheaper model that beats it
+    members, _ = c.frontier_pool(old_terra, [old_terra, LUNA])
+    assert [m.router_id for m in members] == [old_terra.router_id]
+
+
+def test_frontier_pool_prefers_stronger_weakest_seat():
+    glm = sm("zai/glm-flash", 28, 0.05, 0.2)  # blend 0.0875, stronger and cheaper than luna
+    members, _ = c.frontier_pool(SOL, [SOL, TERRA, LUNA, glm])
+    assert members[-1].router_id == "zai/glm-flash"
 
 
 def test_region_of():

@@ -1,13 +1,14 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = []
+# dependencies = ["evaluatorq>=1.98"]
 # ///
 """Cost-savings report for one orq.ai workspace.
 
 `analyze` samples leaf LLM spans from the workspace's traces, scores each span's routing input with the Smart Router's
 `jev-general-v1` decision, re-prices the span at the model the router would have picked, and scales the per-model
-saving rate to the window's spend with a bootstrap CI. It also scans multi-turn threads for missed prompt caching and
-writes `report.json` plus `narrative-slots.md`. `render` merges the agent's `narrative.md` into `report.html`.
+saving rate to the window's spend with a bootstrap CI. Pools and model switches come from the intelligence/price
+frontier in evaluatorq's `model_frontier`, in four scopes: same or any provider, enabled or all available models.
+It also scans multi-turn threads for missed prompt caching and writes `report.json` plus `narrative-slots.md`. `render` merges the agent's `narrative.md` into `report.html`.
 
 Every number comes from this script; the agent writes prose only. All reads and the decision calls go through the
 `orq` CLI (`-o json`), so the user's CLI login and workspace are reused. Responses are cached under `<out>/cache`,
@@ -32,6 +33,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+from evaluatorq.common import model_frontier as mf
 
 SCHEMA_VERSION = "1"
 MAX_SAMPLE = 100
@@ -65,16 +68,8 @@ LLM_SPAN_TYPES = {"span.chat_completion", "span.responses"}
 DECISION_MODEL_RE = re.compile(r"^(typesafe/|orq/decider-)")
 NON_CHAT_RE = re.compile(r"embed|rerank|tts|transcri|whisper|moderation|ocr|dall-e|image", re.I)
 
-# Tier table: provider -> [frontier, tier 1, tier 2, tier 3]; regexes on the normalized model name.
-TIER_TABLE: dict[str, list[str | None]] = {
-    "openai": [r"^gpt-[0-9.]+-astra$", r"^gpt-[0-9.]+-sol$", r"^gpt-[0-9.]+-terra$", r"^gpt-[0-9.]+-luna$"],
-    "anthropic": [r"^claude-fable(-[0-9]+)*$", r"^claude-opus(-[0-9]+)*$", r"^claude-sonnet(-[0-9]+)*$",
-                  r"^claude-haiku(-[0-9]+)*$"],
-    "google": [r"^gemini-4-neon(-preview.*)?$", r"^gemini-4-carbon(-preview.*)?$",
-               r"^gemini-4-hydrogen(-preview.*)?$", r"^gemini-3\.8-flash(-preview.*)?$"],
-    "zai": [None, r"^glm-[0-9.]+$", r"^glm-[0-9.]+-flash$", None],
-    "deepseek": [None, r"^deepseek-v[0-9.]+-pro(-[0-9]+)?$", r"^deepseek(-v[0-9.]+)?-flash(-[0-9]+)?$", None],
-}
+SCOPES = ("same_provider:all", "same_provider:enabled", "any_provider:all", "any_provider:enabled")
+HEADLINE_SCOPE = "same_provider:all"
 REGION_RE = re.compile(r"^(global|us|eu|apac|ap|jp|au|ca|uk|[a-z]{2}-[a-z]+-[0-9]+)\.")
 VENDOR_RE = re.compile(r"^(anthropic|openai|google|meta|mistral|amazon|cohere|deepseek|zai|moonshotai)\.")
 SR_BLOCK = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
@@ -173,10 +168,6 @@ class PoolModel:
     band_price: float
 
 
-def pool_valid(pool: list[PoolModel]) -> bool:
-    return len(pool) >= 2 and all(p.index for p in pool)
-
-
 def bands(pool: list[PoolModel]) -> dict[str, list[PoolModel]]:
     ps = sorted(pool, key=lambda p: (-p.index, p.id))
     n_easy = len(ps) // 2
@@ -198,20 +189,50 @@ def pick(pool: list[PoolModel], tier: str, profile: str) -> PoolModel:
     return sorted(cand, key=lambda p: (p.band_price, -p.index, p.id))[0]
 
 
-# --------------------------------------------------------------------------------------------- model names, tiers
+# --------------------------------------------------------------------------------------------- frontier pools
 
 
-def normalize_name(model_id: str) -> str:
-    name = model_id.split("/", 1)[1] if "/" in model_id else model_id
-    if "/" in name:  # nested host path, e.g. nebius/moonshotai/Kimi-K3
-        name = name.rsplit("/", 1)[1]
-    name = REGION_RE.sub("", name)
-    name = VENDOR_RE.sub("", name)
-    name = re.sub(r"@.*$", "", name)
-    name = re.sub(r"-v[0-9]+:[0-9]+$", "", name)
-    name = re.sub(r"-global$", "", name)
-    name = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", name)
-    return name
+def switch_target(incumbent: mf.ScoredModel, cands: list[mf.ScoredModel]) -> mf.ScoredModel | None:
+    """The cheapest candidate that dominates the incumbent, by evaluatorq's rule.
+
+    Dominance is at least as intelligent and no more expensive, strictly better on one (3:1 input/output blend). A
+    different model must also gain MIN_INDEX_GAIN index points; the same weights on another host need not."""
+    if incumbent.free:
+        return None
+    own = mf.model_identity(incumbent.router_id)
+    better = [m for m in cands if m.router_id != incumbent.router_id and m.dominates(incumbent)
+              and (mf.model_identity(m.router_id) == own
+                   or m.default_index - incumbent.default_index >= mf.MIN_INDEX_GAIN)]
+    return min(better, key=lambda m: (m.price, -m.default_index, m.router_id)) if better else None
+
+
+def frontier_pool(top: mf.ScoredModel, cands: list[mf.ScoredModel]) -> tuple[list[mf.ScoredModel], bool]:
+    """(members strongest first, relaxed): `top` plus up to two cheaper frontier models, by the RES-1285 criteria.
+
+    The lower seats are on the candidates' frontier, weaker than `top`, distinct models, and each sits at least
+    MIN_TIER_RATIO cheaper than the seat above it; of the trios that pass, the one whose weakest seat is strongest
+    wins, ties on total index. With no trio the best pair is returned and flagged relaxed; with no pair, [top]."""
+    ratio = mf.MIN_TIER_RATIO
+    ident = mf.model_identity
+    lower = [m for m in mf.pareto_frontier(cands) if m.default_index < top.default_index
+             and ident(m.router_id) != ident(top.router_id) and m.price * ratio <= top.price]
+    best: tuple | None = None
+    for mid in lower:
+        for low in lower:
+            if low.price * ratio <= mid.price and ident(low.router_id) != ident(mid.router_id):
+                rank = (min(mid.default_index, low.default_index), mid.default_index + low.default_index,
+                        mid.router_id, low.router_id)
+                if best is None or rank > best[0]:
+                    best = (rank, [top, mid, low])
+    if best:
+        return best[1], False
+    if lower:
+        return [top, max(lower, key=lambda m: (m.default_index, -m.price, m.router_id))], True
+    return [top], True
+
+
+def has_dominated(members: list[mf.ScoredModel]) -> bool:
+    return any(a.dominates(b) for a in members for b in members if a is not b)
 
 
 def region_of(model_id: str) -> str | None:
@@ -225,18 +246,6 @@ def region_of(model_id: str) -> str | None:
 
 def developer_of(canonical: str) -> str:
     return canonical.split("/", 1)[0]
-
-
-def table_tier(canonical: str) -> tuple[str | None, int | None]:
-    dev = developer_of(canonical)
-    row = TIER_TABLE.get(dev)
-    if row is None:
-        return None, None
-    name = normalize_name(canonical)
-    for i, rx in enumerate(row):
-        if rx and re.match(rx, name):
-            return dev, i
-    return dev, None
 
 
 # --------------------------------------------------------------------------------------------- pricing
@@ -793,6 +802,11 @@ class Analyzer:
         cards = self.orq("models", "list")
         cards = cards.get("data", cards) if isinstance(cards, dict) else cards
         self.cards = {model_key(c.get("provider", ""), c.get("model_id", "")): c for c in cards}
+        self.garden = mf.garden_from_cards([c for c in cards if isinstance(c, dict)])
+        if mf.catalog_scope(cards) == "project":
+            self.report["checks"]["caveats"].append(
+                {"check": "garden is project-scoped", "detail": "models list has no disabled models, so the "
+                 "all-available scopes equal the enabled ones; use a workspace-scoped login"})
         dec = self.cards.get(DECISION_MODEL)
         if not dec or not dec.get("enabled"):
             raise Stop("decision model enabled", {"model": DECISION_MODEL,
@@ -803,10 +817,27 @@ class Analyzer:
         return (((c.get("metadata") or {}).get("autorouter") or {}).get("v2")) or {}
 
     def poolable(self, m: str) -> bool:
-        c, v, e = self.cards.get(m), self.v2(m), self.cat.get(m)
+        """Scored, priced, comparable and seatable (disabled is allowed: the all-available scopes recommend it)."""
+        g, v, e = self.garden.get(m), self.v2(m), self.cat.get(m)
         p = (e or {}).get("pricing") or {}
-        return bool(c and c.get("enabled") and v.get("intelligence_index") and v.get("price") is not None
-                    and "input" in p and "output" in p)
+        return bool(g and not g.free and mf.unseatable_reason(g) in (None, "disabled in the model catalogue")
+                    and v.get("intelligence_index") and v.get("price") is not None and "input" in p and "output" in p)
+
+    def in_scope(self, x: str, m: str, scope: str) -> bool:
+        prov, avail = scope.split(":")
+        if avail == "enabled" and not (self.cards.get(x) or {}).get("enabled"):
+            return False
+        if region_of(x) != region_of(m):
+            return False
+        g, gm = self.garden.get(x), self.garden.get(m)
+        if g and gm and not mf.region_compatible(g, gm):
+            return False
+        return prov == "any_provider" or self.host(x) == self.host(m)
+
+    def candidates(self, m: str, scope: str) -> list[mf.ScoredModel]:
+        if not hasattr(self, "_poolable"):
+            self._poolable = [x for x in self.garden if self.poolable(x)]
+        return [self.garden[x] for x in self._poolable if self.in_scope(x, m, scope)]
 
     def canonical(self, m: str) -> str:
         e = self.cat.get(m) or {}
@@ -817,61 +848,28 @@ class Analyzer:
         prov = e.get("provider")
         return (prov.get("id") if isinstance(prov, dict) else prov) or split_model(m)[0]
 
-    def resolve_cell(self, dev: str, idx: int, host: str, region: str | None) -> str | None:
-        rx = TIER_TABLE[dev][idx]
-        cands = []
-        for mid in self.cat:
-            if self.host(mid) != host or developer_of(self.canonical(mid)) != dev:
-                continue
-            if not re.match(rx, normalize_name(self.canonical(mid))) or not self.poolable(mid):
-                continue
-            r = region_of(mid)
-            region_rank = 0 if r == region else (1 if r is None else 2)
-            cands.append((region_rank, self.cat[mid].get("created") or "", self.v2(mid).get("price"), mid))
-        if not cands:
-            return None
-        cands.sort(key=lambda c: (c[0], _neg(c[1]), c[2], c[3]))
-        return cands[0][3]
-
-    def pool_for(self, m: str) -> dict:
-        canon = self.canonical(m)
-        dev, idx = table_tier(canon)
-        if dev is None:
-            return {"pool": None, "reason": f"provider {developer_of(canon)} not in tier table"}
-        if idx is None:
-            return {"pool": None, "reason": f"{canon} matches no tier"}
-        row = TIER_TABLE[dev]
-        present = [i for i, rx in enumerate(row) if rx]
-        if len(present) == 2:
-            if idx != present[0]:
-                return {"pool": None, "reason": "under-powered", "tier": idx}
-            cells = present
-        elif idx == 0:
-            cells = [0, 1, 2]
-        elif idx == 1:
-            cells = [1, 2, 3]
-        else:
-            return {"pool": None, "reason": "under-powered", "tier": idx}
-        host, region = self.host(m), region_of(m)
-        ids = []
-        for i in cells:
-            r = self.resolve_cell(dev, i, host, region)
-            if r and r not in ids:
-                ids.append(r)
-        if m not in ids and self.poolable(m) and table_tier(self.canonical(m))[1] in cells:
-            ids = [m if table_tier(self.canonical(x))[1] == idx else x for x in ids]
+    def pool_for(self, m: str, scope: str) -> dict:
+        inc = self.garden.get(m)
+        if inc is None or inc.free or not self.v2(m).get("intelligence_index") or self.v2(m).get("price") is None:
+            return {"pool": None, "reason": "no intelligence index or price", "switch": None, "enable": [],
+                    "relaxed": False}
+        cands = self.candidates(m, scope)
+        sw = switch_target(inc, cands)
+        members, relaxed = frontier_pool(sw or inc, cands)
+        assert not has_dominated(members), [x.router_id for x in members]
+        ids = [x.router_id for x in members]
+        enable = [x for x in ids + ([sw.router_id] if sw else []) if not (self.cards.get(x) or {}).get("enabled")]
+        info = {"switch": sw.router_id if sw else None, "enable": sorted(set(enable)), "relaxed": relaxed}
+        if len(members) < 2:
+            return {"pool": None, "reason": "no frontier model 2.75x cheaper in scope", **info}
         pool = [PoolModel(x, float(self.v2(x)["intelligence_index"]), float(self.v2(x)["price"])) for x in ids]
-        if not pool_valid(pool):
-            return {"pool": None, "reason": "pool has fewer than 2 valid models", "tier": idx}
-        return {"pool": pool, "reason": "", "tier": idx}
+        return {"pool": pool, "reason": "two-model pool: no third tier 2.75x cheaper" if relaxed else "", **info}
 
     def next_stronger(self, m: str) -> str | None:
-        dev, host = developer_of(self.canonical(m)), self.host(m)
+        """The weakest model above this one's index, same host and region, enabled or not."""
         mine = self.v2(m).get("intelligence_index") or 0
-        region = region_of(m)
-        cands = [(self.v2(x)["intelligence_index"], x) for x in self.cat if self.poolable(x)
-                 and self.host(x) == host and developer_of(self.canonical(x)) == dev
-                 and region_of(x) == region and self.v2(x)["intelligence_index"] > mine]
+        cands = [(self.v2(x.router_id)["intelligence_index"], x.router_id)
+                 for x in self.candidates(m, HEADLINE_SCOPE) if self.v2(x.router_id)["intelligence_index"] > mine]
         return min(cands)[1] if cands else None
 
     # ---- sampling
@@ -1084,18 +1082,19 @@ class Analyzer:
             return None
 
     def score_samples(self, drawn: list[dict]) -> None:
-        pools: dict[str, dict] = {}
+        """Price every sample under each scenario. Keys: `router|<scope>|<profile>` and `switch|<scope>`.
+
+        `picks`/`savings` per profile are the headline scope's router, kept flat for the tables."""
+        pools: dict[str, dict[str, dict]] = {}
         self.samples = []
         for d in drawn:
             m = d["model"]
             if m not in pools:
-                pools[m] = self.pool_for(m)
-            pinfo = pools[m]
+                pools[m] = {sc: self.pool_for(m, sc) for sc in SCOPES}
             summ, attrs = d["span"].get("summary") or {}, d["span"].get("attributes") or {}
             env = span_env(summ, attrs, m)
             toks = span_tokens(summ, attrs)
-            pricing = (self.cat.get(m) or {}).get("pricing") or {}
-            cur = choose_price(pricing, env)
+            cur = choose_price((self.cat.get(m) or {}).get("pricing") or {}, env)
             cur_price = price_tokens(toks, cur.prices)
             billed = float(((summ.get("cost") or {}).get("total") or 0)) - float(
                 ((summ.get("cost") or {}).get("web_search") or 0))
@@ -1104,9 +1103,15 @@ class Analyzer:
                    "ask_chars": len(d["input"] or ""), "prompt_tokens": toks.prompt, "flags": [],
                    "picks": {}, "savings": {p: 0.0 for p in PROFILES}, "tier": {}, "fallback": None,
                    "prev_found": d["prev"] is not None, "ask_preview": (d["input"] or "")[:200],
-                   "_tokens": toks, "_env": env}
+                   "scenario_savings": {}, "unpriced": [], "_tokens": toks, "_env": env}
             if cur.flag:
                 row["flags"].append(cur.flag)
+
+            ctx = (row, summ, attrs, toks, cur_price)
+            for sc in SCOPES:  # a switch moves every turn, so the cache stays warm
+                sw = pools[m][sc]["switch"]
+                key = f"switch|{sc}"
+                row["scenario_savings"][key] = self._reprice(ctx, sw, False, key) if sw else 0.0
             if has_auto_router(attrs):
                 row["fallback"] = "already_routed"
             elif d["input"] is None:
@@ -1118,30 +1123,46 @@ class Analyzer:
                 else:
                     row["score"] = dec["score"]
                     row["tier"] = {p: tier_of(dec["score"], p) for p in PROFILES}
-            if row["fallback"] is None and pinfo["pool"]:
-                prev_dec = None
-                if d["prev"] and d["prev"]["input"]:
-                    prev_dec = self.decide(d["prev"]["input"])
+            prev_dec = None
+            if row["fallback"] is None and d["prev"] and d["prev"]["input"]:
+                prev_dec = self.decide(d["prev"]["input"])
+            for sc in SCOPES:
+                pool = pools[m][sc]["pool"]
                 for p in PROFILES:
-                    choice = pick(pinfo["pool"], row["tier"][p], p).id
-                    row["picks"][p] = choice
-                    if d["prev"] is None:
-                        prev_pick = None  # previous turn not found
-                    elif prev_dec is None or not prev_dec.get("ok"):
-                        prev_pick = m  # previous turn fell back to the default, the current model
-                    else:
-                        prev_pick = pick(pinfo["pool"], tier_of(prev_dec["score"], p), p).id
-                    if choice == m and (prev_pick in (m, None)):
+                    key = f"router|{sc}|{p}"
+                    row["scenario_savings"][key] = 0.0
+                    if row["fallback"] is not None or not pool:
                         continue
-                    broken = (prev_pick != choice) if prev_pick is not None else (choice != m)
-                    pp = choose_price((self.cat.get(choice) or {}).get("pricing") or {}, span_env(summ, attrs, choice))
-                    if pp.flag:
-                        row["flags"].append(f"{choice}: {pp.flag}")
-                    row["savings"][p] = cur_price - price_tokens(toks, pp.prices, cache_broken=broken)
-            row["pool"] = [x.id for x in pinfo["pool"]] if pinfo["pool"] else None
-            row["pool_reason"] = pinfo["reason"]
+                    choice = pick(pool, row["tier"][p], p).id
+                    if sc == HEADLINE_SCOPE:
+                        row["picks"][p] = choice
+                    default = m if any(x.id == m for x in pool) else pool[0].id  # the router's default model
+                    if d["prev"] is None:
+                        prev_pick = choice  # previous turn not found: assumed on the same model, no penalty
+                    elif prev_dec is None or not prev_dec.get("ok"):
+                        prev_pick = default  # previous turn fell back to the router's default
+                    else:
+                        prev_pick = pick(pool, tier_of(prev_dec["score"], p), p).id
+                    if choice == m and prev_pick == m:
+                        continue
+                    broken = prev_pick != choice
+                    row["scenario_savings"][key] = self._reprice(ctx, choice, broken, key)
+            row["savings"] = {p: row["scenario_savings"][f"router|{HEADLINE_SCOPE}|{p}"] for p in PROFILES}
+            head = pools[m][HEADLINE_SCOPE]
+            row["pool"] = [x.id for x in head["pool"]] if head["pool"] else None
+            row["pool_reason"] = head["reason"]
+            row["flags"] = sorted(set(row["flags"]))
             self.samples.append(row)
         self.pools = pools
+
+    def _reprice(self, ctx: tuple, target: str, broken: bool, key: str) -> float:
+        """Saving from serving this span on `target`; a missing tier price marks the scenario unpriced."""
+        row, summ, attrs, toks, cur_price = ctx
+        pp = choose_price((self.cat.get(target) or {}).get("pricing") or {}, span_env(summ, attrs, target))
+        if pp.flag:
+            row["flags"].append(f"{target}: {pp.flag}")
+            row["unpriced"].append(key)
+        return cur_price - price_tokens(toks, pp.prices, cache_broken=broken)
 
     def pilot_checks(self, drawn: list[dict]) -> None:
         rows = self.samples
@@ -1189,47 +1210,70 @@ class Analyzer:
         by: dict[str, list[Draw]] = defaultdict(list)
         own: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
         for r in self.samples:
-            by[r["model"]].append(Draw(r["model"], r["weight"], r["cur_price"], r["savings"]))
+            by[r["model"]].append(Draw(r["model"], r["weight"], r["cur_price"], dict(r["scenario_savings"])))
             own[r["model"]][0] += r["cur_price"]
             own[r["model"]][1] += r["billed"]
-        strata, covered, not_covered = [], {}, []
+        strata, priced_ok, not_covered = [], {}, []
         for m, ds in by.items():
             priced, billed = own[m]
             gap = abs(priced - billed) / billed if billed else None
-            pinfo = self.pools.get(m) or {}
             reason = ""
             if gap is None or gap > PRICING_GAP:
                 reason = f"pricing check off by {gap:.1%}" if gap is not None else "no billed cost"
                 self.report["checks"]["caveats"].append({"check": "pricing check", "detail": f"{m}: {reason}"})
-            elif any(f.startswith("no ") or ": no " in f for r in self.samples if r["model"] == m for f in r["flags"]):
-                reason = "span tier has no price on a pool model"
-            if reason:
                 not_covered.append({"model": m, "spend": spend.get(m, 0.0), "reason": reason})
             else:
-                covered[m] = ds
+                priced_ok[m] = ds
+            head = self.pools.get(m, {}).get(HEADLINE_SCOPE) or {}
             strata.append({"model": m, "spend": spend.get(m, 0.0), "n": len(ds), "clusters": len(ds),
-                           "pool": [p.id for p in pinfo.get("pool") or []] or None,
-                           "pool_reason": pinfo.get("reason", ""), "pricing_gap": gap, "covered": not reason,
-                           "rate": stratum_rate(ds, "balanced")})
+                           "pool": [p.id for p in head.get("pool") or []] or None,
+                           "pool_reason": head.get("reason", ""), "pricing_gap": gap, "covered": not reason})
         for row in self.report["spend"]["by_model"]:
             if row["key"] not in by:
                 why = "not sampled" if row["key"] in spend else "not a chat model (decision, embedding or media)"
                 not_covered.append({"model": row["key"], "spend": row["spend"], "reason": why})
-        cov_spend = {m: spend.get(m, 0.0) for m in covered}
-        profiles = {p: estimate(covered, cov_spend, p, random.Random(self.args.seed)) for p in PROFILES}
-        for s in strata:
-            s["savings"] = profiles["balanced"]["per_stratum"].get(s["model"]) if s["covered"] else None
-        head = profiles["balanced"]
         k = 30 / self.days
+
+        def scenario(key: str) -> dict:
+            unpriced = {r["model"] for r in self.samples if key in r["unpriced"]}
+            cov = {m: ds for m, ds in priced_ok.items() if m not in unpriced}
+            cov_spend = {m: spend.get(m, 0.0) for m in cov}
+            e = estimate(cov, cov_spend, key, random.Random(self.args.seed))
+            return {"savings": e["savings"], "ci90": e["ci90"], "per_month": e["savings"] * k,
+                    "ci90_per_month": [x * k for x in e["ci90"]], "without_top3": without_top(cov, cov_spend, key),
+                    "coverage": (sum(cov_spend.values()) / total) if total else 0.0,
+                    "per_stratum": e["per_stratum"], "unpriced_models": sorted(unpriced)}
+
+        scen = {key: scenario(key) for key in
+                [f"router|{sc}|{p}" for sc in SCOPES for p in PROFILES] + [f"switch|{sc}" for sc in SCOPES]}
+        head = scen[f"router|{HEADLINE_SCOPE}|balanced"]
+        for s in strata:
+            s["covered"] = s["covered"] and s["model"] not in head["unpriced_models"]
+            s["savings"] = head["per_stratum"].get(s["model"]) if s["covered"] else None
+            s["rate"] = stratum_rate(by[s["model"]], f"router|{HEADLINE_SCOPE}|balanced")
+        for m in head["unpriced_models"]:
+            if m in priced_ok:
+                not_covered.append({"model": m, "spend": spend.get(m, 0.0),
+                                    "reason": "span tier has no price on a pool model"})
+        self.report["scenarios"] = [
+            {"scope": sc, "provider": sc.split(":")[0], "availability": sc.split(":")[1],
+             "headline": sc == HEADLINE_SCOPE,
+             "router": {p: {kk: v for kk, v in scen[f"router|{sc}|{p}"].items() if kk != "per_stratum"}
+                        for p in PROFILES},
+             "switch": {kk: v for kk, v in scen[f"switch|{sc}"].items() if kk != "per_stratum"},
+             "models": [{"model": m, **{kk: (([x.id for x in v] if v else None) if kk == "pool" else v)
+                                        for kk, v in self.pools[m][sc].items()}} for m in by]}
+            for sc in SCOPES]
         self.report["routing"] = {
-            "headline": {"savings": head["savings"], "ci90": head["ci90"],
-                         "without_top3": without_top(covered, cov_spend, "balanced"),
-                         "coverage": (sum(cov_spend.values()) / total) if total else 0.0,
-                         "per_month": head["savings"] * k, "ci90_per_month": [x * k for x in head["ci90"]]},
-            "profiles": {p: {"savings": v["savings"], "ci90": v["ci90"]} for p, v in profiles.items()},
+            "headline": {kk: head[kk] for kk in ("savings", "ci90", "without_top3", "coverage", "per_month",
+                                                 "ci90_per_month")},
+            "scope": HEADLINE_SCOPE,
+            "profiles": {p: {"savings": scen[f"router|{HEADLINE_SCOPE}|{p}"]["savings"],
+                             "ci90": scen[f"router|{HEADLINE_SCOPE}|{p}"]["ci90"]} for p in PROFILES},
             "strata": strata, "not_covered": sorted(not_covered, key=lambda r: -r["spend"]),
             "buckets": self.buckets(), "fallbacks": self._count("fallback"),
-            "carry_over": {"previous_found": sum(r["prev_found"] for r in self.samples),
+            "carry_over": {"missing_assumed": "same model as this turn, no cache penalty",
+                           "previous_found": sum(r["prev_found"] for r in self.samples),
                            "previous_missing": sum(not r["prev_found"] for r in self.samples)},
             "moves": self.moves(),
             "underpowered": self.underpowered(), "pareto": self.pareto([s["model"] for s in strata]),
@@ -1267,12 +1311,13 @@ class Analyzer:
         return {k: dict(v) for k, v in out.items()}
 
     def underpowered(self) -> list[dict]:
+        """Models where at least half the scored asks are hard: what moving those asks one model up would cost."""
         out = []
-        for m, pinfo in self.pools.items():
-            if pinfo.get("reason") != "under-powered":
-                continue
+        for m in self.pools:
             rows = [r for r in self.samples if r["model"] == m and r["tier"]]
             hard = [r for r in rows if r["tier"]["balanced"] == "hard"]
+            if not rows or len(hard) / len(rows) < 0.5:
+                continue
             nxt = self.next_stronger(m)
             extra = None
             den = sum(r["weight"] * r["cur_price"] for r in rows)
@@ -1282,24 +1327,25 @@ class Analyzer:
                                          - r["cur_price"]) for r in hard)
                 extra = num / den
             ex = [] if self.args.redact else [r["ask_preview"] for r in hard[:3]]
-            out.append({"model": m, "n": len(rows), "share_hard": (len(hard) / len(rows)) if rows else None,
-                        "next_model": nxt, "extra_cost_rate": extra, "examples": ex})
+            out.append({"model": m, "n": len(rows), "share_hard": len(hard) / len(rows), "next_model": nxt,
+                        "next_enabled": bool((self.cards.get(nxt) or {}).get("enabled")) if nxt else None,
+                        "extra_cost_rate": extra, "examples": ex})
         return out
 
     def pareto(self, models: list[str]) -> list[dict]:
-        enabled = [x for x in self.cards if self.poolable(x)]
+        """Per used model: which models dominate it, enabled first, from any provider in the same region."""
         out = []
         for m in models:
-            v = self.v2(m)
-            if not v.get("intelligence_index") or v.get("price") is None:
+            inc = self.garden.get(m)
+            if inc is None or inc.free:
                 out.append({"model": m, "dominated_by": None, "note": "no index or price"})
                 continue
-            i, p = v["intelligence_index"], v["price"]
-            dom = sorted([x for x in enabled if x != m and self.v2(x)["intelligence_index"] >= i
-                          and self.v2(x)["price"] <= p
-                          and (self.v2(x)["intelligence_index"] > i or self.v2(x)["price"] < p)],
-                         key=lambda x: -self.v2(x)["intelligence_index"])
-            out.append({"model": m, "dominated_by": dom[:3], "note": ""})
+            dom = [x for x in self.candidates(m, "any_provider:all") if x.router_id != m and x.dominates(inc)]
+            dom.sort(key=lambda x: (not (self.cards.get(x.router_id) or {}).get("enabled"), -x.default_index))
+            out.append({"model": m, "index": inc.default_index, "blend_price": inc.price,
+                        "dominated_by": [{"model": x.router_id, "index": x.default_index, "blend_price": x.price,
+                                          "enabled": bool((self.cards.get(x.router_id) or {}).get("enabled"))}
+                                         for x in dom[:5]], "note": ""})
         return out
 
     # ---- caching
@@ -1466,6 +1512,34 @@ blockquote{border-left:3px solid var(--line);margin:6px 0;padding:2px 10px;color
 """
 
 
+SCOPE_LABEL = {"same_provider:all": "Same provider, all available", "same_provider:enabled": "Same provider, enabled",
+               "any_provider:all": "Any provider, all available", "any_provider:enabled": "Any provider, enabled"}
+TOKENIZER_NOTE = ("Any-provider figures reuse the sampled spans' token counts. Other model families tokenize "
+                  "differently, so these figures carry an error the traces cannot measure.")
+
+
+def _ci(c: Any) -> str:
+    return f"{_usd(c[0])} to {_usd(c[1])}" if c else "n/a"
+
+
+def _scenario_rows(report: dict) -> list[dict]:
+    rows = []
+    for sc in report.get("scenarios") or []:
+        r, w = sc["router"]["balanced"], sc["switch"]
+        rows.append({"scope": SCOPE_LABEL.get(sc["scope"], sc["scope"]) + (" (headline)" if sc["headline"] else ""),
+                     "router": r["savings"], "router_ci": r["ci90"], "switch": w["savings"], "switch_ci": w["ci90"],
+                     "coverage": r["coverage"]})
+    return rows
+
+
+def _pool_rows(report: dict) -> list[dict]:
+    rows = []
+    for sc in report.get("scenarios") or []:
+        for m in sc["models"]:
+            rows.append({"scope": SCOPE_LABEL.get(sc["scope"], sc["scope"]), **m})
+    return rows
+
+
 def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
     missing = [s for s in SLOTS if not narrative.get(s)]
     if missing:
@@ -1492,15 +1566,37 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
                     [("Profile", "profile", str), ("Savings", "savings", _usd),
                      ("90% CI", "ci90", lambda c: f"{_usd(c[0])} to {_usd(c[1])}")]),
              f"<p class=m>Without the top 3 spans: {_usd(h.get('without_top3'))}.</p>",
-             "<h3>Where sampled asks move (balanced)</h3>",
+             "<h3>Scenarios (balanced)</h3>",
+             ("<p class=m>Router: the Smart Router over a frontier pool. Switch: move all of a model's traffic to the "
+              "cheapest model that beats it on index and price. The two are alternatives; do not add them.</p>"),
+             _table(_scenario_rows(report), [("Scope", "scope", str), ("Router", "router", _usd),
+                                             ("90% CI", "router_ci", _ci), ("Switch", "switch", _usd),
+                                             ("90% CI", "switch_ci", _ci), ("Coverage", "coverage", _pct)]),
+             f"<p class=m>{html.escape(TOKENIZER_NOTE)}</p>",
+             "<h3>Pools and models to enable</h3>",
+             _table(_pool_rows(report), [("Scope", "scope", str), ("Used", "model", str),
+                                         ("Pool", "pool", lambda p: ", ".join(p or []) or "none"),
+                                         ("Switch to", "switch", lambda x: x or ""),
+                                         ("Enable first", "enable", lambda e: ", ".join(e or [])),
+                                         ("Note", "reason", str)]),
+             "<h3>Where sampled asks move (balanced, headline scope)</h3>",
              _table(ro.get("moves", []), [("Used", "used", str), ("Router pick", "pick", str), ("Tier", "tier", str),
                                           ("Spans", "n", str), ("Cost more", "costs_more", str),
                                           ("Weighted saving per span set", "weighted_savings", _usd)])]
+    dom = [{"model": d["model"], "by": ", ".join(f"{x['model']} ({x['index']:.1f} at {x['blend_price']:.2f}"
+                                                f"{'' if x['enabled'] else ', disabled'})" for x in d["dominated_by"])}
+           for d in ro.get("pareto") or [] if d.get("dominated_by")]
+    if dom:
+        parts += ["<h2>Dominated models in use</h2>",
+                  ("<p class=m>Each model below is beaten on index and blended price by the models listed "
+                   "(index at blended $/M tokens). Same region, any provider.</p>"),
+                  _table(dom, [("Model", "model", str), ("Dominated by", "by", str)])]
     up = ro.get("underpowered") or []
     if up:
         parts += ["<h2>Under-powered asks</h2>",
                   _table(up, [("Model", "model", str), ("n", "n", str), ("Hard share", "share_hard", _pct),
-                              ("Next model", "next_model", str), ("Extra cost rate", "extra_cost_rate", _pct)])]
+                              ("Next model", "next_model", str), ("Enabled", "next_enabled", str),
+                              ("Extra cost rate", "extra_cost_rate", _pct)])]
         if not redact:
             for u in up:
                 parts += [f"<blockquote>{html.escape(e)}</blockquote>" for e in u.get("examples") or []]

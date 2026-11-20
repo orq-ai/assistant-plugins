@@ -82,6 +82,42 @@
         }
       }
     },
+    "scenarios": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "required": ["scope", "provider", "availability", "headline", "router", "switch", "models"],
+        "properties": {
+          "scope": {"enum": ["same_provider:all", "same_provider:enabled", "any_provider:all", "any_provider:enabled"]},
+          "provider": {"enum": ["same_provider", "any_provider"]},
+          "availability": {"enum": ["all", "enabled"]},
+          "headline": {"type": "boolean"},
+          "router": {
+            "type": "object",
+            "required": ["balanced", "cost", "quality"],
+            "additionalProperties": {"$ref": "#/$defs/estimate"}
+          },
+          "switch": {"$ref": "#/$defs/estimate"},
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["model", "pool", "switch", "enable", "relaxed", "reason"],
+              "properties": {
+                "model": {"type": "string"},
+                "pool": {"type": ["array", "null"], "items": {"type": "string"}},
+                "switch": {"type": ["string", "null"]},
+                "enable": {"type": "array", "items": {"type": "string"}},
+                "relaxed": {"type": "boolean"},
+                "reason": {"type": "string"}
+              }
+            }
+          }
+        }
+      }
+    },
     "routing": {
       "type": "object",
       "required": ["headline", "profiles", "strata", "not_covered", "buckets", "fallbacks", "carry_over", "underpowered", "pareto"],
@@ -166,6 +202,19 @@
   },
   "$defs": {
     "interval": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+    "estimate": {
+      "type": "object",
+      "required": ["savings", "ci90", "coverage", "per_month", "ci90_per_month", "without_top3", "unpriced_models"],
+      "properties": {
+        "savings": {"type": "number"},
+        "ci90": {"$ref": "#/$defs/interval"},
+        "coverage": {"type": "number", "minimum": 0, "maximum": 1},
+        "per_month": {"type": "number"},
+        "ci90_per_month": {"$ref": "#/$defs/interval"},
+        "without_top3": {"type": "number"},
+        "unpriced_models": {"type": "array", "items": {"type": "string"}}
+      }
+    },
     "perProfile": {
       "type": "object",
       "required": ["balanced", "cost", "quality"],

@@ -1,2 +1,3 @@
 pytest>=8.0
 jsonschema>=4.20
+evaluatorq>=1.98

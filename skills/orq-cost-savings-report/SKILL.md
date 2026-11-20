@@ -7,7 +7,7 @@ description: Use when a customer or teammate asks where an orq.ai workspace coul
 
 ## Overview
 
-Estimates what a workspace would have saved over its recent traces from two changes: routing each request through the Smart Router's `jev-general-v1` decision, and turning on prompt caching where multi-turn threads miss it. A script does every calculation from a trace sample and scales it to the window with a confidence interval and coverage; the agent only writes the narrative. Customers already on cheap models get an under-powered section instead of routing savings.
+Estimates what a workspace would have saved over its recent traces from two changes: routing each request through the Smart Router's `jev-general-v1` decision, and turning on prompt caching where multi-turn threads miss it. A script does every calculation from a trace sample and scales it to the window with a confidence interval and coverage; the agent only writes the narrative. Pools and model switches come from the intelligence/price frontier (no pool member is dominated by another), in four scopes: same or any provider, enabled or all available models, so the report lists which disabled models to enable. Models where most asks are hard get an under-powered section.
 
 Full spec, formulas and field paths: [resources/design.md](resources/design.md).
 
@@ -49,6 +49,7 @@ uv run <this skill's directory>/scripts/cost_savings_report.py render --out <dir
 |---|---|
 | Quoting a savings figure without its CI and coverage | Always give all three |
 | Adding routing and caching savings | They overlap; show side by side |
+| Adding router and switch savings, or two scopes | They are alternatives; quote the headline scope and show the rest beside it |
 | Treating the counterfactual as a quality guarantee | It shows which model the router would pick, not that the answer would be as good |
 | Estimating savings by hand when `analyze` stops | Report the failing check; the numbers come only from `report.json` |
 | Passing `--yes` before the user has seen the decision cost | Run once without it and relay the cost |
