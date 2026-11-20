@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.0] - 2026-11-20
+
+### Added
+
+- `orq-cost-savings-report` skill (RES-1917): estimates what a workspace would save from Smart Router routing (`jev-general-v1`) and prompt caching, from a sample of its own traces, with a 90% CI and coverage. `scripts/cost_savings_report.py` runs `analyze` (sampling, pricing, decision calls after a cost confirmation, estimator, caching scan) and `render` (merges the agent's narrative into HTML); `resources/report.schema.json` is the output contract and `resources/design.md` the spec.
+
 ## [5.1.0] - 2026-11-17
 
 ### Added

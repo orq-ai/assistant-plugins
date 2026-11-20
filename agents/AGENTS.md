@@ -16,6 +16,7 @@ These skills are:
  - orq-cli -> "skills/orq-cli/SKILL.md"
  - orq-evaluator-alignment -> "skills/orq-evaluator-alignment/SKILL.md"
  - orq-compare-agents -> "skills/orq-compare-agents/SKILL.md"
+ - orq-cost-savings-report -> "skills/orq-cost-savings-report/SKILL.md"
  - evaluatorq -> "skills/evaluatorq/SKILL.md"
  - orq-generate-synthetic-dataset -> "skills/orq-generate-synthetic-dataset/SKILL.md"
  - orq-improve-agent -> "skills/orq-improve-agent/SKILL.md"
@@ -59,6 +60,8 @@ orq-generate-synthetic-dataset: `Generate and curate evaluation datasets — str
 evaluatorq: `Write and run evaluatorq evaluation scripts (Python or TypeScript) for a single agent, use custom or built-in scorers, or run the evaluatorq CLI — eq redteam for adversarial testing, eq sim for multi-turn simulation. Do NOT use when comparing multiple agents (use orq-compare-agents).`
 
 orq-compare-agents: `Run cross-framework agent comparisons using evaluatorq — compares any combination of agents (orq.ai, LangGraph, CrewAI, OpenAI Agents SDK, Vercel AI SDK) head-to-head on the same dataset with LLM-as-a-judge scoring. Do NOT use when comparing only orq.ai configurations with no external agents (use orq-run-experiment instead).`
+
+orq-cost-savings-report: `Use when a customer or teammate asks where an orq.ai workspace could save on LLM spend or token cost, wants a cost-savings report from their traces, asks whether a cheaper model or the Smart Router would have handled their traffic, or asks which agents miss prompt caching. Do NOT use to set up a Smart Router (use orq-cli) or to debug a single trace (use orq-analyze-traces).`
 
 orq-setup-observability: `Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment. Use when setting up tracing, adding the AI Router proxy, integrating OpenTelemetry, auditing existing instrumentation, or enriching traces with metadata. Do NOT use when traces already exist and you need to debug failures (use orq-analyze-traces).`
 

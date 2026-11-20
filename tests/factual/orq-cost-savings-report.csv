@@ -1,0 +1,33 @@
+test_type,target,assertion,description
+cli_subcommand,smart-routers,,orq smart-routers exists
+cli_subcommand,status,,orq status exists
+cli_subcommand,telemetry query,,orq telemetry query exists
+cli_flag,telemetry query,--source,orq telemetry query accepts --source
+cli_flag,telemetry query,--mode,orq telemetry query accepts --mode
+cli_flag,telemetry query,--group-by,orq telemetry query accepts --group-by
+cli_flag,telemetry query,--compute,orq telemetry query accepts --compute
+cli_flag,telemetry query,--limit,orq telemetry query accepts --limit
+cli_subcommand,telemetry list-capabilities,,orq telemetry list-capabilities exists
+cli_flag,telemetry list-capabilities,--source,orq telemetry list-capabilities accepts --source
+cli_subcommand,traces search,,orq traces search exists
+cli_flag,traces search,--project,orq traces search accepts --project
+cli_flag,traces search,--filters,orq traces search accepts --filters
+cli_flag,traces search,--limit,orq traces search accepts --limit
+cli_subcommand,traces list-spans,,orq traces list-spans exists
+cli_flag,traces list-spans,--project,orq traces list-spans accepts --project
+cli_subcommand,traces get-span,,orq traces get-span exists
+cli_flag,traces get-span,--project,orq traces get-span accepts --project
+cli_subcommand,model-catalog list,,orq model-catalog list exists
+cli_subcommand,models list,,orq models list exists
+cli_subcommand,decisions create,,orq decisions create exists
+cli_flag,decisions create,--from-file,orq decisions create accepts --from-file
+cli_flag,decisions create,--project,orq decisions create accepts --project
+cli_flag,telemetry query,--from,orq telemetry query accepts --from
+cli_flag,telemetry query,--to,orq telemetry query accepts --to
+cli_flag,telemetry query,--filters,orq telemetry query accepts --filters
+cli_flag,telemetry query,--grain,orq telemetry query accepts --grain
+cli_flag,traces search,--from,orq traces search accepts --from
+cli_flag,traces search,--to,orq traces search accepts --to
+cli_flag,traces list-spans,--limit,orq traces list-spans accepts --limit
+cli_flag,traces list-spans,--page-token,orq traces list-spans accepts --page-token
+cli_flag,telemetry query,--workspace,orq telemetry query accepts --workspace

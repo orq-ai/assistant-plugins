@@ -1,0 +1,232 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "orq-cost-savings-report report.json",
+  "type": "object",
+  "required": ["schema_version", "generated_at", "workspace", "status", "stop", "params", "checks"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "generated_at": {"type": "string"},
+    "workspace": {"type": ["string", "null"]},
+    "status": {"enum": ["ok", "stopped"]},
+    "stop": {
+      "type": ["object", "null"],
+      "required": ["check", "numbers"],
+      "properties": {"check": {"type": "string"}, "numbers": {"type": "object"}}
+    },
+    "params": {
+      "type": "object",
+      "required": ["sample", "profile", "policy", "seed", "counterfactual_test"],
+      "properties": {
+        "sample": {"type": "integer", "minimum": 1, "maximum": 100},
+        "profile": {"const": "balanced"},
+        "policy": {"const": "jev-general-v1"},
+        "seed": {"type": "integer"},
+        "counterfactual_test": {"type": "boolean"}
+      }
+    },
+    "window": {
+      "type": "object",
+      "required": ["from", "to", "days"],
+      "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "days": {"type": "integer", "minimum": 1}}
+    },
+    "spend": {
+      "type": "object",
+      "required": ["total", "per_month", "by_model"],
+      "properties": {
+        "total": {"type": "number"},
+        "per_month": {"type": "number"},
+        "by_model": {"$ref": "#/$defs/spendRows"},
+        "by_agent": {"anyOf": [{"$ref": "#/$defs/spendRows"}, {"type": "null"}]},
+        "by_deployment": {"anyOf": [{"$ref": "#/$defs/spendRows"}, {"type": "null"}]}
+      }
+    },
+    "routing_decision_cost": {
+      "type": "object",
+      "required": ["calls", "estimated_usd"],
+      "properties": {"calls": {"type": "integer"}, "estimated_usd": {"type": "number"}}
+    },
+    "checks": {
+      "type": "object",
+      "required": ["stopping", "caveats"],
+      "properties": {
+        "stopping": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["check", "pass", "numbers"],
+            "properties": {"check": {"type": "string"}, "pass": {"type": "boolean"}, "numbers": {"type": "object"}}
+          }
+        },
+        "caveats": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["check", "detail"],
+            "properties": {"check": {"type": "string"}, "detail": {"type": "string"}}
+          }
+        }
+      }
+    },
+    "samples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["trace_id", "span_id", "model", "weight", "cur_price", "billed", "savings", "picks", "fallback"],
+        "properties": {
+          "weight": {"type": "number", "exclusiveMinimum": 0},
+          "cur_price": {"type": "number"},
+          "billed": {"type": "number"},
+          "savings": {"$ref": "#/$defs/perProfile"},
+          "picks": {"type": "object"},
+          "fallback": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "required": ["scope", "provider", "availability", "headline", "router", "switch", "models"],
+        "properties": {
+          "scope": {"enum": ["same_provider:all", "same_provider:enabled", "any_provider:all", "any_provider:enabled"]},
+          "provider": {"enum": ["same_provider", "any_provider"]},
+          "availability": {"enum": ["all", "enabled"]},
+          "headline": {"type": "boolean"},
+          "router": {
+            "type": "object",
+            "required": ["balanced", "cost", "quality"],
+            "additionalProperties": {"$ref": "#/$defs/estimate"}
+          },
+          "switch": {"$ref": "#/$defs/estimate"},
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["model", "pool", "switch", "enable", "relaxed", "reason"],
+              "properties": {
+                "model": {"type": "string"},
+                "pool": {"type": ["array", "null"], "items": {"type": "string"}},
+                "switch": {"type": ["string", "null"]},
+                "enable": {"type": "array", "items": {"type": "string"}},
+                "relaxed": {"type": "boolean"},
+                "reason": {"type": "string"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "routing": {
+      "type": "object",
+      "required": ["headline", "profiles", "strata", "not_covered", "buckets", "fallbacks", "underpowered", "pareto"],
+      "properties": {
+        "headline": {
+          "type": "object",
+          "required": ["savings", "ci90", "without_top3", "coverage", "per_month", "ci90_per_month"],
+          "properties": {
+            "savings": {"type": "number"},
+            "ci90": {"$ref": "#/$defs/interval"},
+            "without_top3": {"type": "number"},
+            "coverage": {"type": "number", "minimum": 0, "maximum": 1},
+            "per_month": {"type": "number"},
+            "ci90_per_month": {"$ref": "#/$defs/interval"}
+          }
+        },
+        "profiles": {
+          "type": "object",
+          "required": ["balanced", "cost", "quality"],
+          "additionalProperties": {
+            "type": "object",
+            "required": ["savings", "ci90"],
+            "properties": {"savings": {"type": "number"}, "ci90": {"$ref": "#/$defs/interval"}}
+          }
+        },
+        "strata": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["model", "spend", "n", "clusters", "covered", "pool", "pool_reason"],
+            "properties": {
+              "model": {"type": "string"},
+              "spend": {"type": "number"},
+              "n": {"type": "integer"},
+              "clusters": {"type": "integer"},
+              "covered": {"type": "boolean"},
+              "savings": {"type": ["number", "null"]},
+              "pool": {"type": ["array", "null"], "items": {"type": "string"}}
+            }
+          }
+        },
+        "not_covered": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["model", "spend", "reason"],
+            "properties": {"model": {"type": "string"}, "spend": {"type": "number"}, "reason": {"type": "string"}}
+          }
+        }
+      }
+    },
+    "counterfactual_test": {
+      "type": "object",
+      "required": ["asks", "per_model"],
+      "properties": {
+        "asks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["span_id", "used", "recommended", "differs"],
+            "properties": {"differs": {"type": "boolean"}}
+          }
+        },
+        "per_model": {"type": "object"}
+      }
+    },
+    "caching": {
+      "type": "object",
+      "properties": {
+        "threads_scanned": {"type": "integer"},
+        "label": {"type": "string"},
+        "savings_found": {"type": "number"},
+        "savings_orq": {"type": "number"},
+        "rows": {"type": "array"},
+        "error": {"type": "string"}
+      }
+    },
+    "harness": {
+      "type": "object",
+      "properties": {"metric": {"type": "string"}, "rows": {"type": "array"}, "unattributed": {"type": ["number", "null"]}}
+    }
+  },
+  "$defs": {
+    "interval": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+    "estimate": {
+      "type": "object",
+      "required": ["savings", "ci90", "coverage", "per_month", "ci90_per_month", "without_top3", "unpriced_models"],
+      "properties": {
+        "savings": {"type": "number"},
+        "ci90": {"$ref": "#/$defs/interval"},
+        "coverage": {"type": "number", "minimum": 0, "maximum": 1},
+        "per_month": {"type": "number"},
+        "ci90_per_month": {"$ref": "#/$defs/interval"},
+        "without_top3": {"type": "number"},
+        "unpriced_models": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "perProfile": {
+      "type": "object",
+      "required": ["balanced", "cost", "quality"],
+      "additionalProperties": {"type": "number"}
+    },
+    "spendRows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "spend"],
+        "properties": {"key": {"type": "string"}, "spend": {"type": "number"}}
+      }
+    }
+  }
+}

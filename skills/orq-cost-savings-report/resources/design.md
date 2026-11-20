@@ -1,0 +1,348 @@
+# orq-cost-savings-report: design
+
+Spec for `scripts/cost_savings_report.py`. Statements marked **V** were checked against the live orq API and `orq` CLI. Where the script differs from the first draft of this spec, the section says so.
+
+## Scope
+
+| Decision | Choice |
+|---|---|
+| Who runs it | The customer, on their own workspace |
+| Form | The script does all arithmetic and writes `report.json`; the agent writes the narrative; `render` merges both into HTML |
+| Window | `to` = run start; `from` = `to` - min(29 days, workspace retention - 1 day) |
+| Sample | `--sample N` leaf LLM spans, default and v1 maximum 100 |
+| Excluded from the sample | `span.cache_retrieval` (response cache hits), embedding models, decision models (`typesafe/*`, `orq/decider-*`) |
+| Routing policy | The Smart Router's `jev-general-v1` decision, reproduced client-side and unchanged |
+| Profile | Balanced headline; cost and quality as scenario columns |
+| Pool | Frontier pool from evaluatorq's `model_frontier` (no pool member dominated by another), in four scopes: same or any provider, enabled or all available; headline is same provider, all available |
+| Switch | Second lever: move a model's traffic to the cheapest model that dominates it; never added to routing |
+| Transport | The script shells out to the `orq` CLI with `-o json`, so it reuses the user's CLI login and workspace |
+
+## Layout
+
+```
+skills/orq-cost-savings-report/
+  SKILL.md
+  resources/design.md            this file
+  resources/report.schema.json   output contract
+  scripts/cost_savings_report.py PEP 723 header, standard library only
+  tests/requirements.txt         makes CI run the suite
+  tests/test_*.py                load the script with importlib.util.spec_from_file_location
+  tests/fixtures/                synthetic spans, decisions and catalog entries; never customer data
+```
+
+Commands:
+
+```
+uv run <skill dir>/scripts/cost_savings_report.py analyze --workspace <key> --out <dir> [--sample 100] [--counterfactual-test] [--cache-threads 200] [--yes]
+uv run <skill dir>/scripts/cost_savings_report.py render --out <dir> --narrative <dir>/narrative.md [--redact]
+```
+
+`analyze` writes `report.json` and a `narrative-slots.md` listing the slots the agent fills (summary, routing, caching, caveats). `render` refuses to run if a slot is empty or the analysis stopped. Before the paid decision calls `analyze` prints their count and cost and asks; without a terminal it stops with check `confirmation` unless `--yes` is given. It also stops at once if `typesafe/jev-latest` is not enabled in the workspace (V: it is disabled in some workspaces, and the call then returns 403).
+
+## Field map (V)
+
+| Item | Where |
+|---|---|
+| Telemetry model | `openai/gpt-6-luna` (provider-prefixed) |
+| `list-spans` model | bare `model` (`gpt-5.6-terra`) plus `provider` (`openai`); join as `provider + "/" + model` |
+| `list-spans` fields | `.data[]` with `type`, `has_children`, `started_at`, `cost`, `usage`; pages with `--limit`, `--page-token`, `.has_more`, `.next_page_token` |
+| `get-span` | wrapped in `.span`; cost at `.span.summary.cost`; billing at `.span.attributes.orq.billing.*`; usage at `.span.attributes.gen_ai.usage.*` |
+| Input messages | `.span.attributes.gen_ai.input.messages[]`; text under `.parts[]` shaped `{"type":"text","content"}`, `{"kind":"text","text"}` or `{"type":"input_text","text"}`, or `.content` as a plain string. The system message may have role `system` or `developer` |
+| Cache-write TTL | `usage.prompt_tokens_details.cache_creation_<ttl>_tokens` and `orq.billing.cache_write_<ttl>` (for example `30m`) |
+| Pricing tier | `cost.pricing_tier` or `openai.response.service_tier` |
+| Trace search model | summaries carry bare `models: [...]`; filter on the prefixed id, since the bare form can match other hosts |
+| Thread filter | `--filters '[{"field":"thread_id","op":"eq","values":["<id>"]}]'` with `--project`; without `--project` it returns 0 rows |
+| Telemetry paging | no cursor; `--limit` up to 5000 and `.has_more` |
+| Telemetry filters | `[{"field":"model","op":"eq","values":["<bare model>"]},{"field":"provider","op":"eq","values":["<provider>"]}]`; the prefixed id matches nothing |
+| Request counts per cell | `genai.requests` with op `count` (not `sum`), grouped by `project`, `--mode timeseries --grain hour`; `trace_count` cannot be grouped by project |
+| Thread and retention on a span | `.span.attributes.orq.thread_id`, `.span.attributes.orq.retention_days` |
+| Region and speed on a span | `.span.attributes.gen_ai.usage.inference_geo` (`global` means none), `.span.attributes.gen_ai.usage.speed` |
+| `orq models list -o json` | a bare array, not `.data` |
+| Metric and dimension names | `orq telemetry list-capabilities --source TELEMETRY_SOURCE_TRACES -o json` |
+
+Every telemetry and trace command needs RFC 3339 `--from` and `--to`; without them it returns 400 `from: value is required` (V). A window longer than retention returns 400 `time range exceeds workspace retention`; trace search past retention returns `[]` without an error (V). Read retention from that error or from workspace settings; stop if a stratum's trace search is empty while telemetry shows requests for it.
+
+## Token accounting (V)
+
+`prompt_tokens` includes cached and cache-write tokens. Uncached input = `prompt_tokens` - `cached_tokens` - `cache_creation_tokens`, and `input_cost` bills exactly that. `cached_tokens_cost` and `cache_read_cost` hold the same value. Gemini reports cache reads only.
+
+## Routing counterfactual
+
+### 1. Routing input
+
+From the span's input messages, take the newest user turn that still has text after cleaning:
+- Join the turn's text parts with a single space.
+- Remove complete `<system-reminder>...</system-reminder>` blocks; an unclosed tag stays.
+- Trim each remaining piece and join the non-empty ones with a single space.
+
+With no user text, fall back to the system (or `developer`) prompt, then `instructions`. If that is empty too, count a fallback (`empty_input`). Over 65,000 characters: no decision, `prompt_limit`.
+
+### 2. Score
+
+```
+orq decisions create --from-file body.json -o json
+```
+
+```json
+{
+  "model": "typesafe/jev-latest",
+  "state": "<routing input>",
+  "timeout": {"call_timeout": 1500},
+  "retry": {"count": 0},
+  "questions": {
+    "difficulty": {
+      "type": "choice",
+      "instructions": "How difficult is this prompt for an LLM to complete well?",
+      "criteria": {
+        "easy": "Trivial change, any model handles it",
+        "medium": "Moderate complexity, benefits from a capable model",
+        "hard": "Complex task, needs a strong model"
+      }
+    }
+  }
+}
+```
+
+The `--questions` flag form fails (V); use a body file. The answer is at `.answers.difficulty.probabilities`. The router allows the decision 1,500 ms with no retry; `call_timeout` and `retry.count: 0` reproduce that server-side, so a timeout error from the API (not client wall time) counts as `decision_timeout`. Tag each call with `name: "cost-savings-report"` so later runs can exclude these traces.
+
+Score = `p(easy)*0 + p(medium)*1 + p(hard)*2`, summed in that order in float64 without rounding. Results within one float bit of a threshold may differ from the router's; this is not handled.
+
+### 3. Tier
+
+| Profile | easy if score <= t1 | medium if score <= t2 | else hard |
+|---|---|---|---|
+| cost | 0.59 | 1.16 | |
+| balanced | 0.11 | 0.92 | |
+| quality | 0.02 | 0.09 | |
+
+The question text and thresholds are one frozen policy (`jev-general-v1`); changing either makes it a different policy.
+
+### 4. Band and model
+
+Pool validity: every member has `autorouter.v2` metadata with a nonzero `intelligence_index`, and a pool has at least 2 members; otherwise "no routing", listed.
+
+The pool rule (below) decides only which models are in the pool. Band position and "stronger" always come from the live index. Sort strongest first, ties by model id. `easy` gets the weakest `len/2` models; the rest split between `medium` and `hard`, hard getting the smaller half. With 3 models that is one per band; with 2, `hard` is empty and resolves to `medium`. An empty target band uses the nearest stronger band, else the strongest present. Inside a band, balanced and cost pick the lowest `autorouter.v2.price`, then the highest index, then model id; quality picks the highest index.
+
+### 5. Fallback
+
+Any decision failure (`decision_timeout`, error, `prompt_limit`, `empty_input`) serves the default model. The counterfactual uses the customer's current model as that default, so a failure counts as "no change". The real router uses the first model in its pool config; the report states this choice.
+
+### 6. Savings per span
+
+Savings = price(span, current model) - price(span, picked model), both from the pricing function on the span's token breakdown (uncached input, cache read, cache write, output). Negative savings are kept. A picked model without a cache-read price takes cached tokens at its input price. Output tokens are assumed similar.
+
+No cold-cache penalty: the picked model is priced on the same uncached, cached and output tokens as the original span. A cold cache only matters when a router upgrades a thread mid-conversation to a more expensive model, which this report does not model, so no previous turn is fetched and no extra decisions are made.
+
+
+### 7. Pricing function
+
+Model catalog prices carry `variants[].when`. The evaluator implements the full grammar found in the catalog (V): variables `request_unix`, `input_tokens`, `tier`, `inference_geo`, `speed`, `operation`; operators `==`, `!=`, `>`, `>=`, `<`, `<=`, `&&`, `||`, `/`, `%` and parentheses. Example: an off-peak rule on two DeepSeek models of the form `((request_unix / N + N) % N < N) && (...)`.
+
+| Variable | From the span |
+|---|---|
+| `request_unix` | `started_at` |
+| `input_tokens` | `gen_ai.usage.prompt_tokens` |
+| `tier` | `cost.pricing_tier` or `openai.response.service_tier`; `default` and `auto` mean `standard` |
+| `inference_geo` | host region from the model id: `us.`, `us-east-1.` and similar map to `us`, `eu.` to `eu`, `global.` to none |
+| `speed`, `operation` | span attribute if present, else the variant does not match |
+
+Choosing the price, the same way for the current and the picked model:
+- Default to the base price.
+- Use a variant only when the span clearly shows what its condition tests: a region in the model id, a batch, priority or flex tier, a long context, a speed setting. A variable the span does not show counts as false, so an unclear span stays on the base price.
+- When several variants match, take the one whose condition has the most comparisons, so it aligns closest with how the client calls the model. Example: a US-region batch call with 150k input tokens on a model with `input_tokens > 100000`, `inference_geo == "us"`, `tier == "batch"` and their combinations takes the variant that tests all three. Ties go to the last listed: the catalog lists a newer price after an older one (V: two DeepSeek date cutoffs, where first-listed priced 41% too high).
+- A variant overrides the base price key by key; a price it does not list comes from the base (many variants list only some, V).
+- If the picked model has no variant for something the span clearly shows (for example the `priority` tier), the span is flagged and its stratum counts as not covered, so a base price never inflates savings.
+- Cache writes use the span's own TTL; if the model lacks it, the shortest TTL it has.
+
+The pricing check below catches a model where this choice disagrees with what orq billed.
+
+Check: price each sampled span at its own model and compare with `.span.summary.cost`, per model. A model more than 2% off is left out of savings (not covered) and listed with the gap. V: on 102 spans across 11 models every model priced within 0.33% of what orq billed, and the variant-or-base choice agreed with `orq.billing.input.source` on all 102.
+
+### 8. From sample to total
+
+Strata are models (`provider/model`), not project and model: a workspace can have hundreds of (project, model) pairs, most with negligible spend (V).
+
+Allocation of N spans:
+1. Rank models by `genai.cost` in the window.
+2. Take models in order while each can get at least 5 spans under spend-proportional allocation; that gives at most N / 5 strata (20 at N = 100).
+3. Models not taken count as not covered.
+
+Selection inside a stratum:
+1. Request count (`genai.requests`) per (project, hour) for that model; trace count cannot be grouped by project (V).
+2. Draw (project, hour) cells with probability proportional to request count.
+3. In a drawn cell, pick one trace uniformly: run `traces search` on a random 1-minute sub-window inside the hour, widening until a page has traces, and choose one at random from it.
+4. In the trace, pick one leaf LLM span of that model uniformly: `type` in {`span.chat_completion`, `span.responses`}, `has_children == false`. The trace root and `span.agent` carry their children's cost.
+5. Weight w_i = (leaf spans of that model in the trace). This equalizes inclusion exactly when traces in a cell carry similar numbers of requests; otherwise it is an approximation.
+
+Estimator per stratum s:
+
+```
+rate_s    = sum_i w_i * savings_i / sum_i w_i * price(span_i, current model)
+savings_s = rate_s * telemetry genai.cost_s
+headline  = sum_s savings_s
+```
+
+- Fallbacks, `prompt_limit` and spans already routed by a Smart Router (`auto_router.*` attributes) stay in the sample with savings 0.
+- 90% CI: bootstrap 1,000 times, resampling drawn cells within each stratum. Report the cluster count per stratum, and next to the CI a "without the top 3 spans" figure, since a few long-context spans can carry most of the saving.
+- Coverage: share of window spend in strata that were sampled and passed the pricing check.
+- Per month: headline x 30 / window days.
+
+The headline is always shown with its CI and coverage. At N = 100 the interval is wide; the report says so.
+
+### 9. Buckets
+
+Savings are also shown by ask length (characters / 4: 0-128, 128-512, 512-1024, over 1024 tokens) and by span `prompt_tokens` (0-8k, 8k-32k, over 32k). All buckets count in the headline. Flagged:
+- Asks over 1024 tokens: the decision model is least reliable on long asks.
+- Prompts over 32k tokens: the router scores only the ask, so a short ask on a long context rates easy even though the picked model still reads the whole context.
+
+### 10. `--counterfactual-test`
+
+Runs routing on the pilot asks and stops. Per ask: recommended model, model used, whether they differ. Summary: deviation rate per used model, split by blended price into "recommends cheaper" and "recommends pricier". Nothing is replayed.
+
+### Decision cost
+
+`typesafe/jev-latest` costs $0.042 per 1M input tokens and nothing for output (V, `orq models list`). Identical routing inputs are scored once. Estimate after building the inputs: unique inputs x (characters / 4 + 330) tokens x $0.042 / 1M. Previous turns fetched for carry-over add up to N more calls.
+
+## Runtime
+
+Single-call timings (V): `traces search` page 2.7 s, `list-spans` 0.57 s, `get-span` 0.47 s, thread search 1.4 s. Per sampled span: about 3 searches for the sub-window, `list-spans`, `get-span`, the previous-turn lookup and 1-2 decision calls, roughly 10-15 s sequential. At N = 100 with 8 workers that is a few minutes. The script prints its estimate next to the classify cost before starting. Every response is cached on disk by trace and span id so a rerun resumes; 429 and 5xx retry with exponential backoff.
+
+## Pilot checks
+
+On the first min(100, N) scored asks; in v1 that is the whole sample.
+
+Stopping checks. On failure, write the check and its numbers to `report.json` and stop:
+- Tier mix is not a single tier.
+- Fallbacks below 10%; errors other than timeouts below 2%.
+- No routing input contains `<system-reminder>` text; fewer than 10% came from the system-prompt fallback.
+- Every recommended model is enabled and priced.
+
+Caveat checks. Failures are listed; the run continues:
+- Pricing check per model, as above.
+- Reconciliation per drawn cell: leaf span cost sum against telemetry `genai.cost` for that (project, model, hour), within 5%.
+
+## Model pool
+
+### Data sources (V)
+
+| Need | Source | Field |
+|---|---|---|
+| Model list, pricing, host mapping | `orq model-catalog list` | `pricing` (with `variants`), `offering_of` |
+| Enabled in workspace | `orq models list` | `enabled` |
+| Index and band price | `orq models list` | `metadata.autorouter.v2.intelligence_index`, `metadata.autorouter.v2.price` (3:1 input/output blend per 1M) |
+| Recency | both | `created` |
+
+Join `orq models list` to the catalog on `provider + "/" + model_id`; its `id` is a UUID. The catalog's own `artificial_analysis_intelligence_index` disagrees with the router's index and is not used. A project-scoped API key hides disabled models, so the all-available scopes equal the enabled ones; the report adds a `garden is project-scoped` caveat.
+
+### Model garden
+
+Every model comes from evaluatorq's `model_frontier` (`evaluatorq>=1.98`, PyPI), applied to the `orq models list` cards the script already loads: `garden_from_cards`, `dominates`, `pareto_frontier`, `region_compatible`, `unseatable_reason`, `model_identity`. The tier ratio is 2.0, the value evaluatorq's `MIN_TIER_RATIO` moves to; the script pins it until that release. Index is the score at the catalogue default reasoning effort; price is the 3:1 input/output blend per 1M. Dominance: at least as intelligent and no more expensive, strictly better on one.
+
+A model is a candidate when it is scored, priced in the catalog (input and output), not free, seatable and not pre-release; "disabled in the model catalogue" is allowed, because the all-available scopes recommend enabling it. Pre-release means a name segment `preview`, `beta`, `alpha` or `experimental` (split on `-`, `_`, `.`): the catalog has no release-stage field, and these segments are the providers' own naming. A discounted offering is skipped too: a same-host `offering_of` another catalog model, priced below it on input or output (the `-contributor` offerings). Its terms are not in the catalog. Dated snapshots share the base price and stay.
+
+### Scopes
+
+| Scope | Candidates |
+|---|---|
+| Same provider, all available (headline) | Same host and region as the customer's model, enabled or disabled |
+| Same provider, enabled | Same, enabled only |
+| Any provider, all available | Any host, same region (`region_of` and evaluatorq's EU pinning) |
+| Any provider, enabled | Same, enabled only |
+
+Every scope reuses the same sampled spans and decisions; only the local re-pricing differs. Any-provider figures reuse the sampled token counts; other families tokenize differently, and the report says so.
+
+### Switch rule
+
+The switch target is the cheapest candidate that dominates the customer's model on its own traffic: index at least as high, and the model's sampled spans re-priced on the candidate (same uncached, cache-read, cache-write and output tokens) cost no more, strictly better on one. The blend ignores cache prices, so a model that wins on the blend can lose on heavily cached traffic. A candidate the spans cannot price (missing tier price) is never a target. With no sampled spans the blend is used. No minimum index gain: a model that is as smart and much cheaper is the recommendation. The dominated-models list uses the same test.
+
+### Pool rule
+
+1. Top seat: the switch target, else the customer's model. Hard asks are never sent below the model in use.
+2. Lower seats: candidates on the scope's Pareto frontier, weaker than the top seat, a different model, each at least `MIN_TIER_RATIO` cheaper than the seat above. Price here is the customer model's sampled spans re-priced on the candidate (same tokens, cache reads and writes included), the same cost the switch rule uses, so the frontier, the tier gaps and dominance follow this workspace's traffic. A candidate the spans cannot price is never seated. With no sampled spans, evaluatorq's 3:1 blend. The 2.0 ratio means a seat counts once it is half the price of the seat above, since routing an ask down to it already halves that ask's cost. It is a judgement, not a measured figure.
+3. Of the trios that pass, the one whose weakest seat has the highest index wins, ties on total index (RES-1285 criteria, as `derive_trio`).
+4. No trio: the best pair, flagged relaxed (hard resolves to medium, so medium and hard asks go to the top seat). No pair: no pool, listed; the router scenario then serves the top seat, so its figure equals the switch.
+5. Disabled members and the switch target are listed under "enable first".
+
+No pool contains a model another member dominates on the same price: lower seats are on the frontier and weaker than the top seat, and the script asserts it.
+
+Example (synthetic): traffic on gpt-6-sol where a disabled gpt-6.1-terra scores higher at a lower blended price. The all-available pool tops out at gpt-6.1-terra; an older gpt-5.6-terra that gpt-6-luna dominates is never seated in any scope.
+
+### Under-powered asks
+
+For every sampled model where at least half the scored asks are `hard` under balanced: that share, and the extra cost of sending the hard asks to the next model above it by index (same host and region, enabled or not, flagged).
+
+### Pareto check
+
+Per used model: the models that dominate it, same region, any provider, enabled first, with index and blended price. States the fact only.
+
+## Prompt caching gaps
+
+### Data
+
+| Need | Source |
+|---|---|
+| Cache-read tokens, cache-read and cache-write cost by model, agent, deployment, thread | `orq telemetry query` metrics `genai.tokens.cached`, `genai.cost.cache_read`, `genai.cost.cache_write` |
+| Cache-write tokens by model | span metric `gen_ai.client.inference.usage.cache_write.input_tokens` (not groupable by thread or agent, V) |
+| Turns of a thread | thread search, then `list-spans` per trace; a turn is one leaf LLM span |
+
+Grouped scalar queries take one compute per call (V). `agent` and `thread` cannot be grouped in one query (V); join client-side. The rollup groups agents by id, the span metric by agent key; map them with `orq agents list` (V).
+
+### Rule
+
+Unit: (thread, model), turns sorted by `started_at`, a turn being one leaf LLM span. Threads come from telemetry grouped by thread; scan those with 3 or more requests, top 200 by spend in v1. Caching savings are reported for the scanned threads as found, not scaled to the window, and labelled that way.
+
+Candidate: 3 or more turns, a model with a cache-read price, a prefix of at least 1,024 tokens, and cache-read ratio (`cached / prompt_tokens`) below 20%.
+
+Per turn k from 2 to n:
+- alive_k: the gap since turn k-1 is within the cache TTL.
+- read_k = alive_k ? prompt_tokens(k-1) : 0.
+- write_k = prompt_tokens(k) - read_k.
+
+Savings = sum_k max(0, read_k - cached_k) x (input - cache read) - sum_k max(0, write_k - actual_write_k) x (cache write - input), with prices from the pricing function at the current model. No cache-write price makes the second term 0.
+
+The rule assumes conversations append. For providers with automatic prefix caching (OpenAI), a low read ratio often means the prefix is not stable, so the OpenAI figure is an upper bound and labelled so.
+
+Action by provider:
+- Explicit caching (Anthropic-style): set `cache_control` on the agent's model parameters or the deployment variant. orq forwards breakpoints but does not add them.
+- Automatic caching (OpenAI): keep the prefix stable, with the static system prompt and tools first.
+- Reads-only reporting (Gemini): listed without a savings figure.
+
+Only agents and deployments on orq count toward caching savings.
+
+### Routing and caching together
+
+Routing savings are scaled to the window; caching savings cover the scanned threads only. They overlap, so the report shows them side by side and never adds them.
+
+## Harness traffic
+
+The gateway records the calling harness as `trace_framework`, groupable on the `orq.gen_ai.*` metrics but not on `genai.cost` (V). The two metrics disagree in both directions (V: on one workspace `orq.gen_ai.cost` summed to about a third more than `genai.cost`), so the section names its metric and shows each framework's share of it; it shows an "unattributed" row to the summary total only when that difference is positive, and a caveat otherwise. The field also carries SDK names; the report lists every value and marks known coding harnesses as "caching not controllable".
+
+## Report sections
+
+1. Summary: spend in the window and per month; routing savings with 90% CI, the top-3-excluded figure and coverage; caching savings beside it; Pareto line.
+2. Spend by model, agent, deployment.
+3. Routing: balanced headline; cost and quality columns; buckets with the flags above. Action: "create a Smart Router with profile balanced and pool X, Y, Z".
+4. Under-powered asks, up to 3 truncated examples; `--redact` hides them.
+5. Caching gaps by agent and thread, with the action per provider.
+6. Harness traffic.
+7. Method and caveats: policy, fallback choice, sample size and strata, not-covered spend, flagged spans, failed caveat checks.
+
+## Test plan
+
+Unit tests on synthetic fixtures, no network:
+- Routing input: every text-part shape, plain strings, `developer` role, `<system-reminder>` blocks (complete, unclosed), trimming and joins, fallbacks, empty input, the 65,000-character limit.
+- Score and tier: float order; `0.11000000000000001` is medium under balanced; exact t1 and t2 per profile.
+- Bands: pools of 2 to 5 models, index ties, empty bands, pick-in-band tie-breaks, invalid pools, and a 2-model pool whose index order reverses the table order.
+- Tier resolution: all regression ids above, plus disabled and unpriced models and the region tie-break.
+- Pricing: each `when` variable and operator, `||`, the modulo off-peak form, partial overrides, overlapping variants (the US-region batch long-context case picks the three-condition variant), a span that shows nothing stays on base, unknown variables, missing tier variant, missing TTL, `service_tier` `default`.
+- Savings: pick equals current model; negative savings; same tokens on the picked model; a model with no pool takes its switch figure in the router scenario.
+- Sampling and estimator: allocation with a minimum of 5, weights, weighted ratio on a hand-computed fixture, cell bootstrap, top-3-excluded figure, coverage.
+- Caching: read and write per turn, TTL expiry, already-cached and already-written tokens, mixed-model threads.
+- Span filter: root and `span.agent` dropped, leaf spans kept, cache hits and decision models dropped, already-routed spans kept with savings 0.
+- Output: `report.json` validates against `resources/report.schema.json`; `render` refuses empty slots.
+
+`tests/requirements.txt` lists `pytest` and `jsonschema` so CI runs the suite; `tests/test_analyze.py` runs `analyze` and `render` end to end against a fake `orq` CLI. Live smoke test (manual): `analyze --sample 20 --counterfactual-test` on an internal workspace whose decision model is enabled; pilot checks pass and the JSON validates.
+
+## Open questions
+
+1. Agent-level numbers have only been checked on a workspace with little agent traffic.
