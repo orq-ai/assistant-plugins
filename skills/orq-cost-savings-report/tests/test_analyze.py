@@ -159,7 +159,7 @@ def test_analyze_end_to_end(tmp_path):
 
 
 def test_router_without_pool_serves_the_switch_target(tmp_path, monkeypatch):
-    monkeypatch.setattr(c, "frontier_pool", lambda top, cands: ([top], True))
+    monkeypatch.setattr(c, "frontier_pool", lambda top, cands, cost=None: ([top], True))
     _, rep = run(tmp_path)
     for r in rep["samples"]:
         assert r["pool"] is None

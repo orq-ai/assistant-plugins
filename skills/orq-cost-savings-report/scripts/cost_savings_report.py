@@ -215,20 +215,44 @@ def switch_target(incumbent: mf.ScoredModel, cands: list[mf.ScoredModel],
     return min(better, key=lambda t: (t[0], -t[1].default_index, t[1].router_id))[1] if better else None
 
 
-def frontier_pool(top: mf.ScoredModel, cands: list[mf.ScoredModel]) -> tuple[list[mf.ScoredModel], bool]:
+Cost = Callable[[str], "float | None"]
+
+
+def _pricer(cost: Cost | None) -> Callable[[mf.ScoredModel], float | None]:
+    return (lambda m: m.price) if cost is None else (lambda m: cost(m.router_id))
+
+
+def _beats(a: mf.ScoredModel, b: mf.ScoredModel, price: Callable[[mf.ScoredModel], float | None]) -> bool:
+    pa, pb = price(a), price(b)
+    if pa is None or pb is None:
+        return False
+    return a.default_index >= b.default_index and pa <= pb and (a.default_index > b.default_index or pa < pb)
+
+
+def frontier_pool(top: mf.ScoredModel, cands: list[mf.ScoredModel],
+                  cost: Cost | None = None) -> tuple[list[mf.ScoredModel], bool]:
     """(members strongest first, relaxed): `top` plus up to two cheaper frontier models, by the RES-1285 criteria.
 
     The lower seats are on the candidates' frontier, weaker than `top`, distinct models, and each sits at least
     MIN_TIER_RATIO cheaper than the seat above it; of the trios that pass, the one whose weakest seat is strongest
-    wins, ties on total index. With no trio the best pair is returned and flagged relaxed; with no pair, [top]."""
+    wins, ties on total index. With no trio the best pair is returned and flagged relaxed; with no pair, [top].
+
+    Price is `cost` (the incumbent's sampled spans re-priced on the model, cache included) when given, so the
+    frontier, the tier gaps and dominance follow this workspace's traffic; else evaluatorq's 3:1 blend."""
     ratio = mf.MIN_TIER_RATIO
     ident = mf.model_identity
-    lower = [m for m in mf.pareto_frontier(cands) if m.default_index < top.default_index
-             and ident(m.router_id) != ident(top.router_id) and m.price * ratio <= top.price]
+    price = _pricer(cost)
+    top_p = price(top)
+    if top_p is None:
+        return [top], True
+    priced = [m for m in cands if not m.free and price(m) is not None]
+    front = [m for m in priced if not any(_beats(o, m, price) for o in priced if o is not m)]
+    lower = [m for m in front if m.default_index < top.default_index
+             and ident(m.router_id) != ident(top.router_id) and price(m) * ratio <= top_p]
     best: tuple | None = None
     for mid in lower:
         for low in lower:
-            if low.price * ratio <= mid.price and ident(low.router_id) != ident(mid.router_id):
+            if price(low) * ratio <= price(mid) and ident(low.router_id) != ident(mid.router_id):
                 rank = (min(mid.default_index, low.default_index), mid.default_index + low.default_index,
                         mid.router_id, low.router_id)
                 if best is None or rank > best[0]:
@@ -236,12 +260,13 @@ def frontier_pool(top: mf.ScoredModel, cands: list[mf.ScoredModel]) -> tuple[lis
     if best:
         return best[1], False
     if lower:
-        return [top, max(lower, key=lambda m: (m.default_index, -m.price, m.router_id))], True
+        return [top, max(lower, key=lambda m: (m.default_index, -price(m), m.router_id))], True
     return [top], True
 
 
-def has_dominated(members: list[mf.ScoredModel]) -> bool:
-    return any(a.dominates(b) for a in members for b in members if a is not b)
+def has_dominated(members: list[mf.ScoredModel], cost: Cost | None = None) -> bool:
+    price = _pricer(cost)
+    return any(_beats(a, b, price) for a in members for b in members if a is not b)
 
 
 def region_of(model_id: str) -> str | None:
@@ -896,9 +921,10 @@ class Analyzer:
             return {"pool": None, "reason": "no intelligence index or price", "switch": None, "enable": [],
                     "relaxed": False}
         cands = self.candidates(m, scope)
-        sw = switch_target(inc, cands, self.traffic_cost(m))
-        members, relaxed = frontier_pool(sw or inc, cands)
-        assert not has_dominated(members), [x.router_id for x in members]
+        cost = self.traffic_cost(m)
+        sw = switch_target(inc, cands, cost)
+        members, relaxed = frontier_pool(sw or inc, cands, cost)
+        assert not has_dominated(members, cost), [x.router_id for x in members]
         ids = [x.router_id for x in members]
         enable = [x for x in ids + ([sw.router_id] if sw else []) if not (self.cards.get(x) or {}).get("enabled")]
         info = {"switch": sw.router_id if sw else None, "enable": sorted(set(enable)), "relaxed": relaxed}

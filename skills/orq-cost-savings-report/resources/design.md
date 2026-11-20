@@ -258,12 +258,12 @@ The switch target is the cheapest candidate that dominates the customer's model 
 ### Pool rule
 
 1. Top seat: the switch target, else the customer's model. Hard asks are never sent below the model in use.
-2. Lower seats: candidates on the scope's Pareto frontier, weaker than the top seat, a different model, each at least `MIN_TIER_RATIO` cheaper than the seat above.
+2. Lower seats: candidates on the scope's Pareto frontier, weaker than the top seat, a different model, each at least `MIN_TIER_RATIO` cheaper than the seat above. Price here is the customer model's sampled spans re-priced on the candidate (same tokens, cache reads and writes included), the same cost the switch rule uses, so the frontier, the tier gaps and dominance follow this workspace's traffic. A candidate the spans cannot price is never seated. With no sampled spans, evaluatorq's 3:1 blend. `MIN_TIER_RATIO` (2.75) is evaluatorq's judgement of how far apart bands must sit before routing down pays, not a measured figure.
 3. Of the trios that pass, the one whose weakest seat has the highest index wins, ties on total index (RES-1285 criteria, as `derive_trio`).
 4. No trio: the best pair, flagged relaxed (hard resolves to medium, so medium and hard asks go to the top seat). No pair: no pool, listed; the router scenario then serves the top seat, so its figure equals the switch.
 5. Disabled members and the switch target are listed under "enable first".
 
-No pool contains a model another member dominates: lower seats are on the frontier and weaker than the top seat, and the script asserts it.
+No pool contains a model another member dominates on the same price: lower seats are on the frontier and weaker than the top seat, and the script asserts it.
 
 Example (synthetic): traffic on gpt-6-sol where a disabled gpt-6.1-terra scores higher at a lower blended price. The all-available pool tops out at gpt-6.1-terra; an older gpt-5.6-terra that gpt-6-luna dominates is never seated in any scope.
 

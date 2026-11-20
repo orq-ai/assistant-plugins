@@ -424,3 +424,18 @@ def test_switch_target_on_traffic_counts_cache_reads():
     assert c.switch_target(SOL, [flash, other], costs.get).router_id == "acme/acme-other"
     assert c.switch_target(SOL, [flash], costs.get) is None
     assert c.switch_target(SOL, [flash, other], {SOL.router_id: 1.0}.get) is None  # unpriced: never a target
+
+
+def test_frontier_pool_on_traffic_follows_cache_prices():
+    # on the blend sol > terra > luna is a clean trio; on cached traffic luna's reads cost nearly what terra's do
+    costs = {SOL.router_id: 6.0, TERRA.router_id: 2.0, LUNA.router_id: 1.9}
+    members, relaxed = c.frontier_pool(SOL, [SOL, TERRA, LUNA], costs.get)
+    assert [m.router_id for m in members] == [SOL.router_id, TERRA.router_id] and relaxed  # luna under 2.75x
+    assert not c.has_dominated(members, costs.get)
+    cheap = sm("acme/acme-flash", 25, 0.1, 0.5)  # weaker than terra, far cheaper on traffic: replaces luna
+    costs[cheap.router_id] = 0.5
+    members, relaxed = c.frontier_pool(SOL, [SOL, TERRA, LUNA, cheap], costs.get)
+    assert [m.router_id for m in members] == [SOL.router_id, TERRA.router_id, "acme/acme-flash"] and not relaxed
+    unpriced = {SOL.router_id: 6.0, TERRA.router_id: 2.0}  # luna unpriced on these spans: never seated
+    members, _ = c.frontier_pool(SOL, [SOL, TERRA, LUNA], unpriced.get)
+    assert LUNA.router_id not in [m.router_id for m in members]
