@@ -453,3 +453,16 @@ def test_report_number_formats():
     assert c._change(-0.46) == "-46%" and c._change(45.4) == "46x the cost"
     assert c._day("2026-10-22T10:29:00Z") == "22 Oct 2026"
     assert c._scrub("see /Users/someone/repo/a.py and /home/x/y") == "see <path> and <path>"
+
+
+def test_plan_orders_moves_that_need_nothing_enabled_first():
+    report = {"routing": {"strata": [{"model": "openai/a", "savings": 10.0}, {"model": "openai/b", "savings": 30.0},
+                                     {"model": "openai/c", "savings": 0.0}]},
+              "scenarios": [{"headline": True, "models": [
+                  {"model": "openai/a", "pool": None, "switch": "openai/x", "enable": []},
+                  {"model": "openai/b", "pool": ["openai/y", "openai/x"], "switch": "openai/y",
+                   "enable": ["openai/y"]},
+                  {"model": "openai/c", "pool": None, "switch": None, "enable": []}]}]}
+    plan = c._plan(report, 1.0)
+    assert plan.index("Now, nothing to enable: about $10/mo") < plan.index("Enable y, then about $30/mo more")
+    assert "a: switch to x" in plan and "b: route over y and x" in plan and "c:" not in plan
