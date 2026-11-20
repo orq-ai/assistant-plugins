@@ -515,8 +515,36 @@ def test_hard_models_flags_half_or_more_hard_asks():
                            {"model": "m3", "share_hard": None}]}
     assert c._hard_models(ro) == {"m1": 0.5}
     assert c._hard_models({}) == {}
+
+
+def test_hard_flag_shows_on_the_flagged_row_with_the_largest_saving_only():
     report = _plan_report()
-    report["routing"]["underpowered"] = [{"model": "openai/b", "share_hard": 0.8}, {"model": "openai/d", "share_hard": 1.0}]
+    report["routing"]["underpowered"] = [{"model": "openai/a", "share_hard": 0.9}, {"model": "openai/b", "share_hard": 0.8},
+                                         {"model": "openai/d", "share_hard": 1.0}]
     rows = _rows(report)
-    assert rows["openai/b"]["hard"] and not rows["openai/d"]["hard"]  # a keep row has no move to warn about
-    assert "Mostly hard asks: test quality first" in c._actions_chart(report, 1.0)
+    assert rows["openai/b"]["hard"] == 0.8  # biggest saving among flagged
+    assert rows["openai/a"]["hard"] is None and rows["openai/d"]["hard"] is None  # keep row has no move to warn about
+    page = c._actions_chart(report, 1.0)
+    assert page.count("test quality first") == 1 and "80% of its sampled asks are hard: test quality first." in page
+
+
+def test_keep_rows_and_not_sampled_spend_are_lines_not_bars():
+    report = _plan_report()
+    report["routing"]["strata"][3]["model"] = "openai/d"
+    report["routing"]["not_covered"] = [{"model": "x/1", "spend": 60.0}, {"model": "x/2", "spend": 24.0}]
+    chart = c._actions_chart(report, 1.0)
+    assert chart.count("class=row>") == 3  # a, b, c; the keep row d has no bar
+    assert "No cheaper model as strong: d." in chart
+    assert "+$84/mo on 2 other models, not sampled." in chart
+    assert "class=ns" not in chart and "Not sampled</li>" not in chart
+
+
+def test_scope_grid_marks_headline_and_enable_first():
+    report = _plan_report()
+    for sc in report["scenarios"]:
+        sc["switch"] = {"per_month": 80.0, "ci90_per_month": [70.0, 90.0]}
+        sc["router"]["balanced"]["ci90_per_month"] = [90.0, 110.0]
+    grid = c._scope_grid(report)
+    assert grid.count("class='cell hl'") == 1 and "<p class=ch>Any provider</p>" in grid
+    assert "enable 2 models" in grid and "title='openai/y, openai/z'" in grid
+    assert "90% CI $90\u2013$110" in grid and "n/a" in grid  # the two any-provider scopes are absent
