@@ -229,6 +229,11 @@ def _beats(a: mf.ScoredModel, b: mf.ScoredModel, price: Callable[[mf.ScoredModel
     return a.default_index >= b.default_index and pa <= pb and (a.default_index > b.default_index or pa < pb)
 
 
+# A seat counts once it is at least half the price of the seat above. evaluatorq lowers its MIN_TIER_RATIO
+# from 2.75 to the same 2.0; until that release is the floor here, the skill pins it.
+MIN_TIER_RATIO = 2.0
+
+
 def frontier_pool(top: mf.ScoredModel, cands: list[mf.ScoredModel],
                   cost: Cost | None = None) -> tuple[list[mf.ScoredModel], bool]:
     """(members strongest first, relaxed): `top` plus up to two cheaper frontier models, by the RES-1285 criteria.
@@ -239,7 +244,7 @@ def frontier_pool(top: mf.ScoredModel, cands: list[mf.ScoredModel],
 
     Price is `cost` (the incumbent's sampled spans re-priced on the model, cache included) when given, so the
     frontier, the tier gaps and dominance follow this workspace's traffic; else evaluatorq's 3:1 blend."""
-    ratio = mf.MIN_TIER_RATIO
+    ratio = MIN_TIER_RATIO
     ident = mf.model_identity
     price = _pricer(cost)
     top_p = price(top)
@@ -929,9 +934,9 @@ class Analyzer:
         enable = [x for x in ids + ([sw.router_id] if sw else []) if not (self.cards.get(x) or {}).get("enabled")]
         info = {"switch": sw.router_id if sw else None, "enable": sorted(set(enable)), "relaxed": relaxed}
         if len(members) < 2:
-            return {"pool": None, "reason": "no frontier model 2.75x cheaper in scope", **info}
+            return {"pool": None, "reason": "no frontier model 2x cheaper in scope", **info}
         pool = [PoolModel(x, float(self.v2(x)["intelligence_index"]), float(self.v2(x)["price"])) for x in ids]
-        return {"pool": pool, "reason": "two-model pool: no third tier 2.75x cheaper" if relaxed else "", **info}
+        return {"pool": pool, "reason": "two-model pool: no third tier 2x cheaper" if relaxed else "", **info}
 
     def next_stronger(self, m: str) -> str | None:
         """The weakest model above this one's index, same host and region, enabled or not."""

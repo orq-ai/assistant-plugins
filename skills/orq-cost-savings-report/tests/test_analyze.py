@@ -143,10 +143,10 @@ def test_analyze_end_to_end(tmp_path):
 
     scen = {s["scope"]: s for s in rep["scenarios"]}
     sol = {sc: next(m for m in s["models"] if m["model"] == SOL) for sc, s in scen.items()}
-    assert sol["same_provider:all"] | {"reason": ""} == {"model": SOL, "pool": [SOL61, LUNA], "switch": SOL61,
-                                                       "enable": [SOL61], "relaxed": True, "reason": ""}
+    assert sol["same_provider:all"] | {"reason": ""} == {"model": SOL, "pool": [SOL61, TERRA, LUNA], "switch": SOL61,
+                                                       "enable": [SOL61], "relaxed": False, "reason": ""}
     assert (sol["same_provider:enabled"]["pool"], sol["same_provider:enabled"]["switch"]) == ([SOL, TERRA, LUNA], None)
-    assert sol["any_provider:all"]["pool"] == [SOL61, ACME]  # acme-flash beats luna on index and price
+    assert sol["any_provider:all"]["pool"] == [SOL61, TERRA, ACME]  # acme-flash beats luna on index and price
     assert sol["any_provider:enabled"]["pool"] == [SOL, TERRA, ACME]
     garden = an.garden
     for s in sol.values():

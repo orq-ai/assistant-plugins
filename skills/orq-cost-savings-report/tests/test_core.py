@@ -171,9 +171,16 @@ def test_frontier_pool_three_tiers_far_enough_apart():
 
 
 def test_frontier_pool_drops_tier_under_ratio_and_flags_pair():
-    # terra's blend (2) is only 2x under 6.1-sol's (4), under the 2.75x rule: the pool is a flagged pair
-    members, relaxed = c.frontier_pool(SOL61, [SOL61, SOL, TERRA, LUNA])
+    # mid's blend (2.5) is only 1.6x under 6.1-sol's (4), under the 2x rule: the pool is a flagged pair
+    mid = sm("openai/gpt-6-mid", 35, 2, 4)
+    members, relaxed = c.frontier_pool(SOL61, [SOL61, SOL, mid, LUNA])
     assert [m.router_id for m in members] == [SOL61.router_id, LUNA.router_id] and relaxed
+
+
+def test_frontier_pool_seats_a_tier_exactly_half_the_price():
+    # terra's blend (2) is half 6.1-sol's (4): 50% cheaper is enough for a seat
+    members, relaxed = c.frontier_pool(SOL61, [SOL61, SOL, TERRA, LUNA])
+    assert [m.router_id for m in members] == [SOL61.router_id, TERRA.router_id, LUNA.router_id] and not relaxed
 
 
 def test_frontier_pool_never_seats_dominated_model():
@@ -430,7 +437,7 @@ def test_frontier_pool_on_traffic_follows_cache_prices():
     # on the blend sol > terra > luna is a clean trio; on cached traffic luna's reads cost nearly what terra's do
     costs = {SOL.router_id: 6.0, TERRA.router_id: 2.0, LUNA.router_id: 1.9}
     members, relaxed = c.frontier_pool(SOL, [SOL, TERRA, LUNA], costs.get)
-    assert [m.router_id for m in members] == [SOL.router_id, TERRA.router_id] and relaxed  # luna under 2.75x
+    assert [m.router_id for m in members] == [SOL.router_id, TERRA.router_id] and relaxed  # luna under 2x
     assert not c.has_dominated(members, costs.get)
     cheap = sm("acme/acme-flash", 25, 0.1, 0.5)  # weaker than terra, far cheaper on traffic: replaces luna
     costs[cheap.router_id] = 0.5
