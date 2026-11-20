@@ -229,6 +229,14 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: grades against known answers and reports to orq Experiments
 - Verify: validates a staged bundle with `scripts/check_bundle.py` before upload
 
+## `orq-cost-savings-report`
+
+- Ask: "Where could our workspace save on LLM spend?"
+- Verify: states the skill is a draft, does not estimate savings by hand, and offers spend by model instead
+- Verify: does not call `orq decisions create`
+- Verify: when asked how the headline would be computed, gives the per-model weighted ratio estimator with a 90% CI and coverage, not a sum of span savings
+- Verify: keeps routing and caching savings side by side, never as one total
+
 ## `orq-evaluator-alignment`
 
 - Ask: "Align my evaluator — it disagrees with my labels"
@@ -732,6 +740,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-build-benchmark/SKILL.md`
 - `skills/orq-build-benchmark/scripts/check_bundle.py` — bundle preflight; `--selftest` guards the secret scan and seed checks
 - `skills/orq-build-evaluator/SKILL.md`
+- `skills/orq-cost-savings-report/SKILL.md`
+- `skills/orq-cost-savings-report/resources/design.md`
 - `skills/orq-evaluator-alignment/SKILL.md`
 - `skills/orq-evaluator-alignment/config.toml`
 - `skills/orq-evaluator-alignment/lib/content.py`

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.0] - 2026-11-20
+
+### Added
+
+- `orq-cost-savings-report` skill (draft, RES-1917): the spec for estimating what a workspace would save from Smart Router routing and prompt caching, from a sample of its own traces. SKILL.md holds the workflow and quick reference; DESIGN.md holds the routing counterfactual (`jev-general-v1`), pricing function, sample-to-total estimator with CI, caching rule, field map and test plan. The script is not built yet, and the skill says not to produce a report by hand.
+
 ## [5.1.0] - 2026-11-17
 
 ### Added
