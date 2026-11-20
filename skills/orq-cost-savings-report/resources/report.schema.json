@@ -130,8 +130,7 @@
             "required": ["model", "spend", "reason"],
             "properties": {"model": {"type": "string"}, "spend": {"type": "number"}, "reason": {"type": "string"}}
           }
-        },
-        "session_affinity": {"type": "null"}
+        }
       }
     },
     "counterfactual_test": {

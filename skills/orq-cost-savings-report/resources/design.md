@@ -132,7 +132,6 @@ Savings = price(span, current model) - price(span, picked model), both from the 
 
 Cache carry-over: a prompt cache belongs to one model. For each sampled span, fetch the previous span of its thread (thread search, then `list-spans`) and score its routing input too. If the previous turn's pick differs from this turn's pick, this turn's cache-read tokens are priced as a cache write on the picked model (uncached input if it has no cache-write price). If the previous span cannot be found, assume it differs whenever this turn's pick is not the current model. The report counts both cases. Savings are therefore exactly 0 only when the pick and the previous turn's pick both equal the current model.
 
-Session-affinity scenario column (not computed in v1; `routing.session_affinity` is null): pin the thread's first-turn pick for 600 s; an escalation applies from the next turn; hard pins never escalate; at most one re-score per pin TTL.
 
 ### 7. Pricing function
 
@@ -316,7 +315,7 @@ The gateway records the calling harness as `trace_framework`, groupable on the `
 
 1. Summary: spend in the window and per month; routing savings with 90% CI, the top-3-excluded figure and coverage; caching savings beside it; Pareto line.
 2. Spend by model, agent, deployment.
-3. Routing: balanced headline; cost, quality and session-affinity columns; buckets with the flags above. Action: "create a Smart Router with profile balanced and pool X, Y, Z".
+3. Routing: balanced headline; cost and quality columns; buckets with the flags above. Action: "create a Smart Router with profile balanced and pool X, Y, Z".
 4. Under-powered asks, up to 3 truncated examples; `--redact` hides them.
 5. Caching gaps by agent and thread, with the action per provider.
 6. Harness traffic.
@@ -330,7 +329,7 @@ Unit tests on synthetic fixtures, no network:
 - Bands: pools of 2 to 5 models, index ties, empty bands, pick-in-band tie-breaks, invalid pools, and a 2-model pool whose index order reverses the table order.
 - Tier resolution: all regression ids above, plus disabled and unpriced models and the region tie-break.
 - Pricing: each `when` variable and operator, `||`, the modulo off-peak form, partial overrides, overlapping variants (the US-region batch long-context case picks the three-condition variant), a span that shows nothing stays on base, unknown variables, missing tier variant, missing TTL, `service_tier` `default`.
-- Savings: pick equals current model; negative savings; carry-over on a switch, on a switch back, with the previous turn missing, and with no cache-write price; session-affinity pins and escalation.
+- Savings: pick equals current model; negative savings; carry-over on a switch, on a switch back, with the previous turn missing, and with no cache-write price.
 - Sampling and estimator: allocation with a minimum of 5, weights, weighted ratio on a hand-computed fixture, cell bootstrap, top-3-excluded figure, coverage.
 - Caching: read and write per turn, TTL expiry, already-cached and already-written tokens, mixed-model threads.
 - Span filter: root and `span.agent` dropped, leaf spans kept, cache hits and decision models dropped, already-routed spans kept with savings 0.

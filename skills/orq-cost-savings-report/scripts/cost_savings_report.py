@@ -868,9 +868,10 @@ class Analyzer:
     def next_stronger(self, m: str) -> str | None:
         dev, host = developer_of(self.canonical(m)), self.host(m)
         mine = self.v2(m).get("intelligence_index") or 0
+        region = region_of(m)
         cands = [(self.v2(x)["intelligence_index"], x) for x in self.cat if self.poolable(x)
                  and self.host(x) == host and developer_of(self.canonical(x)) == dev
-                 and self.v2(x)["intelligence_index"] > mine]
+                 and region_of(x) == region and self.v2(x)["intelligence_index"] > mine]
         return min(cands)[1] if cands else None
 
     # ---- sampling
@@ -1230,9 +1231,23 @@ class Analyzer:
             "buckets": self.buckets(), "fallbacks": self._count("fallback"),
             "carry_over": {"previous_found": sum(r["prev_found"] for r in self.samples),
                            "previous_missing": sum(not r["prev_found"] for r in self.samples)},
+            "moves": self.moves(),
             "underpowered": self.underpowered(), "pareto": self.pareto([s["model"] for s in strata]),
-            "session_affinity": None,
         }
+
+    def moves(self) -> list[dict]:
+        """Per (used model, balanced pick): spans, how many cost more, weighted savings."""
+        out: dict[tuple, dict] = {}
+        for r in self.samples:
+            pick = r["picks"].get("balanced") or r["model"]
+            row = out.setdefault((r["model"], pick), {"used": r["model"], "pick": pick, "tier": set(), "n": 0,
+                                                      "costs_more": 0, "weighted_savings": 0.0})
+            row["n"] += 1
+            row["costs_more"] += r["savings"]["balanced"] < 0
+            row["weighted_savings"] += r["weight"] * r["savings"]["balanced"]
+            row["tier"].add(r["tier"].get("balanced") or f"fallback: {r['fallback']}")
+        rows = [dict(v, tier=", ".join(sorted(v["tier"]))) for v in out.values()]
+        return sorted(rows, key=lambda v: (v["used"], -v["n"]))
 
     def _count(self, key: str) -> dict:
         out: dict[str, int] = defaultdict(int)
@@ -1425,7 +1440,30 @@ def _table(rows: list[dict], cols: list[tuple[str, str, Any]]) -> str:
     head = "".join(f"<th>{html.escape(h)}</th>" for h, _, _ in cols)
     body = "".join("<tr>" + "".join(f"<td>{html.escape(str(fmt(r.get(k))))}</td>" for _, k, fmt in cols) + "</tr>"
                    for r in rows)
-    return f"<table><tr>{head}</tr>{body}</table>"
+    return f"<div class=t><table><tr>{head}</tr>{body}</table></div>"
+
+
+CSS = """
+:root{--bg:#fbfbfa;--fg:#1c1e21;--muted:#5d636b;--line:#dcdfe3;--tile:#f1f3f4;--accent:#2f6f8f}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15171a;--fg:#e8eaed;--muted:#9aa1a9;
+--line:#30343a;--tile:#1d2024;--accent:#7fb7d4;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15171a;--fg:#e8eaed;--muted:#9aa1a9;--line:#30343a;--tile:#1d2024;--accent:#7fb7d4;
+color-scheme:dark}
+body{font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg);margin:0;
+padding-block:24px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));
+padding-right:max(16px,env(safe-area-inset-right,0px))}
+main{max-width:980px;margin:0 auto}
+h1,h2,h3{text-wrap:balance;line-height:1.25}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin-top:32px;
+border-top:1px solid var(--line);padding-top:16px}h3{font-size:15px;margin-top:20px}
+p,li{max-width:70ch}.m{color:var(--muted)}
+.t{overflow-x:auto;margin:8px 0}table{border-collapse:collapse;width:100%;font-size:13px;
+font-variant-numeric:tabular-nums}td,th{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left;
+vertical-align:top}th{color:var(--muted);font-weight:600;white-space:nowrap}
+.k{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:16px 0}
+.k div{background:var(--tile);padding:12px 14px;border-radius:6px;min-width:0}.k b{display:block;font-size:22px;
+color:var(--accent);font-variant-numeric:tabular-nums}
+blockquote{border-left:3px solid var(--line);margin:6px 0;padding:2px 10px;color:var(--muted)}
+"""
 
 
 def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
@@ -1453,7 +1491,11 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
              _table([{"profile": k, **v} for k, v in (ro.get("profiles") or {}).items()],
                     [("Profile", "profile", str), ("Savings", "savings", _usd),
                      ("90% CI", "ci90", lambda c: f"{_usd(c[0])} to {_usd(c[1])}")]),
-             f"<p class=m>Without the top 3 spans: {_usd(h.get('without_top3'))}.</p>"]
+             f"<p class=m>Without the top 3 spans: {_usd(h.get('without_top3'))}.</p>",
+             "<h3>Where sampled asks move (balanced)</h3>",
+             _table(ro.get("moves", []), [("Used", "used", str), ("Router pick", "pick", str), ("Tier", "tier", str),
+                                          ("Spans", "n", str), ("Cost more", "costs_more", str),
+                                          ("Weighted saving per span set", "weighted_savings", _usd)])]
     up = ro.get("underpowered") or []
     if up:
         parts += ["<h2>Under-powered asks</h2>",
@@ -1473,14 +1515,10 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
                       ("Caching", "coding_harness", lambda x: "not controllable" if x else "")]),
               "<h2>Method and caveats</h2>", _md(narrative["caveats"]),
               _table(report["checks"]["caveats"], [("Check", "check", str), ("Detail", "detail", str)])]
-    css = ("body{font:15px/1.5 system-ui,sans-serif;max-width:960px;margin:24px auto;padding:0 16px;color:#1d1d1f;"
-           "background:#fff}table{border-collapse:collapse;width:100%;margin:8px 0;font-size:13px}td,th{border-bottom:"
-           "1px solid #ddd;padding:4px 6px;text-align:left}.k{display:grid;grid-template-columns:repeat(auto-fit,"
-           "minmax(180px,1fr));gap:12px}.k div{border:1px solid #ddd;padding:10px}.k b{display:block;font-size:22px}"
-           ".m{color:#666}blockquote{border-left:3px solid #ccc;margin:6px 0;padding:2px 10px;color:#444}"
-           "@media(prefers-color-scheme:dark){body{background:#111;color:#eee}td,th,.k div{border-color:#333}}")
+    css = CSS
     return (f"<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width'>"
-            f"<title>Cost savings report</title><style>{css}</style></head><body>{''.join(parts)}</body></html>")
+            f"<title>Cost savings report</title><style>{css}</style></head><body><main>{''.join(parts)}</main></body>"
+            "</html>")
 
 
 # --------------------------------------------------------------------------------------------- CLI
