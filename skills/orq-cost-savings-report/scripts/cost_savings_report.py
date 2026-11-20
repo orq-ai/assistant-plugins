@@ -1485,8 +1485,8 @@ def _neg(s: str) -> str:
 
 
 SLOTS = {
-    "summary": "two to four sentences: spend, routing savings with CI and coverage, caching savings beside it",
-    "routing": "which models move where, the profile columns, flagged buckets, the action",
+    "summary": "two to four sentences: spend, routing savings with CI and coverage, caching savings beside it; quote monthly figures (`per_month`), as the charts do",
+    "routing": "which models move where, the profile columns, flagged buckets, the action; monthly figures",
     "caching": "which threads or agents miss caching and the action per provider",
     "caveats": "sample size, not-covered spend, failed caveat checks, fallback choice",
 }
@@ -1521,40 +1521,152 @@ def _md(text: str) -> str:
 
 
 def _usd(x: Any) -> str:
-    return "n/a" if x is None else f"${x:,.2f}" if abs(x) >= 1 else f"${x:,.4f}"
+    if x is None:
+        return "n/a"
+    if x != 0 and abs(x) < 0.01:
+        return "<$0.01" if x > 0 else "-<$0.01"
+    return f"${x:,.0f}" if abs(x) >= 1000 else f"${x:,.2f}"
+
+
+def _usd0(x: Any) -> str:
+    return "n/a" if x is None else f"${x:,.0f}"
 
 
 def _pct(x: Any) -> str:
     return "n/a" if x is None else f"{x:.0%}"
 
 
-def _table(rows: list[dict], cols: list[tuple[str, str, Any]]) -> str:
-    head = "".join(f"<th>{html.escape(h)}</th>" for h, _, _ in cols)
-    body = "".join("<tr>" + "".join(f"<td>{html.escape(str(fmt(r.get(k))))}</td>" for _, k, fmt in cols) + "</tr>"
-                   for r in rows)
-    return f"<div class=t><table><tr>{head}</tr>{body}</table></div>"
+def _change(x: Any) -> str:
+    """A cost change as a percent, or as a multiple once it passes +1000%."""
+    if x is None:
+        return "n/a"
+    return f"{1 + x:.0f}x the cost" if x > 10 else f"{x:+.0%}"
+
+
+def _day(iso: str) -> str:
+    try:
+        d = parse_ts(iso)
+    except ValueError:
+        return iso
+    return f"{d.day} {d:%b %Y}"
+
+
+def _scrub(text: str) -> str:
+    """Drop absolute home paths from an example ask before it is printed."""
+    return re.sub(r"(/Users|/home|C:\\Users)/[^\s'\"<>]+", "<path>", text)
+
+
+def _txt(x: Any) -> str:
+    if x is None or x == "":
+        return "none"
+    if isinstance(x, bool):
+        return "Yes" if x else "No"
+    return str(x)
+
+
+def _short(model: str) -> str:
+    return model.split("/", 1)[-1]
+
+
+def _table(rows: list[dict], cols: list[tuple[str, str, Any]], caption: str = "") -> str:
+    if not rows:
+        return "<p class=m>Nothing to show.</p>"
+    cap = f"<caption>{html.escape(caption)}</caption>" if caption else ""
+    num = [" class=num" if fmt in NUMERIC else "" for _, _, fmt in cols]
+    head = "".join(f"<th scope=col{c}>{html.escape(h)}</th>" for (h, _, _), c in zip(cols, num, strict=True))
+    body = "".join("<tr>" + "".join(f"<td{c}>{html.escape(str(fmt(r.get(k))))}</td>"
+                                    for (_, k, fmt), c in zip(cols, num, strict=True)) + "</tr>" for r in rows)
+    label = html.escape(caption or cols[0][0])
+    return (f"<div class=t role=region tabindex=0 aria-label='{label}'><table>{cap}<thead><tr>{head}</tr></thead>"
+            f"<tbody>{body}</tbody></table></div>")
 
 
 CSS = """
-:root{--bg:#fbfbfa;--fg:#1c1e21;--muted:#5d636b;--line:#dcdfe3;--tile:#f1f3f4;--accent:#2f6f8f}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15171a;--fg:#e8eaed;--muted:#9aa1a9;
---line:#30343a;--tile:#1d2024;--accent:#7fb7d4;color-scheme:dark}}
-:root[data-theme="dark"]{--bg:#15171a;--fg:#e8eaed;--muted:#9aa1a9;--line:#30343a;--tile:#1d2024;--accent:#7fb7d4;
-color-scheme:dark}
-body{font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg);margin:0;
-padding-block:24px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));
+td.num,th.num{text-align:right}
+:root{--bg:#ffffff;--fg:#25232e;--muted:#5c5a66;--line:#e4e2df;--tile:#f9f8f6;--head:#025558;
+--s1:#299D8F;--s2:#ff8f34;--kept:#d9d6d1;--ns:#eeece8;--th:#025558;--thfg:#ffffff;color-scheme:light}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){--bg:#17161c;--fg:#eceaf0;
+--muted:#a8a5b2;--line:#302e38;--tile:#201f26;--head:#5cc4b6;--s1:#299D8F;--s2:#df5325;--kept:#45434d;
+--ns:#2a2930;--th:#023f42;--thfg:#eceaf0;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#17161c;--fg:#eceaf0;--muted:#a8a5b2;--line:#302e38;--tile:#201f26;--head:#5cc4b6;
+--s1:#299D8F;--s2:#df5325;--kept:#45434d;--ns:#2a2930;--th:#023f42;--thfg:#eceaf0;color-scheme:dark}
+*{box-sizing:border-box}
+body{font:15px/1.55 "Kurrent","Inter",system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg);margin:0;
+padding-block:28px 56px;padding-left:max(16px,env(safe-area-inset-left,0px));
 padding-right:max(16px,env(safe-area-inset-right,0px))}
-main{max-width:980px;margin:0 auto}
-h1,h2,h3{text-wrap:balance;line-height:1.25}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin-top:32px;
-border-top:1px solid var(--line);padding-top:16px}h3{font-size:15px;margin-top:20px}
-p,li{max-width:70ch}.m{color:var(--muted)}
-.t{overflow-x:auto;margin:8px 0}table{border-collapse:collapse;width:100%;font-size:13px;
-font-variant-numeric:tabular-nums}td,th{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left;
-vertical-align:top}th{color:var(--muted);font-weight:600;white-space:nowrap}
-.k{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:16px 0}
-.k div{background:var(--tile);padding:12px 14px;border-radius:6px;min-width:0}.k b{display:block;font-size:22px;
-color:var(--accent);font-variant-numeric:tabular-nums}
-blockquote{border-left:3px solid var(--line);margin:6px 0;padding:2px 10px;color:var(--muted)}
+main{max-width:1000px;margin:0 auto}
+h1,h2,h3{text-wrap:balance;line-height:1.2;letter-spacing:-0.01em;color:var(--head)}
+h1{font-size:28px;margin:0 0 6px}
+h2{font-size:21px;margin:48px 0 6px}
+h3{font-size:15px;margin:24px 0 6px}
+p,li{max-width:72ch;text-wrap:pretty}
+.m{color:var(--muted)}
+.hero{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:28px;margin:28px 0 8px;
+padding:24px 0;border-block:1px solid var(--line)}
+.hero .lab{margin:0;font-weight:600}
+.big{font-size:64px;line-height:1;font-weight:700;margin:10px 0 8px;font-variant-numeric:tabular-nums;
+letter-spacing:-0.02em}
+.big small{font-size:24px;font-weight:600;color:var(--muted);margin-left:4px}
+.hero .sub{margin:0;color:var(--muted)}
+.alts{display:grid;gap:14px;align-content:center;margin:0;padding:0;list-style:none}
+.alts li{display:grid;grid-template-columns:7.5em 1fr;gap:12px;align-items:baseline}
+.alts b{font-size:22px;font-variant-numeric:tabular-nums;text-align:right}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;margin:10px 0 14px;font-size:13px;color:var(--muted);
+padding:0;list-style:none}
+.legend li{display:flex;align-items:center;gap:6px}
+.sw{display:inline-block;width:12px;height:12px;border-radius:3px}
+.chart{margin:8px 0 4px}
+.row{display:grid;grid-template-columns:minmax(0,15em) minmax(0,1fr) 9.5em;gap:6px 16px;align-items:center;
+padding:10px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:0}
+.who{min-width:0}
+.who code{font:500 14px/1.3 "Kurrent Mono",ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
+.who span{display:block;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.tag{display:inline-block;font-size:12px;line-height:1.5;padding:0 7px;border:1px solid var(--line);
+border-radius:999px;color:var(--fg);margin-top:4px}
+.track{display:flex;gap:2px;height:18px;align-items:stretch}
+.track i{display:block;min-width:2px}
+.track i:first-child{border-radius:4px 0 0 4px}
+.track i:last-child{border-radius:0 4px 4px 0}
+.track i:only-child{border-radius:4px}
+.saved{background:var(--s1)}.kept{background:var(--kept)}.ns{background:var(--ns);border:1px dashed var(--muted)}
+.val{text-align:right;font-variant-numeric:tabular-nums}
+.val b{display:block;font-size:16px}
+.val span{font-size:13px;color:var(--muted)}
+.dots .row{grid-template-columns:minmax(0,15em) minmax(0,1fr) 9.5em}
+.plot{position:relative;height:44px}
+.plot .g{position:absolute;top:0;bottom:0;width:1px;background:var(--line)}
+.ci{position:absolute;height:2px;border-radius:1px}
+.ci::before,.ci::after{content:"";position:absolute;top:-4px;width:2px;height:10px;background:inherit}
+.ci::before{left:0}.ci::after{right:0}
+.dot{position:absolute;width:12px;height:12px;border-radius:50%;margin-left:-6px;box-shadow:0 0 0 2px var(--bg)}
+.r{background:var(--s1)}.s{background:var(--s2)}
+.axis{position:relative;height:18px;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.axis span{position:absolute;transform:translateX(-50%)}
+.axis span:first-child{transform:none}
+.head{font-weight:600}
+details{border-top:1px solid var(--line);padding:4px 0}
+details:last-of-type{border-bottom:1px solid var(--line)}
+summary{cursor:pointer;padding:10px 0;font-weight:600}
+summary span{font-weight:400;color:var(--muted)}
+.t{overflow-x:auto;margin:8px 0 16px}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+caption{text-align:left;font-weight:600;padding:4px 0 6px}
+td,th{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+td{overflow-wrap:anywhere;min-width:5em}
+th{background:var(--th);color:var(--thfg);font-weight:600;white-space:nowrap}
+tbody tr:nth-child(even){background:var(--tile)}
+.ex{border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin:6px 0;font-size:13px;color:var(--muted);
+white-space:pre-wrap;overflow-wrap:anywhere;max-height:12em;overflow:auto}
+:focus-visible{outline:2px solid var(--s1);outline-offset:2px}
+@media (max-width:720px){
+.hero{grid-template-columns:1fr;gap:20px}
+.big{font-size:52px}
+.alts li{grid-template-columns:4.5em 1fr}
+.row,.dots .row{grid-template-columns:minmax(0,1fr) auto;padding:12px 0}
+.track,.plot{grid-column:1/-1;grid-row:2}
+.axis-row .who,.axis-row .val{display:none}
+}
 """
 
 
@@ -1562,10 +1674,14 @@ SCOPE_LABEL = {"same_provider:all": "Same provider, all available", "same_provid
                "any_provider:all": "Any provider, all available", "any_provider:enabled": "Any provider, enabled"}
 TOKENIZER_NOTE = ("Any-provider figures reuse the sampled spans' token counts. Other model families tokenize "
                   "differently, so these figures carry an error the traces cannot measure.")
+EXAMPLE_CHARS = 280
 
 
 def _ci(c: Any) -> str:
     return f"{_usd(c[0])} to {_usd(c[1])}" if c else "n/a"
+
+
+NUMERIC = (_usd, _usd0, _pct, _ci, _change)
 
 
 def _scenario_rows(report: dict) -> list[dict]:
@@ -1573,94 +1689,228 @@ def _scenario_rows(report: dict) -> list[dict]:
     for sc in report.get("scenarios") or []:
         r, w = sc["router"]["balanced"], sc["switch"]
         rows.append({"scope": SCOPE_LABEL.get(sc["scope"], sc["scope"]) + (" (headline)" if sc["headline"] else ""),
-                     "router": r["savings"], "router_ci": r["ci90"], "switch": w["savings"], "switch_ci": w["ci90"],
-                     "coverage": r["coverage"]})
+                     "headline": sc["headline"], "router": r.get("per_month"), "router_ci": r.get("ci90_per_month"),
+                     "switch": w.get("per_month"), "switch_ci": w.get("ci90_per_month"), "coverage": r["coverage"]})
+    rows.sort(key=lambda r: not r["headline"])
     return rows
 
 
-def _pool_rows(report: dict) -> list[dict]:
+def _nice_max(x: float) -> tuple[float, float]:
+    """An axis maximum at or above x and its tick step, on a 1/2/2.5/5 grid with four or five ticks."""
+    if x <= 0:
+        return 1.0, 0.25
+    raw = x / 4
+    mag = 10 ** math.floor(math.log10(raw))
+    step = next(s * mag for s in (1, 2, 2.5, 5, 10) if s * mag >= raw)
+    return step * math.ceil(x / step), step
+
+
+def _action(model: str, info: dict, savings: float) -> tuple[str, str]:
+    """(what to do, tag) for one model in the headline scope."""
+    pool, switch, enable = info.get("pool") or [], info.get("switch"), info.get("enable") or []
+    tag = f"<span class=tag>enable {html.escape(', '.join(_short(e) for e in enable))} first</span>" if enable else ""
+    if savings <= 0:
+        return "Keep it: nothing cheaper is as strong", ""
+    if len(pool) > 1:
+        return "Route over " + ", ".join(_short(p) for p in pool), tag
+    if switch:
+        return f"Switch to {_short(switch)}", tag
+    return "Route", tag
+
+
+def _actions_chart(report: dict, per_month: float) -> str:
+    ro = report.get("routing") or {}
+    head = next((sc for sc in report.get("scenarios") or [] if sc.get("headline")), None)
+    info = {m["model"]: m for m in (head or {}).get("models", [])}
+    strata = sorted(ro.get("strata") or [], key=lambda s: -(s.get("savings") or 0))
+    nc = ro.get("not_covered") or []
+    nc_spend = sum(x.get("spend") or 0 for x in nc)
+    top = max([s.get("spend") or 0 for s in strata] + [nc_spend, 1e-9])
     rows = []
+    for s in strata:
+        spend, saved = (s.get("spend") or 0), max(0.0, s.get("savings") or 0)
+        what, tag = _action(s["model"], info.get(s["model"], {}), saved)
+        a, b = saved / top * 100, max(0.0, spend - saved) / top * 100
+        tip = f"{s['model']}: {_usd(spend * per_month)}/mo spend, {_usd(saved * per_month)}/mo saved"
+        bars = (f"<i class=saved style='width:{a:.2f}%'></i>" if a > 0 else "") + \
+               (f"<i class=kept style='width:{b:.2f}%'></i>" if b > 0 else "")
+        rows.append(f"<div class=row><div class=who><code title='{html.escape(s['model'])}'>"
+                    f"{html.escape(_short(s['model']))}</code><span>{html.escape(what)}</span>{tag}</div>"
+                    f"<div class=track title='{html.escape(tip)}'>{bars}</div>"
+                    f"<div class=val><b>{_usd0(saved * per_month)}/mo</b>"
+                    f"<span>{_pct(s.get('rate'))} of {_usd0(spend * per_month)}/mo</span></div></div>")
+    if nc:
+        w = nc_spend / top * 100
+        rows.append(f"<div class=row><div class=who><code>{len(nc)} other models</code>"
+                    f"<span>Not sampled, so not estimated</span></div>"
+                    f"<div class=track title='{_usd(nc_spend * per_month)}/mo not estimated'>"
+                    f"<i class=ns style='width:{w:.2f}%'></i></div>"
+                    f"<div class=val><b>n/a</b><span>{_usd0(nc_spend * per_month)}/mo</span></div></div>")
+    legend = ("<ul class=legend aria-hidden=true><li><span class='sw saved'></span>Saved by the router</li>"
+              "<li><span class='sw kept'></span>Still spent</li><li><span class='sw ns'></span>Not sampled</li></ul>")
+    return legend + "<div class=chart>" + "".join(rows) + "</div>"
+
+
+def _scenario_chart(rows: list[dict]) -> str:
+    vals = [v for r in rows for v in [*(r["router_ci"] or [r["router"] or 0]), *(r["switch_ci"] or [r["switch"] or 0])]]
+    xmax, step = _nice_max(max(vals + [1e-9]))
+    pos = lambda v: max(0.0, min(100.0, (v or 0) / xmax * 100))
+    ticks = [i * step for i in range(round(xmax / step) + 1)]
+    grid = "".join(f"<i class=g style='left:{pos(t):.2f}%'></i>" for t in ticks)
+    out = []
+    for r in rows:
+        marks = grid
+        for key, cls, top in (("router", "r", 10), ("switch", "s", 28)):
+            v, ci = r[key], r[f"{key}_ci"]
+            if v is None:
+                continue
+            if ci:
+                marks += (f"<i class='ci {cls}' style='left:{pos(ci[0]):.2f}%;width:{pos(ci[1]) - pos(ci[0]):.2f}%;"
+                          f"top:{top + 5}px'></i>")
+            label = f"{'Router' if key == 'router' else 'Switch'} {_usd0(v)}/mo, 90% CI {_ci(ci)}"
+            marks += (f"<i class='dot {cls}' style='left:{pos(v):.2f}%;top:{top}px' title='{html.escape(label)}'"
+                      f"></i>")
+        cls = "row head" if r["headline"] else "row"
+        out.append(f"<div class='{cls}'><div class=who>{html.escape(r['scope'])}"
+                   f"<span>{_pct(r['coverage'])} of spend covered</span></div><div class=plot>{marks}</div>"
+                   f"<div class=val><b>{_usd0(r['router'])}/mo</b><span>or switch {_usd0(r['switch'])}/mo</span>"
+                   f"</div></div>")
+    axis = "".join(f"<span style='left:{pos(t):.2f}%'>{_usd0(t)}</span>" for t in ticks[:-1])
+    axis += f"<span style='left:auto;right:0;transform:none'>{_usd0(ticks[-1])}/mo</span>"
+    out.append(f"<div class='row axis-row'><div class=who></div><div class=axis>{axis}</div><div class=val></div></div>")
+    legend = ("<ul class=legend aria-hidden=true><li><span class='sw r' style='border-radius:50%'></span>"
+              "Smart Router</li><li><span class='sw s' style='border-radius:50%'></span>Switch models</li>"
+              "<li>Lines show the 90% CI</li></ul>")
+    return legend + "<div class='chart dots'>" + "".join(out) + "</div>"
+
+
+def _pool_tables(report: dict) -> str:
+    out = []
     for sc in report.get("scenarios") or []:
-        for m in sc["models"]:
-            rows.append({"scope": SCOPE_LABEL.get(sc["scope"], sc["scope"]), **m})
-    return rows
+        cap = SCOPE_LABEL.get(sc["scope"], sc["scope"]) + (" (headline)" if sc["headline"] else "")
+        out.append(_table(sc["models"], [("Model in use", "model", str),
+                                         ("Router pool", "pool", lambda p: ", ".join(p or []) or "none"),
+                                         ("Switch to", "switch", _txt),
+                                         ("Enable first", "enable", lambda e: ", ".join(e or []) or "nothing"),
+                                         ("Note", "reason", lambda x: x or "")], cap))
+    return "".join(out)
 
 
-def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
+def _details(title: str, hint: str, body: str) -> str:
+    return f"<details><summary>{html.escape(title)} <span>{html.escape(hint)}</span></summary>{body}</details>"
+
+
+def render(report: dict, narrative: dict[str, str], redact: bool, show_examples: bool = False) -> str:
     missing = [s for s in SLOTS if not narrative.get(s)]
     if missing:
         raise SystemExit(f"narrative slots empty: {', '.join(missing)}")
     sp, ro, ca = report.get("spend") or {}, report.get("routing") or {}, report.get("caching") or {}
+    win = report["window"]
+    total = sp.get("total") or 0
+    per_month = (sp["per_month"] / total) if total and sp.get("per_month") else 30 / max(1, win["days"])
     h = ro.get("headline") or {}
-    ci = h.get("ci90") or [None, None]
-    parts = [f"<h1>Cost savings report: {html.escape(str(report.get('workspace')))}</h1>",
-             f"<p class=m>{html.escape(report['window']['from'])} to {html.escape(report['window']['to'])} "
-             f"({report['window']['days']} days). Policy {POLICY}, balanced profile.</p>",
-             "<div class=k>"
-             f"<div><b>{_usd(sp.get('total'))}</b>spend in window</div>"
-             f"<div><b>{_usd(h.get('savings'))}</b>routing savings, 90% CI {_usd(ci[0])} to {_usd(ci[1])}</div>"
-             f"<div><b>{_pct(h.get('coverage'))}</b>of spend covered</div>"
-             f"<div><b>{_usd(ca.get('savings_found'))}</b>caching savings in scanned threads</div></div>",
-             "<h2>Summary</h2>", _md(narrative["summary"]),
-             "<h2>Spend by model</h2>", _table(sp.get("by_model", [])[:15], [("Model", "key", str),
-                                                                                ("Spend", "spend", _usd)]),
-             "<h2>Routing</h2>", _md(narrative["routing"]),
-             _table(ro.get("strata", []), [("Model", "model", str), ("Spend", "spend", _usd), ("n", "n", str),
-                                           ("Savings", "savings", _usd), ("Pool", "pool", lambda p: ", ".join(p or [])),
-                                           ("Note", "pool_reason", str)]),
-             _table([{"profile": k, **v} for k, v in (ro.get("profiles") or {}).items()],
-                    [("Profile", "profile", str), ("Savings", "savings", _usd),
-                     ("90% CI", "ci90", lambda c: f"{_usd(c[0])} to {_usd(c[1])}")]),
-             f"<p class=m>Without the top 3 spans: {_usd(h.get('without_top3'))}.</p>",
-             "<h3>Scenarios (balanced)</h3>",
-             ("<p class=m>Router: the Smart Router over a frontier pool. Switch: move all of a model's traffic to the "
-              "cheapest model that beats it on index and price. The two are alternatives; do not add them.</p>"),
-             _table(_scenario_rows(report), [("Scope", "scope", str), ("Router", "router", _usd),
-                                             ("90% CI", "router_ci", _ci), ("Switch", "switch", _usd),
-                                             ("90% CI", "switch_ci", _ci), ("Coverage", "coverage", _pct)]),
-             f"<p class=m>{html.escape(TOKENIZER_NOTE)}</p>",
-             "<h3>Pools and models to enable</h3>",
-             _table(_pool_rows(report), [("Scope", "scope", str), ("Used", "model", str),
-                                         ("Pool", "pool", lambda p: ", ".join(p or []) or "none"),
-                                         ("Switch to", "switch", lambda x: x or ""),
-                                         ("Enable first", "enable", lambda e: ", ".join(e or [])),
-                                         ("Note", "reason", str)]),
-             "<h3>Where sampled asks move (balanced, headline scope)</h3>",
-             _table(ro.get("moves", []), [("Used", "used", str), ("Router pick", "pick", str), ("Tier", "tier", str),
-                                          ("Spans", "n", str), ("Cost more", "costs_more", str),
-                                          ("Weighted saving per span set", "weighted_savings", _usd)])]
-    dom = [{"model": d["model"], "by": ", ".join(f"{x['model']} ({x['index']:.1f} at {x['blend_price']:.2f}"
+    h_pm = h.get("per_month")
+    ci = h.get("ci90_per_month") or [None, None]
+    scen = _scenario_rows(report)
+    head_row = next((r for r in scen if r["headline"]), {})
+    enabled = next((r for r in scen if r["scope"].startswith(SCOPE_LABEL["same_provider:enabled"])), {})
+    share = (h_pm / sp["per_month"]) if h_pm is not None and sp.get("per_month") else None
+    n = (report.get("params") or {}).get("sample")
+
+    hero = ("<section class=hero aria-label='Headline'><div>"
+            "<p class=lab>Estimated saving with the Smart Router</p>"
+            f"<p class=big>{_usd0(h_pm)}<small>/mo</small></p>"
+            f"<p class=sub>90% CI {_usd0(ci[0])} to {_usd0(ci[1])}, about {_pct(share)} of "
+            f"{_usd0(sp.get('per_month'))}/mo spend. Same provider as today, including models you would enable.</p>"
+            "</div><ul class=alts>"
+            f"<li><b>{_usd0(head_row.get('switch'))}</b><span>a month if you instead switch each model outright. "
+            "An alternative to the router: pick one, never add the two.</span></li>"
+            f"<li><b>{_usd0(enabled.get('router'))}</b><span>a month with the router using only models already "
+            "enabled, so nothing to set up.</span></li>"
+            f"<li><b>{_pct(h.get('coverage'))}</b><span>of spend is covered by the {n or 'sampled'} sampled calls. "
+            "The rest is not estimated.</span></li></ul></section>")
+
+    parts = [f"<h1>LLM cost savings: {html.escape(str(report.get('workspace')))}</h1>",
+             (f"<p class=m>{html.escape(_day(win['from']))} to {html.escape(_day(win['to']))} ({win['days']} days), "
+             f"{_usd(total)} spent. Monthly figures scale the window to 30 days. Routing policy {POLICY}, "
+             "balanced profile.</p>"),
+             hero,
+             "<h2>In brief</h2>", _md(narrative["summary"]),
+             "<h2>What to change</h2>",
+             ("<p class=m>Each sampled model, largest saving first. The bar is the model's monthly spend; the teal "
+             "part is what the router would save on it in the headline scope.</p>"),
+             _actions_chart(report, per_month),
+             _md(narrative["routing"]),
+             "<h2>How sure, and other options</h2>",
+             ("<p class=m>Monthly saving in each scope, with its 90% CI. Router: the Smart Router over a pool of "
+             "models. Switch: move all of a model's traffic to the cheapest model that beats it on index and on "
+             "this workspace's own traffic cost. The two are alternatives; do not add them.</p>"),
+             _scenario_chart(scen),
+             (f"<p class=m>{html.escape(TOKENIZER_NOTE)} Excluding the 3 largest sampled calls, the headline is "
+             f"{_usd0((h.get('without_top3') or 0) * per_month)}/mo, so no single call drives it.</p>"),
+             _details("Scenario figures as a table", "monthly, with 90% CI",
+                      _table(scen, [("Scope", "scope", str), ("Router", "router", _usd),
+                                    ("Router 90% CI", "router_ci", _ci), ("Switch", "switch", _usd),
+                                    ("Switch 90% CI", "switch_ci", _ci), ("Coverage", "coverage", _pct)],
+                             "Monthly savings per scope")),
+             "<h2>Caching</h2>",
+             (f"<p><b>{_usd(ca.get('savings_found'))}</b> in the {ca.get('threads_scanned', 0)} costliest threads "
+             "scanned. This is what those threads would have saved, not scaled to the window.</p>"),
+             _md(narrative["caching"]),
+             "<h2>Method and caveats</h2>", _md(narrative["caveats"]),
+             _table(report["checks"]["caveats"], [("Check", "check", str), ("Detail", "detail", str)],
+                    "Caveat checks"),
+             "<h2>Details</h2>",
+             _details("Pools and models to enable", "per scope", _pool_tables(report)),
+             _details("Where sampled asks move", "headline scope, balanced profile",
+                      _table(ro.get("moves", []), [("Model in use", "used", str), ("Router pick", "pick", str),
+                                                   ("Difficulty tiers", "tier", str), ("Sampled calls", "n", str),
+                                                   ("Calls that cost more", "costs_more", str),
+                                                   ("Sample-weighted saving", "weighted_savings", _usd)])),
+             _details("Routing profiles", "headline scope, window totals",
+                      _table([{"profile": k, **v} for k, v in (ro.get("profiles") or {}).items()],
+                             [("Profile", "profile", str), ("Saving in window", "savings", _usd),
+                              ("90% CI", "ci90", _ci)]))]
+    dom = [{"model": d["model"], "by": ", ".join(f"{x['model']} ({x['index']:.1f} at ${x['blend_price']:.2f}"
                                                 f"{'' if x['enabled'] else ', disabled'})" for x in d["dominated_by"])}
            for d in ro.get("pareto") or [] if d.get("dominated_by")]
     if dom:
-        parts += ["<h2>Dominated models in use</h2>",
-                  ("<p class=m>Each model below is beaten on index and blended price by the models listed "
-                   "(index at blended $/M tokens). Same region, any provider.</p>"),
-                  _table(dom, [("Model", "model", str), ("Dominated by", "by", str)])]
+        parts.append(_details("Dominated models in use", "beaten on index and blended price",
+                              "<p class=m>Each model below is beaten on index and blended price by the models listed "
+                              "(index at blended $ per 1M tokens). Same region, any provider.</p>"
+                              + _table(dom, [("Model", "model", str), ("Dominated by", "by", str)])))
     up = ro.get("underpowered") or []
     if up:
-        parts += ["<h2>Under-powered asks</h2>",
-                  _table(up, [("Model", "model", str), ("n", "n", str), ("Hard share", "share_hard", _pct),
-                              ("Next model", "next_model", str), ("Enabled", "next_enabled", str),
-                              ("Extra cost rate", "extra_cost_rate", _pct)])]
-        if not redact:
+        body = _table(up, [("Model", "model", str), ("Sampled calls", "n", str), ("Hard share", "share_hard", _pct),
+                           ("Next model up", "next_model", str), ("Enabled", "next_enabled", _txt),
+                           ("Cost change vs current", "extra_cost_rate", _change)])
+        if show_examples and not redact:
             for u in up:
-                parts += [f"<blockquote>{html.escape(e)}</blockquote>" for e in u.get("examples") or []]
-    parts += ["<h2>Caching gaps</h2>", _md(narrative["caching"]),
-              _table([r for r in ca.get("rows", []) if r.get("candidate")][:20],
-                     [("Thread", "thread", lambda t: "(hidden)" if redact else t), ("Agent", "agent", str),
-                      ("Model", "model", str), ("Turns", "turns", str), ("Savings", "savings", _usd),
-                      ("Action", "action", str)]),
-              "<h2>Harness traffic</h2>",
-              _table((report.get("harness") or {}).get("rows", []),
-                     [("Framework", "framework", str), ("Spend", "spend", _usd), ("Share", "share", _pct),
-                      ("Caching", "coding_harness", lambda x: "not controllable" if x else "")]),
-              "<h2>Method and caveats</h2>", _md(narrative["caveats"]),
-              _table(report["checks"]["caveats"], [("Check", "check", str), ("Detail", "detail", str)])]
-    css = CSS
-    return (f"<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width'>"
-            f"<title>Cost savings report</title><style>{css}</style></head><body><main>{''.join(parts)}</main></body>"
-            "</html>")
+                for e in u.get("examples") or []:
+                    e = _scrub(e)
+                    cut = e if len(e) <= EXAMPLE_CHARS else e[:EXAMPLE_CHARS].rstrip() + " [cut]"
+                    body += f"<pre class=ex aria-label='Example ask for {html.escape(u['model'])}'>" \
+                            f"{html.escape(cut)}</pre>"
+        parts.append(_details("Under-powered asks", "hard asks on a weaker model", body))
+    parts += [_details("Caching candidates", f"{ca.get('threads_scanned', 0)} threads scanned",
+                       _table([r for r in ca.get("rows", []) if r.get("candidate")][:20],
+                              [("Thread", "thread", lambda t: "(hidden)" if redact else t),
+                               ("Agent", "agent", lambda a: a or "no agent"), ("Model", "model", str),
+                               ("Turns", "turns", str), ("Saving", "savings", _usd), ("Action", "action", str)])),
+              _details("Spend by model", "top 15, window",
+                       _table(sp.get("by_model", [])[:15], [("Model", "key", str), ("Spend", "spend", _usd)])),
+              _details("Harness traffic", "share of spend by framework",
+                       ("<p class=m>The harness metric can sum to more than total spend, so read shares, not "
+                        "dollars.</p>" if any(x.get("check") == "harness metric exceeds spend"
+                                              for x in report["checks"]["caveats"]) else "")
+                       + _table((report.get("harness") or {}).get("rows", []),
+                                [("Framework", "framework", str), ("Share", "share", _pct),
+                                 ("Caching", "coding_harness",
+                                  lambda x: "not controllable from orq" if x else "controllable")]))]
+    return ("<!doctype html><html lang=en><head><meta charset=utf-8>"
+            "<meta name=viewport content='width=device-width, initial-scale=1'>"
+            f"<title>Cost savings report</title><style>{CSS}</style></head><body><main>{''.join(parts)}</main>"
+            "</body></html>")
 
 
 # --------------------------------------------------------------------------------------------- CLI
@@ -1681,7 +1931,9 @@ def main(argv: list[str] | None = None) -> int:
     rn = sub.add_parser("render", help="merge narrative.md into report.html")
     rn.add_argument("--out", required=True)
     rn.add_argument("--narrative", required=True)
-    rn.add_argument("--redact", action="store_true")
+    rn.add_argument("--redact", action="store_true", help="hide thread ids and ask examples")
+    rn.add_argument("--show-examples", action="store_true",
+                    help="print sampled ask text under under-powered asks (contains prompt text)")
     a = ap.parse_args(argv)
     if a.cmd == "analyze":
         if not 1 <= a.sample <= MAX_SAMPLE:
@@ -1691,7 +1943,7 @@ def main(argv: list[str] | None = None) -> int:
     report = json.loads((Path(a.out) / "report.json").read_text())
     if report.get("status") != "ok" or "routing" not in report:
         raise SystemExit("report.json has no finished analysis; rerun analyze")
-    page = render(report, parse_narrative(Path(a.narrative).read_text()), a.redact)
+    page = render(report, parse_narrative(Path(a.narrative).read_text()), a.redact, a.show_examples)
     (Path(a.out) / "report.html").write_text(page)
     print(Path(a.out) / "report.html")
     return 0

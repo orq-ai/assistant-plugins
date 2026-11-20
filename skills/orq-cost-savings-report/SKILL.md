@@ -40,7 +40,7 @@ uv run <this skill's directory>/scripts/cost_savings_report.py render --out <dir
 1. Confirm the workspace and output path.
 2. Run `analyze` without `--yes`. It stops at `confirmation` with the decision cost; tell the user the cost and rerun with `--yes` when they agree.
 3. If `report.json` has `status: stopped` on any other check, report that check and its numbers; do not work around it. `decision model enabled` means the workspace must enable `typesafe/jev-latest` first.
-4. Read `report.json` and write each slot in `narrative-slots.md`: state the headline with its 90% CI and coverage, never alone, and keep routing and caching savings separate.
+4. Read `report.json` and write each slot in `narrative-slots.md`: state the headline with its 90% CI and coverage, never alone, and keep routing and caching savings separate. Quote monthly figures (`per_month`, `ci90_per_month`), since the page's charts are monthly.
 5. Run `render` and share the HTML.
 
 ## Common mistakes

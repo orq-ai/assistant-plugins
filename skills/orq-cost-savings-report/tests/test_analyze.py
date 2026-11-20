@@ -179,6 +179,7 @@ def test_render_merges_narrative(tmp_path):
     assert "90% CI" in page
     assert "Same provider, all available (headline)" in page and "tokenize differently" in page
     assert "Dominated models in use" in page
+    assert "class=ex" not in page  # sampled ask text stays out unless --show-examples
 
 
 def test_counterfactual_test_stops_after_pilot(tmp_path):

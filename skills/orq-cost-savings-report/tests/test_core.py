@@ -446,3 +446,10 @@ def test_frontier_pool_on_traffic_follows_cache_prices():
     unpriced = {SOL.router_id: 6.0, TERRA.router_id: 2.0}  # luna unpriced on these spans: never seated
     members, _ = c.frontier_pool(SOL, [SOL, TERRA, LUNA], unpriced.get)
     assert LUNA.router_id not in [m.router_id for m in members]
+
+
+def test_report_number_formats():
+    assert c._usd(0.004) == "<$0.01" and c._usd(0) == "$0.00" and c._usd(1234.5) == "$1,234"
+    assert c._change(-0.46) == "-46%" and c._change(45.4) == "46x the cost"
+    assert c._day("2026-10-22T10:29:00Z") == "22 Oct 2026"
+    assert c._scrub("see /Users/someone/repo/a.py and /home/x/y") == "see <path> and <path>"
