@@ -455,14 +455,48 @@ def test_report_number_formats():
     assert c._scrub("see /Users/someone/repo/a.py and /home/x/y") == "see <path> and <path>"
 
 
-def test_plan_orders_moves_that_need_nothing_enabled_first():
-    report = {"routing": {"strata": [{"model": "openai/a", "savings": 10.0}, {"model": "openai/b", "savings": 30.0},
-                                     {"model": "openai/c", "savings": 0.0}]},
-              "scenarios": [{"headline": True, "models": [
-                  {"model": "openai/a", "pool": None, "switch": "openai/x", "enable": []},
-                  {"model": "openai/b", "pool": ["openai/y", "openai/x"], "switch": "openai/y",
-                   "enable": ["openai/y"]},
-                  {"model": "openai/c", "pool": None, "switch": None, "enable": []}]}]}
+def _bm(pm: float) -> dict:
+    return {"balanced": {"per_month": pm}}
+
+
+def _plan_report() -> dict:
+    """Headline needs y and z enabled; the enabled-only scope differs from the headline on model b only."""
+    return {"routing": {"headline": {"per_month": 100.0},
+                        "strata": [{"model": "openai/a", "savings": 10.0}, {"model": "openai/b", "savings": 50.0},
+                                   {"model": "openai/c", "savings": 40.0}, {"model": "openai/d", "savings": 0.0}]},
+            "scenarios": [
+                {"scope": "same_provider:all", "provider": "same_provider", "availability": "all", "headline": True,
+                 "router": _bm(100.0), "models": [
+                     {"model": "openai/a", "pool": None, "switch": "openai/x", "enable": []},
+                     {"model": "openai/b", "pool": ["openai/y", "openai/x"], "switch": "openai/y",
+                      "enable": ["openai/y"]},
+                     {"model": "openai/c", "pool": None, "switch": "openai/z", "enable": ["openai/z"]},
+                     {"model": "openai/d", "pool": None, "switch": None, "enable": []}]},
+                {"scope": "same_provider:enabled", "provider": "same_provider", "availability": "enabled",
+                 "headline": False, "router": _bm(30.0), "models": [
+                     {"model": "openai/a", "pool": None, "switch": "openai/x", "enable": []},
+                     {"model": "openai/b", "pool": None, "switch": "openai/x", "enable": []},
+                     {"model": "openai/c", "pool": None, "switch": None, "enable": []},
+                     {"model": "openai/d", "pool": None, "switch": None, "enable": []}]}]}
+
+
+def test_plan_steps_sum_to_headline_and_step_one_is_the_enabled_scope():
+    plan = c._plan(_plan_report(), 1.0)
+    assert "Now, with models already enabled: $30/mo" in plan  # the enabled scope's router figure
+    assert "a: change to x ($10/mo)" in plan and "b: change to x ($20/mo)" in plan  # b gets the residual
+    assert "Enable y and z: +$70/mo, $100/mo in total" in plan  # 30 + 70 = the headline
+    assert "c:" in plan.split("Enable y and z")[1] and "; d:" not in plan
+
+
+def test_plan_omits_amounts_when_several_moves_differ():
+    report = _plan_report()
+    report["scenarios"][1]["models"][0] = {"model": "openai/a", "pool": None, "switch": "openai/w", "enable": []}
     plan = c._plan(report, 1.0)
-    assert plan.index("Now, nothing to enable: about $10/mo") < plan.index("Enable y, then about $30/mo more")
-    assert "a: change to x" in plan and "b: route over y and x" in plan and "c:" not in plan
+    assert "a: change to w" in plan and "b: change to x" in plan and "($" not in plan.split("Enable y")[0]
+
+
+def test_underpowered_drops_cheaper_upgrades():
+    ro = {"underpowered": [{"model": "m1", "extra_cost_rate": -0.4}, {"model": "m2", "extra_cost_rate": 0.0},
+                           {"model": "m3", "extra_cost_rate": 1.2}, {"model": "m4", "extra_cost_rate": None}]}
+    assert [u["model"] for u in c.underpowered_rows(ro)] == ["m3"]
+    assert c.underpowered_rows({}) == []

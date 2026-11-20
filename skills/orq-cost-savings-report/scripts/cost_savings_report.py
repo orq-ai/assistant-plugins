@@ -1485,7 +1485,7 @@ def _neg(s: str) -> str:
 
 
 SLOTS = {
-    "summary": "two to four sentences: spend, routing savings with CI and coverage, caching savings beside it; quote monthly figures (`per_month`), as the charts do",
+    "summary": "ONE sentence, the recommendation: which lever (router or change model), what to do first, and the monthly figure (`per_month`); no caveats, the page shows the rest",
     "routing": "why each model moves where it does (index, price, pool picks, flagged buckets); the page already "
                "renders the step plan and per-model chart, so give reasons, not a second plan; monthly figures",
     "caching": "which threads or agents miss caching and the action per provider",
@@ -1584,13 +1584,13 @@ def _table(rows: list[dict], cols: list[tuple[str, str, Any]], caption: str = ""
 
 CSS = """
 :root{--bg:#ffffff;--fg:#25232e;--muted:#5c5a66;--line:#e4e2df;--tile:#f9f8f6;--head:#025558;
---s1:#299D8F;--s2:#df5325;--kept:#c9c5bf;--ns:#eeece8;--th:#025558;--thfg:#ffffff;--warn:#fde9d9;--warnfg:#25232e;
+--s1:#299D8F;--s2:#df5325;--kept:#c9c5bf;--ns:#eeece8;--th:#025558;--thfg:#ffffff;--hl:#e8f4f2;--hl2:#a9d8d2;
 color-scheme:light}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){--bg:#17161c;--fg:#eceaf0;
 --muted:#a8a5b2;--line:#302e38;--tile:#201f26;--head:#299D8F;--s1:#299D8F;--s2:#df5325;--kept:#5a5863;
---ns:#2a2930;--th:#2a5f5c;--thfg:#eceaf0;--warn:#4a2a17;--warnfg:#eceaf0;color-scheme:dark}}
+--ns:#2a2930;--th:#2a5f5c;--thfg:#eceaf0;--hl:#1f2e2e;--hl2:#1d5e58;color-scheme:dark}}
 :root[data-theme="dark"]{--bg:#17161c;--fg:#eceaf0;--muted:#a8a5b2;--line:#302e38;--tile:#201f26;--head:#299D8F;
---s1:#299D8F;--s2:#df5325;--kept:#5a5863;--ns:#2a2930;--th:#2a5f5c;--thfg:#eceaf0;--warn:#4a2a17;--warnfg:#eceaf0;
+--s1:#299D8F;--s2:#df5325;--kept:#5a5863;--ns:#2a2930;--th:#2a5f5c;--thfg:#eceaf0;--hl:#1f2e2e;--hl2:#1d5e58;
 color-scheme:dark}
 *{box-sizing:border-box}
 body{font:15px/1.55 "Kurrent","Inter",system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg);margin:0;
@@ -1606,16 +1606,30 @@ p,li,dd{max-width:64ch;text-wrap:pretty}
 nav.jump{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13px;margin:10px 0 0}
 nav.jump a{color:var(--muted)}
 .hero{margin:28px 0 8px;padding:24px 0;border-block:1px solid var(--line)}
-.hero .lab{margin:0 0 14px;font-weight:600}
-.choice{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:24px;align-items:start}
-.opt .key{display:flex;align-items:center;gap:8px;font-weight:600}
+.hero .lab{margin:0;font-weight:600}
+.hero .verdict{margin:10px 0 18px;font-size:18px;font-weight:700;max-width:60ch}
+.choice{display:grid;grid-template-columns:minmax(0,auto) auto minmax(0,auto);gap:24px;align-items:end;
+justify-content:start}
+.opt .key{display:flex;align-items:center;gap:8px;font-weight:600;margin:0}
 .opt .key i{width:12px;height:12px;border-radius:50%}
-.big{font-size:56px;line-height:1;font-weight:700;margin:10px 0 8px;font-variant-numeric:tabular-nums;
+.big{font-size:40px;line-height:1;font-weight:700;margin:8px 0 6px;font-variant-numeric:tabular-nums;
 letter-spacing:-0.02em}
-.big small{font-size:22px;font-weight:600;color:var(--muted);margin-left:4px}
-.opt p{margin:0 0 4px}
-.or{align-self:center;font-weight:600;color:var(--muted);font-size:15px}
-.pick{margin:18px 0 0}
+.big small{font-size:18px;font-weight:600;color:var(--muted);margin-left:4px}
+.opt.pri .big{font-size:68px;color:var(--s1)}
+.opt.sec .big{font-size:40px;color:var(--s2)}
+.opt p{margin:0 0 2px}
+.or{align-self:center;font-weight:600;color:var(--muted);font-size:15px;margin:0}
+.share{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin:22px 0 6px}
+.share b{font-size:28px;line-height:1;font-variant-numeric:tabular-nums}
+.bar{display:flex;height:30px;border-radius:6px;overflow:hidden;background:var(--ns);position:relative}
+.bar i{display:block;height:100%}
+.bar .b1{background:var(--s1)}.bar .b2{background:var(--hl2);border-left:2px solid var(--bg)}
+.bar span{margin:auto 10px auto auto;font-size:13px;font-weight:600;color:var(--muted);white-space:nowrap}
+.barlab{position:relative;height:38px;font-size:13px;line-height:1.25;font-variant-numeric:tabular-nums}
+.barlab div{position:absolute;top:6px;white-space:nowrap}
+.barlab b{display:block;font-size:15px}
+.pick{margin:10px 0 0;color:var(--muted)}
+.quality{margin:4px 0 0;color:var(--muted)}
 .plan{margin:8px 0 0;padding-left:1.4em}
 .plan li{margin:0 0 12px;padding-left:4px}
 .plan b{font-variant-numeric:tabular-nums}
@@ -1630,24 +1644,24 @@ padding:10px 0;border-bottom:1px solid var(--line)}
 .who{min-width:0}
 .who code{font:500 14px/1.3 "Kurrent Mono",ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
 .who span{display:block;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
-.lever{font-size:12px;font-weight:600;margin-right:6px}
-.lever.r{color:var(--fg)}.lever i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}
-.tag{display:inline-block;font-size:12px;line-height:1.6;padding:0 8px;border-radius:4px;background:var(--warn);
-color:var(--warnfg);margin-top:4px;font-weight:600}
+.tag{display:inline-block;font-size:12px;line-height:1.6;padding:0 8px;border-radius:6px;border:1px solid var(--muted);
+color:var(--fg);margin-top:4px;font-weight:600}
 .track{display:flex;gap:2px;height:18px;align-items:stretch}
 .track i{display:block;min-width:2px}
 .track i:first-child{border-radius:4px 0 0 4px}
 .track i:last-child{border-radius:0 4px 4px 0}
 .track i:only-child{border-radius:4px}
-.sr{background:var(--s1)}.ss{background:var(--s2)}.kept{background:var(--kept)}
+.sr{background:var(--s1)}.kept{background:var(--kept)}
 .ns{background:var(--ns);border:1px dashed var(--muted)}
 .val{text-align:right;font-variant-numeric:tabular-nums}
 .val b{display:block;font-size:16px}
 .val span{font-size:13px;color:var(--muted)}
 .dots .row{grid-template-columns:minmax(0,15em) minmax(0,1fr) 9.5em}
+.row.hl{background:var(--hl);box-shadow:-8px 0 0 var(--hl),8px 0 0 var(--hl)}
+.val .ln b{display:inline;font-size:16px}.val .ln .rt{color:var(--s1)}.val .ln .or2{color:var(--s2)}
 .plot{position:relative;height:40px}
 .plot .g{position:absolute;top:0;bottom:0;width:1px;background:var(--line)}
-.ci{position:absolute;height:8px;border-radius:4px;opacity:.35}
+.ci{position:absolute;height:10px;border-radius:5px;opacity:.55}
 .dot{position:absolute;width:9px;height:9px;border-radius:50%;margin-left:-4.5px;box-shadow:0 0 0 2px var(--bg)}
 .r{background:var(--s1)}.s{background:var(--s2)}
 .dot.o{background:var(--bg);border:2px solid}.dot.o.r{border-color:var(--s1)}.dot.o.s{border-color:var(--s2)}
@@ -1673,9 +1687,12 @@ tbody tr:nth-child(even){background:var(--tile)}
 white-space:pre-wrap;overflow-wrap:anywhere;max-height:12em;overflow:auto}
 :focus-visible{outline:2px solid var(--s1);outline-offset:2px}
 @media (max-width:720px){
-.choice{grid-template-columns:1fr;gap:14px}
-.or{align-self:start}
-.big{font-size:46px}
+.choice{grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:10px}
+.opt.pri .big{font-size:40px}.opt.sec .big{font-size:28px}
+.big small{font-size:14px}
+.hero .verdict{font-size:16px}
+.share b{font-size:22px;white-space:nowrap}.share .m{font-size:13px;white-space:nowrap}
+.barlab{font-size:12px}.barlab b{font-size:13px}
 .row,.dots .row{grid-template-columns:minmax(0,1fr) auto;padding:12px 0}
 .track,.plot{grid-column:1/-1;grid-row:2}
 .axis-row .who,.axis-row .val{display:none}
@@ -1703,7 +1720,8 @@ def _scenario_rows(report: dict) -> list[dict]:
     rows = []
     for sc in report.get("scenarios") or []:
         r, w = sc["router"]["balanced"], sc["switch"]
-        rows.append({"scope": SCOPE_LABEL.get(sc["scope"], sc["scope"]) + (" (headline)" if sc["headline"] else ""),
+        label = SCOPE_LABEL.get(sc["scope"], sc["scope"])
+        rows.append({"scope": label + (" (headline)" if sc["headline"] else ""), "label": label,
                      "headline": sc["headline"], "router": r.get("per_month"), "router_ci": r.get("ci90_per_month"),
                      "switch": w.get("per_month"), "switch_ci": w.get("ci90_per_month"), "coverage": r["coverage"]})
     rows.sort(key=lambda r: not r["headline"])
@@ -1747,32 +1765,72 @@ def _action(model: str, info: dict, savings: float) -> tuple[str, str]:
     return "Route", tag
 
 
-def _plan(report: dict, per_month: float) -> str:
-    """Ordered steps: moves that need nothing enabled, then one step per set of models to enable."""
+def _headline(report: dict) -> dict:
+    return next((sc for sc in report.get("scenarios") or [] if sc.get("headline")), {})
+
+
+def _enabled_scope(report: dict, head: dict) -> dict | None:
+    """The same-provider, enabled-models-only scenario (the headline itself when it already is that)."""
+    if head.get("availability") == "enabled":
+        return head
+    want = f"{head.get('provider', 'same_provider')}:enabled"
+    return next((sc for sc in report.get("scenarios") or [] if sc.get("scope") == want), None)
+
+
+def _same_move(a: dict, b: dict) -> bool:
+    return (a.get("pool") or None) == (b.get("pool") or None) and a.get("switch") == b.get("switch")
+
+
+def _move(model: str, info: dict) -> str:
+    what = _action(model, info, 1.0)[0]
+    return f"{html.escape(_short(model))}: {html.escape(what[0].lower() + what[1:])}"
+
+
+def _plan_figures(report: dict, per_month: float) -> dict:
+    """The two plan steps as numbers: step 1 is the enabled-only router figure, step 2 the extra from enabling.
+
+    Step 1 lists the moves of the enabled scope. A move whose target is the same in the headline scope takes the
+    headline stratum saving. If exactly one move differs, it takes the residual; with more, their amounts are
+    omitted. Without an enabled scope, step 1 falls back to the headline moves that need nothing enabled.
+    """
     ro = report.get("routing") or {}
-    head = next((sc for sc in report.get("scenarios") or [] if sc.get("headline")), None)
-    info = {m["model"]: m for m in (head or {}).get("models", [])}
-    now, later = [], {}
-    for s in sorted(ro.get("strata") or [], key=lambda s: -(s.get("savings") or 0)):
-        saved = (s.get("savings") or 0) * per_month
-        if saved <= 0:
-            continue
-        i = info.get(s["model"], {})
-        what, _ = _action(s["model"], i, saved)
-        item = (f"{html.escape(_short(s['model']))}: {html.escape(what[0].lower() + what[1:])}", saved)
-        en = tuple(i.get("enable") or [])
-        (later.setdefault(en, []) if en else now).append(item)
+    head = _headline(report)
+    h_info = {m["model"]: m for m in head.get("models", [])}
+    strata = {s["model"]: (s.get("savings") or 0) * per_month for s in ro.get("strata") or []}
+    h_pm = (ro.get("headline") or {}).get("per_month")
+    if h_pm is None:
+        h_pm = head.get("router", {}).get("balanced", {}).get("per_month") or 0
+    enabled = _enabled_scope(report, head)
+    if enabled is not None and enabled is not head:
+        e_pm = enabled["router"]["balanced"].get("per_month") or 0
+        e_info = {m["model"]: m for m in enabled.get("models", [])}
+    else:
+        e_info = {m: i for m, i in h_info.items() if not i.get("enable")}
+        e_pm = sum(strata.get(m, 0) for m in e_info) if enabled is None else h_pm
+    moves = {m: (i, strata.get(m)) for m, i in e_info.items() if _lever(i)}
+    diff = [m for m, (i, _) in moves.items() if not _same_move(i, h_info.get(m, {}))]
+    amounts = {m: (v if m not in diff else None) for m, (_, v) in moves.items()}
+    if len(diff) == 1:
+        amounts[diff[0]] = e_pm - sum(v or 0 for m, v in amounts.items() if m != diff[0])
+    now = [(m, i, amounts[m]) for m, (i, _) in moves.items()]
+    now.sort(key=lambda x: -(x[2] if x[2] is not None else -1))
+    later = [m for m, i in h_info.items() if i.get("enable") and strata.get(m, 0) > 0]
+    enable = list(dict.fromkeys(e for m in later for e in h_info[m]["enable"]))
+    return {"now": now, "e_pm": e_pm, "h_pm": h_pm, "later": later, "enable": enable, "h_info": h_info}
+
+
+def _plan(report: dict, per_month: float) -> str:
+    """Ordered steps that sum to the headline: what the enabled models give today, then what enabling adds."""
+    f = _plan_figures(report, per_month)
+    e_r, h_r = round(f["e_pm"]), round(f["h_pm"])
     steps = []
-
-    def moves(items: list) -> str:
-        return "; ".join(f"{t} ({_usd0(v)}/mo)" for t, v in items)
-
-    if now:
-        steps.append(f"<li><b>Now, nothing to enable: about {_usd0(sum(v for _, v in now))}/mo.</b> "
-                     f"{moves(now)}.</li>")
-    for en, items in later.items():
-        steps.append(f"<li><b>Enable {html.escape(', '.join(_short(e) for e in en))}, then about "
-                     f"{_usd0(sum(v for _, v in items))}/mo more.</b> {moves(items)}.</li>")
+    if f["now"] and e_r > 0:
+        items = "; ".join(_move(m, i) + (f" ({_usd0(v)}/mo)" if v is not None else "") for m, i, v in f["now"])
+        steps.append(f"<li><b>Now, with models already enabled: {_usd0(f['e_pm'])}/mo.</b> {items}.</li>")
+    if f["enable"] and h_r > e_r:
+        names = " and ".join(html.escape(_short(e)) for e in f["enable"])
+        items = "; ".join(_move(m, f["h_info"][m]) for m in f["later"])
+        steps.append(f"<li><b>Enable {names}: +${h_r - e_r:,}/mo, {_usd0(f['h_pm'])}/mo in total.</b> {items}.</li>")
     if not steps:
         return "<p>Nothing to change: no sampled model has a cheaper model that is as strong.</p>"
     return f"<ol class=plan>{''.join(steps)}</ol>"
@@ -1791,16 +1849,12 @@ def _actions_chart(report: dict, per_month: float) -> str:
         spend, saved = (s.get("spend") or 0), max(0.0, s.get("savings") or 0)
         i = info.get(s["model"], {})
         what, tag = _action(s["model"], i, saved)
-        lever = _lever(i) if saved > 0 else ""
-        seg = "ss" if lever == "switch" else "sr"
-        chip = (f"<span class=lever title='{'Change model' if lever == 'switch' else 'Smart Router'}'><i class={'s' if lever == 'switch' else 'r'}></i></span>"
-                if lever else "")
         a, b = saved / top * 100, max(0.0, spend - saved) / top * 100
         tip = f"{_short(s['model'])}: {_usd0(saved * per_month)} of {_usd0(spend * per_month)} a month saved"
-        bars = (f"<i class={seg} style='width:{a:.2f}%'></i>" if a > 0 else "") + \
+        bars = (f"<i class=sr style='width:{a:.2f}%'></i>" if a > 0 else "") + \
                (f"<i class=kept style='width:{b:.2f}%'></i>" if b > 0 else "")
         rows.append(f"<div class=row><div class=who><code title='{html.escape(s['model'])}'>"
-                    f"{html.escape(_short(s['model']))}</code><span>{chip}{html.escape(what)}</span>{tag}</div>"
+                    f"{html.escape(_short(s['model']))}</code><span>{html.escape(what)}</span>{tag}</div>"
                     f"<div class=track role=img aria-label='{html.escape(tip)}'>{bars}</div>"
                     f"<div class=val><b>{_usd0(saved * per_month)}/mo</b>"
                     f"<span>{_pct(s.get('rate'))} of {_usd0(spend * per_month)}/mo</span></div></div>")
@@ -1811,8 +1865,7 @@ def _actions_chart(report: dict, per_month: float) -> str:
                     f"<div class=track role=img aria-label='{_usd0(nc_spend * per_month)} a month not estimated'>"
                     f"<i class=ns style='width:{w:.2f}%'></i></div>"
                     f"<div class=val><b>n/a</b><span>{_usd0(nc_spend * per_month)}/mo</span></div></div>")
-    legend = ("<ul class=legend><li><span class='sw sr'></span>Saved by routing over a pool</li>"
-              "<li><span class='sw ss'></span>Saved by changing the model</li>"
+    legend = ("<ul class=legend><li><span class='sw sr'></span>Saved</li>"
               "<li><span class='sw kept'></span>Still spent</li><li><span class='sw ns'></span>Not sampled</li></ul>")
     return legend + "<div class=chart>" + "".join(rows) + "</div>"
 
@@ -1829,7 +1882,7 @@ def _scenario_chart(rows: list[dict]) -> str:
                "</div><div class=val></div></div>"
     out = [axis_row.format(" axis-top")]
     for r in rows:
-        approx = r["scope"].startswith("Any provider")
+        approx = r["label"].startswith("Any provider")
         marks = grid
         for key, cls, top in (("router", "r", 8), ("switch", "s", 24)):
             v, ci = r[key], r[f"{key}_ci"]
@@ -1837,21 +1890,25 @@ def _scenario_chart(rows: list[dict]) -> str:
                 continue
             if ci:
                 marks += (f"<i class='ci {cls}' style='left:{pos(ci[0]):.2f}%;width:{pos(ci[1]) - pos(ci[0]):.2f}%;"
-                          f"top:{top}px'></i>")
+                          f"top:{top - 1}px'></i>")
             label = f"{'Smart Router' if key == 'router' else 'Change model'} {_usd0(v)} a month, 90% CI {_ci(ci)}"
             marks += (f"<i class='dot {cls}{' o' if approx else ''}' style='left:{pos(v):.2f}%;top:{top - 0.5}px' "
                       f"role=img aria-label='{html.escape(label)}'></i>")
-        sub = "Token counts approximate" if approx else ("" if same_cov else f"{_pct(r['coverage'])} of spend covered")
-        out.append(f"<div class=row><div class=who>{html.escape(r['scope'])}"
+        sub = "" if same_cov else f"{_pct(r['coverage'])} of spend covered"
+        out.append(f"<div class='row{' hl' if r['headline'] else ''}'><div class=who>{html.escape(r['label'])}"
                    f"{f'<span>{sub}</span>' if sub else ''}</div><div class=plot>{marks}</div>"
-                   f"<div class=val><b>{_usd0(r['router'])}/mo</b><span>or change model {_usd0(r['switch'])}/mo</span>"
-                   f"</div></div>")
+                   f"<div class=val><span class=ln><b class=rt>{_usd0(r['router'])}</b> "
+                   f"<b class=or2>{_usd0(r['switch'])}</b></span></div></div>")
     out.append(axis_row.format(""))
     legend = ("<ul class=legend><li><span class='sw r' style='border-radius:50%'></span>Smart Router</li>"
               "<li><span class='sw s' style='border-radius:50%'></span>Change model</li>"
-              "<li>Band: 90% CI</li><li>Hollow: other providers, token counts approximate</li>"
-              "<li>Axis: saving per month</li></ul>")
+              "<li>band = 90% CI</li><li>hollow = other providers, approximate</li></ul>")
     return legend + "<div class='chart dots'>" + "".join(out) + "</div>"
+
+
+def underpowered_rows(ro: dict) -> list[dict]:
+    """Models with many hard asks whose next model up costs more; a cheaper 'upgrade' contradicts dominance."""
+    return [u for u in ro.get("underpowered") or [] if (u.get("extra_cost_rate") or 0) > 0]
 
 
 def _pool_tables(report: dict) -> str:
@@ -1904,67 +1961,75 @@ def render(report: dict, narrative: dict[str, str], redact: bool, show_examples:
     cov = h.get("coverage")
     caching_small = (ca.get("savings_found") or 0) < 1
 
+    spend_pm = sp.get("per_month")
+    e_pm = enabled.get("router")
+    first = re.split(r"\n\s*\n", narrative["summary"].strip())[0]
+    verdict = html.escape(" ".join(first.split()))
+    bar = ""
+    if spend_pm and h_pm is not None and e_pm is not None:
+        w1, w2 = min(100.0, e_pm / spend_pm * 100), max(0.0, min(100.0, (h_pm - e_pm) / spend_pm * 100))
+        bar = (f"<div class=share><b style='color:var(--s1)'>{_pct(share)} of spend</b>"
+               f"<span class=m>{_usd0(h_pm)}/mo of {_usd0(spend_pm)}/mo</span></div>"
+               f"<div class=bar role=img aria-label='{_usd0(e_pm)} a month today, {_usd0(h_pm - e_pm)} more after "
+               f"enabling, of {_usd0(spend_pm)} a month spend'><i class=b1 style='width:{w1:.2f}%'></i>"
+               f"<i class=b2 style='width:{w2:.2f}%'></i><span>{_usd0(spend_pm)}/mo spend</span></div>"
+               f"<div class=barlab><div style='left:0'><b>{_usd0(e_pm)} today</b></div>"
+               f"<div style='left:{w1:.2f}%;padding-left:4px'><b>+{_usd0(h_pm - e_pm)} after enabling</b>"
+               "</div></div>")
+
     hero = ("<section class=hero aria-label='Headline'>"
-            f"<p class=lab>Estimated saving per month, same provider as today, on the {_pct(cov)} of spend the "
-            f"{n or 'sampled'} sampled calls cover</p><div class=choice>"
-            "<div class=opt><p class=key><i class=r></i>Smart Router</p>"
+            "<p class=lab>Estimated saving per month</p>"
+            f"<p class=verdict>{verdict}</p><div class=choice>"
+            "<div class='opt pri'><p class=key><i class=r></i>Smart Router</p>"
             f"<p class=big>{_usd0(h_pm)}<small>/mo</small></p>"
-            f"<p class=m>90% CI {_usd0(ci[0])} to {_usd0(ci[1])}, about {_pct(share)} of "
-            f"{_usd0(sp.get('per_month'))}/mo spend. Picks a model for each call.</p>"
-            f"<p class=m>{_usd0(enabled.get('router'))}/mo using only models already enabled.</p></div>"
+            f"<p class=m>90% CI {_usd0(ci[0])} to {_usd0(ci[1])}</p></div>"
             "<p class=or>or</p>"
-            "<div class=opt><p class=key><i class=s></i>Change model</p>"
+            "<div class='opt sec'><p class=key><i class=s></i>Change model</p>"
             f"<p class=big>{_usd0(head_row.get('switch'))}<small>/mo</small></p>"
-            f"<p class=m>90% CI {_usd0(sw_ci[0])} to {_usd0(sw_ci[1])}. Replaces each beaten model for all of "
-            "its calls.</p>"
-            f"<p class=m>{_usd0(enabled.get('switch'))}/mo using only models already enabled.</p></div></div>"
-            "<p class=pick>Pick one. Both act on the same calls, so their savings overlap and do not add up.</p>"
-            "</section>")
+            f"<p class=m>90% CI {_usd0(sw_ci[0])} to {_usd0(sw_ci[1])}</p></div></div>"
+            f"{bar}"
+            f"<p class=pick>Pick one: the savings overlap.</p>"
+            "<p class=quality>Model picks use a benchmark index; test answer quality before moving traffic.</p>"
+            f"<p class=m>Same provider as today, on the {_pct(cov)} of spend the {n or 'sampled'} sampled calls "
+            "cover.</p></section>")
 
     nav = ("<nav class=jump aria-label='Sections'><a href='#do'>What to do</a><a href='#change'>Per model</a>"
-           "<a href='#scopes'>Every scope</a><a href='#method'>Method</a><a href='#details'>Details</a></nav>")
+           "<a href='#scopes'>Other scopes</a><a href='#details'>Details</a></nav>")
     to_day = _day(win["to"])
     parts = [f"<h1>LLM cost savings: {html.escape(ws)}</h1>",
              (f"<p class=m>{html.escape(_day(win['from']))} to {html.escape(to_day)} ({win['days']} days), "
               f"{_usd(total)} spent. Monthly figures scale the window to 30 days.</p>"),
              nav, hero,
              "<h2 id=do>What to do</h2>",
-             ("<p class=m>Steps in order, with the router's saving per step. Together they make the router "
-              "figure above.</p>"),
              _plan(report, per_month),
-             _md(narrative["summary"]),
              "<h2 id=change>Saving per model</h2>",
-             ("<p class=m>Each sampled model, largest saving first. The bar is the model's monthly spend; the "
-              "coloured part is what the router saves on it. Where a model has no pool, the router sends all of its "
-              "calls to the replacement model, so the router and change-model figures share those rows.</p>"),
+             "<p class=m>Router saving by model. The bars sum to the router figure.</p>",
              _actions_chart(report, per_month),
-             _details("Why each move", "the reasoning per model", _md(narrative["routing"])),
-             "<h2 id=scopes>Every scope, and how sure</h2>",
-             ("<p class=m>Monthly saving in each scope. The 90% CI covers sampling noise only. It does not cover "
-              f"answer quality, the {_pct(1 - cov) if cov is not None else 'unsampled'} of spend outside the "
-              "sample, or tokenizer differences on other providers.</p>"),
-             _scenario_chart(scen),
-             (f"<p class=m>{html.escape(TOKENIZER_NOTE)} Excluding the 3 largest sampled calls, the headline is "
-              f"{_usd0((h.get('without_top3') or 0) * per_month)}/mo, so no single call drives it.</p>"),
-             _details("Scenario figures as a table", "monthly, with 90% CI",
-                      _table(scen, [("Scope", "scope", str), ("Router", "router", _usd),
-                                    ("Router 90% CI", "router_ci", _ci), ("Change model", "switch", _usd),
-                                    ("Change model 90% CI", "switch_ci", _ci), ("Coverage", "coverage", _pct)],
-                             "Monthly savings per scope"))]
-    caching_line = (f"<p><b>Caching:</b> {_usd(ca.get('savings_found'))} in the {ca.get('threads_scanned', 0)} "
-                    "costliest threads scanned, not scaled to the window.</p>")
-    if not caching_small:
-        parts += ["<h2 id=caching>Caching</h2>", caching_line, _md(narrative["caching"])]
-    parts += ["<h2 id=method>Method and caveats</h2>",
-              (f"<p class=m>Routing policy {POLICY}, balanced profile, {n or 'sampled'} sampled calls. "
-               f"Report generated {html.escape(_day(report['generated_at']) if report.get('generated_at') else to_day)}."
-               "</p>"),
-              _md(narrative["caveats"])]
+             "<h2 id=scopes>Other scopes</h2>",
+             "<p class=m>90% CI covers sampling noise only, not answer quality.</p>",
+             _scenario_chart(scen)]
     if caching_small:
-        parts += [caching_line.replace("</p>", " Too small to act on.</p>"), _md(narrative["caching"])]
-    parts += ["<h3>Terms</h3><dl class=gl>" + "".join(f"<dt>{html.escape(t)}</dt><dd>{html.escape(d)}</dd>"
-                                                     for t, d in GLOSSARY) + "</dl>",
-              "<h2 id=details>Details</h2>",
+        parts.append("<p><b>Caching:</b> nothing worth changing.</p>")
+    else:
+        parts += ["<h2 id=caching>Caching</h2>",
+                  (f"<p><b>Caching:</b> {_usd(ca.get('savings_found'))} in the {ca.get('threads_scanned', 0)} "
+                   "costliest threads scanned, not scaled to the window.</p>"), _md(narrative["caching"])]
+    gen = html.escape(_day(report["generated_at"]) if report.get("generated_at") else to_day)
+    parts += ["<h2 id=details>Details</h2>",
+              (f"<p class=m>Covers {_pct(cov)} of spend; figures re-price the sampled calls on the new model. "
+               f"Policy {POLICY}, balanced profile, generated {gen}.</p>"),
+              _details("Why each move", "the reasoning per model", _md(narrative["routing"])),
+              _details("Method and caveats", "sample, coverage, limits", _md(narrative["caveats"])),
+              _details("Terms", "what the words mean",
+                       "<dl class=gl>" + "".join(f"<dt>{html.escape(t)}</dt><dd>{html.escape(d)}</dd>"
+                                                 for t, d in GLOSSARY) + "</dl>"),
+              _details("Scenario figures as a table", "monthly, with 90% CI",
+                       f"<p class=m>{html.escape(TOKENIZER_NOTE)} Excluding the 3 largest sampled calls, the "
+                       f"headline is {_usd0((h.get('without_top3') or 0) * per_month)}/mo.</p>"
+                       + _table(scen, [("Scope", "scope", str), ("Router", "router", _usd),
+                                       ("Router 90% CI", "router_ci", _ci), ("Change model", "switch", _usd),
+                                       ("Change model 90% CI", "switch_ci", _ci), ("Coverage", "coverage", _pct)],
+                                "Monthly savings per scope")),
               _details("Pools and models to enable", "what each move needs, per scope", _pool_tables(report)),
               _details("Where sampled asks move", "headline scope, balanced profile",
                        _table(ro.get("moves", []), [("Model in use", "used", str), ("Router pick", "pick", str),
@@ -1988,11 +2053,11 @@ def render(report: dict, narrative: dict[str, str], redact: bool, show_examples:
                               "than the headline scope.</p>"
                               + _table(dom, [("Model", "model", str), ("Dominated by", "by", str)],
                                        "Dominated models in use")))
-    up = ro.get("underpowered") or []
+    up = underpowered_rows(ro)
     if up:
         body = _table(up, [("Model", "model", str), ("Sampled calls", "n", str), ("Hard share", "share_hard", _pct),
                            ("Next model up", "next_model", str), ("Enabled", "next_enabled", _txt),
-                           ("Cost change vs current", "extra_cost_rate", _change)], "Under-powered asks")
+                           ("Cost change vs current", "extra_cost_rate", _change)], "Models with many hard asks")
         if show_examples and not redact:
             for u in up:
                 for e in u.get("examples") or []:
@@ -2000,30 +2065,17 @@ def render(report: dict, narrative: dict[str, str], redact: bool, show_examples:
                     cut = e if len(e) <= EXAMPLE_CHARS else e[:EXAMPLE_CHARS].rstrip() + " [cut]"
                     body += f"<pre class=ex aria-label='Example ask for {html.escape(u['model'])}'>" \
                             f"{html.escape(cut)}</pre>"
-        parts.append(_details("Under-powered asks", "hard asks on a weaker model", body))
-    parts += [_details("Caching candidates",
-                       f"{ca.get('threads_scanned', 0)} threads scanned" + (", all too small to act on"
-                                                                           if caching_small else ""),
-                       _table([r for r in ca.get("rows", []) if r.get("candidate")][:20],
-                              [("Thread", "thread", lambda t: "(hidden)" if redact else t),
-                               ("Agent", "agent", lambda a: a or "no agent"), ("Model", "model", str),
-                               ("Turns", "turns", str), ("Saving", "savings", _usd), ("Action", "action", str)],
-                              "Caching candidates")),
-              _details("Spend by model", "top 15, window",
-                       _table(sp.get("by_model", [])[:15], [("Model", "key", str), ("Spend", "spend", _usd)],
-                              "Spend by model")),
-              _details("Harness traffic", "share of spend by framework",
-                       ("<p class=m>The harness metric can sum to more than total spend, so read shares, not "
-                        "dollars.</p>" if any(x.get("check") == "harness metric exceeds spend"
-                                              for x in report["checks"]["caveats"]) else "")
-                       + _table((report.get("harness") or {}).get("rows", []),
-                                [("Framework", "framework", str), ("Share", "share", _pct),
-                                 ("Caching", "coding_harness",
-                                  lambda x: "not controllable from orq" if x else "controllable")],
-                                "Harness traffic")),
-              _details("Data checks", "raw caveat checks",
-                       _table(report["checks"]["caveats"], [("Check", "check", str), ("Detail", "detail", str)],
-                              "Caveat checks"))]
+        parts.append(_details("Models with many hard asks", "hard asks on a weaker model", body))
+    if not caching_small:
+        parts.append(_details("Caching candidates", f"{ca.get('threads_scanned', 0)} threads scanned",
+                              _table([r for r in ca.get("rows", []) if r.get("candidate")][:20],
+                                     [("Thread", "thread", lambda t: "(hidden)" if redact else t),
+                                      ("Agent", "agent", lambda a: a or "no agent"), ("Model", "model", str),
+                                      ("Turns", "turns", str), ("Saving", "savings", _usd), ("Action", "action", str)],
+                                     "Caching candidates")))
+    parts.append(_details("Spend by model", "top 15, window",
+                          _table(sp.get("by_model", [])[:15], [("Model", "key", str), ("Spend", "spend", _usd)],
+                                 "Spend by model")))
     title = f"{ws} cost savings, {to_day.split(' ', 1)[-1]}"
     return ("<!doctype html><html lang=en><head><meta charset=utf-8>"
             "<meta name=viewport content='width=device-width, initial-scale=1'>"
