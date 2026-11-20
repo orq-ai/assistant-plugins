@@ -28,6 +28,7 @@ import subprocess
 import sys
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -193,14 +194,25 @@ def pick(pool: list[PoolModel], tier: str, profile: str) -> PoolModel:
 # --------------------------------------------------------------------------------------------- frontier pools
 
 
-def switch_target(incumbent: mf.ScoredModel, cands: list[mf.ScoredModel]) -> mf.ScoredModel | None:
-    """The cheapest candidate that dominates the incumbent, by evaluatorq's rule.
+def switch_target(incumbent: mf.ScoredModel, cands: list[mf.ScoredModel],
+                  cost: Callable[[str], float | None] | None = None) -> mf.ScoredModel | None:
+    """The cheapest candidate that dominates the incumbent: at least as intelligent and no more expensive, strictly
+    better on one.
 
-    Dominance is at least as intelligent and no more expensive, strictly better on one (3:1 input/output blend)."""
+    With `cost` (the incumbent's sampled spans re-priced on a model, cache reads and writes included) price is that
+    cost; a model `cost` cannot price is never a target. Without it, evaluatorq's 3:1 input/output blend."""
     if incumbent.free:
         return None
-    better = [m for m in cands if m.router_id != incumbent.router_id and m.dominates(incumbent)]
-    return min(better, key=lambda m: (m.price, -m.default_index, m.router_id)) if better else None
+    if cost is None:
+        better = [m for m in cands if m.router_id != incumbent.router_id and m.dominates(incumbent)]
+        return min(better, key=lambda m: (m.price, -m.default_index, m.router_id)) if better else None
+    own = cost(incumbent.router_id)
+    if own is None:
+        return None
+    priced = [(c, m) for m in cands if m.router_id != incumbent.router_id and (c := cost(m.router_id)) is not None]
+    better = [(c, m) for c, m in priced if m.default_index >= incumbent.default_index and c <= own
+              and (m.default_index > incumbent.default_index or c < own)]
+    return min(better, key=lambda t: (t[0], -t[1].default_index, t[1].router_id))[1] if better else None
 
 
 def frontier_pool(top: mf.ScoredModel, cands: list[mf.ScoredModel]) -> tuple[list[mf.ScoredModel], bool]:
@@ -814,12 +826,44 @@ class Analyzer:
     def poolable(self, m: str) -> bool:
         """Scored, priced, comparable, seatable and not pre-release (disabled is allowed: the all-available scopes
         recommend it)."""
-        if PRERELEASE_RE.search(split_model(m)[1]):
+        if PRERELEASE_RE.search(split_model(m)[1]) or self.discounted_offering(m):
             return False
         g, v, e = self.garden.get(m), self.v2(m), self.cat.get(m)
         p = (e or {}).get("pricing") or {}
         return bool(g and not g.free and mf.unseatable_reason(g) in (None, "disabled in the model catalogue")
                     and v.get("intelligence_index") and v.get("price") is not None and "input" in p and "output" in p)
+
+    def discounted_offering(self, m: str) -> bool:
+        """A same-host offering of another catalog model, priced below it (e.g. a `-contributor` offering): the
+        catalog does not state its terms, so it is never recommended. Dated snapshots share the base price."""
+        e = self.cat.get(m) or {}
+        base = e.get("offering_of")
+        if not base or base == m or base not in self.cat or self.host(base) != self.host(m):
+            return False
+        mine, theirs = e.get("pricing") or {}, (self.cat[base].get("pricing") or {})
+        units = [(_unit(mine.get(k)), _unit(theirs.get(k))) for k in ("input", "output")]
+        return any(a is not None and b is not None and a < b for a, b in units)
+
+    def traffic_cost(self, m: str) -> Callable[[str], float | None] | None:
+        """The sampled spans of `m` re-priced on a model, same tokens; None when a span hits a missing tier price."""
+        spans = self._traffic.get(m) if hasattr(self, "_traffic") else None
+        if not spans:
+            return None
+        memo: dict[str, float | None] = {}
+
+        def cost(x: str) -> float | None:
+            if x not in memo:
+                total = 0.0
+                for w, summ, attrs, toks in spans:
+                    pp = choose_price((self.cat.get(x) or {}).get("pricing") or {}, span_env(summ, attrs, x))
+                    if pp.flag:
+                        memo[x] = None
+                        break
+                    total += w * price_tokens(toks, pp.prices)
+                else:
+                    memo[x] = total
+            return memo[x]
+        return cost
 
     def in_scope(self, x: str, m: str, scope: str) -> bool:
         prov, avail = scope.split(":")
@@ -852,7 +896,7 @@ class Analyzer:
             return {"pool": None, "reason": "no intelligence index or price", "switch": None, "enable": [],
                     "relaxed": False}
         cands = self.candidates(m, scope)
-        sw = switch_target(inc, cands)
+        sw = switch_target(inc, cands, self.traffic_cost(m))
         members, relaxed = frontier_pool(sw or inc, cands)
         assert not has_dominated(members), [x.router_id for x in members]
         ids = [x.router_id for x in members]
@@ -1054,6 +1098,10 @@ class Analyzer:
         `picks`/`savings` per profile are the headline scope's router, kept flat for the tables."""
         pools: dict[str, dict[str, dict]] = {}
         self.samples = []
+        self._traffic: dict[str, list] = {}
+        for d in drawn:
+            summ, attrs = d["span"].get("summary") or {}, d["span"].get("attributes") or {}
+            self._traffic.setdefault(d["model"], []).append((d["weight"], summ, attrs, span_tokens(summ, attrs)))
         for d in drawn:
             m = d["model"]
             if m not in pools:
@@ -1300,7 +1348,14 @@ class Analyzer:
             if inc is None or inc.free:
                 out.append({"model": m, "dominated_by": None, "note": "no index or price"})
                 continue
-            dom = [x for x in self.candidates(m, "any_provider:all") if x.router_id != m and x.dominates(inc)]
+            cost = self.traffic_cost(m)
+            own = cost(m) if cost else None
+            if own is None:
+                dom = [x for x in self.candidates(m, "any_provider:all") if x.router_id != m and x.dominates(inc)]
+            else:  # on this model's sampled traffic, cache prices included
+                dom = [x for x in self.candidates(m, "any_provider:all") if x.router_id != m
+                       and (c := cost(x.router_id)) is not None and x.default_index >= inc.default_index
+                       and c <= own and (x.default_index > inc.default_index or c < own)]
             dom.sort(key=lambda x: (not (self.cards.get(x.router_id) or {}).get("enabled"), -x.default_index))
             out.append({"model": m, "index": inc.default_index, "blend_price": inc.price,
                         "dominated_by": [{"model": x.router_id, "index": x.default_index, "blend_price": x.price,

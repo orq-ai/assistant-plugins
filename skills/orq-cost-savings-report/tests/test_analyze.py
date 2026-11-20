@@ -246,3 +246,18 @@ def test_unscored_turn_goes_to_the_top_seat(tmp_path, monkeypatch):
     for r in rep["samples"]:
         assert r["fallback"] == "decision_timeout" and r["picks"]["balanced"] == SOL61
         assert r["savings"]["balanced"] == pytest.approx(r["scenario_savings"]["switch|same_provider:all"])
+
+
+def test_discounted_same_host_offering_is_skipped(tmp_path):
+    an = c.Analyzer(ns(tmp_path))
+
+    def entry(i, of, inp, host="meta"):
+        return {"id": i, "offering_of": of, "provider": {"id": host},
+                "pricing": {"input": {"cost": inp, "per": 1_000_000}, "output": {"cost": 1, "per": 1_000_000}}}
+    an.cat = {e["id"]: e for e in [
+        entry("meta/spark", "meta/spark", 1.25), entry("meta/spark-contributor", "meta/spark", 0.1),
+        entry("meta/spark-2026-09-01", "meta/spark", 1.25), entry("aws/spark", "meta/spark", 0.5, "aws")]}
+    assert an.discounted_offering("meta/spark-contributor")
+    assert not an.discounted_offering("meta/spark-2026-09-01")  # dated snapshot, same price
+    assert not an.discounted_offering("aws/spark")  # another host's offering
+    assert not an.discounted_offering("meta/spark")

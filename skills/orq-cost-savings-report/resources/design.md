@@ -238,7 +238,7 @@ Join `orq models list` to the catalog on `provider + "/" + model_id`; its `id` i
 
 Every model comes from evaluatorq's `model_frontier` (`evaluatorq>=1.98`, PyPI), applied to the `orq models list` cards the script already loads: `garden_from_cards`, `dominates`, `pareto_frontier`, `region_compatible`, `unseatable_reason`, `model_identity` and `MIN_TIER_RATIO` (2.75). Index is the score at the catalogue default reasoning effort; price is the 3:1 input/output blend per 1M. Dominance: at least as intelligent and no more expensive, strictly better on one.
 
-A model is a candidate when it is scored, priced in the catalog (input and output), not free, seatable and not pre-release; "disabled in the model catalogue" is allowed, because the all-available scopes recommend enabling it. Pre-release means a name segment `preview`, `beta`, `alpha` or `experimental` (split on `-`, `_`, `.`): the catalog has no release-stage field, and these segments are the providers' own naming.
+A model is a candidate when it is scored, priced in the catalog (input and output), not free, seatable and not pre-release; "disabled in the model catalogue" is allowed, because the all-available scopes recommend enabling it. Pre-release means a name segment `preview`, `beta`, `alpha` or `experimental` (split on `-`, `_`, `.`): the catalog has no release-stage field, and these segments are the providers' own naming. A discounted offering is skipped too: a same-host `offering_of` another catalog model, priced below it on input or output (the `-contributor` offerings). Its terms are not in the catalog. Dated snapshots share the base price and stay.
 
 ### Scopes
 
@@ -253,7 +253,7 @@ Every scope reuses the same sampled spans and decisions; only the local re-prici
 
 ### Switch rule
 
-The switch target is the cheapest candidate that dominates the customer's model. No minimum index gain: a model that is as smart and much cheaper is the recommendation.
+The switch target is the cheapest candidate that dominates the customer's model on its own traffic: index at least as high, and the model's sampled spans re-priced on the candidate (same uncached, cache-read, cache-write and output tokens) cost no more, strictly better on one. The blend ignores cache prices, so a model that wins on the blend can lose on heavily cached traffic. A candidate the spans cannot price (missing tier price) is never a target. With no sampled spans the blend is used. No minimum index gain: a model that is as smart and much cheaper is the recommendation. The dominated-models list uses the same test.
 
 ### Pool rule
 

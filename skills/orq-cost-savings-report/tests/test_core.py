@@ -415,3 +415,12 @@ def test_parse_narrative_and_render_refuses_empty_slot():
     assert n["summary"] == "A." and n["routing"] == ""
     with pytest.raises(SystemExit, match="routing"):
         c.render({}, n, redact=False)
+
+
+def test_switch_target_on_traffic_counts_cache_reads():
+    flash = sm("acme/acme-flash", 41, 0.1, 0.5)  # dominates sol on the blend
+    other = sm("acme/acme-other", 40, 0.5, 2)
+    costs = {SOL.router_id: 1.0, "acme/acme-flash": 1.2, "acme/acme-other": 0.6}  # flash's cache reads cost more
+    assert c.switch_target(SOL, [flash, other], costs.get).router_id == "acme/acme-other"
+    assert c.switch_target(SOL, [flash], costs.get) is None
+    assert c.switch_target(SOL, [flash, other], {SOL.router_id: 1.0}.get) is None  # unpriced: never a target
