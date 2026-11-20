@@ -25,7 +25,7 @@ for; a link opens the trace in one click.
 
 - Write the Markdown link syntax itself: `[016de4cd](<https://my.orq.ai/acme/traces/(trace:016de4cd7a2b4c21c707f00ad3185eb8)>)`, or a descriptive label (`[failing turn 3](<url>)`). The label is the bare 8-char prefix: no `…`, no full id. Never `016de4cd (https://…)`: that is an id with a URL pasted after it, and the reader still sees the raw URL.
 - A raw id is fine only where a machine reads it: CLI arguments, JSON/YAML front matter, dataset rows, code. Or when the user asks for the id itself.
-- No workspace key or host available (step 2 below fails)? Say so once, and only then fall back to the id.
+- No shell (MCP only), or step 2 below fails? Use host `https://my.orq.ai` unless the conversation shows another one, and ask the user once for the workspace key. Fall back to the id only if they do not give it.
 - Several traces in a table: put the link in the id column; do not add a second column with the full id.
 
 ## URL shape
