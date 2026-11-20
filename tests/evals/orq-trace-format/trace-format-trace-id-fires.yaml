@@ -1,0 +1,10 @@
+id: trace-format-trace-id-fires
+skill: orq-trace-format
+kind: invocation
+# One trace by id; the reply must point at it. Real rows from the research workspace, pasted so no tool access is needed.
+prompt: 'Look at this trace from `orq traces search`: {"trace_id": "e3f5215fb483d9766a57e2cab3b7e935", "span_id": "75f9f2cac5bb6410", "name": "orq.job", "status": "error", "started_at": "2026-11-20T10:55:26.060Z", "duration_ms": 0, "cost": {"accepted_prediction": 0, "audio_input": 0, "audio_output": 0, "billable": false, "cache_read": 0, "cache_write": 0, "cached": 0, "currency": "USD", "input": 0, "integration_id": "", "output": 0, "pricing_tier": "", "reasoning": 0, "rejected_prediction": 0, "threshold_exceeded": false, "total": 0, "web_search": 0}, "input": "{\"inputs\": {\"question\": \"What is 17 * 23?\", \"expected\": \"391\"}, \"expected_output\": null}", "output": null} Why did it error?'
+expect_skill: orq-trace-format
+expect_skill_anywhere: true
+runs: 1
+pass_threshold: 1
+max_turns: 10

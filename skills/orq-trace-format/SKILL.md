@@ -1,16 +1,16 @@
 ---
 name: orq-trace-format
 description: >
-  Show orq.ai traces and spans to a person as clickable Studio links instead
-  of raw trace ids. Use whenever a reply, report, table, PR or ticket mentions
-  an orq trace, span, trace_id, span_id, run, failing conversation or
-  invocation the reader may want to open: "show me the trace", "link the
-  failing runs", "which trace was that", results from `orq traces search`,
-  `list_traces`, a router or deployment response's `x-orq-trace-id` /
-  `telemetry.trace_id`, an evaluator run, or an experiment. Covers the URL
-  shape, the workspace key and host, and the "opens empty" fix. Do NOT use to
-  query or analyze traces (use orq-analyze-traces or orq-cli), or to set up
-  tracing (use orq-setup-observability).
+  Load BEFORE writing any reply that names an orq.ai trace or span, even
+  when the trace data is already in the conversation and no tool is needed.
+  Answering about pasted `orq traces search` rows, a trace_id, span_id, a
+  failing run, the slowest run, a summary of traces, or a deployment
+  response's `x-orq-trace-id` / `telemetry.trace_id` all count: each trace
+  in the reply must be a clickable Studio link `[<8-char prefix>](<url>)`,
+  never a bare 32-hex id, and this skill has the URL shape, workspace key
+  and host. Also for PRs, tickets, evaluator runs and experiments that cite
+  traces. Do NOT use to query or analyze traces (use orq-analyze-traces or
+  orq-cli), or to set up tracing (use orq-setup-observability).
 allowed-tools: Bash(orq auth whoami:*), Read
 metadata:
   verified: "2026-10-13"
@@ -23,7 +23,7 @@ metadata:
 in a table or a sentence is something the reader has to copy, paste and search
 for; a link opens the trace in one click.
 
-- Write `[<first 8 chars of trace_id>](<url>)`, or a descriptive label (`[failing turn 3](<url>)`).
+- Write the Markdown link syntax itself: `[016de4cd](<https://my.orq.ai/acme/traces/(trace:016de4cd7a2b4c21c707f00ad3185eb8)>)`, or a descriptive label (`[failing turn 3](<url>)`). The label is the bare 8-char prefix: no `…`, no full id. Never `016de4cd (https://…)`: that is an id with a URL pasted after it, and the reader still sees the raw URL.
 - A raw id is fine only where a machine reads it: CLI arguments, JSON/YAML front matter, dataset rows, code. Or when the user asks for the id itself.
 - No workspace key or host available (step 2 below fails)? Say so once, and only then fall back to the id.
 - Several traces in a table: put the link in the id column; do not add a second column with the full id.

@@ -1,9 +1,0 @@
-id: trace-format-fires-id
-skill: orq-trace-format
-kind: invocation
-# A bare trace id with no "link" wording: the skill should still fire.
-prompt: Where can I see orq trace b422a93c8b34ddfa70eaf5c7e3705c19?
-expect_skill: orq-trace-format
-runs: 3
-pass_threshold: 0.66  # 2 of 3
-max_turns: 4

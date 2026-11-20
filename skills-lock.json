@@ -109,7 +109,7 @@
     "orq-trace-format": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "e8e69662118ca1587b5e7a708a7b07cee22952d01f33ed9fcc846249da1b7371"
+      "computedHash": "32d7ca9a71bd310a61c5e2fff366a3e60dad5e549a02b1c90833cd3bbd54b6dc"
     }
   }
 }

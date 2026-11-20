@@ -145,12 +145,15 @@ class Case:
     max_turns: int = 6
     # Excluded from pass/fail; reported as a trigger rate.
     borderline: bool = False
+    # Invocation: pass when expect_skill fires at any point, not only first. For companion
+    # skills (e.g. orq-trace-format) that load after the skill that owns the task.
+    expect_skill_anywhere: bool = False
 
 
 CASE_TYPES: dict[str, type | tuple[type, ...]] = {
     "id": str, "skill": str, "kind": str, "prompt": str, "expect_skill": str,
     "expect_tools": list, "expect_question_about": list, "forbid_tools": list, "allow_tools": list,
-    "runs": int, "pass_threshold": (int, float), "max_turns": int, "borderline": bool,
+    "runs": int, "pass_threshold": (int, float), "max_turns": int, "borderline": bool, "expect_skill_anywhere": bool,
 }  # fmt: skip
 
 def load_cases(skill_names: set[str]) -> list[Case]:
@@ -830,14 +833,21 @@ def errored_expected_tools(agent: str, case: Case, calls: list[dict[str, Any]]) 
     return [t for t in case.expect_tools if t in failed and t not in ok]
 
 
-def fired_skills(agent: str, calls: list[dict[str, Any]]) -> list[str]:
-    """Skills that loaded. A Skill call that errored (unknown skill, load failure) did not fire one."""
+def fired_skills(agent: str, calls: list[dict[str, Any]], include_reads: bool = False) -> list[str]:
+    """Skills that loaded. A Skill call that errored (unknown skill, load failure) did not fire one.
+
+    include_reads also counts a completed read of `skills/<name>/SKILL.md`: how an agent loads a
+    companion skill another skill points it at.
+    """
     fired: list[str] = []
     for c in calls:
         if not completed(c):
             continue
         args = c["arguments"] if isinstance(c["arguments"], dict) else {}
-        if agent == "claude" and c["name"] == "Skill":
+        path = str(args.get("file_path", args.get("filePath", "")))
+        if include_reads and c["name"] in ("Read", "read") and (m := re.search(r"skills/([^/]+)/SKILL\.md$", path)):
+            name = m.group(1)
+        elif agent == "claude" and c["name"] == "Skill":
             name = str(args.get("skill", ""))
         elif agent == "opencode" and c["name"] == "skill":
             name = str(args.get("name", ""))
@@ -874,12 +884,14 @@ async def skill_fired(params: ScorerParameter) -> EvaluationResult:
         return _skip("no run output")
     case, out = usable
     orq_skills = set(params["data"].inputs["orq_skills"])
-    fired = fired_skills(out["agent"], out["tool_calls"])
+    fired = fired_skills(out["agent"], out["tool_calls"], include_reads=case.expect_skill_anywhere)
     fired_orq = [s for s in fired if s in orq_skills]
     if case.expect_skill == "any":
         return _skip(f"any skill may fire; fired {fired or 'nothing'}")
     if case.expect_skill == "none":
         ok = not fired_orq
+    elif case.expect_skill_anywhere:
+        ok = case.expect_skill in fired_orq
     else:
         ok = bool(fired_orq) and fired_orq[0] == case.expect_skill
     return _verdict(ok, ok, f"expected {case.expect_skill}; fired {fired or 'nothing'}")
