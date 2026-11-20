@@ -142,12 +142,15 @@ Model catalog prices carry `variants[].when`. The evaluator implements the full 
 | `inference_geo` | host region from the model id: `us.`, `us-east-1.` and similar map to `us`, `eu.` to `eu`, `global.` to none |
 | `speed`, `operation` | span attribute if present, else the variant does not match |
 
-Rules, to confirm against the server-side evaluator before building:
-- A variant overrides the base price key by key (many variants override only some keys, V).
-- When several variants match, the one with the most conditions wins; ties go to the first listed.
-- An unknown variable makes the variant not match, and the span is flagged.
-- If the picked model has no variant for the span's tier (for example `priority`), the span is flagged and its stratum counts as not covered, so standard pricing never inflates savings.
+Choosing the price, the same way for the current and the picked model:
+- Default to the base price.
+- Use a variant only when the span clearly shows what its condition tests: a region in the model id, a batch, priority or flex tier, a long context, a speed setting. A variable the span does not show counts as false, so an unclear span stays on the base price.
+- When several variants match, take the one whose condition covers the most of what the span shows, so it aligns closest with how the client calls the model. Example: a US-region batch call with 150k input tokens on a model with `input_tokens > 100000`, `inference_geo == "us"`, `tier == "batch"` and their combinations takes the variant that tests all three. Ties go to the first listed.
+- A variant overrides the base price key by key; a price it does not list comes from the base (many variants list only some, V).
+- If the picked model has no variant for something the span clearly shows (for example the `priority` tier), the span is flagged and its stratum counts as not covered, so a base price never inflates savings.
 - Cache writes use the span's own TTL; if the model lacks it, the shortest TTL it has.
+
+The pricing check below catches a model where this choice disagrees with what orq billed.
 
 Check: price each sampled span at its own model and compare with `.span.summary.cost`, per model. A model more than 2% off is left out of savings (not covered) and listed with the gap.
 
@@ -322,7 +325,7 @@ Unit tests on synthetic fixtures, no network:
 - Score and tier: float order; `0.11000000000000001` is medium under balanced; exact t1 and t2 per profile.
 - Bands: pools of 2 to 5 models, index ties, empty bands, pick-in-band tie-breaks, invalid pools, and a 2-model pool whose index order reverses the table order.
 - Tier resolution: all regression ids above, plus disabled and unpriced models and the region tie-break.
-- Pricing: each `when` variable and operator, `||`, the modulo off-peak form, partial overrides, overlapping variants, unknown variables, missing tier variant, missing TTL, `service_tier` `default`.
+- Pricing: each `when` variable and operator, `||`, the modulo off-peak form, partial overrides, overlapping variants (the US-region batch long-context case picks the three-condition variant), a span that shows nothing stays on base, unknown variables, missing tier variant, missing TTL, `service_tier` `default`.
 - Savings: pick equals current model; negative savings; carry-over on a switch, on a switch back, with the previous turn missing, and with no cache-write price; session-affinity pins and escalation.
 - Sampling and estimator: allocation with a minimum of 5, weights, weighted ratio on a hand-computed fixture, cell bootstrap, top-3-excluded figure, coverage.
 - Caching: read and write per turn, TTL expiry, already-cached and already-written tokens, mixed-model threads.
@@ -333,5 +336,4 @@ Unit tests on synthetic fixtures, no network:
 
 ## Open questions
 
-1. The pricing-variant precedence rules above must be confirmed against the server-side evaluator before building.
-2. Agent-level numbers have only been checked on a workspace with little agent traffic.
+1. Agent-level numbers have only been checked on a workspace with little agent traffic.
