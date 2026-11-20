@@ -1485,9 +1485,12 @@ def _neg(s: str) -> str:
 
 
 SLOTS = {
-    "summary": "ONE sentence, the recommendation: which lever (router or change model), what to do first, and the monthly figure (`per_month`); no caveats, the page shows the rest",
-    "routing": "why each model moves where it does (index, price, pool picks, flagged buckets); the page already "
-               "renders the step plan and per-model chart, so give reasons, not a second plan; monthly figures",
+    "summary": "ONE sentence that leads with the concrete action and its monthly amount (which models move where, "
+               "`per_month` with models already enabled), then what enabling more adds. Lead with the Smart Router "
+               "only when its figure beats the change-model figure by more than 10%; otherwise lead with the model "
+               "changes. No caveats, the page shows the rest",
+    "routing": "why each model moves where it does (index, price, pool picks, flagged buckets): one line per model, "
+               "no action list, the page renders the per-model plan; monthly figures",
     "caching": "which threads or agents miss caching and the action per provider",
     "caveats": "sample size, not-covered spend, failed caveat checks, fallback choice",
 }
@@ -1587,10 +1590,10 @@ CSS = """
 --s1:#299D8F;--s2:#df5325;--kept:#c9c5bf;--ns:#eeece8;--th:#025558;--thfg:#ffffff;--hl:#e8f4f2;--hl2:#a9d8d2;
 color-scheme:light}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){--bg:#17161c;--fg:#eceaf0;
---muted:#a8a5b2;--line:#302e38;--tile:#201f26;--head:#299D8F;--s1:#299D8F;--s2:#df5325;--kept:#5a5863;
---ns:#2a2930;--th:#2a5f5c;--thfg:#eceaf0;--hl:#1f2e2e;--hl2:#1d5e58;color-scheme:dark}}
-:root[data-theme="dark"]{--bg:#17161c;--fg:#eceaf0;--muted:#a8a5b2;--line:#302e38;--tile:#201f26;--head:#299D8F;
---s1:#299D8F;--s2:#df5325;--kept:#5a5863;--ns:#2a2930;--th:#2a5f5c;--thfg:#eceaf0;--hl:#1f2e2e;--hl2:#1d5e58;
+--muted:#a8a5b2;--line:#302e38;--tile:#201f26;--head:#7cc4bb;--s1:#299D8F;--s2:#df5325;--kept:#5a5863;
+--ns:#2a2930;--th:#2a5f5c;--thfg:#eceaf0;--hl:#1f2e2e;--hl2:#3f8f86;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#17161c;--fg:#eceaf0;--muted:#a8a5b2;--line:#302e38;--tile:#201f26;--head:#7cc4bb;
+--s1:#299D8F;--s2:#df5325;--kept:#5a5863;--ns:#2a2930;--th:#2a5f5c;--thfg:#eceaf0;--hl:#1f2e2e;--hl2:#3f8f86;
 color-scheme:dark}
 *{box-sizing:border-box}
 body{font:15px/1.55 "Kurrent","Inter",system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg);margin:0;
@@ -1606,8 +1609,7 @@ p,li,dd{max-width:64ch;text-wrap:pretty}
 nav.jump{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13px;margin:10px 0 0}
 nav.jump a{color:var(--muted)}
 .hero{margin:28px 0 8px;padding:24px 0;border-block:1px solid var(--line)}
-.hero .lab{margin:0;font-weight:600}
-.hero .verdict{margin:10px 0 18px;font-size:18px;font-weight:700;max-width:60ch}
+.hero .verdict{margin:0 0 18px;font-size:18px;font-weight:700;max-width:60ch}
 .choice{display:grid;grid-template-columns:minmax(0,auto) auto minmax(0,auto);gap:24px;align-items:end;
 justify-content:start}
 .opt .key{display:flex;align-items:center;gap:8px;font-weight:600;margin:0}
@@ -1616,11 +1618,12 @@ justify-content:start}
 letter-spacing:-0.02em}
 .big small{font-size:18px;font-weight:600;color:var(--muted);margin-left:4px}
 .opt.pri .big{font-size:68px;color:var(--s1)}
-.opt.sec .big{font-size:40px;color:var(--s2)}
+.opt.sec .big{font-size:40px;color:var(--fg)}
 .opt p{margin:0 0 2px}
-.or{align-self:center;font-weight:600;color:var(--muted);font-size:15px;margin:0}
-.share{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin:22px 0 6px}
-.share b{font-size:28px;line-height:1;font-variant-numeric:tabular-nums}
+.or{align-self:center;text-align:center;font-weight:600;color:var(--muted);font-size:15px;margin:0}
+.share{margin:22px 0 6px;font-size:15px;font-weight:600}
+.other{margin:14px 0 0;font-size:14px}
+.caveat{margin:12px 0 0}
 .bar{display:flex;height:30px;border-radius:6px;overflow:hidden;background:var(--ns);position:relative}
 .bar i{display:block;height:100%}
 .bar .b1{background:var(--s1)}.bar .b2{background:var(--hl2);border-left:2px solid var(--bg)}
@@ -1628,11 +1631,6 @@ letter-spacing:-0.02em}
 .barlab{position:relative;height:38px;font-size:13px;line-height:1.25;font-variant-numeric:tabular-nums}
 .barlab div{position:absolute;top:6px;white-space:nowrap}
 .barlab b{display:block;font-size:15px}
-.pick{margin:10px 0 0;color:var(--muted)}
-.quality{margin:4px 0 0;color:var(--muted)}
-.plan{margin:8px 0 0;padding-left:1.4em}
-.plan li{margin:0 0 12px;padding-left:4px}
-.plan b{font-variant-numeric:tabular-nums}
 .legend{display:flex;flex-wrap:wrap;gap:6px 18px;margin:10px 0 14px;font-size:13px;color:var(--muted);
 padding:0;list-style:none}
 .legend li{display:flex;align-items:center;gap:6px}
@@ -1644,14 +1642,13 @@ padding:10px 0;border-bottom:1px solid var(--line)}
 .who{min-width:0}
 .who code{font:500 14px/1.3 "Kurrent Mono",ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
 .who span{display:block;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
-.tag{display:inline-block;font-size:12px;line-height:1.6;padding:0 8px;border-radius:6px;border:1px solid var(--muted);
-color:var(--fg);margin-top:4px;font-weight:600}
+.row.keep .who code,.row.keep .val b{color:var(--muted);font-weight:500}
 .track{display:flex;gap:2px;height:18px;align-items:stretch}
 .track i{display:block;min-width:2px}
 .track i:first-child{border-radius:4px 0 0 4px}
 .track i:last-child{border-radius:0 4px 4px 0}
 .track i:only-child{border-radius:4px}
-.sr{background:var(--s1)}.kept{background:var(--kept)}
+.sr{background:var(--s1)}.sr2{background:var(--hl2)}.kept{background:var(--kept)}
 .ns{background:var(--ns);border:1px dashed var(--muted)}
 .val{text-align:right;font-variant-numeric:tabular-nums}
 .val b{display:block;font-size:16px}
@@ -1691,7 +1688,7 @@ white-space:pre-wrap;overflow-wrap:anywhere;max-height:12em;overflow:auto}
 .opt.pri .big{font-size:40px}.opt.sec .big{font-size:28px}
 .big small{font-size:14px}
 .hero .verdict{font-size:16px}
-.share b{font-size:22px;white-space:nowrap}.share .m{font-size:13px;white-space:nowrap}
+.cin{display:none}
 .barlab{font-size:12px}.barlab b{font-size:13px}
 .row,.dots .row{grid-template-columns:minmax(0,1fr) auto;padding:12px 0}
 .track,.plot{grid-column:1/-1;grid-row:2}
@@ -1750,19 +1747,28 @@ def _lever(info: dict) -> str:
     return "switch" if info.get("switch") else ""
 
 
-def _action(model: str, info: dict, savings: float) -> tuple[str, str]:
-    """(what to do, prerequisite tag) for one model in the headline scope."""
-    pool, switch, enable = info.get("pool") or [], info.get("switch"), info.get("enable") or []
-    tag = (f"<span class=tag>Enable {html.escape(', '.join(_short(e) for e in enable))} first</span>"
-           if enable else "")
-    if savings <= 0:
-        prov = PROVIDER_NAME.get(model.split("/")[0], model.split("/")[0])
-        return f"Keep it: no cheaper {prov} model is as strong", ""
+def _phrase(info: dict) -> str:
+    """The move of one model in one scope, lower case: 'route over A and B', 'change to A' or 'route'."""
+    pool, switch = info.get("pool") or [], info.get("switch")
     if len(pool) > 1:
-        return "Route over " + " and ".join(_short(p) for p in pool), tag
-    if switch:
-        return f"Change to {_short(switch)}", tag
-    return "Route", tag
+        return "route over " + " and ".join(_short(p) for p in pool)
+    return f"change to {_short(switch)}" if switch else "route"
+
+
+def _action_lines(model: str, head: dict, today: dict | None, saved: float) -> list[str]:
+    """Plain row text: what to do with this model, today and after enabling models, as short sentences."""
+    if saved <= 0:
+        prov = PROVIDER_NAME.get(model.split("/")[0], model.split("/")[0])
+        return [f"Keep it: no cheaper {prov} model is as strong"]
+    enable = head.get("enable") or []
+    if not enable:
+        p = _phrase(head)
+        return [p[0].upper() + p[1:]]
+    names = " and ".join(_short(e) for e in enable)
+    later = f"After enabling {names}: {_phrase(head)}."
+    if today and _lever(today) and not _same_move(today, head):
+        return [f"Today: {_phrase(today)}.", later]
+    return [later]
 
 
 def _headline(report: dict) -> dict:
@@ -1781,15 +1787,10 @@ def _same_move(a: dict, b: dict) -> bool:
     return (a.get("pool") or None) == (b.get("pool") or None) and a.get("switch") == b.get("switch")
 
 
-def _move(model: str, info: dict) -> str:
-    what = _action(model, info, 1.0)[0]
-    return f"{html.escape(_short(model))}: {html.escape(what[0].lower() + what[1:])}"
-
-
 def _plan_figures(report: dict, per_month: float) -> dict:
-    """The two plan steps as numbers: step 1 is the enabled-only router figure, step 2 the extra from enabling.
+    """The plan as numbers: the enabled-only router figure (today) and the extra from enabling models.
 
-    Step 1 lists the moves of the enabled scope. A move whose target is the same in the headline scope takes the
+    Today lists the moves of the enabled scope. A move whose target is the same in the headline scope takes the
     headline stratum saving. If exactly one move differs, it takes the residual; with more, their amounts are
     omitted. Without an enabled scope, step 1 falls back to the headline moves that need nothing enabled.
     """
@@ -1816,58 +1817,79 @@ def _plan_figures(report: dict, per_month: float) -> dict:
     now.sort(key=lambda x: -(x[2] if x[2] is not None else -1))
     later = [m for m, i in h_info.items() if i.get("enable") and strata.get(m, 0) > 0]
     enable = list(dict.fromkeys(e for m in later for e in h_info[m]["enable"]))
-    return {"now": now, "e_pm": e_pm, "h_pm": h_pm, "later": later, "enable": enable, "h_info": h_info}
+    return {"now": now, "e_pm": e_pm, "h_pm": h_pm, "later": later, "enable": enable, "h_info": h_info,
+            "e_info": e_info, "strata": strata}
 
 
-def _plan(report: dict, per_month: float) -> str:
-    """Ordered steps that sum to the headline: what the enabled models give today, then what enabling adds."""
+def _today_amounts(f: dict) -> dict[str, float]:
+    """Monthly saving available today per model. Amounts the reconciliation could not pin down (several moves
+    differ from the headline) split what is left of the enabled-scope total by headline saving."""
+    known = {m: v for m, _, v in f["now"] if v is not None}
+    unknown = [m for m, _, v in f["now"] if v is None]
+    if unknown:
+        left = max(0.0, f["e_pm"] - sum(known.values()))
+        weights = {m: f["strata"].get(m, 0) for m in unknown}
+        tot = sum(weights.values())
+        known.update({m: left * (w / tot if tot else 1 / len(unknown)) for m, w in weights.items()})
+    return known
+
+
+def _hard_models(ro: dict) -> dict[str, float]:
+    """Models where at least half of the sampled calls are hard asks, with that share."""
+    return {u["model"]: u["share_hard"] for u in ro.get("underpowered") or [] if (u.get("share_hard") or 0) >= 0.5}
+
+
+def _plan_rows(report: dict, per_month: float) -> list[dict]:
+    """One row per sampled model: monthly saving split into today (enabled models) and after enabling."""
+    ro = report.get("routing") or {}
     f = _plan_figures(report, per_month)
-    e_r, h_r = round(f["e_pm"]), round(f["h_pm"])
-    steps = []
-    if f["now"] and e_r > 0:
-        items = "; ".join(_move(m, i) + (f" ({_usd0(v)}/mo)" if v is not None else "") for m, i, v in f["now"])
-        steps.append(f"<li><b>Now, with models already enabled: {_usd0(f['e_pm'])}/mo.</b> {items}.</li>")
-    if f["enable"] and h_r > e_r:
-        names = " and ".join(html.escape(_short(e)) for e in f["enable"])
-        items = "; ".join(_move(m, f["h_info"][m]) for m in f["later"])
-        steps.append(f"<li><b>Enable {names}: +${h_r - e_r:,}/mo, {_usd0(f['h_pm'])}/mo in total.</b> {items}.</li>")
-    if not steps:
-        return "<p>Nothing to change: no sampled model has a cheaper model that is as strong.</p>"
-    return f"<ol class=plan>{''.join(steps)}</ol>"
+    today = _today_amounts(f)
+    hard = _hard_models(ro)
+    rows = []
+    for st in sorted(ro.get("strata") or [], key=lambda x: -(x.get("savings") or 0)):
+        m = st["model"]
+        saved = max(0.0, st.get("savings") or 0) * per_month
+        now = min(saved, max(0.0, today.get(m, 0.0)))
+        rows.append({"model": m, "spend": (st.get("spend") or 0) * per_month, "saved": saved, "today": now,
+                     "after": saved - now, "rate": st.get("rate"), "hard": m in hard and saved > 0,
+                     "lines": _action_lines(m, f["h_info"].get(m, {}), f["e_info"].get(m), saved)})
+    return rows
 
 
 def _actions_chart(report: dict, per_month: float) -> str:
     ro = report.get("routing") or {}
-    head = next((sc for sc in report.get("scenarios") or [] if sc.get("headline")), None)
-    info = {m["model"]: m for m in (head or {}).get("models", [])}
-    strata = sorted(ro.get("strata") or [], key=lambda s: -(s.get("savings") or 0))
+    rows_in = _plan_rows(report, per_month)
     nc = ro.get("not_covered") or []
-    nc_spend = sum(x.get("spend") or 0 for x in nc)
-    top = max([s.get("spend") or 0 for s in strata] + [nc_spend, 1e-9])
+    nc_spend = sum(x.get("spend") or 0 for x in nc) * per_month
+    top = max([r["spend"] for r in rows_in] + [nc_spend, 1e-9])
     rows = []
-    for s in strata:
-        spend, saved = (s.get("spend") or 0), max(0.0, s.get("savings") or 0)
-        i = info.get(s["model"], {})
-        what, tag = _action(s["model"], i, saved)
-        a, b = saved / top * 100, max(0.0, spend - saved) / top * 100
-        tip = f"{_short(s['model'])}: {_usd0(saved * per_month)} of {_usd0(spend * per_month)} a month saved"
-        bars = (f"<i class=sr style='width:{a:.2f}%'></i>" if a > 0 else "") + \
-               (f"<i class=kept style='width:{b:.2f}%'></i>" if b > 0 else "")
-        rows.append(f"<div class=row><div class=who><code title='{html.escape(s['model'])}'>"
-                    f"{html.escape(_short(s['model']))}</code><span>{html.escape(what)}</span>{tag}</div>"
+    for r in rows_in:
+        seg = [("sr", r["today"]), ("sr2", r["after"]), ("kept", max(0.0, r["spend"] - r["saved"]))]
+        bars = "".join(f"<i class={c} style='width:{v / top * 100:.2f}%'></i>" for c, v in seg if v / top > 0)
+        tip = (f"{_short(r['model'])}: {_usd0(r['today'])} saved today, {_usd0(r['after'])} more after enabling, "
+               f"of {_usd0(r['spend'])} a month")
+        notes = "".join(f"<span>{html.escape(x)}</span>" for x in r["lines"])
+        if r["hard"]:
+            notes += "<span>Mostly hard asks: test quality first</span>"
+        rows.append(f"<div class='row{'' if r['saved'] > 0 else ' keep'}'><div class=who>"
+                    f"<code title='{html.escape(r['model'])}'>{html.escape(_short(r['model']))}</code>{notes}</div>"
                     f"<div class=track role=img aria-label='{html.escape(tip)}'>{bars}</div>"
-                    f"<div class=val><b>{_usd0(saved * per_month)}/mo</b>"
-                    f"<span>{_pct(s.get('rate'))} of {_usd0(spend * per_month)}/mo</span></div></div>")
+                    f"<div class=val><b>{_usd0(r['saved'])}/mo</b>"
+                    f"<span>{_pct(r['rate'])} of {_usd0(r['spend'])}/mo</span></div></div>")
     if nc:
         w = nc_spend / top * 100
-        rows.append(f"<div class=row><div class=who><code>{len(nc)} other models</code>"
+        rows.append(f"<div class='row keep'><div class=who><code>{len(nc)} other models</code>"
                     f"<span>Not sampled, so not estimated</span></div>"
-                    f"<div class=track role=img aria-label='{_usd0(nc_spend * per_month)} a month not estimated'>"
+                    f"<div class=track role=img aria-label='{_usd0(nc_spend)} a month not estimated'>"
                     f"<i class=ns style='width:{w:.2f}%'></i></div>"
-                    f"<div class=val><b>n/a</b><span>{_usd0(nc_spend * per_month)}/mo</span></div></div>")
-    legend = ("<ul class=legend><li><span class='sw sr'></span>Saved</li>"
-              "<li><span class='sw kept'></span>Still spent</li><li><span class='sw ns'></span>Not sampled</li></ul>")
-    return legend + "<div class=chart>" + "".join(rows) + "</div>"
+                    f"<div class=val><b>n/a</b><span>{_usd0(nc_spend)}/mo</span></div></div>")
+    legend = "<ul class=legend><li><span class='sw sr'></span>Saved today</li>"
+    if any(r["after"] > 0 for r in rows_in):
+        legend += "<li><span class='sw sr2'></span>Saved after enabling</li>"
+    legend += "<li><span class='sw kept'></span>Still spent</li>"
+    if nc:
+        legend += "<li><span class='sw ns'></span>Not sampled</li>"
+    return legend + "</ul><div class=chart>" + "".join(rows) + "</div>"
 
 
 def _scenario_chart(rows: list[dict]) -> str:
@@ -1906,11 +1928,6 @@ def _scenario_chart(rows: list[dict]) -> str:
     return legend + "<div class='chart dots'>" + "".join(out) + "</div>"
 
 
-def underpowered_rows(ro: dict) -> list[dict]:
-    """Models with many hard asks whose next model up costs more; a cheaper 'upgrade' contradicts dominance."""
-    return [u for u in ro.get("underpowered") or [] if (u.get("extra_cost_rate") or 0) > 0]
-
-
 def _pool_tables(report: dict) -> str:
     out = []
     for sc in report.get("scenarios") or []:
@@ -1918,8 +1935,8 @@ def _pool_tables(report: dict) -> str:
         out.append(_table(sc["models"], [("Model in use", "model", str),
                                          ("Router pool", "pool", lambda p: ", ".join(p or []) or "none"),
                                          ("Change to", "switch", _txt),
-                                         ("Enable first", "enable", lambda e: ", ".join(e or []) or "nothing"),
-                                         ("Note", "reason", lambda x: x or "")], cap))
+                                         ("Enable first", "enable", lambda e: ", ".join(e or []) or "nothing")],
+                            cap))
     return "".join(out)
 
 
@@ -1968,32 +1985,31 @@ def render(report: dict, narrative: dict[str, str], redact: bool, show_examples:
     bar = ""
     if spend_pm and h_pm is not None and e_pm is not None:
         w1, w2 = min(100.0, e_pm / spend_pm * 100), max(0.0, min(100.0, (h_pm - e_pm) / spend_pm * 100))
-        bar = (f"<div class=share><b style='color:var(--s1)'>{_pct(share)} of spend</b>"
-               f"<span class=m>{_usd0(h_pm)}/mo of {_usd0(spend_pm)}/mo</span></div>"
+        bar = (f"<p class=share>{_pct(share)} of spend</p>"
                f"<div class=bar role=img aria-label='{_usd0(e_pm)} a month today, {_usd0(h_pm - e_pm)} more after "
                f"enabling, of {_usd0(spend_pm)} a month spend'><i class=b1 style='width:{w1:.2f}%'></i>"
                f"<i class=b2 style='width:{w2:.2f}%'></i><span>{_usd0(spend_pm)}/mo spend</span></div>"
                f"<div class=barlab><div style='left:0'><b>{_usd0(e_pm)} today</b></div>"
                f"<div style='left:{w1:.2f}%;padding-left:4px'><b>+{_usd0(h_pm - e_pm)} after enabling</b>"
                "</div></div>")
+    other = next((r["router"] for r in scen if r["label"] == SCOPE_LABEL["any_provider:all"]), None)
+    other_line = (f"<p class='m other'>Up to {_usd0(other)}/mo if other providers are allowed (approximate; test "
+                  "quality first).</p>" if other else "")
 
     hero = ("<section class=hero aria-label='Headline'>"
-            "<p class=lab>Estimated saving per month</p>"
             f"<p class=verdict>{verdict}</p><div class=choice>"
             "<div class='opt pri'><p class=key><i class=r></i>Smart Router</p>"
             f"<p class=big>{_usd0(h_pm)}<small>/mo</small></p>"
-            f"<p class=m>90% CI {_usd0(ci[0])} to {_usd0(ci[1])}</p></div>"
-            "<p class=or>or</p>"
+            f"<p class='m cin'>90% CI {_usd0(ci[0])}\u2013{_usd0(ci[1])}</p></div>"
+            "<p class=or>or, pick one</p>"
             "<div class='opt sec'><p class=key><i class=s></i>Change model</p>"
             f"<p class=big>{_usd0(head_row.get('switch'))}<small>/mo</small></p>"
-            f"<p class=m>90% CI {_usd0(sw_ci[0])} to {_usd0(sw_ci[1])}</p></div></div>"
-            f"{bar}"
-            f"<p class=pick>Pick one: the savings overlap.</p>"
-            "<p class=quality>Model picks use a benchmark index; test answer quality before moving traffic.</p>"
-            f"<p class=m>Same provider as today, on the {_pct(cov)} of spend the {n or 'sampled'} sampled calls "
-            "cover.</p></section>")
+            f"<p class='m cin'>90% CI {_usd0(sw_ci[0])}\u2013{_usd0(sw_ci[1])}</p></div></div>"
+            f"{other_line}{bar}"
+            f"<p class='m caveat'>From {n or 'the'} sampled calls ({_pct(cov)} of spend). Test answer quality "
+            "before moving traffic.</p></section>")
 
-    nav = ("<nav class=jump aria-label='Sections'><a href='#do'>What to do</a><a href='#change'>Per model</a>"
+    nav = ("<nav class=jump aria-label='Sections'><a href='#do'>What to do</a>"
            "<a href='#scopes'>Other scopes</a><a href='#details'>Details</a></nav>")
     to_day = _day(win["to"])
     parts = [f"<h1>LLM cost savings: {html.escape(ws)}</h1>",
@@ -2001,9 +2017,7 @@ def render(report: dict, narrative: dict[str, str], redact: bool, show_examples:
               f"{_usd(total)} spent. Monthly figures scale the window to 30 days.</p>"),
              nav, hero,
              "<h2 id=do>What to do</h2>",
-             _plan(report, per_month),
-             "<h2 id=change>Saving per model</h2>",
-             "<p class=m>Router saving by model. The bars sum to the router figure.</p>",
+             "<p class=m>Router saving per model, per month. The bars add up to the headline.</p>",
              _actions_chart(report, per_month),
              "<h2 id=scopes>Other scopes</h2>",
              "<p class=m>90% CI covers sampling noise only, not answer quality.</p>",
@@ -2017,7 +2031,7 @@ def render(report: dict, narrative: dict[str, str], redact: bool, show_examples:
     gen = html.escape(_day(report["generated_at"]) if report.get("generated_at") else to_day)
     parts += ["<h2 id=details>Details</h2>",
               (f"<p class=m>Covers {_pct(cov)} of spend; figures re-price the sampled calls on the new model. "
-               f"Policy {POLICY}, balanced profile, generated {gen}.</p>"),
+               f"Balanced routing profile, generated {gen}.</p>"),
               _details("Why each move", "the reasoning per model", _md(narrative["routing"])),
               _details("Method and caveats", "sample, coverage, limits", _md(narrative["caveats"])),
               _details("Terms", "what the words mean",
@@ -2053,19 +2067,6 @@ def render(report: dict, narrative: dict[str, str], redact: bool, show_examples:
                               "than the headline scope.</p>"
                               + _table(dom, [("Model", "model", str), ("Dominated by", "by", str)],
                                        "Dominated models in use")))
-    up = underpowered_rows(ro)
-    if up:
-        body = _table(up, [("Model", "model", str), ("Sampled calls", "n", str), ("Hard share", "share_hard", _pct),
-                           ("Next model up", "next_model", str), ("Enabled", "next_enabled", _txt),
-                           ("Cost change vs current", "extra_cost_rate", _change)], "Models with many hard asks")
-        if show_examples and not redact:
-            for u in up:
-                for e in u.get("examples") or []:
-                    e = _scrub(e)
-                    cut = e if len(e) <= EXAMPLE_CHARS else e[:EXAMPLE_CHARS].rstrip() + " [cut]"
-                    body += f"<pre class=ex aria-label='Example ask for {html.escape(u['model'])}'>" \
-                            f"{html.escape(cut)}</pre>"
-        parts.append(_details("Models with many hard asks", "hard asks on a weaker model", body))
     if not caching_small:
         parts.append(_details("Caching candidates", f"{ca.get('threads_scanned', 0)} threads scanned",
                               _table([r for r in ca.get("rows", []) if r.get("candidate")][:20],

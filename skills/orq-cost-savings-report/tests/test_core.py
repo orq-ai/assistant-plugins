@@ -480,23 +480,43 @@ def _plan_report() -> dict:
                      {"model": "openai/d", "pool": None, "switch": None, "enable": []}]}]}
 
 
-def test_plan_steps_sum_to_headline_and_step_one_is_the_enabled_scope():
-    plan = c._plan(_plan_report(), 1.0)
-    assert "Now, with models already enabled: $30/mo" in plan  # the enabled scope's router figure
-    assert "a: change to x ($10/mo)" in plan and "b: change to x ($20/mo)" in plan  # b gets the residual
-    assert "Enable y and z: +$70/mo, $100/mo in total" in plan  # 30 + 70 = the headline
-    assert "c:" in plan.split("Enable y and z")[1] and "; d:" not in plan
+def _rows(report: dict) -> dict:
+    return {r["model"]: r for r in c._plan_rows(report, 1.0)}
 
 
-def test_plan_omits_amounts_when_several_moves_differ():
+def test_plan_rows_split_sums_to_enabled_and_headline_figures():
+    rows = _rows(_plan_report())
+    assert sum(r["today"] for r in rows.values()) == pytest.approx(30)  # enabled-scope router figure
+    assert sum(r["today"] + r["after"] for r in rows.values()) == pytest.approx(100)  # the headline
+    assert rows["openai/a"]["today"] == 10 and rows["openai/a"]["after"] == 0  # same move in both scopes
+    assert rows["openai/b"]["today"] == pytest.approx(20) and rows["openai/b"]["after"] == pytest.approx(30)  # residual
+    assert rows["openai/c"]["today"] == 0 and rows["openai/c"]["after"] == 40  # nothing enabled to act on yet
+    assert rows["openai/d"]["saved"] == 0
+
+
+def test_plan_rows_text_and_keep_rows():
+    rows = _rows(_plan_report())
+    assert rows["openai/a"]["lines"] == ["Change to x"]
+    assert rows["openai/b"]["lines"] == ["Today: change to x.", "After enabling y: route over y and x."]
+    assert rows["openai/c"]["lines"] == ["After enabling z: change to z."]
+    assert rows["openai/d"]["lines"] == ["Keep it: no cheaper OpenAI model is as strong"]
+
+
+def test_plan_rows_split_residual_by_headline_saving_when_several_moves_differ():
     report = _plan_report()
     report["scenarios"][1]["models"][0] = {"model": "openai/a", "pool": None, "switch": "openai/w", "enable": []}
-    plan = c._plan(report, 1.0)
-    assert "a: change to w" in plan and "b: change to x" in plan and "($" not in plan.split("Enable y")[0]
+    rows = _rows(report)
+    assert sum(r["today"] for r in rows.values()) == pytest.approx(30)
+    assert rows["openai/a"]["today"] == pytest.approx(5) and rows["openai/b"]["today"] == pytest.approx(25)
 
 
-def test_underpowered_drops_cheaper_upgrades():
-    ro = {"underpowered": [{"model": "m1", "extra_cost_rate": -0.4}, {"model": "m2", "extra_cost_rate": 0.0},
-                           {"model": "m3", "extra_cost_rate": 1.2}, {"model": "m4", "extra_cost_rate": None}]}
-    assert [u["model"] for u in c.underpowered_rows(ro)] == ["m3"]
-    assert c.underpowered_rows({}) == []
+def test_hard_models_flags_half_or_more_hard_asks():
+    ro = {"underpowered": [{"model": "m1", "share_hard": 0.5}, {"model": "m2", "share_hard": 0.49},
+                           {"model": "m3", "share_hard": None}]}
+    assert c._hard_models(ro) == {"m1": 0.5}
+    assert c._hard_models({}) == {}
+    report = _plan_report()
+    report["routing"]["underpowered"] = [{"model": "openai/b", "share_hard": 0.8}, {"model": "openai/d", "share_hard": 1.0}]
+    rows = _rows(report)
+    assert rows["openai/b"]["hard"] and not rows["openai/d"]["hard"]  # a keep row has no move to warn about
+    assert "Mostly hard asks: test quality first" in c._actions_chart(report, 1.0)

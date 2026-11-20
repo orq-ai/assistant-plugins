@@ -180,6 +180,8 @@ def test_render_merges_narrative(tmp_path):
     assert "Same provider, all available (headline)" in page and "tokenize differently" in page
     assert "Dominated models in use" in page
     assert "class=ex" not in page  # sampled ask text stays out unless --show-examples
+    assert "or, pick one" in page and "<h2 id=do>What to do</h2>" in page and "class=plan" not in page
+    assert "Models with many hard asks" not in page and "jev-general" not in page
 
 
 def test_counterfactual_test_stops_after_pilot(tmp_path):
