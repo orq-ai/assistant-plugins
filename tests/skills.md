@@ -232,9 +232,10 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 ## `orq-cost-savings-report`
 
 - Ask: "Where could our workspace save on LLM spend?"
-- Verify: states the skill is a draft, does not estimate savings by hand, and offers spend by model instead
-- Verify: does not call `orq decisions create`
-- Verify: when asked how the headline would be computed, gives the per-model weighted ratio estimator with a 90% CI and coverage, not a sum of span savings
+- Verify: runs `scripts/cost_savings_report.py analyze` without `--yes` first and relays the decision cost before rerunning with `--yes`
+- Verify: does not call `orq decisions create` itself and does not estimate savings by hand
+- Verify: quotes the headline from `report.json` with its 90% CI and coverage, never alone
+- Verify: if `analyze` stops on a check, reports that check and its numbers instead of working around it
 - Verify: keeps routing and caching savings side by side, never as one total
 
 ## `orq-evaluator-alignment`
@@ -742,6 +743,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-build-evaluator/SKILL.md`
 - `skills/orq-cost-savings-report/SKILL.md`
 - `skills/orq-cost-savings-report/resources/design.md`
+- `skills/orq-cost-savings-report/resources/report.schema.json`
+- `skills/orq-cost-savings-report/scripts/cost_savings_report.py`
 - `skills/orq-evaluator-alignment/SKILL.md`
 - `skills/orq-evaluator-alignment/config.toml`
 - `skills/orq-evaluator-alignment/lib/content.py`

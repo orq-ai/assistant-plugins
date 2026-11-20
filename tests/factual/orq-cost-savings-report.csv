@@ -22,3 +22,12 @@ cli_subcommand,models list,,orq models list exists
 cli_subcommand,decisions create,,orq decisions create exists
 cli_flag,decisions create,--from-file,orq decisions create accepts --from-file
 cli_flag,decisions create,--project,orq decisions create accepts --project
+cli_flag,telemetry query,--from,orq telemetry query accepts --from
+cli_flag,telemetry query,--to,orq telemetry query accepts --to
+cli_flag,telemetry query,--filters,orq telemetry query accepts --filters
+cli_flag,telemetry query,--grain,orq telemetry query accepts --grain
+cli_flag,traces search,--from,orq traces search accepts --from
+cli_flag,traces search,--to,orq traces search accepts --to
+cli_flag,traces list-spans,--limit,orq traces list-spans accepts --limit
+cli_flag,traces list-spans,--page-token,orq traces list-spans accepts --page-token
+cli_flag,telemetry query,--workspace,orq telemetry query accepts --workspace

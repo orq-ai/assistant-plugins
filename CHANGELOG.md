@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `orq-cost-savings-report` skill (draft, RES-1917): the spec for estimating what a workspace would save from Smart Router routing and prompt caching, from a sample of its own traces. SKILL.md holds the workflow and quick reference; DESIGN.md holds the routing counterfactual (`jev-general-v1`), pricing function, sample-to-total estimator with CI, caching rule, field map and test plan. The script is not built yet, and the skill says not to produce a report by hand.
+- `orq-cost-savings-report` skill (RES-1917): estimates what a workspace would save from Smart Router routing (`jev-general-v1`) and prompt caching, from a sample of its own traces, with a 90% CI and coverage. `scripts/cost_savings_report.py` runs `analyze` (sampling, pricing, decision calls after a cost confirmation, estimator, caching scan) and `render` (merges the agent's narrative into HTML); `resources/report.schema.json` is the output contract and `resources/design.md` the spec.
 
 ## [5.1.0] - 2026-11-17
 

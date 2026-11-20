@@ -1,6 +1,6 @@
 # orq-cost-savings-report: design
 
-Spec for `scripts/cost_savings_report.py`, which is not built yet. Statements marked **V** were checked against the live orq API and `orq` CLI; everything else is the intended behaviour of the script.
+Spec for `scripts/cost_savings_report.py`. Statements marked **V** were checked against the live orq API and `orq` CLI. Where the script differs from the first draft of this spec, the section says so.
 
 ## Scope
 
@@ -22,8 +22,8 @@ Spec for `scripts/cost_savings_report.py`, which is not built yet. Statements ma
 skills/orq-cost-savings-report/
   SKILL.md
   resources/design.md            this file
-  resources/report.schema.json   output contract (with the script)
-  scripts/cost_savings_report.py PEP 723 inline deps, including evaluatorq
+  resources/report.schema.json   output contract
+  scripts/cost_savings_report.py PEP 723 header, standard library only
   tests/requirements.txt         makes CI run the suite
   tests/test_*.py                load the script with importlib.util.spec_from_file_location
   tests/fixtures/                synthetic spans, decisions and catalog entries; never customer data
@@ -32,11 +32,11 @@ skills/orq-cost-savings-report/
 Commands:
 
 ```
-uv run <skill dir>/scripts/cost_savings_report.py analyze --workspace <key> --out <dir> [--sample 100] [--counterfactual-test]
+uv run <skill dir>/scripts/cost_savings_report.py analyze --workspace <key> --out <dir> [--sample 100] [--counterfactual-test] [--cache-threads 200] [--yes]
 uv run <skill dir>/scripts/cost_savings_report.py render --out <dir> --narrative <dir>/narrative.md [--redact]
 ```
 
-`analyze` writes `report.json` and a `narrative-slots.md` listing the slots the agent fills (summary, routing, caching, caveats). `render` refuses to run if a slot is empty.
+`analyze` writes `report.json` and a `narrative-slots.md` listing the slots the agent fills (summary, routing, caching, caveats). `render` refuses to run if a slot is empty or the analysis stopped. Before the paid decision calls `analyze` prints their count and cost and asks; without a terminal it stops with check `confirmation` unless `--yes` is given. It also stops at once if `typesafe/jev-latest` is not enabled in the workspace (V: it is disabled in some workspaces, and the call then returns 403).
 
 ## Field map (V)
 
@@ -52,6 +52,10 @@ uv run <skill dir>/scripts/cost_savings_report.py render --out <dir> --narrative
 | Trace search model | summaries carry bare `models: [...]`; filter on the prefixed id, since the bare form can match other hosts |
 | Thread filter | `--filters '[{"field":"thread_id","op":"eq","values":["<id>"]}]'` with `--project`; without `--project` it returns 0 rows |
 | Telemetry paging | no cursor; `--limit` up to 5000 and `.has_more` |
+| Telemetry filters | `[{"field":"model","op":"eq","values":["<bare model>"]},{"field":"provider","op":"eq","values":["<provider>"]}]`; the prefixed id matches nothing |
+| Request counts per cell | `genai.requests` with op `count` (not `sum`), grouped by `project`, `--mode timeseries --grain hour`; `trace_count` cannot be grouped by project |
+| Thread and retention on a span | `.span.attributes.orq.thread_id`, `.span.attributes.orq.retention_days` |
+| Region and speed on a span | `.span.attributes.gen_ai.usage.inference_geo` (`global` means none), `.span.attributes.gen_ai.usage.speed` |
 | `orq models list -o json` | a bare array, not `.data` |
 | Metric and dimension names | `orq telemetry list-capabilities --source TELEMETRY_SOURCE_TRACES -o json` |
 
@@ -128,7 +132,7 @@ Savings = price(span, current model) - price(span, picked model), both from the 
 
 Cache carry-over: a prompt cache belongs to one model. For each sampled span, fetch the previous span of its thread (thread search, then `list-spans`) and score its routing input too. If the previous turn's pick differs from this turn's pick, this turn's cache-read tokens are priced as a cache write on the picked model (uncached input if it has no cache-write price). If the previous span cannot be found, assume it differs whenever this turn's pick is not the current model. The report counts both cases. Savings are therefore exactly 0 only when the pick and the previous turn's pick both equal the current model.
 
-Session-affinity scenario column: pin the thread's first-turn pick for 600 s; an escalation applies from the next turn; hard pins never escalate; at most one re-score per pin TTL.
+Session-affinity scenario column (not computed in v1; `routing.session_affinity` is null): pin the thread's first-turn pick for 600 s; an escalation applies from the next turn; hard pins never escalate; at most one re-score per pin TTL.
 
 ### 7. Pricing function
 
@@ -145,14 +149,14 @@ Model catalog prices carry `variants[].when`. The evaluator implements the full 
 Choosing the price, the same way for the current and the picked model:
 - Default to the base price.
 - Use a variant only when the span clearly shows what its condition tests: a region in the model id, a batch, priority or flex tier, a long context, a speed setting. A variable the span does not show counts as false, so an unclear span stays on the base price.
-- When several variants match, take the one whose condition covers the most of what the span shows, so it aligns closest with how the client calls the model. Example: a US-region batch call with 150k input tokens on a model with `input_tokens > 100000`, `inference_geo == "us"`, `tier == "batch"` and their combinations takes the variant that tests all three. Ties go to the first listed.
+- When several variants match, take the one whose condition has the most comparisons, so it aligns closest with how the client calls the model. Example: a US-region batch call with 150k input tokens on a model with `input_tokens > 100000`, `inference_geo == "us"`, `tier == "batch"` and their combinations takes the variant that tests all three. Ties go to the last listed: the catalog lists a newer price after an older one (V: two DeepSeek date cutoffs, where first-listed priced 41% too high).
 - A variant overrides the base price key by key; a price it does not list comes from the base (many variants list only some, V).
 - If the picked model has no variant for something the span clearly shows (for example the `priority` tier), the span is flagged and its stratum counts as not covered, so a base price never inflates savings.
 - Cache writes use the span's own TTL; if the model lacks it, the shortest TTL it has.
 
 The pricing check below catches a model where this choice disagrees with what orq billed.
 
-Check: price each sampled span at its own model and compare with `.span.summary.cost`, per model. A model more than 2% off is left out of savings (not covered) and listed with the gap.
+Check: price each sampled span at its own model and compare with `.span.summary.cost`, per model. A model more than 2% off is left out of savings (not covered) and listed with the gap. V: on 102 spans across 11 models every model priced within 0.33% of what orq billed, and the variant-or-base choice agreed with `orq.billing.input.source` on all 102.
 
 ### 8. From sample to total
 
@@ -164,11 +168,11 @@ Allocation of N spans:
 3. Models not taken count as not covered.
 
 Selection inside a stratum:
-1. Telemetry trace count per (project, hour) for that model.
-2. Draw (project, hour) cells with probability proportional to trace count.
+1. Request count (`genai.requests`) per (project, hour) for that model; trace count cannot be grouped by project (V).
+2. Draw (project, hour) cells with probability proportional to request count.
 3. In a drawn cell, pick one trace uniformly: run `traces search` on a random 1-minute sub-window inside the hour, widening until a page has traces, and choose one at random from it.
 4. In the trace, pick one leaf LLM span of that model uniformly: `type` in {`span.chat_completion`, `span.responses`}, `has_children == false`. The trace root and `span.agent` carry their children's cost.
-5. Weight w_i = (leaf spans of that model in the trace), so each span's inclusion probability is equalized.
+5. Weight w_i = (leaf spans of that model in the trace). This equalizes inclusion exactly when traces in a cell carry similar numbers of requests; otherwise it is an approximation.
 
 Estimator per stratum s:
 
@@ -249,7 +253,7 @@ Normalizing a model id:
 
 Regression cases: `anthropic/claude-opus-5-5` → opus; `openai/gpt-6.2-sol` → sol; `baseten/deepseek-v4.1-flash-1017` → DeepSeek flash; `google/claude-opus-4-5@20251101` → opus; `aws/eu.anthropic.claude-haiku-5-5` → haiku; `openai/gpt-6-luna-2026-08-01` → luna.
 
-Resolution per cell, on the customer's host: keep models that are enabled, priced and valid for a pool; take the newest by `created`, preferring no region prefix, then the lowest price. No match leaves the cell empty. Newer disabled models in the lineage are listed as "enable to compare", never recommended.
+Resolution per cell, on the customer's host: keep models that are enabled, priced and valid for a pool; prefer the customer's own region, then no region prefix; then the newest by `created`, then the lowest price. The customer's own model fills its own cell, so the pool is the router the customer would set up around the model they use. No match leaves the cell empty. Newer disabled models in the lineage are listed as "enable to compare", never recommended.
 
 ### Pool rule
 
@@ -264,7 +268,7 @@ Table tier and index order can disagree. Example (V): deepseek-flash has a highe
 
 ### Pareto check
 
-One line per model: does any enabled model have an index at least as high and a band price at most as high, one strictly better. Uses evaluatorq's `model_frontier` helpers (`pareto_frontier`, `in_family_upgrades`, `load_garden`); `load_garden` returns every model, so build its client for the same workspace and filter to enabled models. States the fact only.
+One line per model: does any enabled model in the same workspace have an index at least as high and a band price at most as high, one strictly better. Computed in the script from `orq models list`, so it always uses the analysed workspace's enabled models. States the fact only.
 
 ## Prompt caching gaps
 
@@ -306,7 +310,7 @@ Routing savings are scaled to the window; caching savings cover the scanned thre
 
 ## Harness traffic
 
-The gateway records the calling harness as `trace_framework`, groupable on the `orq.gen_ai.*` metrics but not on `genai.cost` (V). `orq.gen_ai.cost` can run below `genai.cost`, so the section names its metric and shows an "unattributed" row to the summary total. The field also carries SDK names; the report lists every value and marks known coding harnesses as "caching not controllable".
+The gateway records the calling harness as `trace_framework`, groupable on the `orq.gen_ai.*` metrics but not on `genai.cost` (V). The two metrics disagree in both directions (V: on one workspace `orq.gen_ai.cost` summed to about a third more than `genai.cost`), so the section names its metric and shows each framework's share of it; it shows an "unattributed" row to the summary total only when that difference is positive, and a caveat otherwise. The field also carries SDK names; the report lists every value and marks known coding harnesses as "caching not controllable".
 
 ## Report sections
 
@@ -332,7 +336,7 @@ Unit tests on synthetic fixtures, no network:
 - Span filter: root and `span.agent` dropped, leaf spans kept, cache hits and decision models dropped, already-routed spans kept with savings 0.
 - Output: `report.json` validates against `resources/report.schema.json`; `render` refuses empty slots.
 
-`tests/requirements.txt` lists `pytest` and `jsonschema` so CI runs the suite. Live smoke test (manual): `analyze --sample 20 --counterfactual-test` on an internal demo workspace; pilot checks pass and the JSON validates.
+`tests/requirements.txt` lists `pytest` and `jsonschema` so CI runs the suite; `tests/test_analyze.py` runs `analyze` and `render` end to end against a fake `orq` CLI. Live smoke test (manual): `analyze --sample 20 --counterfactual-test` on an internal workspace whose decision model is enabled; pilot checks pass and the JSON validates.
 
 ## Open questions
 
