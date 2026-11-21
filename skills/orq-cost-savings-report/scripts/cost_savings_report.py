@@ -1611,7 +1611,10 @@ def _table(rows: list[dict], cols: list[tuple[str, str, Any]], caption: str = ""
     cap = f"<caption>{html.escape(caption)}</caption>" if caption else ""
     num = [" class=num" if fmt in NUMERIC else "" for _, _, fmt in cols]
     head = "".join(f"<th scope=col{c}>{html.escape(h)}</th>" for (h, _, _), c in zip(cols, num, strict=True))
-    body = "".join("<tr>" + "".join(f"<td{c}>{html.escape(str(fmt(r.get(k))))}</td>"
+    def cell(fmt: Any, v: Any) -> str:
+        return fmt(v) if fmt in RAW else html.escape(str(fmt(v)))
+
+    body = "".join("<tr>" + "".join(f"<td{c}>{cell(fmt, r.get(k))}</td>"
                                     for (_, k, fmt), c in zip(cols, num, strict=True)) + "</tr>" for r in rows)
     label = html.escape(caption or cols[0][0])
     return (f"<div class=t role=region tabindex=0 aria-label='{label}'><table>{cap}<thead><tr>{head}</tr></thead>"
@@ -1778,7 +1781,10 @@ details:first-child{border-top:0}
 details[open]{padding-bottom:12px}
 summary{cursor:pointer;padding:10px 0;margin:0;border:0;border-radius:0;font-weight:500;color:var(--fg)}
 summary span{font-weight:400;color:var(--muted)}
-.t{overflow-x:auto;margin:8px 0 12px}.t td:first-child{white-space:nowrap}
+.t{overflow-x:auto;margin:8px 0 12px}
+svg.rg{display:block}svg.rg .tk{stroke:var(--ns);stroke-width:2;stroke-linecap:round}
+svg.rg .ci{stroke-width:6;stroke-linecap:round}svg.rg.lv-r .ci{stroke:var(--s1)}svg.rg.lv-s .ci{stroke:var(--s2)}
+svg.rg circle{fill:var(--fg);stroke:var(--card);stroke-width:1.5}.t td:first-child{white-space:nowrap}
 @media print{.theme,.toc{display:none}.card,.row,details,tr{break-inside:avoid}body{padding:0}}
 table{border-collapse:collapse;width:100%;font-size:13px}
 caption{text-align:left;font-weight:500;padding:4px 0 6px}
@@ -2155,8 +2161,40 @@ def _uncertainty_rows(report: dict, spend_pm: float | None) -> list[dict]:
             ci = fig.get("ci90_per_month")
             rows.append({"scope": label, "lever": lever, "pm": fig.get("per_month"),
                          "pct": _of(fig.get("per_month"), spend_pm),
-                         "ci": f"{_usd0(ci[0])} to {_usd0(ci[1])}" if ci else "n/a"})
+                         "ci": f"{_usd0(ci[0])} to {_usd0(ci[1])}" if ci else "n/a",
+                         "range": (ci[0], fig.get("per_month"), ci[1], lever) if ci else None})
+    ends = [v for r in rows if r["range"] for v in (r["range"][0], r["range"][2])]
+    # one shared scale for every row, from just below the lowest bound to the highest, so overlaps show
+    span = (max(ends) - min(ends)) if ends else 0
+    axis = (max(0.0, min(ends) - span * 0.05), max(ends) + span * 0.05) if span > 0 else None
+    for r in rows:
+        r["range"] = (*r["range"], *axis) if r["range"] and axis else None
     return rows
+
+
+RANGE_W = 200
+
+
+def _range_cell(v: Any) -> str:
+    """Inline range plot on the table's shared axis: a track, the 90% range as a bar, a dot at the estimate."""
+    if not v:
+        return ""
+    lo, est, hi, lever, a0, a1 = v
+    x = [max(0.0, min(1.0, ((a or 0) - a0) / (a1 - a0))) * (RANGE_W - 8) + 4 for a in (lo, est, hi)]
+    cls = "lv-s" if lever == "Change model" else "lv-r"
+    label = f"90% range {_usd0(lo)} to {_usd0(hi)} a month, estimate {_usd0(est)}"
+    return (f"<svg class='rg {cls}' width={RANGE_W} height=14 viewBox='0 0 {RANGE_W} 14' role=img "
+            f"aria-label='{html.escape(label)}'><line class=tk x1=4 x2={RANGE_W - 4} y1=7 y2=7></line>"
+            f"<line class=ci x1={x[0]:.1f} x2={max(x[2], x[0] + 2):.1f} y1=7 y2=7></line>"
+            f"<circle cx={x[1]:.1f} cy=7 r=3.5></circle></svg>")
+
+
+RAW = (_range_cell,)
+
+
+def _range_head(rows: list[dict]) -> str:
+    r = next((x["range"] for x in rows if x["range"]), None)
+    return f"Range, {_usd0(r[4])} to {_usd0(r[5])}" if r else "Range"  # table formatters that return markup, not text
 
 
 def _pool_tables(report: dict) -> str:
@@ -2301,11 +2339,14 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
                                        f"{ca.get('threads_scanned', 0)} costliest threads scanned, not scaled to the "
                                        "window.</p>") + _md(narrative["caching"]), "caching"))
     gen = html.escape(_day(report["generated_at"]) if report.get("generated_at") else to_day)
+    unc = _uncertainty_rows(report, spend_pm)
     dets = [_details("Estimates with uncertainty", "90% CI per scope and lever",
-                     "<p class=m>The 90% CI covers sampling noise only, not answer quality.</p>" + _table(
-                         _uncertainty_rows(report, spend_pm),
+                     "<p class=m>The 90% CI covers sampling noise only, not answer quality. The range plot "
+                     "shows it on one scale for every row (it does not start at $0): where two bars overlap, the "
+                     "difference is within the margin of error.</p>" + _table(unc,
                          [("Scope", "scope", str), ("Lever", "lever", str), ("$/mo saved", "pm", _usd),
-                          ("% saved", "pct", _pc), ("90% CI ($/mo)", "ci", _ci_cell)], "Estimates with uncertainty")),
+                          ("% saved", "pct", _pc), ("90% CI ($/mo)", "ci", _ci_cell),
+                          (_range_head(unc), "range", _range_cell)], "Estimates with uncertainty")),
             _details("Why each move", "the reasoning per model", _md(narrative["routing"])),
             _details("Method and caveats", "sample, coverage, limits, terms",
                      _md(narrative["caveats"]) + (

@@ -697,3 +697,20 @@ def test_levers_within_margin_of_error_when_ranges_overlap():
     head["switch"]["ci90_per_month"] = [120.0, 140.0]
     assert not c._ranges_overlap(head)
     assert not c._ranges_overlap({"router": {"balanced": {}}, "switch": {}})  # no ranges: no claim
+
+
+def test_uncertainty_range_plot_shares_one_scale():
+    sc = lambda lo, est, hi: {"per_month": est, "ci90_per_month": [lo, hi]}
+    report = {"scenarios": [{"scope": "same_provider:all", "headline": True,
+                             "router": {"balanced": sc(150, 158, 165)}, "switch": sc(151, 153, 156)},
+                            {"scope": "any_provider:all", "headline": False,
+                             "router": {"balanced": sc(190, 200, 220)}, "switch": {"per_month": 10.0}}]}
+    rows = c._uncertainty_rows(report, 400.0)
+    assert len({r["range"][4:] for r in rows if r["range"]}) == 1  # every bar on one shared axis
+    assert rows[0]["range"][4] < 150 and rows[0]["range"][5] > 220
+    assert rows[-1]["range"] is None and c._range_cell(None) == ""  # no CI: no bar, no claim
+    svg = c._range_cell(rows[0]["range"])
+    assert "class='rg lv-r'" in svg and "estimate $158" in svg and "<script" not in svg
+    assert "class='rg lv-s'" in c._range_cell(rows[1]["range"])
+    html_table = c._table(rows, [("Range", "range", c._range_cell), ("Scope", "scope", str)])
+    assert "<svg class='rg lv-r'" in html_table  # markup kept, not escaped
