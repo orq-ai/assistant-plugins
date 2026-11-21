@@ -38,7 +38,7 @@ from typing import Any
 
 from evaluatorq.common import model_frontier as mf
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "1.1"
 MAX_SAMPLE = 100
 MIN_PER_STRATUM = 5
 WINDOW_DAYS = 29
@@ -62,8 +62,8 @@ QUESTION = {
         },
     }
 }
-THRESHOLDS = {"cost": (0.59, 1.16), "balanced": (0.11, 0.92), "quality": (0.02, 0.09)}
-PROFILES = ("balanced", "cost", "quality")
+THRESHOLDS = {"cost": (0.59, 1.16), "balanced": (0.11, 0.92)}
+PROFILES = ("balanced", "cost")
 TIERS = ("easy", "medium", "hard")
 
 LLM_SPAN_TYPES = {"span.chat_completion", "span.responses"}
@@ -71,6 +71,8 @@ DECISION_MODEL_RE = re.compile(r"^(typesafe/|orq/decider-)")
 NON_CHAT_RE = re.compile(r"embed|rerank|tts|transcri|whisper|moderation|ocr|dall-e|image", re.I)
 
 PRERELEASE_RE = re.compile(r"(?:^|[-_.])(preview|beta|alpha|experimental)(?:$|[-_.])", re.IGNORECASE)  # name segment
+PROVIDER_FAMILY = {"google-ai": "google"}  # one provider for same-provider scopes; routes keep their own prices
+MIN_SAMPLE = 15  # fewer sampled calls on a model than this get a "Small sample" note
 SCOPES = ("same_provider:all", "same_provider:enabled", "any_provider:all", "any_provider:enabled")
 HEADLINE_SCOPE = "same_provider:all"
 REGION_RE = re.compile(r"^(global|us|eu|apac|ap|jp|au|ca|uk|[a-z]{2}-[a-z]+-[0-9]+)\.")
@@ -187,8 +189,6 @@ def pick(pool: list[PoolModel], tier: str, profile: str) -> PoolModel:
         stronger = [t for t in TIERS[TIERS.index(tier) + 1:] if b[t]]
         target = stronger[0] if stronger else next(t for t in reversed(TIERS) if b[t])
     cand = b[target]
-    if profile == "quality":
-        return sorted(cand, key=lambda p: (-p.index, p.id))[0]
     return sorted(cand, key=lambda p: (p.band_price, -p.index, p.id))[0]
 
 
@@ -854,13 +854,15 @@ class Analyzer:
         c = self.cards.get(m) or {}
         return (((c.get("metadata") or {}).get("autorouter") or {}).get("v2")) or {}
 
-    def poolable(self, m: str) -> bool:
+    def poolable(self, m: str, score_ok: bool = True) -> bool:
         """Scored, priced, comparable, seatable and not pre-release (disabled is allowed: the all-available scopes
         recommend it)."""
         if PRERELEASE_RE.search(split_model(m)[1]) or self.discounted_offering(m):
             return False
         g, v, e = self.garden.get(m), self.v2(m), self.cat.get(m)
         p = (e or {}).get("pricing") or {}
+        if score_ok and g and g.ranked_on_headline:  # no score at its default effort: the index is not reliable
+            return False
         return bool(g and not g.free and mf.unseatable_reason(g) in (None, "disabled in the model catalogue")
                     and v.get("intelligence_index") and v.get("price") is not None and "input" in p and "output" in p)
 
@@ -910,7 +912,22 @@ class Analyzer:
     def candidates(self, m: str, scope: str) -> list[mf.ScoredModel]:
         if not hasattr(self, "_poolable"):
             self._poolable = [x for x in self.garden if self.poolable(x)]
-        return [self.garden[x] for x in self._poolable if self.in_scope(x, m, scope)]
+            skipped = sorted(x for x, g in self.garden.items() if g.ranked_on_headline and self.poolable(x, False))
+            if skipped:
+                self.report["checks"]["caveats"].append(
+                    {"check": "no score at default effort", "detail": f"excluded as targets: {', '.join(skipped)}"})
+        best: dict[str, mf.ScoredModel] = {}  # one candidate per underlying model: the cheapest route, enabled first
+        for x in self._poolable:
+            if not self.in_scope(x, m, scope):
+                continue
+            g, ident = self.garden[x], mf.model_identity(x)
+            cur = best.get(ident)
+            if cur is None or self._route_rank(g) < self._route_rank(cur):
+                best[ident] = g
+        return [best[i] for i in best]
+
+    def _route_rank(self, g: mf.ScoredModel) -> tuple:
+        return (g.price, not (self.cards.get(g.router_id) or {}).get("enabled"), g.router_id)
 
     def canonical(self, m: str) -> str:
         e = self.cat.get(m) or {}
@@ -919,7 +936,8 @@ class Analyzer:
     def host(self, m: str) -> str:
         e = self.cat.get(m) or {}
         prov = e.get("provider")
-        return (prov.get("id") if isinstance(prov, dict) else prov) or split_model(m)[0]
+        host = (prov.get("id") if isinstance(prov, dict) else prov) or split_model(m)[0]
+        return PROVIDER_FAMILY.get(host, host)
 
     def pool_for(self, m: str, scope: str) -> dict:
         inc = self.garden.get(m)
@@ -1325,8 +1343,9 @@ class Analyzer:
         for r in self.samples:
             pick = r["picks"].get("balanced") or r["model"]
             row = out.setdefault((r["model"], pick), {"used": r["model"], "pick": pick, "tier": set(), "n": 0,
-                                                      "costs_more": 0, "weighted_savings": 0.0})
+                                                      "fallback": 0, "costs_more": 0, "weighted_savings": 0.0})
             row["n"] += 1
+            row["fallback"] += r["fallback"] is not None
             row["costs_more"] += r["savings"]["balanced"] < 0
             row["weighted_savings"] += r["weight"] * r["savings"]["balanced"]
             row["tier"].add(r["tier"].get("balanced") or f"fallback: {r['fallback']}")
@@ -1354,7 +1373,8 @@ class Analyzer:
         """Models where at least half the scored asks are hard: what moving those asks one model up would cost."""
         out = []
         for m in self.pools:
-            rows = [r for r in self.samples if r["model"] == m and r["tier"]]
+            every = [r for r in self.samples if r["model"] == m]
+            rows = [r for r in every if r["tier"]]
             hard = [r for r in rows if r["tier"]["balanced"] == "hard"]
             if not rows or len(hard) / len(rows) < 0.5:
                 continue
@@ -1367,7 +1387,7 @@ class Analyzer:
                                          - r["cur_price"]) for r in hard)
                 extra = num / den
             ex = [] if self.args.redact else [r["ask_preview"] for r in hard[:3]]
-            out.append({"model": m, "n": len(rows), "share_hard": len(hard) / len(rows), "next_model": nxt,
+            out.append({"model": m, "n": len(every), "n_scored": len(rows), "share_hard": len(hard) / len(rows), "next_model": nxt,
                         "next_enabled": bool((self.cards.get(nxt) or {}).get("enabled")) if nxt else None,
                         "extra_cost_rate": extra, "examples": ex})
         return out
@@ -1600,13 +1620,13 @@ def _table(rows: list[dict], cols: list[tuple[str, str, Any]], caption: str = ""
 CSS = """
 :root{--bg:#ffffff;--fg:#141319;--fg2:#3c3a48;--muted:#737373;--panel:#fafafa;--strip:#f7f6f5;--card:#ffffff;
 --line:#e6e6e6;--shadow:0 1px 2px 0 #14131908;--s1:#299D8F;--s2:#df5325;--kept:#dcdad6;--ns:#ebeae8;--hl:#eef7f5;
---hl2:#9fd5cd;--pill:#ffffff;color-scheme:light}
+--hl2:#9fd5cd;--pill:#ffffff;--rec-fg:#1d7a6e;--rec-bg:#e3f3f0;color-scheme:light}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){--bg:#1f1e1d;--fg:#faf9f5;--fg2:#c2c0b6;
 --muted:#9c9a92;--panel:#262624;--strip:#1f1e1d;--card:#30302e;--line:#42413d;--shadow:0 1px 2px 0 #00000040;
---s1:#299D8F;--s2:#df5325;--kept:#55544f;--ns:#3a3935;--hl:#2b3a38;--hl2:#7ccdc3;--pill:#42413d;color-scheme:dark}}
+--s1:#299D8F;--s2:#df5325;--kept:#55544f;--ns:#3a3935;--hl:#2b3a38;--hl2:#7ccdc3;--pill:#42413d;--rec-fg:#7ccdc3;--rec-bg:#2b3a38;color-scheme:dark}}
 :root[data-theme="dark"]{--bg:#1f1e1d;--fg:#faf9f5;--fg2:#c2c0b6;--muted:#9c9a92;--panel:#262624;--strip:#1f1e1d;
 --card:#30302e;--line:#42413d;--shadow:0 1px 2px 0 #00000040;--s1:#299D8F;--s2:#df5325;--kept:#55544f;--ns:#3a3935;
---hl:#2b3a38;--hl2:#7ccdc3;--pill:#42413d;color-scheme:dark}
+--hl:#2b3a38;--hl2:#7ccdc3;--pill:#42413d;--rec-fg:#7ccdc3;--rec-bg:#2b3a38;color-scheme:dark}
 *{box-sizing:border-box}
 body{font:14px/1.5 "Avio Sans",Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 background:var(--bg);color:var(--fg);margin:0;padding-block:28px 56px;
@@ -1631,6 +1651,8 @@ margin:0 6px 6px;padding:var(--pad);min-width:0;--pad:16px}
 .kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .kpis .card{margin:8px 0 0}
 .kh{display:flex;align-items:center;gap:8px;padding:10px 16px;font-size:13px;font-weight:500;color:var(--muted)}
+.rec{margin-left:auto;font-size:11px;font-weight:500;line-height:1.4;padding:1px 6px;border-radius:4px;
+color:var(--rec-fg);background:var(--rec-bg)}
 .kh i,.dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none}
 .big{font-size:36px;line-height:1.1;font-weight:500;margin:0;letter-spacing:-0.02em;color:var(--fg)}
 .big small{font-size:14px;font-weight:400;color:var(--muted);margin-left:6px;letter-spacing:0}
@@ -1882,7 +1904,8 @@ def _plan_rows(report: dict, per_month: float) -> list[dict]:
         m = st["model"]
         saved = max(0.0, st.get("savings") or 0) * per_month
         now = min(saved, max(0.0, today.get(m, 0.0)))
-        rows.append({"model": m, "spend": (st.get("spend") or 0) * per_month, "saved": saved, "today": now,
+        n_calls = sum(mv.get("n") or 0 for mv in ro.get("moves") or [] if mv.get("used") == m)
+        rows.append({"model": m, "n": n_calls, "spend": (st.get("spend") or 0) * per_month, "saved": saved, "today": now,
                      "after": saved - now, "rate": st.get("rate"), "hard": None,
                      "lines": _action_lines(m, f["h_info"].get(m, {}), f["e_info"].get(m), saved),
                      **_flow(m, f["h_info"].get(m, {}), f["e_info"].get(m), ro.get("moves") or [])})
@@ -1960,6 +1983,8 @@ def _actions_chart(report: dict, per_month: float) -> str:
         tip = (f"{_short(r['model'])}: {_pc(_of(r['today'], r['spend']))} saved today, "
                f"{_pc(_of(r['after'], r['spend']))} more after enabling, of {_usd0(r['spend'])} a month")
         notes = f"<span>{html.escape(r['note'])}</span>" if r["note"] else ""
+        if r["n"] < MIN_SAMPLE:
+            notes += f"<span>Small sample: {r['n']} call{'s' if r['n'] != 1 else ''}.</span>"
         if r["hard"] is not None:
             notes += f"<span class=hard>{r['hard']:.0%} of its sampled asks are hard: test quality first.</span>"
         rows.append(f"<div class=row><div class=who>{_flow_html(r)}{notes}</div>"
@@ -2086,7 +2111,13 @@ def _font_css() -> str:
     return "".join(out)
 
 
-def render(report: dict, narrative: dict[str, str], redact: bool, show_examples: bool = False) -> str:
+def _moves_rows(ro: dict) -> list[dict]:
+    """Moves with a call count that says how many of the calls were fallbacks (no routing decision)."""
+    return [dict(mv, calls=f"{mv.get('n', 0)}" + (f" (incl. {mv['fallback']} fallback)" if mv.get("fallback") else ""))
+            for mv in ro.get("moves") or []]
+
+
+def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
     missing = [s for s in SLOTS if not narrative.get(s)]
     if missing:
         raise SystemExit(f"narrative slots empty: {', '.join(missing)}")
@@ -2134,8 +2165,11 @@ def render(report: dict, narrative: dict[str, str], redact: bool, show_examples:
     else:
         gap = "<p class='m gap'>Router adds nothing here.</p>"
 
+    rec = "r" if h_pm is not None and (sw_pm is None or h_pm >= sw_pm) else "s" if sw_pm is not None else ""
+
     def kpi(dot: str, name: str, p: Any, pm: Any) -> str:
-        return (f"<section class=card><div class=kh><i class={dot}></i>{name}</div><div class=cb>"
+        tag = "<span class=rec>Recommended</span>" if dot == rec else ""
+        return (f"<section class=card><div class=kh><i class={dot}></i>{name}{tag}</div><div class=cb>"
                 f"<p class=big>{_pc(p)}<small>saved, {_usd0(pm)}/mo</small></p></div></section>")
 
     hero = ("<section class=hero aria-label='Headline'>"
@@ -2178,8 +2212,8 @@ def render(report: dict, narrative: dict[str, str], redact: bool, show_examples:
                                                    for t, d in GLOSSARY) + "</dl>")),
             _details("Pools and models to enable", "what each move needs, per scope", _pool_tables(report)),
             _details("Where sampled asks move", "headline scope, balanced profile",
-                     _table(ro.get("moves", []), [("Model in use", "used", str), ("Router pick", "pick", str),
-                                                  ("Difficulty tiers", "tier", str), ("Sampled calls", "n", str),
+                     _table(_moves_rows(ro), [("Model in use", "used", str), ("Router pick", "pick", str),
+                                                  ("Difficulty tiers", "tier", str), ("Sampled calls", "calls", str),
                                                   ("Calls that cost more", "costs_more", str),
                                                   ("Saving on the sampled calls", "weighted_savings", _usd)],
                             "Where sampled asks move"))]
@@ -2219,8 +2253,6 @@ def main(argv: list[str] | None = None) -> int:
     rn.add_argument("--out", required=True)
     rn.add_argument("--narrative", required=True)
     rn.add_argument("--redact", action="store_true", help="hide thread ids and ask examples")
-    rn.add_argument("--show-examples", action="store_true",
-                    help="print sampled ask text under under-powered asks (contains prompt text)")
     a = ap.parse_args(argv)
     if a.cmd == "analyze":
         if not 1 <= a.sample <= MAX_SAMPLE:
@@ -2230,7 +2262,7 @@ def main(argv: list[str] | None = None) -> int:
     report = json.loads((Path(a.out) / "report.json").read_text())
     if report.get("status") != "ok" or "routing" not in report:
         raise SystemExit("report.json has no finished analysis; rerun analyze")
-    page = render(report, parse_narrative(Path(a.narrative).read_text()), a.redact, a.show_examples)
+    page = render(report, parse_narrative(Path(a.narrative).read_text()), a.redact)
     (Path(a.out) / "report.html").write_text(page)
     print(Path(a.out) / "report.html")
     return 0

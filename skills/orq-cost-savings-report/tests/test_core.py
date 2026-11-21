@@ -121,7 +121,6 @@ def test_pick_in_band_tie_breaks():
     band = [pm(1, 10, 1.0), pm(2, 12, 1.0), pm(3, 30, 5)]
     pool = band + [pm(4, 40, 9), pm(5, 50, 9), pm(6, 60, 9)]
     assert c.pick(pool, "easy", "balanced").id == "m2"  # same price: higher index
-    assert c.pick(pool, "easy", "quality").id == "m3"
 
 
 def test_two_model_pool_index_order_reverses_table_order():
@@ -591,3 +590,17 @@ def test_flow_change_model_is_one_arrow_without_shares():
     out = c._flow_html({"model": "openai/a", "lines": ["Change to b"], **f})
     assert f["lever"] == "switch" and f["note"] == "" and f["branches"][0]["tiers"] == []
     assert "class='flow switch'" in out and "class='to one'" in out and "<small>" not in out
+
+
+def test_small_sample_note_under_min_sample():
+    report = _plan_report()
+    report["routing"]["moves"] = [{"used": "openai/a", "pick": "openai/x", "n": c.MIN_SAMPLE - 1},
+                                  {"used": "openai/b", "pick": "openai/y", "n": c.MIN_SAMPLE},
+                                  {"used": "openai/b", "pick": "openai/x", "n": 3}]
+    chart = c._actions_chart(report, 1.0)
+    assert chart.count("Small sample:") == 2  # a (14) and c (no moves: 0 calls); b has 18
+    assert f"Small sample: {c.MIN_SAMPLE - 1} calls." in chart and "Small sample: 0 calls." in chart
+
+
+def test_pick_ignores_profiles_other_than_cost_and_balanced_thresholds():
+    assert set(c.PROFILES) == {"balanced", "cost"} and set(c.THRESHOLDS) == set(c.PROFILES)

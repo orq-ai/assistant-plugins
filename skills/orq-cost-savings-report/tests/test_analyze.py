@@ -187,7 +187,7 @@ def test_render_merges_narrative(tmp_path):
     for gone in ("Dominated", "Routing profiles", "Spend by model", "Scenario figures as a table", "class=plot"):
         assert gone not in page
     assert "<dt>Smart Router</dt>" in page and "Method and caveats" in page  # Terms live in Method
-    assert "class=ex" not in page  # sampled ask text stays out unless --show-examples
+    assert "class=ex" not in page   # sampled ask text never reaches the page
     assert "or, pick one" not in page and "<h2 id=do>What to do</h2>" in page and "class=plan" not in page
     assert "Models with many hard asks" not in page and "jev-general" not in page
 
@@ -272,3 +272,74 @@ def test_discounted_same_host_offering_is_skipped(tmp_path):
     assert not an.discounted_offering("meta/spark-2026-09-01")  # dated snapshot, same price
     assert not an.discounted_offering("aws/spark")  # another host's offering
     assert not an.discounted_offering("meta/spark")
+
+
+def _analyzer_with(tmp_path, extra):
+    """Analyzer over the fixture models plus `extra`: (provider, model_id, enabled, index, price, input, output,
+    effort card fields)."""
+    an = c.Analyzer(ns(tmp_path))
+    an.orq = FakeOrq()
+    an.load_models()
+    for prov, mid, idx, inp, out, meta in extra:
+        key = f"{prov}/{mid}"
+        v2 = {"intelligence_index": idx, "price": (3 * inp + out) / 4, **meta}
+        an.cards[key] = {"provider": prov, "model_id": mid, "enabled": True, "input_cost": inp / 1000,
+                         "output_cost": out / 1000, "metadata": {"autorouter": {"v2": v2}}}
+        an.cat[key] = {"id": key, "offering_of": key, "provider": {"id": prov}, "modalities": {"output": ["text"]},
+                       "pricing": {"input": {"cost": inp, "per": 1000000}, "output": {"cost": out, "per": 1000000}}}
+    an.garden = c.mf.garden_from_cards(list(an.cards.values()))
+    return an
+
+
+def test_google_and_google_ai_are_one_provider_and_one_candidate(tmp_path):
+    an = _analyzer_with(tmp_path, [("google", "gem-flash", 40.0, 0.1, 0.4, {}),
+                                   ("google-ai", "gem-flash", 40.0, 0.2, 0.4, {}),
+                                   ("google-ai", "gem-pro", 45.0, 1.0, 4.0, {})])
+    assert an.host("google-ai/gem-pro") == an.host("google/gem-flash") == "google"
+    assert an.in_scope("google/gem-flash", "google-ai/gem-pro", "same_provider:all")
+    cands = [x.router_id for x in an.candidates("openai/gpt-6-sol", "any_provider:all")]
+    assert [x for x in cands if x.endswith("/gem-flash")] == ["google/gem-flash"]  # the cheaper route, once
+
+
+def test_models_without_a_default_effort_score_are_never_targets(tmp_path):
+    effort = {"parameter": "reasoningEffort", "config": {"default": "high", "options": [
+        {"value": "low"}, {"value": "high"}]}}
+    an = _analyzer_with(tmp_path, [("zai", "glm-x", 40.0, 0.1, 0.4, {"default_effort_scored": False}),
+                                   ("zai", "glm-y", 40.0, 0.1, 0.4, {})])
+    an.cards["zai/glm-x"]["parameters"] = [effort]  # a reasoning-effort card with no score at its default
+    an.garden = c.mf.garden_from_cards(list(an.cards.values()))
+    assert an.garden["zai/glm-x"].ranked_on_headline and not an.garden["zai/glm-y"].ranked_on_headline
+    ids = [x.router_id for x in an.candidates("openai/gpt-6-sol", "any_provider:all")]
+    assert "zai/glm-x" not in ids and "zai/glm-y" in ids
+    assert any("zai/glm-x" in x["detail"] for x in an.report["checks"]["caveats"])
+
+
+def test_report_has_no_quality_profile_and_a_minor_schema_version(tmp_path):
+    _, rep = run(tmp_path)
+    assert rep["schema_version"] == "1.1"
+    assert set(rep["routing"]["profiles"]) == {"balanced", "cost"}
+    assert all(set(s["router"]) == {"balanced", "cost"} for s in rep["scenarios"])
+
+
+def test_underpowered_and_moves_count_fallback_samples(tmp_path):
+    an, _ = run(tmp_path)
+    an.samples = an.samples[:2]
+    an.samples[0]["fallback"], an.samples[0]["tier"] = "prompt_limit", {}
+    an.samples[1]["tier"] = {"balanced": "hard", "cost": "hard"}
+    an.pools = {SOL: an.pools[SOL]}
+    up = an.underpowered()[0]
+    assert up["n"] == len(an.samples) == 2 and up["n_scored"] == 1  # the fallback counts in n, not in the shares
+    assert sum(m["n"] for m in an.moves()) == 2 and sum(m["fallback"] for m in an.moves()) == 1
+    row = c._moves_rows({"moves": [{"used": "a", "pick": "b", "n": 11, "fallback": 1}, {"n": 3, "fallback": 0}]})
+    assert row[0]["calls"] == "11 (incl. 1 fallback)" and row[1]["calls"] == "3"
+
+
+def test_hero_tags_the_bigger_lever_and_small_samples_get_a_note(tmp_path):
+    run(tmp_path)
+    narrative = tmp_path / "narrative.md"
+    narrative.write_text("## summary\n\nx\n\n## routing\n\nx\n\n## caching\n\nx\n\n## caveats\n\nx\n")
+    assert c.main(["render", "--out", str(tmp_path), "--narrative", str(narrative)]) == 0
+    page = (tmp_path / "report.html").read_text()
+    hero = page.split("<section class=hero")[1].split("<h2 id=do>")[0]
+    assert hero.count("<span class=rec>Recommended</span>") == 1
+    assert "Small sample: 10 calls." in page.split("<h2 id=do>")[1].split("<h2 id=scopes>")[0]

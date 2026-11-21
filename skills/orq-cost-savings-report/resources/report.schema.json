@@ -4,7 +4,7 @@
   "type": "object",
   "required": ["schema_version", "generated_at", "workspace", "status", "stop", "params", "checks"],
   "properties": {
-    "schema_version": {"const": "1"},
+    "schema_version": {"const": "1.1"},
     "generated_at": {"type": "string"},
     "workspace": {"type": ["string", "null"]},
     "status": {"enum": ["ok", "stopped"]},
@@ -96,7 +96,7 @@
           "headline": {"type": "boolean"},
           "router": {
             "type": "object",
-            "required": ["balanced", "cost", "quality"],
+            "required": ["balanced", "cost"],
             "additionalProperties": {"$ref": "#/$defs/estimate"}
           },
           "switch": {"$ref": "#/$defs/estimate"},
@@ -136,7 +136,7 @@
         },
         "profiles": {
           "type": "object",
-          "required": ["balanced", "cost", "quality"],
+          "required": ["balanced", "cost"],
           "additionalProperties": {
             "type": "object",
             "required": ["savings", "ci90"],
@@ -217,7 +217,7 @@
     },
     "perProfile": {
       "type": "object",
-      "required": ["balanced", "cost", "quality"],
+      "required": ["balanced", "cost"],
       "additionalProperties": {"type": "number"}
     },
     "spendRows": {

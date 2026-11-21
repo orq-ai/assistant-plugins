@@ -12,7 +12,7 @@ Spec for `scripts/cost_savings_report.py`. Statements marked **V** were checked 
 | Sample | `--sample N` leaf LLM spans, default and v1 maximum 100 |
 | Excluded from the sample | `span.cache_retrieval` (response cache hits), embedding models, decision models (`typesafe/*`, `orq/decider-*`) |
 | Routing policy | The Smart Router's `jev-general-v1` decision, reproduced client-side and unchanged |
-| Profile | Balanced headline; cost and quality as scenario columns |
+| Profile | Balanced headline; cost as a scenario column |
 | Pool | Frontier pool from evaluatorq's `model_frontier` (no pool member dominated by another), in four scopes: same or any provider, enabled or all available; headline is same provider, all available |
 | Change model | Second lever (JSON key `switch`): move a model's traffic to the cheapest model that dominates it; never added to routing. The page says "change model", not "switch", so it is not confused with routing |
 | Transport | The script shells out to the `orq` CLI with `-o json`, so it reuses the user's CLI login and workspace |
@@ -113,7 +113,6 @@ Score = `p(easy)*0 + p(medium)*1 + p(hard)*2`, summed in that order in float64 w
 |---|---|---|---|
 | cost | 0.59 | 1.16 | |
 | balanced | 0.11 | 0.92 | |
-| quality | 0.02 | 0.09 | |
 
 The question text and thresholds are one frozen policy (`jev-general-v1`); changing either makes it a different policy.
 
@@ -121,7 +120,7 @@ The question text and thresholds are one frozen policy (`jev-general-v1`); chang
 
 Pool validity: every member has `autorouter.v2` metadata with a nonzero `intelligence_index`, and a pool has at least 2 members; otherwise "no routing", listed.
 
-The pool rule (below) decides only which models are in the pool. Band position and "stronger" always come from the live index. Sort strongest first, ties by model id. `easy` gets the weakest `len/2` models; the rest split between `medium` and `hard`, hard getting the smaller half. With 3 models that is one per band; with 2, `hard` is empty and resolves to `medium`. An empty target band uses the nearest stronger band, else the strongest present. Inside a band, balanced and cost pick the lowest `autorouter.v2.price`, then the highest index, then model id; quality picks the highest index.
+The pool rule (below) decides only which models are in the pool. Band position and "stronger" always come from the live index. Sort strongest first, ties by model id. `easy` gets the weakest `len/2` models; the rest split between `medium` and `hard`, hard getting the smaller half. With 3 models that is one per band; with 2, `hard` is empty and resolves to `medium`. An empty target band uses the nearest stronger band, else the strongest present. Inside a band, balanced and cost pick the lowest `autorouter.v2.price`, then the highest index, then model id.
 
 ### 5. Fallback
 
@@ -238,7 +237,7 @@ Join `orq models list` to the catalog on `provider + "/" + model_id`; its `id` i
 
 Every model comes from evaluatorq's `model_frontier` (`evaluatorq>=1.98`, PyPI), applied to the `orq models list` cards the script already loads: `garden_from_cards`, `dominates`, `pareto_frontier`, `region_compatible`, `unseatable_reason`, `model_identity`. The tier ratio is 2.0, the value evaluatorq's `MIN_TIER_RATIO` moves to; the script pins it until that release. Index is the score at the catalogue default reasoning effort; price is the 3:1 input/output blend per 1M. Dominance: at least as intelligent and no more expensive, strictly better on one.
 
-A model is a candidate when it is scored, priced in the catalog (input and output), not free, seatable and not pre-release; "disabled in the model catalogue" is allowed, because the all-available scopes recommend enabling it. Pre-release means a name segment `preview`, `beta`, `alpha` or `experimental` (split on `-`, `_`, `.`): the catalog has no release-stage field, and these segments are the providers' own naming. A discounted offering is skipped too: a same-host `offering_of` another catalog model, priced below it on input or output (the `-contributor` offerings). Its terms are not in the catalog. Dated snapshots share the base price and stay.
+A model is a candidate when it is scored, priced in the catalog (input and output), not free, seatable and not pre-release; "disabled in the model catalogue" is allowed, because the all-available scopes recommend enabling it. Pre-release means a name segment `preview`, `beta`, `alpha` or `experimental` (split on `-`, `_`, `.`): the catalog has no release-stage field, and these segments are the providers' own naming. A card with a reasoning-effort parameter but no score at its default effort (evaluatorq's `ranked_on_headline`) is not a candidate, and a caveat lists the models skipped for it. Candidates are one per underlying model (`model_identity`): of several routes the cheapest wins, enabled first. `google` and `google-ai` count as one provider in same-provider scopes; each route keeps its own price. A discounted offering is skipped too: a same-host `offering_of` another catalog model, priced below it on input or output (the `-contributor` offerings). Its terms are not in the catalog. Dated snapshots share the base price and stay.
 
 ### Scopes
 
@@ -321,7 +320,7 @@ The gateway records the calling harness as `trace_framework`, groupable on the `
 
 1. Summary: spend in the window and per month; routing savings with 90% CI, the top-3-excluded figure and coverage; caching savings beside it; Pareto line.
 2. Spend by model, agent, deployment.
-3. Routing: balanced headline; cost and quality columns; buckets with the flags above. Action: "create a Smart Router with profile balanced and pool X, Y, Z".
+3. Routing: balanced headline; cost column; buckets with the flags above. Action: "create a Smart Router with profile balanced and pool X, Y, Z".
 4. Under-powered asks, up to 3 truncated examples; `--redact` hides them.
 5. Caching gaps by agent and thread, with the action per provider.
 6. Harness traffic.
@@ -346,3 +345,10 @@ Unit tests on synthetic fixtures, no network:
 ## Open questions
 
 1. Agent-level numbers have only been checked on a workspace with little agent traffic.
+
+## Report display
+
+- Hero: the lever saving more per month carries a "Recommended" tag (Smart Router on ties).
+- What to do: a model with fewer than `MIN_SAMPLE` (15) sampled calls gets "Small sample: N calls." N is the sum of `routing.moves[].n` where `used` is the model.
+- Call counts include fallback samples (asks with no routing decision) in every table; the moves table shows "N (incl. M fallback)". `underpowered[].n` counts all samples, `n_scored` only the scored ones.
+- `schema_version` is `1.1`: the quality profile was dropped.
