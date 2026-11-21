@@ -2050,6 +2050,14 @@ def _flow_html(r: dict) -> str:
             f"<span class=link></span><ul class='to {kind}'>{''.join(items)}</ul></div>")
 
 
+def _ranges_overlap(head: dict) -> bool:
+    """Whether the 90% ranges of the two levers' monthly savings overlap (a rough, conservative test: both come
+    from the same sampled calls, so a paired comparison would separate them sooner)."""
+    r = ((head.get("router") or {}).get("balanced") or {}).get("ci90_per_month")
+    w = (head.get("switch") or {}).get("ci90_per_month")
+    return bool(r and w) and r[0] <= w[1] and w[0] <= r[1]
+
+
 def _plan_caption(lever: str, pct: float | None, pm: float | None) -> str:
     name = "change model" if lever == "switch" else "Smart Router"
     return (f"<p class=m>Recommended plan ({name}): one move per model. Together: {_pc(pct)} saved "
@@ -2255,6 +2263,9 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
     pts = round((p_router - p_switch) * 100) if p_router is not None and p_switch is not None else 0
     if adds is None:
         gap = ""
+    elif _ranges_overlap(_headline(report)):
+        gap = ("<p class='m gap'>Both save about the same: the difference is within the margin of error, "
+               "so either works.</p>")
     elif adds > 0:
         more = f"{pts} point{'s' if pts != 1 else ''} more" if pts >= 1 else "slightly more"
         gap = f"<p class='m gap'>Router saves {more} (+${adds:,}/mo).</p>"

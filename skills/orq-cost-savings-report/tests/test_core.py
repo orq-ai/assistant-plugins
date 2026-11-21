@@ -689,3 +689,11 @@ def test_plan_rows_follow_change_model_when_it_is_the_recommended_lever():
     assert b["enable"] == ["openai/y"] and b["today"] == pytest.approx(15)
     assert "Recommended plan (change model)" in c._plan_caption("switch", 0.9, 90.0)
     assert "Recommended plan (Smart Router)" in c._plan_caption("router", 1.0, 100.0)
+
+
+def test_levers_within_margin_of_error_when_ranges_overlap():
+    head = {"router": {"balanced": {"ci90_per_month": [153.0, 165.0]}}, "switch": {"ci90_per_month": [151.0, 156.0]}}
+    assert c._ranges_overlap(head)
+    head["switch"]["ci90_per_month"] = [120.0, 140.0]
+    assert not c._ranges_overlap(head)
+    assert not c._ranges_overlap({"router": {"balanced": {}}, "switch": {}})  # no ranges: no claim
