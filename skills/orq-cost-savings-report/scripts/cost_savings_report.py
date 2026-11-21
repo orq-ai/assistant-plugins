@@ -1319,9 +1319,8 @@ class Analyzer:
         self.report["scenarios"] = [
             {"scope": sc, "provider": sc.split(":")[0], "availability": sc.split(":")[1],
              "headline": sc == HEADLINE_SCOPE,
-             "router": {p: {kk: v for kk, v in scen[f"router|{sc}|{p}"].items() if kk != "per_stratum"}
-                        for p in PROFILES},
-             "switch": {kk: v for kk, v in scen[f"switch|{sc}"].items() if kk != "per_stratum"},
+             "router": {p: dict(scen[f"router|{sc}|{p}"]) for p in PROFILES},
+             "switch": dict(scen[f"switch|{sc}"]),
              "models": [{"model": m, **{kk: (([x.id for x in v] if v else None) if kk == "pool" else v)
                                         for kk, v in self.pools[m][sc].items()}} for m in by]}
             for sc in SCOPES]
@@ -1343,8 +1342,10 @@ class Analyzer:
         for r in self.samples:
             pick = r["picks"].get("balanced") or r["model"]
             row = out.setdefault((r["model"], pick), {"used": r["model"], "pick": pick, "tier": set(), "n": 0,
-                                                      "fallback": 0, "costs_more": 0, "weighted_savings": 0.0})
+                                                      "fallback": 0, "costs_more": 0, "weight": 0.0,
+                                                      "weighted_savings": 0.0})
             row["n"] += 1
+            row["weight"] += r["weight"]
             row["fallback"] += r["fallback"] is not None
             row["costs_more"] += r["savings"]["balanced"] < 0
             row["weighted_savings"] += r["weight"] * r["savings"]["balanced"]
@@ -1620,7 +1621,7 @@ def _table(rows: list[dict], cols: list[tuple[str, str, Any]], caption: str = ""
 CSS = """
 :root{--bg:#ffffff;--fg:#141319;--fg2:#3c3a48;--muted:#737373;--panel:#fafafa;--strip:#f7f6f5;--card:#ffffff;
 --line:#e6e6e6;--shadow:0 1px 2px 0 #14131908;--s1:#299D8F;--s2:#df5325;--kept:#dcdad6;--ns:#ebeae8;--hl:#eef7f5;
---hl2:#9fd5cd;--pill:#ffffff;--rec-fg:#1d7a6e;--rec-bg:#e3f3f0;color-scheme:light}
+--hl2:#7acbc1;--pill:#ffffff;--rec-fg:#1d7a6e;--rec-bg:#e3f3f0;color-scheme:light}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){--bg:#1f1e1d;--fg:#faf9f5;--fg2:#c2c0b6;
 --muted:#9c9a92;--panel:#262624;--strip:#1f1e1d;--card:#30302e;--line:#42413d;--shadow:0 1px 2px 0 #00000040;
 --s1:#299D8F;--s2:#df5325;--kept:#55544f;--ns:#3a3935;--hl:#2b3a38;--hl2:#7ccdc3;--pill:#42413d;--rec-fg:#7ccdc3;--rec-bg:#2b3a38;color-scheme:dark}}
@@ -1669,39 +1670,51 @@ list-style:none}
 .r{background:var(--s1)}.s{background:var(--s2)}
 .caveat{margin:12px 0 0;font-size:13px}
 .chart{margin:12px 0 0}
-.row{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) 7em;gap:6px 16px;align-items:center;
+.row{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) 7em;gap:6px 16px;align-items:start;
 padding:12px 0;border-bottom:1px solid var(--line)}
 .row:first-child{padding-top:0}.row:last-child{border-bottom:0;padding-bottom:0}
 .who{min-width:0}
 .who>span{display:block;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
 .who>span:first-of-type{margin-top:6px}
-.flow{display:flex;align-items:center;min-width:0;--lv:var(--s1)}
-.flow.switch{--lv:var(--s2)}
-.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card);
-border-radius:6px;padding:3px 8px;font-size:13px;font-weight:500;line-height:1.3;color:var(--fg);
-white-space:nowrap;box-shadow:var(--shadow)}
-.chip.src{background:var(--panel);color:var(--fg2);flex:0 1 auto}
-.chip.new{border-style:dashed;border-color:var(--lv)}
+.flow{display:grid;grid-template-columns:11em auto minmax(0,1fr);align-items:center;min-width:0;
+--lv:var(--fg2);--chip-h:25px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:var(--chip-h);border:1px solid var(--line);
+background:var(--card);border-radius:6px;padding:0 8px;font-size:13px;font-weight:500;line-height:1.3;
+color:var(--fg);white-space:nowrap;box-shadow:var(--shadow)}
+.chip.src{display:block;justify-self:start;max-width:100%;overflow:hidden;text-overflow:ellipsis;
+line-height:calc(var(--chip-h) - 2px);background:var(--panel);color:var(--fg2)}
+.chip.new{border-style:dashed;border-color:var(--s1)}
 .chip.same{background:var(--panel);color:var(--fg2)}
-.chip em{font-style:normal;font-size:11px;font-weight:500;color:var(--lv)}
-.link{flex:0 0 18px;height:2px;background:var(--lv);position:relative}
-.flow.switch .link{flex-basis:26px;margin-right:6px}
+.chip em{font-style:normal;font-size:11px;font-weight:500;color:var(--rec-fg)}
+.chip.same em{color:var(--muted)}
+.link{width:18px;height:2px;background:var(--lv);position:relative}
+.flow.switch .link{width:26px;margin-right:6px}
 .flow.switch .link::after{content:"";position:absolute;right:-6px;top:-4px;border:5px solid transparent;
 border-left:6px solid var(--lv);border-right:0}
 .to{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;min-width:0}
-.to li{display:flex;align-items:center;gap:8px;flex-wrap:wrap;position:relative;min-width:0}
+.to li{display:flex;flex-wrap:nowrap;position:relative;min-width:0}
+.br{display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;min-width:0}
+.meta{display:inline-flex;align-items:center;gap:6px}
+.share{display:inline-block;flex:none;width:32px;height:4px;border-radius:2px;
+background:linear-gradient(90deg,var(--fg2) calc(var(--p)*100%),var(--ns) 0)}
 .to.fork li{padding-left:16px}
-.to.fork li::before{content:"";position:absolute;left:0;top:50%;width:12px;height:2px;margin-top:-1px;background:var(--lv)}
+.to.fork li::before{content:"";position:absolute;left:0;top:calc(var(--chip-h)/2 - 1px);width:12px;height:2px;
+background:var(--lv)}
 .to.fork li::after{content:"";position:absolute;left:0;width:2px;top:-3px;bottom:-3px;background:var(--lv)}
-.to.fork li:first-child::after{top:50%}
-.to.fork li:last-child::after{bottom:50%}
+.to.fork li:first-child::after{top:calc(var(--chip-h)/2)}
+.to.fork li:last-child::after{bottom:auto;height:calc(var(--chip-h)/2 + 3px)}
 .to small{font-size:12px;color:var(--muted)}
-.lk{display:inline-block;width:16px;height:2px;vertical-align:middle;margin-right:6px;background:var(--s2)}
-.lk.router{background:var(--s1)}
+.lk{display:inline-block;width:16px;height:2px;vertical-align:middle;margin-right:6px;background:var(--fg2);
+position:relative}
+.lk.arrow::after{content:"";position:absolute;right:-2px;top:-3px;border:4px solid transparent;
+border-left:5px solid var(--fg2);border-right:0}
+.lk.fork{width:12px;height:10px;background:none;border:solid var(--fg2);border-width:2px 0 2px 2px}
+.lk.dash{width:16px;height:10px;background:none;border:1px dashed var(--s1);border-radius:3px}
 .val,.kpis,.cell,.legend,.num,td,th{font-variant-numeric:tabular-nums}
 .who span.hard{color:var(--muted);font-weight:400}
-.track{display:flex;gap:3px;height:10px;align-items:stretch}
+.track{display:flex;gap:2px;height:10px;align-items:stretch;margin-top:8px}
 .track i{display:block;min-width:3px;border-radius:5px}
+.track i.kept{min-width:0}
 .foot{margin:8px 0 0;font-size:13px}
 .foot+.foot{margin-top:2px}
 .val{text-align:right}
@@ -1750,7 +1763,8 @@ white-space:pre-wrap;overflow-wrap:anywhere;max-height:12em;overflow:auto}
 .card>.cb{--pad:12px}
 .row{grid-template-columns:minmax(0,1fr) auto;padding:12px 0}
 .who{grid-column:1/-1}.track{grid-column:1;grid-row:2}.val{grid-row:2}
-.chip{font-size:12px;padding:2px 6px}.chip em{font-size:10px}.to small{font-size:11px}
+.flow{grid-template-columns:9.5em auto minmax(0,1fr);--chip-h:23px}
+.chip{font-size:12px;padding:0 6px}.chip em{font-size:10px}.to small{font-size:11px}
 dl.gl{grid-template-columns:1fr}dl.gl dd{margin-bottom:8px}
 }
 """
@@ -1806,12 +1820,12 @@ def _phrase(info: dict) -> str:
     return f"change to {_short(switch)}" if switch else "route"
 
 
-def _action_lines(model: str, head: dict, today: dict | None, saved: float) -> list[str]:
+def _action_lines(model: str, head: dict, today: dict | None, saved: float, enable: list[str] | None = None) -> list[str]:
     """Plain row text: what to do with this model, today and after enabling models, as short sentences."""
     if saved <= 0:
         prov = PROVIDER_NAME.get(model.split("/")[0], model.split("/")[0])
         return [f"Keep it: no cheaper {prov} model is as strong"]
-    enable = head.get("enable") or []
+    enable = head.get("enable") or [] if enable is None else enable
     if not enable:
         p = _phrase(head)
         return [p[0].upper() + p[1:]]
@@ -1864,6 +1878,9 @@ def _plan_figures(report: dict, per_month: float) -> dict:
     amounts = {m: (v if m not in diff else None) for m, (_, v) in moves.items()}
     if len(diff) == 1:
         amounts[diff[0]] = e_pm - sum(v or 0 for m, v in amounts.items() if m != diff[0])
+    exact = ((enabled or {}).get("router", {}).get("balanced") or {}).get("per_stratum")
+    if exact is not None:  # the enabled scope's own per-model saving: no reconciliation needed
+        amounts = {m: (exact.get(m) or 0.0) * per_month for m in moves}
     now = [(m, i, amounts[m]) for m, (i, _) in moves.items()]
     now.sort(key=lambda x: -(x[2] if x[2] is not None else -1))
     later = [m for m, i in h_info.items() if i.get("enable") and strata.get(m, 0) > 0]
@@ -1873,8 +1890,9 @@ def _plan_figures(report: dict, per_month: float) -> dict:
 
 
 def _today_amounts(f: dict) -> dict[str, float]:
-    """Monthly saving available today per model. Amounts the reconciliation could not pin down (several moves
-    differ from the headline) split what is left of the enabled-scope total by headline saving."""
+    """Monthly saving available today per model: the enabled scope's own per-model saving when the report has it.
+    Older reports: amounts the reconciliation could not pin down (several moves differ from the headline) split
+    what is left of the enabled-scope total by headline saving."""
     known = {m: v for m, _, v in f["now"] if v is not None}
     unknown = [m for m, _, v in f["now"] if v is None]
     if unknown:
@@ -1905,10 +1923,12 @@ def _plan_rows(report: dict, per_month: float) -> list[dict]:
         saved = max(0.0, st.get("savings") or 0) * per_month
         now = min(saved, max(0.0, today.get(m, 0.0)))
         n_calls = sum(mv.get("n") or 0 for mv in ro.get("moves") or [] if mv.get("used") == m)
-        rows.append({"model": m, "n": n_calls, "spend": (st.get("spend") or 0) * per_month, "saved": saved, "today": now,
+        spend = (st.get("spend") or 0) * per_month
+        fl = _flow(m, f["h_info"].get(m, {}), f["e_info"].get(m), ro.get("moves") or [], now, spend)
+        rows.append({"model": m, "n": n_calls, "spend": spend, "saved": saved, "today": now,
                      "after": saved - now, "rate": st.get("rate"), "hard": None,
-                     "lines": _action_lines(m, f["h_info"].get(m, {}), f["e_info"].get(m), saved),
-                     **_flow(m, f["h_info"].get(m, {}), f["e_info"].get(m), ro.get("moves") or [])})
+                     "lines": _action_lines(m, f["h_info"].get(m, {}), f["e_info"].get(m), saved, fl["enable"]),
+                     **fl})
     flagged = [r for r in rows if r["model"] in hard and r["saved"] > 0]
     if flagged:
         top = max(flagged, key=lambda r: r["saved"])
@@ -1919,31 +1939,35 @@ def _plan_rows(report: dict, per_month: float) -> list[dict]:
 TIERS = ("easy", "medium", "hard")
 
 
-def _flow(model: str, head: dict, today: dict | None, moves: list[dict]) -> dict:
-    """Where this model's calls go in the headline scope: lever, targets with their share of sampled asks and
-    the ask tiers they take, models to enable, and the move available today when it differs."""
+def _flow(model: str, head: dict, today: dict | None, moves: list[dict], today_saved: float | None = None,
+          spend: float | None = None) -> dict:
+    """Where this model's calls go in the headline scope: lever, targets with their share of sampled calls (by
+    sample weight, over the drawn targets only), the tiers of their scored calls, unscored calls, models to
+    enable (only drawn targets, never the model itself), and what to do before enabling when that saves money."""
     lever = _lever(head)
     targets = (head.get("pool") or []) if lever == "router" else [head["switch"]] if lever == "switch" else []
-    counts: dict[str, int] = {}
+    counts: dict[str, float] = {}
+    unscored: dict[str, int] = {}
     tiers: dict[str, set] = {}
     for mv in moves:
         if mv.get("used") == model:
-            counts[mv["pick"]] = counts.get(mv["pick"], 0) + (mv.get("n") or 0)
+            w = mv.get("weight")
+            counts[mv["pick"]] = counts.get(mv["pick"], 0) + (w if w is not None else (mv.get("n") or 0))
+            unscored[mv["pick"]] = unscored.get(mv["pick"], 0) + (mv.get("fallback") or 0)
             tiers.setdefault(mv["pick"], set()).update(t.strip() for t in str(mv.get("tier", "")).split(","))
-    total = sum(counts.values())
-    order = sorted(targets, key=lambda t: -counts.get(t, 0))
+    drawn = [t for t in targets if counts.get(t)] or targets
+    total = sum(counts.get(t, 0) for t in drawn)
+    enable = [e for e in head.get("enable") or [] if e in drawn and e != model]
     branches = []
-    for t in order:
+    for t in sorted(drawn, key=lambda t: -counts.get(t, 0)):
         tt = [x for x in TIERS if x in tiers.get(t, set())]
         branches.append({"model": t, "share": counts[t] / total if total and t in counts else None,
-                         "tiers": tt if 0 < len(tt) < len(TIERS) else [], "enable": t in (head.get("enable") or []),
-                         "stays": t == model})
-    enable = head.get("enable") or []
+                         "tiers": tt if 0 < len(tt) < len(TIERS) else [], "unscored": unscored.get(t, 0),
+                         "enable": t in enable, "stays": t == model})
     note = ""
-    if enable and today and _lever(today) and not _same_move(today, head):
-        names = " and ".join(_short(e) for e in enable)
-        note = f"Until {names} is enabled: {_phrase(today)}."
-    return {"lever": lever, "branches": branches, "note": note}
+    if enable and today and _lever(today) and not _same_move(today, head) and (today_saved or 0) > 0:
+        note = f"Before enabling: {_phrase(today)} now, {_pc(_of(today_saved, spend))} saved ({_usd0(today_saved)}/mo)."
+    return {"lever": lever, "branches": branches, "note": note, "enable": enable}
 
 
 def _flow_html(r: dict) -> str:
@@ -1955,16 +1979,25 @@ def _flow_html(r: dict) -> str:
         meta = []
         if len(r["branches"]) > 1:
             if b["share"] is not None:
-                meta.append(f"{b['share']:.0%}")
+                meta.append(("<1%" if 0 < b["share"] < 0.005 else f"{b['share']:.0%}") + " of calls")
             if b["tiers"]:
-                meta.append(" and ".join(b["tiers"]) + " asks")
-        tag = "<em>enable</em>" if b["enable"] else ""
-        small = f"<small>{html.escape(' · '.join(meta))}</small>" if meta else ""
-        items.append(f"<li><span class='{cls}' title='{html.escape(b['model'])}'>"
-                     f"{html.escape(_short(b['model']))}{tag}</span>{small}</li>")
+                meta.append(", ".join(t.capitalize() for t in b["tiers"]))
+            if b["unscored"]:
+                meta.append(f"+{b['unscored']} ungraded")
+        tag = "<em>enable</em>" if b["enable"] else "<em>stays</em>" if b["stays"] else ""
+        bar = f"<i class=share style='--p:{b['share']:.2f}'></i>" if meta and b["share"] is not None else ""
+        text = html.escape(" \u00b7 ".join(meta))
+        small = f"<span class=meta>{bar}<small>{text}</small></span>" if meta else ""
+        items.append(f"<li><div class=br><span class='{cls}' title='{html.escape(b['model'])}'>"
+                     f"{html.escape(_short(b['model']))}{tag}</span>{small}</div></li>")
     kind = "fork" if len(items) > 1 else "one"
     return (f"<div class='flow {r['lever']}' role=img aria-label='{html.escape(' '.join(r['lines']))}'>{src}"
             f"<span class=link></span><ul class='to {kind}'>{''.join(items)}</ul></div>")
+
+
+def _plan_caption(p_router: float | None, h_pm: float | None) -> str:
+    return (f"<p class=m>Recommended plan: one move per model. Together: {_pc(p_router)} saved ({_usd0(h_pm)}/mo). "
+            "Bar length is the model's monthly spend.</p>")
 
 
 def _actions_chart(report: dict, per_month: float) -> str:
@@ -1978,7 +2011,8 @@ def _actions_chart(report: dict, per_month: float) -> str:
     rows = []
     for r in drawn:
         seg = [("sr", r["today"]), ("sr2", r["after"]), ("kept", max(0.0, r["spend"] - r["saved"]))]
-        bars = "".join(f"<i class={c} style='width:{v / top * 100:.2f}%'></i>" for c, v in seg if v / top > 0)
+        bars = "".join(f"<i class={c} style='width:{v / top * 100:.2f}%'></i>" for c, v in seg
+                       if v / top > (0.02 if c == "kept" else 0))
         pct = _of(r["saved"], r["spend"])
         tip = (f"{_short(r['model'])}: {_pc(_of(r['today'], r['spend']))} saved today, "
                f"{_pc(_of(r['after'], r['spend']))} more after enabling, of {_usd0(r['spend'])} a month")
@@ -1986,7 +2020,7 @@ def _actions_chart(report: dict, per_month: float) -> str:
         if r["n"] < MIN_SAMPLE:
             notes += f"<span>Small sample: {r['n']} call{'s' if r['n'] != 1 else ''}.</span>"
         if r["hard"] is not None:
-            notes += f"<span class=hard>{r['hard']:.0%} of its sampled asks are hard: test quality first.</span>"
+            notes += "<span class=hard>Mostly hard work: spot-check answers before moving it.</span>"
         rows.append(f"<div class=row><div class=who>{_flow_html(r)}{notes}</div>"
                     f"<div class=track role=img aria-label='{html.escape(tip)}'>{bars}</div>"
                     f"<div class=val><b>{_pc(pct)} saved</b>"
@@ -1997,13 +2031,13 @@ def _actions_chart(report: dict, per_month: float) -> str:
     legend += "<li><span class='sw kept'></span>Still spent</li>"
     levers = {r["lever"] for r in drawn}
     if "switch" in levers:
-        legend += "<li><span class='lk switch'></span>Change model</li>"
+        legend += "<li><span class='lk arrow'></span>Arrow: move all calls</li>"
     if "router" in levers:
-        legend += "<li><span class='lk router'></span>Smart Router splits asks</li>"
-    foot = ""
-    if kept:
-        foot += ("<p class='m foot'>No cheaper model as strong: "
-                 f"{html.escape(', '.join(_short(m) for m in kept))}.</p>")
+        legend += "<li><span class='lk fork'></span>Fork: Smart Router picks a model per call</li>"
+    if any(r["enable"] for r in drawn):
+        legend += "<li><span class='lk dash'></span>Dashed: enable this model in your orq.ai workspace first</li>"
+    foot = "".join(f"<p class='m foot'>{html.escape(_short(m))}: keep, already the cheapest model that is as strong.</p>"
+                   for m in kept)
     if nc:
         foot += f"<p class='m foot'>Not analysed: {_usd0(nc_spend)}/mo of spend on {len(nc)} smaller models.</p>"
     return legend + "</ul><div class=chart>" + "".join(rows) + "</div>" + foot
@@ -2187,8 +2221,7 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
              (f"<p class=m>{html.escape(_day(win['from']))} to {html.escape(to_day)}, scaled to a month: "
               f"{_usd0(spend_pm)}/mo LLM spend.</p>"),
              nav, hero,
-             _card("What to do", "<p class=m>Saving per model, per month, as a share of that model's spend. "
-                   "Rows add up to the Smart Router figure.</p>" + _actions_chart(report, per_month), "do"),
+             _card("What to do", _plan_caption(p_router, h_pm) + _actions_chart(report, per_month), "do"),
              _card("Other scopes", "<p class=m>Share of monthly spend saved, by which models are allowed.</p>"
                    + _scope_grid(report, spend_pm) + f"<p class=m>{html.escape(TOKENIZER_NOTE)}</p>", "scopes")]
     if caching_small:

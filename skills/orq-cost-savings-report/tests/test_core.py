@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -524,7 +525,7 @@ def test_hard_flag_shows_on_the_flagged_row_with_the_largest_saving_only():
     assert rows["openai/b"]["hard"] == 0.8  # biggest saving among flagged
     assert rows["openai/a"]["hard"] is None and rows["openai/d"]["hard"] is None  # keep row has no move to warn about
     page = c._actions_chart(report, 1.0)
-    assert page.count("test quality first") == 1 and "80% of its sampled asks are hard: test quality first." in page
+    assert page.count("Mostly hard work") == 1 and "Mostly hard work: spot-check answers before moving it." in page
 
 
 def test_row_percent_leads_the_right_column():
@@ -550,7 +551,7 @@ def test_keep_rows_and_not_sampled_spend_are_lines_not_bars():
     report["routing"]["not_covered"] = [{"model": "x/1", "spend": 60.0}, {"model": "x/2", "spend": 24.0}]
     chart = c._actions_chart(report, 1.0)
     assert chart.count("class=row>") == 3  # a, b, c; the keep row d has no bar
-    assert "No cheaper model as strong: d." in chart
+    assert "d: keep, already the cheapest model that is as strong." in chart
     assert "Not analysed: $84/mo of spend on 2 smaller models." in chart
     assert "class=ns" not in chart and "Not sampled</li>" not in chart
 
@@ -575,13 +576,74 @@ def test_flow_router_fork_shares_tiers_and_enable():
     moves = [{"used": "openai/s", "pick": "openai/s", "tier": "hard, medium", "n": 3},
              {"used": "openai/s", "pick": "openai/h", "tier": "easy", "n": 1},
              {"used": "openai/x", "pick": "openai/h", "tier": "easy", "n": 9}]
-    f = c._flow("openai/s", head, today, moves)
+    f = c._flow("openai/s", head, today, moves, 12.0, 48.0)
     assert f["lever"] == "router"
     assert [(b["model"], b["share"], b["tiers"], b["enable"], b["stays"]) for b in f["branches"]] == [
         ("openai/s", 0.75, ["medium", "hard"], False, True), ("openai/h", 0.25, ["easy"], True, False)]
-    assert f["note"] == "Until h is enabled: change to m."
+    assert f["note"] == "Before enabling: change to m now, 25% saved ($12/mo)."
     out = c._flow_html({"model": "openai/s", "lines": ["x"], **f})
-    assert "class='to fork'" in out and "75% · medium and hard asks" in out and "<em>enable</em>" in out
+    assert "class='to fork'" in out and "75% of calls \u00b7 Medium, Hard" in out and "<em>enable</em>" in out
+    assert "<em>stays</em>" in out and "--p:0.75" in out and "<div class=br>" in out
+    assert "asks" not in out and out.count("<em>enable</em>") == 1
+
+
+def test_flow_note_only_when_today_saves_money():
+    head = {"model": "openai/s", "pool": ["openai/s", "openai/h"], "switch": None, "enable": ["openai/h"]}
+    today = {"model": "openai/s", "pool": None, "switch": "openai/m", "enable": []}
+    moves = [{"used": "openai/s", "pick": "openai/h", "n": 1}]
+    assert c._flow("openai/s", head, today, moves, 0.0, 48.0)["note"] == ""
+    assert c._flow("openai/s", head, today, moves)["note"] == ""
+
+
+def test_flow_shares_weight_drawn_targets_only_and_fallbacks_get_no_tier():
+    head = {"model": "openai/s", "pool": ["openai/s", "openai/h", "openai/z"], "switch": None,
+            "enable": ["openai/h", "openai/z", "openai/s"]}
+    moves = [{"used": "openai/s", "pick": "openai/s", "tier": "easy", "n": 5, "weight": 10.0, "fallback": 0},
+             {"used": "openai/s", "pick": "openai/h", "tier": "fallback: error, hard", "n": 5, "weight": 30.0,
+              "fallback": 2},
+             {"used": "openai/s", "pick": "openai/q", "tier": "hard", "n": 9, "weight": 99.0, "fallback": 0}]
+    f = c._flow("openai/s", head, None, moves)
+    got = {b["model"]: b for b in f["branches"]}
+    assert set(got) == {"openai/s", "openai/h"}  # z was never drawn; q is not a target
+    assert got["openai/h"]["share"] == 0.75 and got["openai/s"]["share"] == 0.25  # weight, not n
+    assert got["openai/h"]["tiers"] == ["hard"] and got["openai/h"]["unscored"] == 2
+    assert f["enable"] == ["openai/h"] and not got["openai/s"]["enable"]  # enable only on drawn targets, never itself
+    out = c._flow_html({"model": "openai/s", "lines": ["x"], **f})
+    assert "+2 ungraded" in out
+    moves[1].pop("weight"), moves[0].pop("weight")
+    assert {b["model"]: b["share"] for b in c._flow("openai/s", head, None, moves)["branches"]} == {
+        "openai/h": 0.5, "openai/s": 0.5}  # falls back to n
+
+
+def test_row_enable_set_drives_lines_and_note():
+    report = _plan_report()
+    report["routing"]["moves"] = [{"used": "openai/b", "pick": "openai/x", "n": 3, "fallback": 0}]
+    row = _rows(report)["openai/b"]
+    assert row["enable"] == [] and row["note"] == ""  # y is not drawn: nothing to enable
+    assert row["lines"] == ["Route over y and x"]
+
+
+def test_today_uses_enabled_scope_per_stratum_when_present():
+    report = _plan_report()
+    report["scenarios"][1]["router"]["balanced"]["per_stratum"] = {"openai/a": 9.0, "openai/b": 21.0}
+    rows = _rows(report)
+    assert rows["openai/a"]["today"] == 9 and rows["openai/b"]["today"] == 21 and rows["openai/c"]["today"] == 0
+
+
+def test_legend_chart_caption_and_kept_sliver():
+    report = _plan_report()
+    report["routing"]["strata"][1].update(spend=100.0)
+    report["routing"]["moves"] = [{"used": "openai/b", "pick": "openai/y", "n": 3, "fallback": 0},
+                                  {"used": "openai/b", "pick": "openai/x", "n": 3, "fallback": 0}]
+    chart = c._actions_chart(report, 1.0)
+    assert "Arrow: move all calls" in chart and "Fork: Smart Router picks a model per call" in chart
+    assert "Dashed: enable this model in your orq.ai workspace first" in chart
+    assert "Smart Router splits asks" not in chart and "Change model" not in chart
+    assert "Recommended plan: one move per model. Together: 25% saved ($100/mo). Bar length is the model's monthly spend." \
+        in c._plan_caption(0.25, 100.0)
+    assert chart.count("<i class=kept") == 1  # b only: a and c keep nothing worth a segment
+    report["routing"]["strata"][2].update(spend=40.5)  # c saves 40 of 40.5: kept sliver under 2% of the top spend
+    assert c._actions_chart(report, 1.0).count("<i class=kept") == 1
 
 
 def test_flow_change_model_is_one_arrow_without_shares():
@@ -604,3 +666,11 @@ def test_small_sample_note_under_min_sample():
 
 def test_pick_ignores_profiles_other_than_cost_and_balanced_thresholds():
     assert set(c.PROFILES) == {"balanced", "cost"} and set(c.THRESHOLDS) == set(c.PROFILES)
+
+
+def test_flow_tiny_share_reads_below_one_percent():
+    head = {"model": "openai/s", "pool": ["openai/a", "openai/b"], "switch": None, "enable": []}
+    moves = [{"used": "openai/s", "pick": "openai/a", "tier": "hard", "n": 999},
+             {"used": "openai/s", "pick": "openai/b", "tier": "easy", "n": 1}]
+    out = c._flow_html({"model": "openai/s", "lines": ["x"], **c._flow("openai/s", head, None, moves)})
+    assert "&lt;1% of calls" in out and not re.search(r"[^0-9]0% of calls", out)

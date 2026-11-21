@@ -143,6 +143,20 @@
             "properties": {"savings": {"type": "number"}, "ci90": {"$ref": "#/$defs/interval"}}
           }
         },
+        "moves": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["used", "pick", "n", "fallback"],
+            "properties": {
+              "used": {"type": "string"},
+              "pick": {"type": "string"},
+              "n": {"type": "integer"},
+              "fallback": {"type": "integer"},
+              "weight": {"type": "number"}
+            }
+          }
+        },
         "strata": {
           "type": "array",
           "items": {
@@ -212,7 +226,8 @@
         "per_month": {"type": "number"},
         "ci90_per_month": {"$ref": "#/$defs/interval"},
         "without_top3": {"type": "number"},
-        "unpriced_models": {"type": "array", "items": {"type": "string"}}
+        "unpriced_models": {"type": "array", "items": {"type": "string"}},
+        "per_stratum": {"type": "object", "additionalProperties": {"type": ["number", "null"]}}
       }
     },
     "perProfile": {

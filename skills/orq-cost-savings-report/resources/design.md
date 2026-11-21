@@ -350,5 +350,6 @@ Unit tests on synthetic fixtures, no network:
 
 - Hero: the lever saving more per month carries a "Recommended" tag (Smart Router on ties).
 - What to do: a model with fewer than `MIN_SAMPLE` (15) sampled calls gets "Small sample: N calls." N is the sum of `routing.moves[].n` where `used` is the model.
+- What to do diagram: shares are by sample weight (`routing.moves[].weight`, else `n`) over drawn targets only; unscored picks get no tier and show "+N unscored"; "enable" marks only drawn targets other than the model itself. Today amounts come from the enabled scenario's `per_stratum` (kept in every scenario's router/switch estimate); old reports fall back to the reconciled split.
 - Call counts include fallback samples (asks with no routing decision) in every table; the moves table shows "N (incl. M fallback)". `underpowered[].n` counts all samples, `n_scored` only the scored ones.
 - `schema_version` is `1.1`: the quality profile was dropped.

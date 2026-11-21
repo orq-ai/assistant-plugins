@@ -153,6 +153,11 @@ def test_analyze_end_to_end(tmp_path):
         assert not c.has_dominated([garden[x] for x in s["pool"]])
     assert scen["same_provider:all"]["headline"] and rep["routing"]["headline"]["savings"] == pytest.approx(
         scen["same_provider:all"]["router"]["balanced"]["savings"])
+    for sc in scen.values():  # per-model savings stay in every scenario; they add up to the scenario total
+        assert sum(v or 0 for v in sc["router"]["balanced"]["per_stratum"].values()) == pytest.approx(
+            sc["router"]["balanced"]["savings"])
+        assert "per_stratum" in sc["switch"]
+    assert sum(m["weight"] for m in rep["routing"]["moves"]) == pytest.approx(sum(x["weight"] for x in rep["samples"]))
     dom = {d["model"]: d["dominated_by"] for d in rep["routing"]["pareto"]}
     assert dom[SOL][0] == {"model": SOL61, "index": 50.0, "blend_price": 4.0, "enabled": False}
     assert (tmp_path / "narrative-slots.md").read_text().count("## ") == 4
