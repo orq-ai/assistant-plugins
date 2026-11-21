@@ -1631,7 +1631,8 @@ MOON = _SVG.format(c="moon", d="<path d='M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 2
 PAGE_JS = """(function(){var d=document.documentElement;
 var mq=window.matchMedia?matchMedia('(prefers-color-scheme: dark)'):null,btn=document.querySelector('.theme');
 function isDark(){var t=d.getAttribute('data-theme');return t?t==='dark':!!(mq&&mq.matches)}
-function label(){if(btn)btn.setAttribute('aria-label',isDark()?'Switch to light theme':'Switch to dark theme')}
+function label(){if(btn)btn.setAttribute('aria-label',isDark()?'Switch to light theme':'Switch to dark theme');
+var b=document.body;if(b){b.classList.remove('auto','light','dark');b.classList.add(d.getAttribute('data-theme')||'auto')}}
 label();if(mq&&mq.addEventListener)mq.addEventListener('change',label);
 if(btn)btn.addEventListener('click',function(){var t=isDark()?'light':'dark';d.setAttribute('data-theme',t);
 try{localStorage.setItem('report-theme',t)}catch(e){}label()});
@@ -1770,10 +1771,12 @@ align-items:stretch}
 dl.gl{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;margin:12px 0}
 dl.gl dt{font-weight:500}dl.gl dd{margin:0}
 .rows{margin:12px calc(-1*var(--pad)) calc(-1*var(--pad))}
-details{border-top:1px solid var(--line);padding:2px 16px}
+details,summary,table,thead,tbody,tr,th,td,caption,dl,dt,dd{background:none;box-shadow:none}
+details,summary,td,li,dt,dd{color:var(--fg)}caption{color:var(--muted)}
+details{border:0;border-top:1px solid var(--line);border-radius:0;margin:0;padding:2px 16px}
 details:first-child{border-top:0}
 details[open]{padding-bottom:12px}
-summary{cursor:pointer;padding:10px 0;font-weight:500;color:var(--fg)}
+summary{cursor:pointer;padding:10px 0;margin:0;border:0;border-radius:0;font-weight:500;color:var(--fg)}
 summary span{font-weight:400;color:var(--muted)}
 .t{overflow-x:auto;margin:8px 0 12px}.t td:first-child{white-space:nowrap}
 @media print{.theme,.toc{display:none}.card,.row,details,tr{break-inside:avoid}body{padding:0}}
@@ -2319,7 +2322,7 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
     return ("<!doctype html><html lang=en><head><meta charset=utf-8>"
             "<meta name=viewport content='width=device-width, initial-scale=1'>"
             f"<title>{html.escape(title)}</title><script>{THEME_BOOT}</script><style>{_font_css()}{CSS}</style></head>"
-            f"<body><main>{body}</main><script>{PAGE_JS}</script></body></html>")
+            f"<body class=auto><main>{body}</main><script>{PAGE_JS}</script></body></html>")
 
 
 # --------------------------------------------------------------------------------------------- CLI
