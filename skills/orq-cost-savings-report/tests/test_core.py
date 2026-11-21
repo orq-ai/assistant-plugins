@@ -568,3 +568,26 @@ def test_scope_grid_marks_headline_and_enable_first():
     pct = c._scope_grid(report, 1000.0)
     assert "<p class=f1>10%<span>Smart Router</span></p>" in pct and "<p class=f2>8%<span>Change model</span></p>" in pct
     assert "$100/mo" in pct and "$80/mo" in pct
+
+
+def test_flow_router_fork_shares_tiers_and_enable():
+    head = {"model": "openai/s", "pool": ["openai/s", "openai/h"], "switch": None, "enable": ["openai/h"]}
+    today = {"model": "openai/s", "pool": None, "switch": "openai/m", "enable": []}
+    moves = [{"used": "openai/s", "pick": "openai/s", "tier": "hard, medium", "n": 3},
+             {"used": "openai/s", "pick": "openai/h", "tier": "easy", "n": 1},
+             {"used": "openai/x", "pick": "openai/h", "tier": "easy", "n": 9}]
+    f = c._flow("openai/s", head, today, moves)
+    assert f["lever"] == "router"
+    assert [(b["model"], b["share"], b["tiers"], b["enable"], b["stays"]) for b in f["branches"]] == [
+        ("openai/s", 0.75, ["medium", "hard"], False, True), ("openai/h", 0.25, ["easy"], True, False)]
+    assert f["note"] == "Until h is enabled: change to m."
+    out = c._flow_html({"model": "openai/s", "lines": ["x"], **f})
+    assert "class='to fork'" in out and "75% · medium and hard asks" in out and "<em>enable</em>" in out
+
+
+def test_flow_change_model_is_one_arrow_without_shares():
+    head = {"model": "openai/a", "pool": None, "switch": "openai/b", "enable": []}
+    f = c._flow("openai/a", head, None, [{"used": "openai/a", "pick": "openai/b", "tier": "easy, hard, medium", "n": 4}])
+    out = c._flow_html({"model": "openai/a", "lines": ["Change to b"], **f})
+    assert f["lever"] == "switch" and f["note"] == "" and f["branches"][0]["tiers"] == []
+    assert "class='flow switch'" in out and "class='to one'" in out and "<small>" not in out

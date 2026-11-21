@@ -18,6 +18,7 @@ so a rerun resumes without paying twice. Spec: ../resources/design.md.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import html
 import json
@@ -1608,7 +1609,7 @@ CSS = """
 --hl:#2b3a38;--hl2:#7ccdc3;--pill:#42413d;color-scheme:dark}
 *{box-sizing:border-box}
 body{font:14px/1.5 "Avio Sans",Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-font-variant-numeric:tabular-nums;background:var(--bg);color:var(--fg);margin:0;padding-block:28px 56px;
+background:var(--bg);color:var(--fg);margin:0;padding-block:28px 56px;
 padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 main{max-width:1000px;margin:0 auto}
 h1,h2,h3{text-wrap:balance;line-height:1.25;color:var(--fg);font-weight:500}
@@ -1646,13 +1647,36 @@ list-style:none}
 .r{background:var(--s1)}.s{background:var(--s2)}
 .caveat{margin:12px 0 0;font-size:13px}
 .chart{margin:12px 0 0}
-.row{display:grid;grid-template-columns:minmax(0,15em) minmax(0,1fr) 8em;gap:6px 16px;align-items:center;
+.row{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) 7em;gap:6px 16px;align-items:center;
 padding:12px 0;border-bottom:1px solid var(--line)}
 .row:first-child{padding-top:0}.row:last-child{border-bottom:0;padding-bottom:0}
 .who{min-width:0}
-.who code{font-family:inherit;font-size:14px;font-weight:500;line-height:1.3;overflow-wrap:anywhere;color:var(--fg)}
-.who span{display:block;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
-.who span:first-of-type{color:var(--fg);font-weight:500}
+.who>span{display:block;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.who>span:first-of-type{margin-top:6px}
+.flow{display:flex;align-items:center;min-width:0;--lv:var(--s1)}
+.flow.switch{--lv:var(--s2)}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card);
+border-radius:6px;padding:3px 8px;font-size:13px;font-weight:500;line-height:1.3;color:var(--fg);
+white-space:nowrap;box-shadow:var(--shadow)}
+.chip.src{background:var(--panel);color:var(--fg2);flex:0 1 auto}
+.chip.new{border-style:dashed;border-color:var(--lv)}
+.chip.same{background:var(--panel);color:var(--fg2)}
+.chip em{font-style:normal;font-size:11px;font-weight:500;color:var(--lv)}
+.link{flex:0 0 18px;height:2px;background:var(--lv);position:relative}
+.flow.switch .link{flex-basis:26px;margin-right:6px}
+.flow.switch .link::after{content:"";position:absolute;right:-6px;top:-4px;border:5px solid transparent;
+border-left:6px solid var(--lv);border-right:0}
+.to{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;min-width:0}
+.to li{display:flex;align-items:center;gap:8px;flex-wrap:wrap;position:relative;min-width:0}
+.to.fork li{padding-left:16px}
+.to.fork li::before{content:"";position:absolute;left:0;top:50%;width:12px;height:2px;margin-top:-1px;background:var(--lv)}
+.to.fork li::after{content:"";position:absolute;left:0;width:2px;top:-3px;bottom:-3px;background:var(--lv)}
+.to.fork li:first-child::after{top:50%}
+.to.fork li:last-child::after{bottom:50%}
+.to small{font-size:12px;color:var(--muted)}
+.lk{display:inline-block;width:16px;height:2px;vertical-align:middle;margin-right:6px;background:var(--s2)}
+.lk.router{background:var(--s1)}
+.val,.kpis,.cell,.legend,.num,td,th{font-variant-numeric:tabular-nums}
 .who span.hard{color:var(--muted);font-weight:400}
 .track{display:flex;gap:3px;height:10px;align-items:stretch}
 .track i{display:block;min-width:3px;border-radius:5px}
@@ -1703,7 +1727,8 @@ white-space:pre-wrap;overflow-wrap:anywhere;max-height:12em;overflow:auto}
 .hero .verdict{font-size:16px}
 .card>.cb{--pad:12px}
 .row{grid-template-columns:minmax(0,1fr) auto;padding:12px 0}
-.track{grid-column:1/-1;grid-row:2}
+.who{grid-column:1/-1}.track{grid-column:1;grid-row:2}.val{grid-row:2}
+.chip{font-size:12px;padding:2px 6px}.chip em{font-size:10px}.to small{font-size:11px}
 dl.gl{grid-template-columns:1fr}dl.gl dd{margin-bottom:8px}
 }
 """
@@ -1859,12 +1884,64 @@ def _plan_rows(report: dict, per_month: float) -> list[dict]:
         now = min(saved, max(0.0, today.get(m, 0.0)))
         rows.append({"model": m, "spend": (st.get("spend") or 0) * per_month, "saved": saved, "today": now,
                      "after": saved - now, "rate": st.get("rate"), "hard": None,
-                     "lines": _action_lines(m, f["h_info"].get(m, {}), f["e_info"].get(m), saved)})
+                     "lines": _action_lines(m, f["h_info"].get(m, {}), f["e_info"].get(m), saved),
+                     **_flow(m, f["h_info"].get(m, {}), f["e_info"].get(m), ro.get("moves") or [])})
     flagged = [r for r in rows if r["model"] in hard and r["saved"] > 0]
     if flagged:
         top = max(flagged, key=lambda r: r["saved"])
         top["hard"] = hard[top["model"]]
     return rows
+
+
+TIERS = ("easy", "medium", "hard")
+
+
+def _flow(model: str, head: dict, today: dict | None, moves: list[dict]) -> dict:
+    """Where this model's calls go in the headline scope: lever, targets with their share of sampled asks and
+    the ask tiers they take, models to enable, and the move available today when it differs."""
+    lever = _lever(head)
+    targets = (head.get("pool") or []) if lever == "router" else [head["switch"]] if lever == "switch" else []
+    counts: dict[str, int] = {}
+    tiers: dict[str, set] = {}
+    for mv in moves:
+        if mv.get("used") == model:
+            counts[mv["pick"]] = counts.get(mv["pick"], 0) + (mv.get("n") or 0)
+            tiers.setdefault(mv["pick"], set()).update(t.strip() for t in str(mv.get("tier", "")).split(","))
+    total = sum(counts.values())
+    order = sorted(targets, key=lambda t: -counts.get(t, 0))
+    branches = []
+    for t in order:
+        tt = [x for x in TIERS if x in tiers.get(t, set())]
+        branches.append({"model": t, "share": counts[t] / total if total and t in counts else None,
+                         "tiers": tt if 0 < len(tt) < len(TIERS) else [], "enable": t in (head.get("enable") or []),
+                         "stays": t == model})
+    enable = head.get("enable") or []
+    note = ""
+    if enable and today and _lever(today) and not _same_move(today, head):
+        names = " and ".join(_short(e) for e in enable)
+        note = f"Until {names} is enabled: {_phrase(today)}."
+    return {"lever": lever, "branches": branches, "note": note}
+
+
+def _flow_html(r: dict) -> str:
+    """Source model chip, an arrow, and one chip per target: a fork for the router, a single arrow for a change."""
+    src = f"<span class='chip src' title='{html.escape(r['model'])}'>{html.escape(_short(r['model']))}</span>"
+    items = []
+    for b in r["branches"]:
+        cls = "chip" + (" new" if b["enable"] else "") + (" same" if b["stays"] else "")
+        meta = []
+        if len(r["branches"]) > 1:
+            if b["share"] is not None:
+                meta.append(f"{b['share']:.0%}")
+            if b["tiers"]:
+                meta.append(" and ".join(b["tiers"]) + " asks")
+        tag = "<em>enable</em>" if b["enable"] else ""
+        small = f"<small>{html.escape(' · '.join(meta))}</small>" if meta else ""
+        items.append(f"<li><span class='{cls}' title='{html.escape(b['model'])}'>"
+                     f"{html.escape(_short(b['model']))}{tag}</span>{small}</li>")
+    kind = "fork" if len(items) > 1 else "one"
+    return (f"<div class='flow {r['lever']}' role=img aria-label='{html.escape(' '.join(r['lines']))}'>{src}"
+            f"<span class=link></span><ul class='to {kind}'>{''.join(items)}</ul></div>")
 
 
 def _actions_chart(report: dict, per_month: float) -> str:
@@ -1882,11 +1959,10 @@ def _actions_chart(report: dict, per_month: float) -> str:
         pct = _of(r["saved"], r["spend"])
         tip = (f"{_short(r['model'])}: {_pc(_of(r['today'], r['spend']))} saved today, "
                f"{_pc(_of(r['after'], r['spend']))} more after enabling, of {_usd0(r['spend'])} a month")
-        notes = "".join(f"<span>{html.escape(x)}</span>" for x in r["lines"])
+        notes = f"<span>{html.escape(r['note'])}</span>" if r["note"] else ""
         if r["hard"] is not None:
             notes += f"<span class=hard>{r['hard']:.0%} of its sampled asks are hard: test quality first.</span>"
-        rows.append(f"<div class=row><div class=who>"
-                    f"<code title='{html.escape(r['model'])}'>{html.escape(_short(r['model']))}</code>{notes}</div>"
+        rows.append(f"<div class=row><div class=who>{_flow_html(r)}{notes}</div>"
                     f"<div class=track role=img aria-label='{html.escape(tip)}'>{bars}</div>"
                     f"<div class=val><b>{_pc(pct)} saved</b>"
                     f"<span>{_usd0(r['saved'])}/mo</span></div></div>")
@@ -1894,6 +1970,11 @@ def _actions_chart(report: dict, per_month: float) -> str:
     if any(r["after"] > 0 for r in drawn):
         legend += "<li><span class='sw sr2'></span>Saved after enabling</li>"
     legend += "<li><span class='sw kept'></span>Still spent</li>"
+    levers = {r["lever"] for r in drawn}
+    if "switch" in levers:
+        legend += "<li><span class='lk switch'></span>Change model</li>"
+    if "router" in levers:
+        legend += "<li><span class='lk router'></span>Smart Router splits asks</li>"
     foot = ""
     if kept:
         foot += ("<p class='m foot'>No cheaper model as strong: "
@@ -1988,6 +2069,21 @@ GLOSSARY = [
     ("Coverage", "The share of spend on the sampled models. Spend on other models is not estimated."),
     ("Ask, sampled call", "One LLM call (a span) from this workspace's traces, re-priced on the new model."),
 ]
+
+
+FONT_DIR = Path(__file__).resolve().parent.parent / "resources" / "fonts"
+
+
+def _font_css() -> str:
+    """@font-face rules for the bundled Avio Sans subsets (Latin), inlined so the page stays one file."""
+    out = []
+    for name, weight in (("Regular", 400), ("Medium", 500), ("SemiBold", 600)):
+        f = FONT_DIR / f"AvioSans-{name}.woff2"
+        if f.exists():
+            data = base64.b64encode(f.read_bytes()).decode()
+            out.append(f'@font-face{{font-family:"Avio Sans";font-weight:{weight};font-style:normal;'
+                       f'font-display:swap;src:url(data:font/woff2;base64,{data}) format("woff2")}}')
+    return "".join(out)
 
 
 def render(report: dict, narrative: dict[str, str], redact: bool, show_examples: bool = False) -> str:
@@ -2100,7 +2196,7 @@ def render(report: dict, narrative: dict[str, str], redact: bool, show_examples:
     title = f"{ws} cost savings, {to_day.split(' ', 1)[-1]}"
     return ("<!doctype html><html lang=en><head><meta charset=utf-8>"
             "<meta name=viewport content='width=device-width, initial-scale=1'>"
-            f"<title>{html.escape(title)}</title><style>{CSS}</style></head><body><main>{''.join(parts)}</main>"
+            f"<title>{html.escape(title)}</title><style>{_font_css()}{CSS}</style></head><body><main>{''.join(parts)}</main>"
             "</body></html>")
 
 
