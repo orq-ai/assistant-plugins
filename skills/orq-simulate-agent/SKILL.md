@@ -28,6 +28,7 @@ violations. You almost never need to hand-roll the loop.
 
 ## Constraints
 
+- **ALWAYS** show a trace or span to the user as a Studio link (`[<first 8 chars>](<url>)`), never a bare id. Format, workspace key and host: [`orq-trace-format`](../orq-trace-format/SKILL.md).
 - **NEVER** use the same model for the user simulator and the agent under test if a downstream LLM-as-judge is reading both. Collusion inflates scores. `simulate()` accepts one `sim_model=` kwarg that drives the simulator, judge, and first-message generator. The agent's own model lives inside the target (`target="agent:<key>"` or the callback). To customize the user simulator separately, build a `UserSimulatorAgent(model=...)` and pass it as `user_simulator=`.
 - **NEVER** let the simulator run unbounded. `simulate()` defaults to `max_turns=10`. Lower it for cheap exploration, raise it for memory tests.
 - **NEVER** hand-roll the loop around `client.responses.create()` when `simulate()` or `wrap_simulation_agent()` covers the case. The framework already handles parallelism, judge-based termination, OTel tracing, and result conversion.

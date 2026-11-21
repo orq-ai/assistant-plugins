@@ -79,6 +79,17 @@ def test_skill_fired_requires_the_expected_skill_first() -> None:
     assert score(r.skill_fired, c, [call("Skill", {"skill": "orq-build-evaluator"}, status="incomplete")]).pass_ is False
 
 
+def test_skill_fired_anywhere_accepts_a_later_fire() -> None:
+    c = case(expect_skill="orq-run-experiment", expect_skill_anywhere=True)
+    later = [call("Skill", {"skill": "orq-build-evaluator"}), call("Skill", {"skill": "orq-run-experiment"})]
+    assert score(r.skill_fired, c, later).pass_ is True
+    assert score(r.skill_fired, c, [call("Skill", {"skill": "orq-build-evaluator"})]).pass_ is False
+    read = [call("Skill", {"skill": "orq-build-evaluator"}), call("Read", {"file_path": "/work/plugin/skills/orq-run-experiment/SKILL.md"})]
+    assert score(r.skill_fired, c, read).pass_ is True
+    # Without the opt-in a read is not a fire, so first-skill cases score as before.
+    assert score(r.skill_fired, case(expect_skill="orq-run-experiment"), read[1:]).pass_ is False
+
+
 def test_skill_fired_none_and_any() -> None:
     none = case(kind="invocation", expect_skill="none")
     assert score(r.skill_fired, none, [call("Skill", {"skill": "orq-run-experiment"})]).pass_ is False

@@ -72,7 +72,7 @@ All endpoints require `Authorization: Bearer $ORQ_API_KEY`.
 | `model` | Model used |
 | `provider` | Provider used |
 | `is_final` | Whether this is the final response chunk (streaming) |
-| `telemetry.trace_id` | Trace ID — link it as `<host>/<workspace-key>/traces/(trace:<trace_id>)` ([format, and the unverified-id caveat](../../orq-cli/resources/command-map.md#building-app-urls)) |
+| `telemetry.trace_id` | Trace ID — link it as `<host>/<workspace-key>/traces/(trace:<trace_id>)` ([format, and the unverified-id caveat](../../orq-trace-format/SKILL.md)) |
 | `telemetry.span_id` | Span ID |
 | `choices[].message.content` | Generated text content |
 | `choices[].message.tool_calls` | Tool call requests (if model used tools) |

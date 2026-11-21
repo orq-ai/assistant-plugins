@@ -1,0 +1,6 @@
+test_type,target,assertion,description
+cli_subcommand,auth whoami,,orq auth whoami exists
+cli_flag,auth whoami,-o,orq auth whoami accepts -o
+cli_flag,auth whoami,-j,orq auth whoami accepts -j
+cli_flag,auth whoami,--raw,orq auth whoami accepts --raw
+cli_subcommand,traces search,,orq traces search exists

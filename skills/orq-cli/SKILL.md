@@ -24,6 +24,7 @@ The CLI is a Go binary generated from the orq.ai OpenAPI spec, so nearly every A
 
 ## Constraints
 
+- **ALWAYS** show a trace or span to the user as a Studio link (`[<first 8 chars>](<url>)`), never a bare id. Format, workspace key and host: [`orq-trace-format`](../orq-trace-format/SKILL.md).
 - **NEVER** run any `orq` command with `--verbose` in output anyone else will see. It writes the whole profile config to **stderr** before any request, so every command dumps it. **On 8.6.9 the keys in that dump are masked** (`"api_key":"**HIDDEN**"`) and the HTTP `Authorization` header is `[REDACTED]`, so it no longer leaks credentials — but it still lists every profile name and host, which is not for a shared transcript. **On 5.1.0 it printed every stored key in plaintext**, and that version was verified to do so; the fix landed somewhere between 5.1.0 and 8.6.9 and was not bisected. On any CLI you have not checked, assume the 5.1.0 behaviour, and if a key did print, tell the user to rotate it.
 - **NEVER** run a generated `delete` command, or `orq request DELETE`, without `--force` in any non-interactive context. Since 5.0.0 they prompt for confirmation and **refuse to run when there is no terminal** — which is every agent and CI invocation. Re-verified on 8.6.9. This one fails *loudly* (exit 1, message on stderr, no request sent), so it costs a retry rather than data; `--force` skips the prompt, so think before adding it — it is the confirmation you are removing.
 - **NEVER** trust `orq doctor`'s exit code, or its `auth.status`, as proof a credential works. `doctor` exits **0** whatever it finds, and its `auth.status` says `authenticated` from the mere presence of a session file: on 8.6.9 a session whose refresh token was dead reported `authenticated` (`source: session-file`) while `orq auth whoami` failed with `Error: Invalid refresh token!`. `whoami` and `workspace list` now fail loudly — exit **1** with `Error: you are not logged in` (5.1.0 exited 0 with the same message, so an old script that read the payload still works, and one that read the exit code now gets a real signal). The only real proof a credential works is a resource command returning data.
@@ -309,7 +310,7 @@ Fall back to the session file only when the CLI is unavailable. Same value, unde
 jq -r .activeWorkspaceKey ~/.orq/sessions/my.orq.ai.json
 ```
 
-A snippet for scripts that need the key (for example to build trace and span links; the URL shapes are in [resources/command-map.md → Building app URLs](resources/command-map.md#building-app-urls)). It has to tolerate the command succeeding while producing nothing, which is why the guard is not optional:
+A snippet for scripts that need the key (for example to build trace and span links; the URL shapes are in the [`orq-trace-format`](../orq-trace-format/SKILL.md) skill). It has to tolerate the command succeeding while producing nothing, which is why the guard is not optional:
 
 ```sh
 # ORQ_WORKSPACE is read by the CLI itself as of 5.x (still listed on 8.6.9), so honouring it here agrees
@@ -325,7 +326,7 @@ case "$workspace_key" in
 esac
 ```
 
-Keep that in scripts and terminal use. Library code on a request path should not shell out to the CLI — see the note in [resources/command-map.md](resources/command-map.md#building-app-urls).
+Keep that in scripts and terminal use. Library code on a request path should not shell out to the CLI — see [`orq-trace-format`](../orq-trace-format/SKILL.md).
 
 ## Phase 4 — Discover the command
 
