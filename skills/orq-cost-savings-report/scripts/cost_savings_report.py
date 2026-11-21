@@ -28,6 +28,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.parse
 from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -1639,6 +1640,12 @@ var b=document.body;if(b){b.classList.remove('auto','light','dark');b.classList.
 label();if(mq&&mq.addEventListener)mq.addEventListener('change',label);
 if(btn)btn.addEventListener('click',function(){var t=isDark()?'light':'dark';d.setAttribute('data-theme',t);
 try{localStorage.setItem('report-theme',t)}catch(e){}label()});
+document.querySelectorAll('.copy').forEach(function(b){b.addEventListener('click',function(e){
+e.preventDefault();e.stopPropagation();var t=b.closest('details').querySelector('pre').textContent;
+function done(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy'},1500)}
+function old(){var a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();
+try{document.execCommand('copy');done()}catch(x){}a.remove()}
+if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(done,old);else old()})});
 })();"""
 
 CSS = """
@@ -1662,6 +1669,14 @@ h2{font-size:13px;color:var(--muted);margin:0;padding:10px 16px;scroll-margin-to
 h3{font-size:14px;margin:20px 0 6px}
 p,li,dd{max-width:68ch;text-wrap:pretty}
 .m{color:var(--muted)}
+.setup+.setup{margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}
+.setup h3{font-size:15px;margin:0 0 4px;display:flex;align-items:center;gap:8px}.setup .ol{margin:8px 0 0}.setup .ol a{color:var(--fg);text-underline-offset:2px}
+details.cp{border:1px solid var(--line);border-radius:6px;padding:0 12px;margin:8px 0}
+details.cp>summary{display:flex;align-items:center;gap:8px;padding:6px 0}
+details.cp .copy{margin-left:auto;font:inherit;font-size:12px;color:var(--fg);background:var(--pill);
+border:1px solid var(--line);border-radius:6px;padding:2px 10px;cursor:pointer}
+details.cp pre{margin:0 0 10px;padding:10px 12px;background:var(--panel);border-radius:6px;font:12px/1.5 ui-monospace,
+SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--fg)}
 .top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.top>div{min-width:0}
 .toc{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 16px;margin:20px 0 4px;font-size:13px}
 .toc span{color:var(--muted)}
@@ -2215,6 +2230,106 @@ def _card(title: str, body: str, ident: str = "") -> str:
     return f"<section class=card><h2{i}>{html.escape(title)}</h2><div class=cb>{body}</div></section>"
 
 
+ORQ_APP = "https://my.orq.ai"
+ROUTER_PROFILE = "SMART_ROUTER_PROFILE_BALANCED"
+SEP = " \u00b7 "
+
+
+def _router_key(model: str) -> str:
+    return "savings-" + re.sub(r"[^a-z0-9]+", "-", model.split("/")[-1].lower()).strip("-")
+
+
+def _setup_plan(report: dict, lever: str) -> dict:
+    """What applying one lever takes: models to enable, and per model in use its router pool or new model."""
+    moves, enable = [], []
+    for info in _headline(report).get("models") or []:
+        if lever == "router" and _lever(info) == "router":
+            moves.append({"model": info["model"], "key": _router_key(info["model"]), "pool": list(info["pool"])})
+            new = info.get("enable") or []
+        elif lever == "switch" and info.get("switch"):
+            moves.append({"model": info["model"], "to": info["switch"]})
+            new = _as_switch(info)["enable"]
+        else:
+            continue
+        enable += [e for e in new if e not in enable]
+    return {"lever": lever, "enable": enable, "moves": moves}
+
+
+def _setup_commands(plan: dict) -> str:
+    lines = []
+    if plan["enable"]:
+        lines.append("# Enable models (needs a management key with workspace-model write access)")
+        lines += [f"orq models enable --model-id {m}" for m in plan["enable"]]
+    if plan["lever"] == "router":
+        lines.append("# One Smart Router per model; note the model_ref in each response")
+        lines += [f"orq smart-routers create --key {m['key']} "
+                  + " ".join(f"--models {x}" for x in m["pool"]) + f" --body-profile {ROUTER_PROFILE}"
+                  for m in plan["moves"]]
+    else:
+        lines.append("# Then change the model in your code, deployments and agents:")
+        lines += [f"#   {m['model']} -> {m['to']}" for m in plan["moves"]]
+    return "\n".join(lines)
+
+
+def _setup_prompt(plan: dict) -> str:
+    out = ["Apply this orq.ai cost-savings plan. Use the orq CLI (`orq --help`).", ""]
+    step = 1
+    if plan["enable"]:
+        out.append(f"{step}. Enable these models in the orq.ai workspace with `orq models enable --model-id <id>` "
+                   "(needs a management key with workspace-model write access):")
+        out += [f"   - {m}" for m in plan["enable"]]
+        step += 1
+    if plan["lever"] == "router":
+        out.append(f"{step}. Create one Smart Router per model with `orq smart-routers create`, profile "
+                   f"{ROUTER_PROFILE}, and keep the `model_ref` each response returns:")
+        out += [f"   - key {m['key']}, models {', '.join(m['pool'])} (replaces {m['model']})" for m in plan["moves"]]
+        swap = "the `model_ref` of its router"
+    else:
+        out.append(f"{step}. Use these replacements:")
+        out += [f"   - {m['model']} -> {m['to']}" for m in plan["moves"]]
+        swap = "its replacement"
+    out += [(f"{step + 1}. Find every place this codebase uses one of the replaced models: model ids in code and "
+             f"config, and orq.ai deployments or agents. Change each to {swap}. Leave other models alone."),
+            (f"{step + 2}. Before moving all traffic, run a sample of real prompts through the old and the new setup "
+             "and compare the answers. Report any quality differences."),
+            f"{step + 3}. Show me the diff before committing."]
+    return "\n".join(out)
+
+
+def _copy_block(title: str, text: str) -> str:
+    return (f"<details class=cp><summary>{html.escape(title)}<button type=button class=copy>Copy</button></summary>"
+            f"<pre>{html.escape(text)}</pre></details>")
+
+
+def _setup_card(report: dict, rec: str) -> str:
+    ws = urllib.parse.quote(str(report.get("workspace") or ""), safe="")
+    blocks = []
+    for lever in (["switch", "router"] if rec == "s" else ["router", "switch"]):
+        plan = _setup_plan(report, lever)
+        if not plan["moves"]:
+            continue
+        name = "Smart Router" if lever == "router" else "Change model"
+        tag = " <span class=rec>Recommended</span>" if lever[0] == rec else ""
+        n_on, n_mv = len(plan["enable"]), len(plan["moves"])
+        names = [m["model"].split("/")[-1] for m in plan["moves"]]
+        moved = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+        what = (f"create {n_mv} router{'s' if n_mv != 1 else ''} and point {moved} at them" if lever == "router"
+                else f"change {moved}")
+        summary = (f"Enable {n_on} model{'s' if n_on != 1 else ''}, then {what}." if n_on
+                   else what[0].upper() + what[1:] + ".")
+        links = [f"<a href='{ORQ_APP}/{ws}/router/models?q={urllib.parse.quote(m.split('/')[-1])}'>"
+                 f"Enable {html.escape(m.split('/')[-1])}</a>" for m in plan["enable"]]
+        if lever == "router":
+            links.insert(0, f"<a href='{ORQ_APP}/{ws}/router/smart-router?id=new'>Create a Smart Router</a>")
+        blocks.append(f"<div class=setup><h3>{name}{tag}</h3><p class=m>{html.escape(summary)}</p>"
+                      + _copy_block("Commands", _setup_commands(plan))
+                      + _copy_block("Prompt for your coding agent", _setup_prompt(plan))
+                      + (f"<p class='m ol'>In orq.ai: {SEP.join(links)}</p>" if links else "") + "</div>")
+    if not blocks:
+        return ""
+    return _card("Set it up", "".join(blocks), "setup")
+
+
 def _details(title: str, hint: str, body: str) -> str:
     return f"<details><summary>{html.escape(title)} <span>{html.escape(hint)}</span></summary>{body}</details>"
 
@@ -2323,8 +2438,10 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
                     "Test answer quality before moving traffic.</p>")
             + "</section>")
 
-    nav = ("<nav class=toc aria-label='On this page'><span>On this page</span><ul><li><a href='#do'>What to do</a></li>"
-           "<li><a href='#scopes'>Other model choices</a></li><li><a href='#details'>Details</a></li></ul></nav>")
+    setup = _setup_card(report, rec)
+    toc = [("do", "What to do"), ("setup", "Set it up"), ("scopes", "Other model choices"), ("details", "Details")]
+    nav = ("<nav class=toc aria-label='On this page'><span>On this page</span><ul>"
+           + "".join(f"<li><a href='#{k}'>{t}</a></li>" for k, t in toc if k != "setup" or setup) + "</ul></nav>")
     theme = f"<button type=button class=theme aria-label='Switch colour theme'>{SUN}{MOON}</button>"
     to_day = _day(win["to"])
     head = (f"<header class=top><div><h1>LLM cost savings: {html.escape(ws)}</h1>"
@@ -2332,6 +2449,7 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
             f"{_usd0(spend_pm)}/mo LLM spend.</p></div>{theme}</header>")
     parts = [_card("What to do", (_plan_caption("switch", p_switch, sw_pm) if rec == "s" else _plan_caption("router", p_router, h_pm))
                    + _actions_chart(report, per_month, "switch" if rec == "s" else "router"), "do"),
+             setup,
              _card("Other model choices", "<p class=m>Share of monthly spend saved, by which models are allowed.</p>"
                    + _scope_grid(report, spend_pm) + f"<p class=m>{html.escape(TOKENIZER_NOTE)}</p>", "scopes")]
     if not caching_small:

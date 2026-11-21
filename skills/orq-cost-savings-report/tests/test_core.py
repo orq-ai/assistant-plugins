@@ -714,3 +714,41 @@ def test_uncertainty_range_plot_shares_one_scale():
     assert "class='rg lv-s'" in c._range_cell(rows[1]["range"])
     html_table = c._table(rows, [("Range", "range", c._range_cell), ("Scope", "scope", str)])
     assert "<svg class='rg lv-r'" in html_table  # markup kept, not escaped
+
+
+SETUP_REPORT = {"workspace": "acme", "scenarios": [{"headline": True, "models": [
+    {"model": "openai/gpt-6-sol", "pool": ["openai/gpt-6.1-terra", "openai/gpt-6-luna"],
+     "switch": "openai/gpt-6.1-terra", "enable": ["openai/gpt-6.1-terra"]},
+    {"model": "anthropic/claude-sonnet-5", "pool": None, "switch": "anthropic/claude-haiku-5-5",
+     "enable": ["anthropic/claude-haiku-5-5"]},
+    {"model": "openai/gpt-6-luna", "pool": None, "switch": None, "enable": []}]}]}
+
+
+def test_setup_router_commands_enable_then_create_one_router_per_model():
+    plan = c._setup_plan(SETUP_REPORT, "router")
+    assert plan["enable"] == ["openai/gpt-6.1-terra"]
+    assert [m["key"] for m in plan["moves"]] == ["savings-gpt-6-sol"]
+    cmds = c._setup_commands(plan).splitlines()
+    assert cmds[1] == "orq models enable --model-id openai/gpt-6.1-terra"
+    assert cmds[3] == ("orq smart-routers create --key savings-gpt-6-sol --models openai/gpt-6.1-terra "
+                       "--models openai/gpt-6-luna --body-profile SMART_ROUTER_PROFILE_BALANCED")
+
+
+def test_setup_change_model_lists_replacements_and_only_their_enables():
+    plan = c._setup_plan(SETUP_REPORT, "switch")
+    assert plan["enable"] == ["openai/gpt-6.1-terra", "anthropic/claude-haiku-5-5"]
+    assert {m["model"]: m["to"] for m in plan["moves"]} == {
+        "openai/gpt-6-sol": "openai/gpt-6.1-terra", "anthropic/claude-sonnet-5": "anthropic/claude-haiku-5-5"}
+    assert "smart-routers" not in c._setup_commands(plan)
+    prompt = c._setup_prompt(plan)
+    assert "anthropic/claude-sonnet-5 -> anthropic/claude-haiku-5-5" in prompt and "gpt-6-luna ->" not in prompt
+
+
+def test_setup_card_puts_recommended_lever_first_with_collapsed_copyable_blocks():
+    card = c._setup_card(SETUP_REPORT, "s")
+    assert card.index("<h3>Change model") < card.index("<h3>Smart Router")
+    assert card.count("<details class=cp>") == 4 and card.count("class=copy") == 4
+    assert "https://my.orq.ai/acme/router/smart-router?id=new" in card
+    assert "https://my.orq.ai/acme/router/models?q=gpt-6.1-terra" in card
+    assert "&lt;" not in c._setup_prompt(c._setup_plan(SETUP_REPORT, "router")).replace("<id>", "")
+    assert c._setup_card({"scenarios": []}, "r") == ""
