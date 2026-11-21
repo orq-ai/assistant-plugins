@@ -1622,22 +1622,20 @@ THEME_BOOT = ("try{var t=localStorage.getItem('report-theme');"
               "if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}"
               "document.documentElement.classList.add('js')")
 
+_SVG = ("<svg class={c} viewBox='0 0 24 24' width=16 height=16 fill=none stroke=currentColor stroke-width=2 "
+        "stroke-linecap=round stroke-linejoin=round aria-hidden=true>{d}</svg>")
+SUN = _SVG.format(c="sun", d="<circle cx=12 cy=12 r=4></circle><path d='M12 2v2M12 20v2M4.93 4.93l1.41 1.41"
+                  "M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41'></path>")
+MOON = _SVG.format(c="moon", d="<path d='M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z'></path>")
+
 PAGE_JS = """(function(){var d=document.documentElement;
-function setTheme(t){if(t==='light'||t==='dark'){d.setAttribute('data-theme',t)}else{t='auto';d.removeAttribute('data-theme')}
-[].forEach.call(document.querySelectorAll('.theme button'),function(b){b.setAttribute('aria-pressed',String(b.dataset.t===t))});
-try{localStorage.setItem('report-theme',t)}catch(e){}}
-var t='auto';try{t=localStorage.getItem('report-theme')||'auto'}catch(e){}
-setTheme(t);
-[].forEach.call(document.querySelectorAll('.theme button'),function(b){b.addEventListener('click',function(){setTheme(b.dataset.t)})});
-var tabs=[].slice.call(document.querySelectorAll('nav.jump a'));
-function show(id){tabs.forEach(function(a){var k=a.getAttribute('href').slice(1),on=k===id,p=document.getElementById('pane-'+k);
-a.setAttribute('aria-selected',String(on));a.tabIndex=on?0:-1;if(p)p.hidden=!on})}
-tabs.forEach(function(a,i){a.setAttribute('role','tab');a.setAttribute('aria-controls','pane-'+a.getAttribute('href').slice(1));
-a.addEventListener('click',function(e){e.preventDefault();show(a.getAttribute('href').slice(1));
-try{history.replaceState(null,'',a.getAttribute('href'))}catch(x){}});
-a.addEventListener('keydown',function(e){var j=e.key==='ArrowRight'?i+1:e.key==='ArrowLeft'?i-1:-9;
-if(j===-9)return;j=(j+tabs.length)%tabs.length;tabs[j].focus();tabs[j].click()})});
-var h=location.hash.slice(1);show(document.getElementById('pane-'+h)?h:'do')})();"""
+var mq=window.matchMedia?matchMedia('(prefers-color-scheme: dark)'):null,btn=document.querySelector('.theme');
+function isDark(){var t=d.getAttribute('data-theme');return t?t==='dark':!!(mq&&mq.matches)}
+function label(){if(btn)btn.setAttribute('aria-label',isDark()?'Switch to light theme':'Switch to dark theme')}
+label();if(mq&&mq.addEventListener)mq.addEventListener('change',label);
+if(btn)btn.addEventListener('click',function(){var t=isDark()?'light':'dark';d.setAttribute('data-theme',t);
+try{localStorage.setItem('report-theme',t)}catch(e){}label()});
+})();"""
 
 CSS = """
 :root{--bg:#ffffff;--fg:#141319;--fg2:#3c3a48;--muted:#737373;--panel:#fafafa;--strip:#f7f6f5;--card:#ffffff;
@@ -1660,19 +1658,24 @@ h2{font-size:13px;color:var(--muted);margin:0;padding:10px 16px;scroll-margin-to
 h3{font-size:14px;margin:20px 0 6px}
 p,li,dd{max-width:68ch;text-wrap:pretty}
 .m{color:var(--muted)}
-.top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
-.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:4px;background:var(--strip);
-border:1px solid var(--line);border-radius:8px;font-size:13px}
-.seg a,.seg button{font:inherit;color:var(--muted);text-decoration:none;padding:5px 12px;border-radius:6px;border:0;
-background:none;cursor:pointer;transition:background-color .15s ease-out,color .15s ease-out}
-.seg a:hover,.seg button:hover{color:var(--fg)}
-.seg [aria-selected=true],.seg [aria-pressed=true]{background:var(--pill);color:var(--fg);box-shadow:var(--shadow)}
-.seg a:focus-visible,.seg button:focus-visible{outline:2px solid var(--s1);outline-offset:1px}
-nav.jump{margin:20px 0 0}
-.theme{display:none;font-size:12px}.js .theme{display:inline-flex}
-.theme button{padding:3px 10px}
-.pane[hidden]{display:none}
-@media (prefers-reduced-motion:reduce){.seg a,.seg button{transition:none}}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.top>div{min-width:0}
+.toc{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 16px;margin:20px 0 4px;font-size:13px}
+.toc span{color:var(--muted)}
+.toc ul{display:flex;flex-wrap:wrap;gap:4px 16px;margin:0;padding:0;list-style:none}
+.toc li{max-width:none}
+.toc a{color:var(--fg);text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:3px;
+transition:text-decoration-color .15s ease-out}
+.toc a:hover{text-decoration-color:currentColor}
+.toc a:focus-visible{outline:2px solid var(--s1);outline-offset:2px;border-radius:2px}
+.theme{display:none;place-items:center;width:32px;height:32px;padding:0;border:1px solid var(--line);border-radius:8px;
+background:var(--strip);color:var(--muted);cursor:pointer;transition:color .15s ease-out,background-color .15s ease-out}
+.js .theme{display:inline-grid}.theme:hover{color:var(--fg);background:var(--pill)}
+.theme:focus-visible{outline:2px solid var(--s1);outline-offset:1px}
+.theme .sun{display:none}
+:root[data-theme="dark"] .theme .sun{display:block}:root[data-theme="dark"] .theme .moon{display:none}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .theme .sun{display:block}
+:root:not([data-theme="light"]) .theme .moon{display:none}}
+@media (prefers-reduced-motion:reduce){.toc a,.theme{transition:none}}
 .card{background:var(--strip);border:1px solid var(--line);border-radius:8px;margin:12px 0;overflow:hidden}
 .card>.cb{background:var(--card);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow);
 margin:0 6px 6px;padding:var(--pad);min-width:0;--pad:16px}
@@ -1758,7 +1761,7 @@ align-items:stretch}
 .cell{border:1px solid var(--line);border-radius:6px;padding:10px 12px;min-width:0;background:var(--panel)}
 .cell.hl{background:var(--hl);border-color:var(--s1)}
 .cell p{margin:0}
-.cell .tag{font-size:11px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.cell .tag{font-size:12px;font-weight:500;color:var(--rec-fg)}
 .cell .f1{font-size:26px;line-height:1.15;font-weight:500;color:var(--s1)}
 .cell .f2{font-size:19px;line-height:1.2;font-weight:500;color:var(--s2);margin-top:8px}
 .cell .f1 span,.cell .f2 span{font-size:12px;font-weight:400;color:var(--muted);margin-left:6px}
@@ -1772,7 +1775,8 @@ details:first-child{border-top:0}
 details[open]{padding-bottom:12px}
 summary{cursor:pointer;padding:10px 0;font-weight:500;color:var(--fg)}
 summary span{font-weight:400;color:var(--muted)}
-.t{overflow-x:auto;margin:8px 0 12px}
+.t{overflow-x:auto;margin:8px 0 12px}.t td:first-child{white-space:nowrap}
+@media print{.theme,.toc{display:none}.card,.row,details,tr{break-inside:avoid}body{padding:0}}
 table{border-collapse:collapse;width:100%;font-size:13px}
 caption{text-align:left;font-weight:500;padding:4px 0 6px}
 td,th{border-bottom:1px solid var(--line);padding:8px 8px;text-align:left;vertical-align:top}
@@ -2073,7 +2077,7 @@ def _actions_chart(report: dict, per_month: float, lever: str = "router") -> str
         rows.append(f"<div class=row><div class=who>{_flow_html(r)}{notes}</div>"
                     f"<div class=track role=img aria-label='{html.escape(tip)}'>{bars}</div>"
                     f"<div class=val><b>{_pc(pct)} saved</b>"
-                    f"<span>{_usd0(r['saved'])}/mo</span></div></div>")
+                    f"<span>{_usd0(r['saved'])} of {_usd0(r['spend'])}/mo</span></div></div>")
     legend = "<ul class=legend><li><span class='sw sr'></span>Saved today</li>"
     if any(r["after"] > 0 for r in drawn):
         legend += "<li><span class='sw sr2'></span>Saved after enabling</li>"
@@ -2101,7 +2105,7 @@ def _scope_cell(sc: dict | None, approx: bool, coverage_note: str, spend_pm: flo
         return "<div class=cell><p class=m>n/a</p></div>"
     r, w = sc["router"]["balanced"], sc["switch"]
     enable = list(dict.fromkeys(e for m in sc.get("models") or [] for e in m.get("enable") or []))
-    out = ["<div class='cell hl'><p class=tag>headline</p>" if sc.get("headline") else "<div class=cell>",
+    out = ["<div class='cell hl'><p class=tag>This report's figure</p>" if sc.get("headline") else "<div class=cell>",
            f"<p class=f1>{_pc(_of(r.get('per_month'), spend_pm))}<span>Smart Router</span></p>",
            f"<p class=ci>{_usd0(r.get('per_month'))}/mo</p>",
            f"<p class=f2>{_pc(_of(w.get('per_month'), spend_pm))}<span>Change model</span></p>",
@@ -2264,22 +2268,18 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
                     "Test answer quality before moving traffic.</p>")
             + "</section>")
 
-    nav = ("<nav class='jump seg' role=tablist aria-label='Sections'><a href='#do' aria-selected=true>What to do</a>"
-           "<a href='#scopes'>Other scopes</a><a href='#details'>Details</a></nav>")
-    theme = ("<div class='theme seg' role=group aria-label='Colour theme'>"
-             + "".join(f"<button type=button data-t={t} aria-pressed={'true' if t == 'auto' else 'false'}>{t.title()}"
-                       "</button>" for t in ("auto", "light", "dark")) + "</div>")
+    nav = ("<nav class=toc aria-label='On this page'><span>On this page</span><ul><li><a href='#do'>What to do</a></li>"
+           "<li><a href='#scopes'>Other model choices</a></li><li><a href='#details'>Details</a></li></ul></nav>")
+    theme = f"<button type=button class=theme aria-label='Switch colour theme'>{SUN}{MOON}</button>"
     to_day = _day(win["to"])
     head = (f"<header class=top><div><h1>LLM cost savings: {html.escape(ws)}</h1>"
             f"<p class=m>{html.escape(_day(win['from']))} to {html.escape(to_day)}, scaled to a month: "
             f"{_usd0(spend_pm)}/mo LLM spend.</p></div>{theme}</header>")
     parts = [_card("What to do", (_plan_caption("switch", p_switch, sw_pm) if rec == "s" else _plan_caption("router", p_router, h_pm))
                    + _actions_chart(report, per_month, "switch" if rec == "s" else "router"), "do"),
-             _card("Other scopes", "<p class=m>Share of monthly spend saved, by which models are allowed.</p>"
+             _card("Other model choices", "<p class=m>Share of monthly spend saved, by which models are allowed.</p>"
                    + _scope_grid(report, spend_pm) + f"<p class=m>{html.escape(TOKENIZER_NOTE)}</p>", "scopes")]
-    if caching_small:
-        parts.append("<p><b>Caching:</b> nothing worth changing.</p>")
-    else:
+    if not caching_small:
         parts.append(_card("Caching", (f"<p><b>Caching:</b> {_usd(ca.get('savings_found'))} in the "
                                        f"{ca.get('threads_scanned', 0)} costliest threads scanned, not scaled to the "
                                        "window.</p>") + _md(narrative["caching"]), "caching"))
@@ -2310,13 +2310,11 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
                                      ("Agent", "agent", lambda a: a or "no agent"), ("Model", "model", str),
                                      ("Turns", "turns", str), ("Saving", "savings", _usd), ("Action", "action", str)],
                                     "Caching candidates")))
-    intro = (f"<p class=m>{_usd(total)} spent over the {win['days']}-day window. Covers {_pct(cov)} of spend; "
+    intro = "<p><b>Caching:</b> nothing worth changing.</p>" if caching_small else ""
+    intro += (f"<p class=m>{_usd(total)} spent over the {win['days']}-day window. Covers {_pct(cov)} of spend; "
              f"figures re-price the sampled calls on the new model. Balanced routing profile, generated {gen}.</p>")
     parts.append(_card("Details", intro + "<div class=rows>" + "".join(dets) + "</div>", "details"))
-    # three tab panes: What to do, Other scopes, Details (caching sits with Details); all visible without script
-    panes = (f"<div class=pane id=pane-do>{parts[0]}</div><div class=pane id=pane-scopes>{parts[1]}</div>"
-             f"<div class=pane id=pane-details>{''.join(parts[2:])}</div>")
-    body = head + hero + nav + panes
+    body = head + hero + nav + "".join(parts)
     title = f"{ws} cost savings, {to_day.split(' ', 1)[-1]}"
     return ("<!doctype html><html lang=en><head><meta charset=utf-8>"
             "<meta name=viewport content='width=device-width, initial-scale=1'>"

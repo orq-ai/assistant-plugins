@@ -181,7 +181,7 @@ def test_render_merges_narrative(tmp_path):
     assert c.main(["render", "--out", str(tmp_path), "--narrative", str(narrative)]) == 0
     page = (tmp_path / "report.html").read_text()
     assert "Routing would save money." in page and "<li>easy asks move to luna</li>" in page
-    assert "class='cell hl'><p class=tag>headline</p>" in page  # the grid highlights the headline cell
+    assert "class='cell hl'><p class=tag>This report's figure</p>" in page  # the grid highlights the headline cell
     assert "tokenize differently" in page and "approximate" in page
     hero = page.split("<section class=hero")[1].split("<h2 id=do>")[0]
     assert "90% CI" not in hero and "saved, $" in hero and "%</p>" in hero.replace("<small>", "</p>")  # percent first
@@ -195,11 +195,13 @@ def test_render_merges_narrative(tmp_path):
     assert "class=ex" not in page   # sampled ask text never reaches the page
     assert "or, pick one" not in page and "<h2 id=do>What to do</h2>" in page and "class=plan" not in page
     assert "Models with many hard asks" not in page and "jev-general" not in page
-    # tabs: one pane per section, all visible without script; theme switch Auto / Light / Dark
-    for k in ("do", "scopes", "details"):
-        assert f"<div class=pane id=pane-{k}>" in page and f"href='#{k}'" in page
-    assert "role=tablist" in page and "hidden" not in page.split("<main>")[1].split("<script>")[0]
-    assert all(f"data-t={t}" in page for t in ("auto", "light", "dark")) and "report-theme" in page
+    # an outline linking to every section, all sections on the page in order; sun/moon theme toggle
+    toc = page.split("<nav class=toc")[1].split("</nav>")[0]
+    assert [k for k in ("do", "scopes", "details") if f"href='#{k}'" in toc] == ["do", "scopes", "details"]
+    assert page.index("<h2 id=do>") < page.index("<h2 id=scopes>") < page.index("<h2 id=details>")
+    assert "tablist" not in page and "pane-" not in page
+    assert "<button type=button class=theme" in page and "class=sun" in page and "class=moon" in page
+    assert "report-theme" in page
 
 
 def test_counterfactual_test_stops_after_pilot(tmp_path):

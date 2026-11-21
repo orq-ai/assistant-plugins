@@ -532,7 +532,7 @@ def test_row_percent_leads_the_right_column():
     report = _plan_report()
     report["routing"]["strata"][1].update(spend=100.0)
     chart = c._actions_chart(report, 1.0)
-    assert "<b>50% saved</b><span>$50/mo</span>" in chart  # model b: 50 saved of 100 spend
+    assert "<b>50% saved</b><span>$50 of $100/mo</span>" in chart  # model b: 50 saved of 100 spend
 
 
 def test_uncertainty_rows_carry_percent_and_ci():
