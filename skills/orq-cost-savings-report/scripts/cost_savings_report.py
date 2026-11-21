@@ -1508,9 +1508,9 @@ def _neg(s: str) -> str:
 
 
 SLOTS = {
-    "summary": "one line, at most 15 words, no model names, percent of spend first: the today figure, the full "
-               "figure and what unlocks it (for example `Save 24% today, 38% after enabling two models.`); the "
-               "per-model rows carry the names and dollars",
+    "summary": "one line, at most 12 words, no model names: the recommended lever (the larger saving, Smart Router "
+               "on ties) with its percent of spend and monthly dollars (for example `Save 38% ($150/mo) with Smart "
+               "Router.`); the spend bar shows how much is possible today",
     "routing": "why each model moves where it does: one line per model, plain words, no 'dominated', no raw index "
                "numbers; no action list, the page renders the per-model plan; monthly figures",
     "caching": "which threads or agents miss caching and the action per provider",
@@ -2183,6 +2183,9 @@ GLOSSARY = [
     ("Scope", "Which models are allowed: same provider or any, and enabled models only or all available."),
     ("Coverage", "The share of spend on the sampled models. Spend on other models is not estimated."),
     ("Ask, sampled call", "One LLM call (a span) from this workspace's traces, re-priced on the new model."),
+    ("Easy, Medium, Hard", ("How demanding each sampled call is, as graded by the router. Easy and medium calls "
+                            "sent to a strong model are where a cheaper model does the same job.")),
+    ("Ungraded", "Calls the router could not grade; they go to the strongest model in the pool."),
 ]
 
 
