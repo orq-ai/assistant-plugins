@@ -177,13 +177,18 @@ def test_render_merges_narrative(tmp_path):
     page = (tmp_path / "report.html").read_text()
     assert "Routing would save money." in page and "<li>easy asks move to luna</li>" in page
     assert "class='cell hl'><p class=tag>headline</p>" in page  # the grid highlights the headline cell
-    assert page.count("90% CI") >= 8 and "tokenize differently" in page and "approximate" in page
-    assert "Router adds" in page and "Up to $" not in page
+    assert "tokenize differently" in page and "approximate" in page
+    hero = page.split("<section class=hero")[1].split("<h2 id=do>")[0]
+    assert "90% CI" not in hero and "saved, $" in hero and "%</p>" in hero.replace("<small>", "</p>")  # percent first
+    assert "90% CI" not in page.split("<h2 id=scopes>")[1].split("<h2 id=details>")[0]
+    appendix = page.split("<summary>Estimates with uncertainty")[1]
+    assert "90% CI ($/mo)" in appendix and "% saved" in appendix and "sampling noise only" in appendix
+    assert ("Router saves" in page or "Router adds nothing" in page) and "Up to $" not in page
     for gone in ("Dominated", "Routing profiles", "Spend by model", "Scenario figures as a table", "class=plot"):
         assert gone not in page
     assert "<dt>Smart Router</dt>" in page and "Method and caveats" in page  # Terms live in Method
     assert "class=ex" not in page  # sampled ask text stays out unless --show-examples
-    assert "or, pick one" not in page and "<p class=or>or</p>" in page and "<h2 id=do>What to do</h2>" in page and "class=plan" not in page
+    assert "or, pick one" not in page and "<h2 id=do>What to do</h2>" in page and "class=plan" not in page
     assert "Models with many hard asks" not in page and "jev-general" not in page
 
 

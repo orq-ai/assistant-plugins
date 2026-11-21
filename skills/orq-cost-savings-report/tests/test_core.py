@@ -528,6 +528,23 @@ def test_hard_flag_shows_on_the_flagged_row_with_the_largest_saving_only():
     assert page.count("test quality first") == 1 and "80% of its sampled asks are hard: test quality first." in page
 
 
+def test_row_percent_leads_the_right_column():
+    report = _plan_report()
+    report["routing"]["strata"][1].update(spend=100.0)
+    chart = c._actions_chart(report, 1.0)
+    assert "<b>50% saved</b><span>$50/mo</span>" in chart  # model b: 50 saved of 100 spend
+
+
+def test_uncertainty_rows_carry_percent_and_ci():
+    report = _plan_report()
+    for sc in report["scenarios"]:
+        sc["switch"] = {"per_month": 20.0, "ci90_per_month": [15.0, 25.0]}
+        sc["router"]["balanced"]["ci90_per_month"] = [90.0, 110.0]
+    rows = c._uncertainty_rows(report, 400.0)
+    assert rows[0]["lever"] == "Smart Router" and rows[0]["pct"] == 0.25 and rows[0]["ci"] == "$90 to $110"
+    assert rows[1]["pct"] == 0.05
+
+
 def test_keep_rows_and_not_sampled_spend_are_lines_not_bars():
     report = _plan_report()
     report["routing"]["strata"][3]["model"] = "openai/d"
@@ -535,7 +552,7 @@ def test_keep_rows_and_not_sampled_spend_are_lines_not_bars():
     chart = c._actions_chart(report, 1.0)
     assert chart.count("class=row>") == 3  # a, b, c; the keep row d has no bar
     assert "No cheaper model as strong: d." in chart
-    assert "+$84/mo on 2 other models, not sampled." in chart
+    assert "Not analysed: $84/mo of spend on 2 smaller models." in chart
     assert "class=ns" not in chart and "Not sampled</li>" not in chart
 
 
@@ -547,4 +564,7 @@ def test_scope_grid_marks_headline_and_enable_first():
     grid = c._scope_grid(report)
     assert grid.count("class='cell hl'") == 1 and "<p class=ch>Any provider</p>" in grid
     assert "enable 2 models" in grid and "title='openai/y, openai/z'" in grid
-    assert "90% CI $90\u2013$110" in grid and "n/a" in grid  # the two any-provider scopes are absent
+    assert "90% CI" not in grid and "n/a" in grid  # the two any-provider scopes are absent
+    pct = c._scope_grid(report, 1000.0)
+    assert "<p class=f1>10%<span>Smart Router</span></p>" in pct and "<p class=f2>8%<span>Change model</span></p>" in pct
+    assert "$100/mo" in pct and "$80/mo" in pct
