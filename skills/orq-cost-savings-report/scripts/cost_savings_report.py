@@ -1618,6 +1618,27 @@ def _table(rows: list[dict], cols: list[tuple[str, str, Any]], caption: str = ""
             f"<tbody>{body}</tbody></table></div>")
 
 
+THEME_BOOT = ("try{var t=localStorage.getItem('report-theme');"
+              "if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}"
+              "document.documentElement.classList.add('js')")
+
+PAGE_JS = """(function(){var d=document.documentElement;
+function setTheme(t){if(t==='light'||t==='dark'){d.setAttribute('data-theme',t)}else{t='auto';d.removeAttribute('data-theme')}
+[].forEach.call(document.querySelectorAll('.theme button'),function(b){b.setAttribute('aria-pressed',String(b.dataset.t===t))});
+try{localStorage.setItem('report-theme',t)}catch(e){}}
+var t='auto';try{t=localStorage.getItem('report-theme')||'auto'}catch(e){}
+setTheme(t);
+[].forEach.call(document.querySelectorAll('.theme button'),function(b){b.addEventListener('click',function(){setTheme(b.dataset.t)})});
+var tabs=[].slice.call(document.querySelectorAll('nav.jump a'));
+function show(id){tabs.forEach(function(a){var k=a.getAttribute('href').slice(1),on=k===id,p=document.getElementById('pane-'+k);
+a.setAttribute('aria-selected',String(on));a.tabIndex=on?0:-1;if(p)p.hidden=!on})}
+tabs.forEach(function(a,i){a.setAttribute('role','tab');a.setAttribute('aria-controls','pane-'+a.getAttribute('href').slice(1));
+a.addEventListener('click',function(e){e.preventDefault();show(a.getAttribute('href').slice(1));
+try{history.replaceState(null,'',a.getAttribute('href'))}catch(x){}});
+a.addEventListener('keydown',function(e){var j=e.key==='ArrowRight'?i+1:e.key==='ArrowLeft'?i-1:-9;
+if(j===-9)return;j=(j+tabs.length)%tabs.length;tabs[j].focus();tabs[j].click()})});
+var h=location.hash.slice(1);show(document.getElementById('pane-'+h)?h:'do')})();"""
+
 CSS = """
 :root{--bg:#ffffff;--fg:#141319;--fg2:#3c3a48;--muted:#737373;--panel:#fafafa;--strip:#f7f6f5;--card:#ffffff;
 --line:#e6e6e6;--shadow:0 1px 2px 0 #14131908;--s1:#299D8F;--s2:#df5325;--kept:#dcdad6;--ns:#ebeae8;--hl:#eef7f5;
@@ -1639,10 +1660,19 @@ h2{font-size:13px;color:var(--muted);margin:0;padding:10px 16px;scroll-margin-to
 h3{font-size:14px;margin:20px 0 6px}
 p,li,dd{max-width:68ch;text-wrap:pretty}
 .m{color:var(--muted)}
-nav.jump{display:inline-flex;flex-wrap:wrap;gap:2px;margin:16px 0 0;padding:4px;background:var(--strip);
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:4px;background:var(--strip);
 border:1px solid var(--line);border-radius:8px;font-size:13px}
-nav.jump a{color:var(--muted);text-decoration:none;padding:5px 12px;border-radius:6px}
-nav.jump a:first-child,nav.jump a:hover{background:var(--pill);color:var(--fg);box-shadow:var(--shadow)}
+.seg a,.seg button{font:inherit;color:var(--muted);text-decoration:none;padding:5px 12px;border-radius:6px;border:0;
+background:none;cursor:pointer;transition:background-color .15s ease-out,color .15s ease-out}
+.seg a:hover,.seg button:hover{color:var(--fg)}
+.seg [aria-selected=true],.seg [aria-pressed=true]{background:var(--pill);color:var(--fg);box-shadow:var(--shadow)}
+.seg a:focus-visible,.seg button:focus-visible{outline:2px solid var(--s1);outline-offset:1px}
+nav.jump{margin:20px 0 0}
+.theme{display:none;font-size:12px}.js .theme{display:inline-flex}
+.theme button{padding:3px 10px}
+.pane[hidden]{display:none}
+@media (prefers-reduced-motion:reduce){.seg a,.seg button{transition:none}}
 .card{background:var(--strip);border:1px solid var(--line);border-radius:8px;margin:12px 0;overflow:hidden}
 .card>.cb{background:var(--card);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow);
 margin:0 6px 6px;padding:var(--pad);min-width:0;--pad:16px}
@@ -1651,7 +1681,8 @@ margin:0 6px 6px;padding:var(--pad);min-width:0;--pad:16px}
 .hero .verdict{margin:0 0 4px;font-size:17px;font-weight:500;color:var(--fg);max-width:60ch}
 .kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .kpis .card{margin:8px 0 0}
-.kh{display:flex;align-items:center;gap:8px;padding:10px 16px;font-size:13px;font-weight:500;color:var(--muted)}
+.kh{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:10px 16px;font-size:13px;font-weight:500;color:var(--muted)}
+.kn{white-space:nowrap}
 .rec{margin-left:auto;font-size:11px;font-weight:500;line-height:1.4;padding:1px 6px;border-radius:4px;
 color:var(--rec-fg);background:var(--rec-bg)}
 .kh i,.dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none}
@@ -1670,7 +1701,7 @@ list-style:none}
 .r{background:var(--s1)}.s{background:var(--s2)}
 .caveat{margin:12px 0 0;font-size:13px}
 .chart{margin:12px 0 0}
-.row{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) 7em;gap:6px 16px;align-items:start;
+.row{display:grid;grid-template-columns:minmax(0,2.2fr) minmax(0,1fr) 7em;gap:6px 16px;align-items:start;
 padding:12px 0;border-bottom:1px solid var(--line)}
 .row:first-child{padding-top:0}.row:last-child{border-bottom:0;padding-bottom:0}
 .who{min-width:0}
@@ -1852,7 +1883,14 @@ def _same_move(a: dict, b: dict) -> bool:
     return (a.get("pool") or None) == (b.get("pool") or None) and a.get("switch") == b.get("switch")
 
 
-def _plan_figures(report: dict, per_month: float) -> dict:
+def _as_switch(info: dict) -> dict:
+    """A model's move under the change-model lever: its switch target only, enabling only that target."""
+    sw = info.get("switch")
+    return {"model": info.get("model"), "pool": None, "switch": sw,
+            "enable": [e for e in info.get("enable") or [] if e == sw]}
+
+
+def _plan_figures(report: dict, per_month: float, lever: str = "router") -> dict:
     """The plan as numbers: the enabled-only router figure (today) and the extra from enabling models.
 
     Today lists the moves of the enabled scope. A move whose target is the same in the headline scope takes the
@@ -1861,15 +1899,25 @@ def _plan_figures(report: dict, per_month: float) -> dict:
     """
     ro = report.get("routing") or {}
     head = _headline(report)
-    h_info = {m["model"]: m for m in head.get("models", [])}
-    strata = {s["model"]: (s.get("savings") or 0) * per_month for s in ro.get("strata") or []}
-    h_pm = (ro.get("headline") or {}).get("per_month")
-    if h_pm is None:
-        h_pm = head.get("router", {}).get("balanced", {}).get("per_month") or 0
+    sw = lever == "switch"
+    conv = _as_switch if sw else (lambda i: i)
+    h_info = {m["model"]: conv(m) for m in head.get("models", [])}
+    if sw:
+        strata = {m: (v or 0) * per_month for m, v in ((head.get("switch") or {}).get("per_stratum") or {}).items()}
+        h_pm = (head.get("switch") or {}).get("per_month") or 0
+    else:
+        strata = {s["model"]: (s.get("savings") or 0) * per_month for s in ro.get("strata") or []}
+        h_pm = (ro.get("headline") or {}).get("per_month")
+        if h_pm is None:
+            h_pm = head.get("router", {}).get("balanced", {}).get("per_month") or 0
     enabled = _enabled_scope(report, head)
+
+    def est(sc: dict) -> dict:
+        return (sc.get("switch") if sw else (sc.get("router") or {}).get("balanced")) or {}
+
     if enabled is not None and enabled is not head:
-        e_pm = enabled["router"]["balanced"].get("per_month") or 0
-        e_info = {m["model"]: m for m in enabled.get("models", [])}
+        e_pm = est(enabled).get("per_month") or 0
+        e_info = {m["model"]: conv(m) for m in enabled.get("models", [])}
     else:
         e_info = {m: i for m, i in h_info.items() if not i.get("enable")}
         e_pm = sum(strata.get(m, 0) for m in e_info) if enabled is None else h_pm
@@ -1878,7 +1926,7 @@ def _plan_figures(report: dict, per_month: float) -> dict:
     amounts = {m: (v if m not in diff else None) for m, (_, v) in moves.items()}
     if len(diff) == 1:
         amounts[diff[0]] = e_pm - sum(v or 0 for m, v in amounts.items() if m != diff[0])
-    exact = ((enabled or {}).get("router", {}).get("balanced") or {}).get("per_stratum")
+    exact = est(enabled or {}).get("per_stratum")
     if exact is not None:  # the enabled scope's own per-model saving: no reconciliation needed
         amounts = {m: (exact.get(m) or 0.0) * per_month for m in moves}
     now = [(m, i, amounts[m]) for m, (i, _) in moves.items()]
@@ -1908,19 +1956,19 @@ def _hard_models(ro: dict) -> dict[str, float]:
     return {u["model"]: u["share_hard"] for u in ro.get("underpowered") or [] if (u.get("share_hard") or 0) >= 0.5}
 
 
-def _plan_rows(report: dict, per_month: float) -> list[dict]:
+def _plan_rows(report: dict, per_month: float, lever: str = "router") -> list[dict]:
     """One row per sampled model: monthly saving split into today (enabled models) and after enabling.
 
     `hard` is the share of hard asks on the one flagged row with the largest saving, else None.
     """
     ro = report.get("routing") or {}
-    f = _plan_figures(report, per_month)
+    f = _plan_figures(report, per_month, lever)
     today = _today_amounts(f)
     hard = _hard_models(ro)
     rows = []
-    for st in sorted(ro.get("strata") or [], key=lambda x: -(x.get("savings") or 0)):
+    for st in sorted(ro.get("strata") or [], key=lambda x: -f["strata"].get(x["model"], 0)):
         m = st["model"]
-        saved = max(0.0, st.get("savings") or 0) * per_month
+        saved = max(0.0, f["strata"].get(m, 0))
         now = min(saved, max(0.0, today.get(m, 0.0)))
         n_calls = sum(mv.get("n") or 0 for mv in ro.get("moves") or [] if mv.get("used") == m)
         spend = (st.get("spend") or 0) * per_month
@@ -1995,14 +2043,15 @@ def _flow_html(r: dict) -> str:
             f"<span class=link></span><ul class='to {kind}'>{''.join(items)}</ul></div>")
 
 
-def _plan_caption(p_router: float | None, h_pm: float | None) -> str:
-    return (f"<p class=m>Recommended plan: one move per model. Together: {_pc(p_router)} saved ({_usd0(h_pm)}/mo). "
-            "Bar length is the model's monthly spend.</p>")
+def _plan_caption(lever: str, pct: float | None, pm: float | None) -> str:
+    name = "change model" if lever == "switch" else "Smart Router"
+    return (f"<p class=m>Recommended plan ({name}): one move per model. Together: {_pc(pct)} saved "
+            f"({_usd0(pm)}/mo). Bar length is the model's monthly spend.</p>")
 
 
-def _actions_chart(report: dict, per_month: float) -> str:
+def _actions_chart(report: dict, per_month: float, lever: str = "router") -> str:
     ro = report.get("routing") or {}
-    rows_in = _plan_rows(report, per_month)
+    rows_in = _plan_rows(report, per_month, lever)
     nc = ro.get("not_covered") or []
     nc_spend = sum(x.get("spend") or 0 for x in nc) * per_month
     drawn = [r for r in rows_in if r["saved"] > 0]
@@ -2175,9 +2224,12 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
     verdict = html.escape(" ".join(first.split()))
     sw_pm = head_row.get("switch")
     p_router, p_switch = _of(h_pm, spend_pm), _of(sw_pm, spend_pm)
+    rec = "r" if h_pm is not None and (sw_pm is None or h_pm >= sw_pm) else "s" if sw_pm is not None else ""
+    # the spend bar and the plan follow the recommended lever
+    plan_pm, plan_e = (sw_pm, enabled.get("switch")) if rec == "s" else (h_pm, e_pm)
     bar = ""
-    if spend_pm and h_pm is not None and e_pm is not None:
-        now_v, more_v = max(0.0, e_pm), max(0.0, h_pm - e_pm)
+    if spend_pm and plan_pm is not None and plan_e is not None:
+        now_v, more_v = max(0.0, plan_e), max(0.0, plan_pm - plan_e)
         left_v = max(0.0, spend_pm - now_v - more_v)
         segs = [("b1", now_v, "sr"), ("b2", more_v, "sr2"), ("b3", left_v, "kept")]
         bars = "".join(f"<i class={c} style='flex:{v / spend_pm:.4f} 1 0'></i>" for c, v, _ in segs if v > 0)
@@ -2199,11 +2251,9 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
     else:
         gap = "<p class='m gap'>Router adds nothing here.</p>"
 
-    rec = "r" if h_pm is not None and (sw_pm is None or h_pm >= sw_pm) else "s" if sw_pm is not None else ""
-
     def kpi(dot: str, name: str, p: Any, pm: Any) -> str:
         tag = "<span class=rec>Recommended</span>" if dot == rec else ""
-        return (f"<section class=card><div class=kh><i class={dot}></i>{name}{tag}</div><div class=cb>"
+        return (f"<section class=card><div class=kh><i class={dot}></i><span class=kn>{name}</span>{tag}</div><div class=cb>"
                 f"<p class=big>{_pc(p)}<small>saved, {_usd0(pm)}/mo</small></p></div></section>")
 
     hero = ("<section class=hero aria-label='Headline'>"
@@ -2214,14 +2264,17 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
                     "Test answer quality before moving traffic.</p>")
             + "</section>")
 
-    nav = ("<nav class=jump aria-label='Sections'><a href='#do'>What to do</a>"
+    nav = ("<nav class='jump seg' role=tablist aria-label='Sections'><a href='#do' aria-selected=true>What to do</a>"
            "<a href='#scopes'>Other scopes</a><a href='#details'>Details</a></nav>")
+    theme = ("<div class='theme seg' role=group aria-label='Colour theme'>"
+             + "".join(f"<button type=button data-t={t} aria-pressed={'true' if t == 'auto' else 'false'}>{t.title()}"
+                       "</button>" for t in ("auto", "light", "dark")) + "</div>")
     to_day = _day(win["to"])
-    parts = [f"<h1>LLM cost savings: {html.escape(ws)}</h1>",
-             (f"<p class=m>{html.escape(_day(win['from']))} to {html.escape(to_day)}, scaled to a month: "
-              f"{_usd0(spend_pm)}/mo LLM spend.</p>"),
-             nav, hero,
-             _card("What to do", _plan_caption(p_router, h_pm) + _actions_chart(report, per_month), "do"),
+    head = (f"<header class=top><div><h1>LLM cost savings: {html.escape(ws)}</h1>"
+            f"<p class=m>{html.escape(_day(win['from']))} to {html.escape(to_day)}, scaled to a month: "
+            f"{_usd0(spend_pm)}/mo LLM spend.</p></div>{theme}</header>")
+    parts = [_card("What to do", (_plan_caption("switch", p_switch, sw_pm) if rec == "s" else _plan_caption("router", p_router, h_pm))
+                   + _actions_chart(report, per_month, "switch" if rec == "s" else "router"), "do"),
              _card("Other scopes", "<p class=m>Share of monthly spend saved, by which models are allowed.</p>"
                    + _scope_grid(report, spend_pm) + f"<p class=m>{html.escape(TOKENIZER_NOTE)}</p>", "scopes")]
     if caching_small:
@@ -2260,11 +2313,15 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
     intro = (f"<p class=m>{_usd(total)} spent over the {win['days']}-day window. Covers {_pct(cov)} of spend; "
              f"figures re-price the sampled calls on the new model. Balanced routing profile, generated {gen}.</p>")
     parts.append(_card("Details", intro + "<div class=rows>" + "".join(dets) + "</div>", "details"))
+    # three tab panes: What to do, Other scopes, Details (caching sits with Details); all visible without script
+    panes = (f"<div class=pane id=pane-do>{parts[0]}</div><div class=pane id=pane-scopes>{parts[1]}</div>"
+             f"<div class=pane id=pane-details>{''.join(parts[2:])}</div>")
+    body = head + hero + nav + panes
     title = f"{ws} cost savings, {to_day.split(' ', 1)[-1]}"
     return ("<!doctype html><html lang=en><head><meta charset=utf-8>"
             "<meta name=viewport content='width=device-width, initial-scale=1'>"
-            f"<title>{html.escape(title)}</title><style>{_font_css()}{CSS}</style></head><body><main>{''.join(parts)}</main>"
-            "</body></html>")
+            f"<title>{html.escape(title)}</title><script>{THEME_BOOT}</script><style>{_font_css()}{CSS}</style></head>"
+            f"<body><main>{body}</main><script>{PAGE_JS}</script></body></html>")
 
 
 # --------------------------------------------------------------------------------------------- CLI

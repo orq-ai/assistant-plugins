@@ -639,8 +639,8 @@ def test_legend_chart_caption_and_kept_sliver():
     assert "Arrow: move all calls" in chart and "Fork: Smart Router picks a model per call" in chart
     assert "Dashed: enable this model in your orq.ai workspace first" in chart
     assert "Smart Router splits asks" not in chart and "Change model" not in chart
-    assert "Recommended plan: one move per model. Together: 25% saved ($100/mo). Bar length is the model's monthly spend." \
-        in c._plan_caption(0.25, 100.0)
+    assert "Recommended plan (Smart Router): one move per model. Together: 25% saved ($100/mo). Bar length is the model's monthly spend." \
+        in c._plan_caption("router", 0.25, 100.0)
     assert chart.count("<i class=kept") == 1  # b only: a and c keep nothing worth a segment
     report["routing"]["strata"][2].update(spend=40.5)  # c saves 40 of 40.5: kept sliver under 2% of the top spend
     assert c._actions_chart(report, 1.0).count("<i class=kept") == 1
@@ -674,3 +674,18 @@ def test_flow_tiny_share_reads_below_one_percent():
              {"used": "openai/s", "pick": "openai/b", "tier": "easy", "n": 1}]
     out = c._flow_html({"model": "openai/s", "lines": ["x"], **c._flow("openai/s", head, None, moves)})
     assert "&lt;1% of calls" in out and not re.search(r"[^0-9]0% of calls", out)
+
+
+def test_plan_rows_follow_change_model_when_it_is_the_recommended_lever():
+    report = _plan_report()
+    head, enabled = report["scenarios"]
+    head["switch"] = {"per_month": 90.0, "per_stratum": {"openai/a": 10.0, "openai/b": 45.0, "openai/c": 35.0}}
+    enabled["switch"] = {"per_month": 25.0, "per_stratum": {"openai/a": 10.0, "openai/b": 15.0}}
+    rows = {r["model"]: r for r in c._plan_rows(report, 1.0, "switch")}
+    assert sum(r["saved"] for r in rows.values()) == pytest.approx(90)  # the change-model figure, not the router's
+    assert sum(r["today"] for r in rows.values()) == pytest.approx(25)
+    b = rows["openai/b"]
+    assert b["lever"] == "switch" and [x["model"] for x in b["branches"]] == ["openai/y"]  # no fork
+    assert b["enable"] == ["openai/y"] and b["today"] == pytest.approx(15)
+    assert "Recommended plan (change model)" in c._plan_caption("switch", 0.9, 90.0)
+    assert "Recommended plan (Smart Router)" in c._plan_caption("router", 1.0, 100.0)

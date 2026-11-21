@@ -195,6 +195,11 @@ def test_render_merges_narrative(tmp_path):
     assert "class=ex" not in page   # sampled ask text never reaches the page
     assert "or, pick one" not in page and "<h2 id=do>What to do</h2>" in page and "class=plan" not in page
     assert "Models with many hard asks" not in page and "jev-general" not in page
+    # tabs: one pane per section, all visible without script; theme switch Auto / Light / Dark
+    for k in ("do", "scopes", "details"):
+        assert f"<div class=pane id=pane-{k}>" in page and f"href='#{k}'" in page
+    assert "role=tablist" in page and "hidden" not in page.split("<main>")[1].split("<script>")[0]
+    assert all(f"data-t={t}" in page for t in ("auto", "light", "dark")) and "report-theme" in page
 
 
 def test_counterfactual_test_stops_after_pilot(tmp_path):
