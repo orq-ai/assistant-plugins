@@ -21,6 +21,7 @@ These skills are:
  - orq-improve-agent -> "skills/orq-improve-agent/SKILL.md"
  - orq-invoke-deployment -> "skills/orq-invoke-deployment/SKILL.md"
  - orq-manage-skills -> "skills/orq-manage-skills/SKILL.md"
+ - orq-optimize-costs -> "skills/orq-optimize-costs/SKILL.md"
  - orq-recommend-evaluators -> "skills/orq-recommend-evaluators/SKILL.md"
  - orq-quickstart -> "skills/orq-quickstart/SKILL.md"
  - orq-red-team -> "skills/orq-red-team/SKILL.md"
@@ -50,6 +51,8 @@ orq-improve-agent: `Improve an underperforming orq agent, deployment, or local a
 orq-recommend-evaluators: `Use when an orq agent or deployment has no or few evaluators and someone asks which ones it should have ("what should I evaluate", "which evals does this agent need", "suggest evaluators"), including a new agent with no production traffic yet. Do NOT use to build and validate one specific judge in depth (use orq-build-evaluator), to realign a judge that already exists (use orq-evaluator-alignment), or to build a failure taxonomy (use orq-analyze-traces).`
 
 orq-review-agent: `Health-check an orq agent's setup without changing it, with or without production traffic: instructions, tools, skill references, evaluators, model choice and run health, checked against the suite's best practices, each finding with a suggestion, in one HTML report. Use when someone asks to "review my agent", "is my agent set up well", "audit support-bot before launch", or "give my agent a health check". Do NOT use to find out why conversations fail or to build a failure taxonomy (use orq-analyze-traces), to apply a fix (use orq-improve-agent), to pick evaluators to add (use orq-recommend-evaluators), or to hill-climb a metric.`
+
+orq-optimize-costs: `Find where an orq workspace overspends on models and recommend cheaper routing from its traces — rank spend by model, sort the traffic into the Smart Router's easy / medium / hard complexity tiers, and propose model replacements, a Smart Router pool and mode, or routing rules, each with an explicit, conservative savings estimate from the workspace's catalogue prices and intelligence index. Use when someone asks to "cut our LLM costs", "are we overpaying for this model", "which requests could run on a cheaper model", "should we use a Smart Router", or "set up routing to save money". Do NOT use to find out why outputs are bad (use orq-analyze-traces), to health-check one agent's setup (use orq-review-agent), for a spend number on its own (use /orq:analytics), or to run the validation experiment itself (use orq-run-experiment).`
 
 orq-invoke-deployment: `Invoke orq.ai deployments, agents, and models via the Python SDK or HTTP API — pass prompt variables, stream responses, handle multi-turn agent conversations, and generate integration code`
 

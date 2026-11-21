@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.3.0] - 2026-11-21
+
+### Added
+
+- `orq-optimize-costs` skill: recommend cheaper routing from production traces (RES-1909). Ranks spend by model, sorts the traffic into the Smart Router's easy / medium / hard complexity tiers (read off routed traffic, replayed through a temporary Smart Router, or labelled on a sample and marked approximate), and proposes model replacements, a Smart Router pool and mode, or routing rules. Each recommendation carries a conservative savings estimate from the catalogue's per-token prices and intelligence index, and a validation experiment and canary before any traffic moves. Ships `scripts/estimate_savings.py`, which recomputes each trace's cost at the candidate model and simulates the Smart Router's banding and per-band pick. CLI surface probed 2026-11-21 against `orq` 11.4.1 (API 4.14.20); the Smart Router span attributes and the replay path are marked unverified.
+
 ## [5.2.0] - 2026-11-19
 
 ### Added
