@@ -1,4 +1,4 @@
-id: smart-router-setup-not-fires
+id: cost-savings-near-miss-router-setup
 skill: orq-cost-savings-report
 kind: invocation
 prompt: Create a Smart Router in my orq workspace with gpt-6-luna and claude-sonnet-5-5 in the pool.
