@@ -638,7 +638,8 @@ def test_legend_chart_caption_and_kept_sliver():
     chart = c._actions_chart(report, 1.0)
     assert "Arrow: move all calls" in chart and "Fork: Smart Router picks a model per call" in chart
     assert "Dashed: enable this model in your orq.ai workspace first" in chart
-    assert "Smart Router splits asks" not in chart and "Change model" not in chart
+    shown = re.sub(r"data-tip='[^']*'", "", chart)  # bar tooltips name the lever on purpose
+    assert "Smart Router splits asks" not in shown and "Change model" not in shown
     assert "Recommended plan (Smart Router): one move per model. Together: 25% saved ($100/mo). Bar length is the model's monthly spend." \
         in c._plan_caption("router", 0.25, 100.0)
     assert chart.count("<i class=kept") == 1  # b only: a and c keep nothing worth a segment
@@ -729,9 +730,11 @@ def test_setup_router_commands_enable_then_create_one_router_per_model():
     assert plan["enable"] == ["openai/gpt-6.1-terra"]
     assert [m["key"] for m in plan["moves"]] == ["savings-gpt-6-sol"]
     cmds = c._setup_commands(plan).splitlines()
-    assert cmds[1] == "orq models enable --model-id openai/gpt-6.1-terra"
-    assert cmds[3] == ("orq smart-routers create --key savings-gpt-6-sol --models openai/gpt-6.1-terra "
-                       "--models openai/gpt-6-luna --body-profile SMART_ROUTER_PROFILE_BALANCED")
+    # the CLI enables by the model's id, so the line looks it up from the provider/model name
+    assert cmds[1] == ("orq models enable --model-id \"$(orq models list -o json -j "
+                       "\"[?refId=='openai/gpt-6.1-terra'].id | [0]\" --raw)\"")
+    assert cmds[3:] == ["orq smart-routers create --key savings-gpt-6-sol \\", "  --models openai/gpt-6.1-terra \\",
+                        "  --models openai/gpt-6-luna \\", "  --body-profile SMART_ROUTER_PROFILE_BALANCED"]
 
 
 def test_setup_change_model_lists_replacements_and_only_their_enables():
@@ -739,7 +742,7 @@ def test_setup_change_model_lists_replacements_and_only_their_enables():
     assert plan["enable"] == ["openai/gpt-6.1-terra", "anthropic/claude-haiku-5-5"]
     assert {m["model"]: m["to"] for m in plan["moves"]} == {
         "openai/gpt-6-sol": "openai/gpt-6.1-terra", "anthropic/claude-sonnet-5": "anthropic/claude-haiku-5-5"}
-    assert "smart-routers" not in c._setup_commands(plan)
+    assert "smart-routers" not in c._setup_commands(plan) and "->" not in c._setup_commands(plan)
     prompt = c._setup_prompt(plan)
     assert "anthropic/claude-sonnet-5 -> anthropic/claude-haiku-5-5" in prompt and "gpt-6-luna ->" not in prompt
 
@@ -748,7 +751,20 @@ def test_setup_card_puts_recommended_lever_first_with_collapsed_copyable_blocks(
     card = c._setup_card(SETUP_REPORT, "s")
     assert card.index("<h3>Change model") < card.index("<h3>Smart Router")
     assert card.count("<details class=cp>") == 4 and card.count("class=copy") == 4
+    assert "<summary>Enable models</summary>" in card and "gpt-6-sol \u2192 gpt-6.1-terra</li>" in card
+    assert "<button" not in card.split("<summary>")[1].split("</summary>")[0]  # no button inside a summary
     assert "https://my.orq.ai/acme/router/smart-router?id=new" in card
     assert "https://my.orq.ai/acme/router/models?q=gpt-6.1-terra" in card
     assert "&lt;" not in c._setup_prompt(c._setup_plan(SETUP_REPORT, "router")).replace("<id>", "")
     assert c._setup_card({"scenarios": []}, "r") == ""
+
+
+def test_plan_bars_explain_each_segment_on_hover():
+    tip = c._tip("Saved today with Smart Router", 51.0, 95.0)
+    assert tip == "Saved today with Smart Router: $51/mo \u00b7 54% of this model's spend"
+    assert c._tip("Still spent", 20.0, 400.0, "your total spend").endswith("5% of your total spend")
+
+
+def test_range_plot_draws_gridlines_at_round_values():
+    svg = c._range_cell((150, 158, 165, "Smart Router", 80.0, 222.0))
+    assert svg.count("class=gl") == 3  # $80..$222 in steps of $50: lines at $100, $150, $200

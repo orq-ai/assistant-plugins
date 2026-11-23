@@ -1641,11 +1641,20 @@ label();if(mq&&mq.addEventListener)mq.addEventListener('change',label);
 if(btn)btn.addEventListener('click',function(){var t=isDark()?'light':'dark';d.setAttribute('data-theme',t);
 try{localStorage.setItem('report-theme',t)}catch(e){}label()});
 document.querySelectorAll('.copy').forEach(function(b){b.addEventListener('click',function(e){
-e.preventDefault();e.stopPropagation();var t=b.closest('details').querySelector('pre').textContent;
+e.preventDefault();e.stopPropagation();var t=b.parentNode.querySelector('pre').textContent;
 function done(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy'},1500)}
 function old(){var a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();
 try{document.execCommand('copy');done()}catch(x){}a.remove()}
 if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(done,old);else old()})});
+var tip=document.createElement('div');tip.className='tip';tip.setAttribute('role','tooltip');document.body.appendChild(tip);
+function show(el,x,y){tip.textContent=el.getAttribute('data-tip');tip.style.display='block';
+var w=tip.offsetWidth,h=tip.offsetHeight;tip.style.left=Math.max(8,Math.min(innerWidth-w-8,x-w/2))+'px';
+tip.style.top=(y-h-10<8?y+18:y-h-10)+'px'}
+function hide(){tip.style.display='none'}
+document.querySelectorAll('[data-tip]').forEach(function(el){
+el.addEventListener('pointermove',function(e){show(el,e.clientX,e.clientY)});el.addEventListener('pointerleave',hide);
+el.addEventListener('focus',function(){var r=el.getBoundingClientRect();show(el,r.left+r.width/2,r.top)});
+el.addEventListener('blur',hide)});
 })();"""
 
 CSS = """
@@ -1669,14 +1678,24 @@ h2{font-size:13px;color:var(--muted);margin:0;padding:10px 16px;scroll-margin-to
 h3{font-size:14px;margin:20px 0 6px}
 p,li,dd{max-width:68ch;text-wrap:pretty}
 .m{color:var(--muted)}
+.tip{position:fixed;z-index:10;display:none;pointer-events:none;max-width:260px;padding:6px 10px;border-radius:6px;
+font-size:12px;line-height:1.4;background:var(--fg);color:var(--bg);box-shadow:0 2px 8px #00000030}
+[data-tip]{cursor:default}[data-tip]:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
 .setup+.setup{margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}
 .setup h3{font-size:15px;margin:0 0 4px;display:flex;align-items:center;gap:8px}.setup .ol{margin:8px 0 0}.setup .ol a{color:var(--fg);text-underline-offset:2px}
-details.cp{border:1px solid var(--line);border-radius:6px;padding:0 12px;margin:8px 0}
-details.cp>summary{display:flex;align-items:center;gap:8px;padding:6px 0}
-details.cp .copy{margin-left:auto;font:inherit;font-size:12px;color:var(--fg);background:var(--pill);
-border:1px solid var(--line);border-radius:6px;padding:2px 10px;cursor:pointer}
+.cpw{position:relative;margin:8px 0}
+details.cp{border:1px solid var(--line);border-radius:6px;padding:0 12px;margin:0}
+details.cp>summary{list-style:none;cursor:pointer;padding:10px 80px 10px 0}
+details.cp>summary::-webkit-details-marker{display:none}
+details.cp>summary::before{content:"\\25B8";display:inline-block;width:1em;color:var(--muted);transition:transform .15s}
+details.cp[open]>summary::before{transform:rotate(90deg)}
+.cpw .copy{position:absolute;top:5px;right:6px;min-height:32px;font:inherit;font-size:13px;color:var(--fg);
+background:var(--pill);border:1px solid var(--line);border-radius:6px;padding:4px 12px;cursor:pointer}
 details.cp pre{margin:0 0 10px;padding:10px 12px;background:var(--panel);border-radius:6px;font:12px/1.5 ui-monospace,
-SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--fg)}
+SFMono-Regular,Menlo,monospace;color:var(--fg)}
+details.cp pre.cmd{white-space:pre;overflow-x:auto}details.cp pre.txt{white-space:pre-wrap;overflow-wrap:break-word}
+.setup .mv{margin:8px 0;padding-left:18px}.setup .mv li{margin:2px 0}
+@media (prefers-reduced-motion:reduce){details.cp>summary::before{transition:none}}
 .top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.top>div{min-width:0}
 .toc{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 16px;margin:20px 0 4px;font-size:13px}
 .toc span{color:var(--muted)}
@@ -1703,6 +1722,8 @@ margin:0 6px 6px;padding:var(--pad);min-width:0;--pad:16px}
 .hero .verdict{margin:0 0 12px;font-size:17px;font-weight:500;color:var(--fg);max-width:60ch}
 .kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .kpis .card{margin:8px 0 0}
+@media (max-width:480px){.kpis .card{position:relative;overflow:visible}
+.kpis .rec{position:absolute;top:-9px;right:8px}}
 .kh{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:10px 16px;font-size:13px;font-weight:500;color:var(--muted)}
 .kn{white-space:nowrap}
 .rec{margin-left:auto;font-size:11px;font-weight:500;line-height:1.4;padding:1px 6px;border-radius:4px;
@@ -1797,7 +1818,7 @@ details[open]{padding-bottom:12px}
 summary{cursor:pointer;padding:10px 0;margin:0;border:0;border-radius:0;font-weight:500;color:var(--fg)}
 summary span{font-weight:400;color:var(--muted)}
 .t{overflow-x:auto;margin:8px 0 12px}
-svg.rg{display:block}svg.rg .tk{stroke:var(--ns);stroke-width:2;stroke-linecap:round}
+svg.rg{display:block}svg.rg .gl{stroke:var(--line);stroke-width:1}svg.rg .tk{stroke:var(--ns);stroke-width:2;stroke-linecap:round}
 svg.rg .ci{stroke-width:6;stroke-linecap:round}svg.rg.lv-r .ci{stroke:var(--s1)}svg.rg.lv-s .ci{stroke:var(--s2)}
 svg.rg circle{fill:var(--fg);stroke:var(--card);stroke-width:1.5}.t td:first-child{white-space:nowrap}
 @media print{.theme,.toc{display:none}.card,.row,details,tr{break-inside:avoid}body{padding:0}}
@@ -2085,6 +2106,11 @@ def _plan_caption(lever: str, pct: float | None, pm: float | None) -> str:
             f"({_usd0(pm)}/mo). Bar length is the model's monthly spend.</p>")
 
 
+def _tip(what: str, v: float, spend: float | None, of: str = "this model's spend") -> str:
+    share = f" \u00b7 {_pc(_of(v, spend))} of {of}" if spend else ""
+    return f"{what}: {_usd0(v)}/mo{share}"
+
+
 def _actions_chart(report: dict, per_month: float, lever: str = "router") -> str:
     ro = report.get("routing") or {}
     rows_in = _plan_rows(report, per_month, lever)
@@ -2096,7 +2122,12 @@ def _actions_chart(report: dict, per_month: float, lever: str = "router") -> str
     rows = []
     for r in drawn:
         seg = [("sr", r["today"]), ("sr2", r["after"]), ("kept", max(0.0, r["spend"] - r["saved"]))]
-        bars = "".join(f"<i class={c} style='width:{v / top * 100:.2f}%'></i>" for c, v in seg
+        how = "Smart Router" if r.get("lever") == "router" else "Change model"
+        on = ", ".join(_short(x) for x in r.get("enable") or [])
+        what = {"sr": f"Saved today with {how}", "sr2": f"Saved with {how} after enabling {on or 'models'}",
+                "kept": "Still spent"}
+        bars = "".join(f"<i class={c} style='width:{v / top * 100:.2f}%' tabindex=0 "
+                       f"data-tip='{html.escape(_tip(what[c], v, r['spend']))}'></i>" for c, v in seg
                        if v / top > (0.02 if c == "kept" else 0))
         pct = _of(r["saved"], r["spend"])
         tip = (f"{_short(r['model'])}: {_pc(_of(r['today'], r['spend']))} saved today, "
@@ -2187,7 +2218,7 @@ def _uncertainty_rows(report: dict, spend_pm: float | None) -> list[dict]:
     return rows
 
 
-RANGE_W = 200
+RANGE_W = 260
 
 
 def _range_cell(v: Any) -> str:
@@ -2197,9 +2228,13 @@ def _range_cell(v: Any) -> str:
     lo, est, hi, lever, a0, a1 = v
     x = [max(0.0, min(1.0, ((a or 0) - a0) / (a1 - a0))) * (RANGE_W - 8) + 4 for a in (lo, est, hi)]
     cls = "lv-s" if lever == "Change model" else "lv-r"
+    step = next(st for st in (5, 10, 20, 25, 50, 100, 200, 500, 1000, 2000, 5000, 1e9) if (a1 - a0) / st <= 5)
+    grid = "".join(f"<line class=gl x1={(t - a0) / (a1 - a0) * (RANGE_W - 8) + 4:.1f} "
+                   f"x2={(t - a0) / (a1 - a0) * (RANGE_W - 8) + 4:.1f} y1=0 y2=14></line>"
+                   for t in range(int(math.ceil(a0 / step) * step), int(a1) + 1, int(step)))
     label = f"90% range {_usd0(lo)} to {_usd0(hi)} a month, estimate {_usd0(est)}"
     return (f"<svg class='rg {cls}' width={RANGE_W} height=14 viewBox='0 0 {RANGE_W} 14' role=img "
-            f"aria-label='{html.escape(label)}'><line class=tk x1=4 x2={RANGE_W - 4} y1=7 y2=7></line>"
+            f"aria-label='{html.escape(label)}'>{grid}<line class=tk x1=4 x2={RANGE_W - 4} y1=7 y2=7></line>"
             f"<line class=ci x1={x[0]:.1f} x2={max(x[2], x[0] + 2):.1f} y1=7 y2=7></line>"
             f"<circle cx={x[1]:.1f} cy=7 r=3.5></circle></svg>")
 
@@ -2209,7 +2244,10 @@ RAW = (_range_cell,)
 
 def _range_head(rows: list[dict]) -> str:
     r = next((x["range"] for x in rows if x["range"]), None)
-    return f"Range, {_usd0(r[4])} to {_usd0(r[5])}" if r else "Range"  # table formatters that return markup, not text
+    if not r:
+        return "Range"
+    step = next(st for st in (5, 10, 20, 25, 50, 100, 200, 500, 1000, 2000, 5000, 1e9) if (r[5] - r[4]) / st <= 5)
+    return f"Range, {_usd0(r[4])} to {_usd0(r[5])}, lines every {_usd0(step)}"  # table formatters that return markup, not text
 
 
 def _pool_tables(report: dict) -> str:
@@ -2258,16 +2296,13 @@ def _setup_plan(report: dict, lever: str) -> dict:
 def _setup_commands(plan: dict) -> str:
     lines = []
     if plan["enable"]:
-        lines.append("# Enable models (needs a management key with workspace-model write access)")
-        lines += [f"orq models enable --model-id {m}" for m in plan["enable"]]
+        lines.append("# Enable models. The CLI takes the model's id, so each line looks it up first.")
+        lines += [f"orq models enable --model-id \"$(orq models list -o json -j \"[?refId=='{m}'].id | [0]\" --raw)\""
+                  for m in plan["enable"]]
     if plan["lever"] == "router":
-        lines.append("# One Smart Router per model; note the model_ref in each response")
-        lines += [f"orq smart-routers create --key {m['key']} "
-                  + " ".join(f"--models {x}" for x in m["pool"]) + f" --body-profile {ROUTER_PROFILE}"
-                  for m in plan["moves"]]
-    else:
-        lines.append("# Then change the model in your code, deployments and agents:")
-        lines += [f"#   {m['model']} -> {m['to']}" for m in plan["moves"]]
+        lines.append("# One Smart Router per model. Use the model_ref in each response as the new model name.")
+        lines += [" \\\n  ".join([f"orq smart-routers create --key {m['key']}", *(f"--models {x}" for x in m["pool"]),
+                                   f"--body-profile {ROUTER_PROFILE}"]) for m in plan["moves"]]
     return "\n".join(lines)
 
 
@@ -2275,8 +2310,8 @@ def _setup_prompt(plan: dict) -> str:
     out = ["Apply this orq.ai cost-savings plan. Use the orq CLI (`orq --help`).", ""]
     step = 1
     if plan["enable"]:
-        out.append(f"{step}. Enable these models in the orq.ai workspace with `orq models enable --model-id <id>` "
-                   "(needs a management key with workspace-model write access):")
+        out.append(f"{step}. Enable these models in the orq.ai workspace with `orq models enable --model-id <id>`. "
+                   "<id> is the model's `id` from `orq models list -o json`, not the provider/model name:")
         out += [f"   - {m}" for m in plan["enable"]]
         step += 1
     if plan["lever"] == "router":
@@ -2296,9 +2331,10 @@ def _setup_prompt(plan: dict) -> str:
     return "\n".join(out)
 
 
-def _copy_block(title: str, text: str) -> str:
-    return (f"<details class=cp><summary>{html.escape(title)}<button type=button class=copy>Copy</button></summary>"
-            f"<pre>{html.escape(text)}</pre></details>")
+def _copy_block(title: str, text: str, kind: str = "txt") -> str:
+    t = html.escape(title)
+    return (f"<div class=cpw><details class=cp><summary>{t}</summary><pre class={kind}>{html.escape(text)}</pre>"
+            f"</details><button type=button class=copy aria-live=polite aria-label='Copy: {t}'>Copy</button></div>")
 
 
 def _setup_card(report: dict, rec: str) -> str:
@@ -2322,7 +2358,10 @@ def _setup_card(report: dict, rec: str) -> str:
         if lever == "router":
             links.insert(0, f"<a href='{ORQ_APP}/{ws}/router/smart-router?id=new'>Create a Smart Router</a>")
         blocks.append(f"<div class=setup><h3>{name}{tag}</h3><p class=m>{html.escape(summary)}</p>"
-                      + _copy_block("Commands", _setup_commands(plan))
+                      + (f"<ul class=mv>{''.join(f'<li>{html.escape(_short(m['model']))} \u2192 {html.escape(_short(m['to']))}</li>' for m in plan['moves'])}</ul>"
+                         if lever == "switch" else "")
+                      + (_copy_block("Commands" if lever == "router" else "Enable models", _setup_commands(plan), "cmd")
+                         if _setup_commands(plan) else "")
                       + _copy_block("Prompt for your coding agent", _setup_prompt(plan))
                       + (f"<p class='m ol'>In orq.ai: {SEP.join(links)}</p>" if links else "") + "</div>")
     if not blocks:
@@ -2403,7 +2442,11 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
         now_v, more_v = max(0.0, plan_e), max(0.0, plan_pm - plan_e)
         left_v = max(0.0, spend_pm - now_v - more_v)
         segs = [("b1", now_v, "sr"), ("b2", more_v, "sr2"), ("b3", left_v, "kept")]
-        bars = "".join(f"<i class={c} style='flex:{v / spend_pm:.4f} 1 0'></i>" for c, v, _ in segs if v > 0)
+        how = "Smart Router" if rec == "r" else "Change model"
+        names = {"b1": f"Saved today with {how}", "b2": f"Saved with {how} after enabling models", "b3": "Still spent"}
+        bars = "".join(f"<i class={c} style='flex:{v / spend_pm:.4f} 1 0' tabindex=0 data-tip='"
+                       f"{html.escape(_tip(names[c], v, spend_pm, 'your total spend'))}'></i>"
+                       for c, v, _ in segs if v > 0)
         items = [("sr", f"{_pc(now_v / spend_pm)} saved today", now_v),
                  ("sr2", f"+{_pc(more_v / spend_pm)} after enabling", more_v),
                  ("kept", f"{_pc(left_v / spend_pm)} still spent", left_v)]
