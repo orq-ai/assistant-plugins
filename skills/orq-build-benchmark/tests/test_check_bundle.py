@@ -42,10 +42,13 @@ def test_directory_symlink_says_what_it_is(tmp_path: Path) -> None:
     assert any('symlink to a directory' in e for e in errors), errors
 
 
-def _step4_helpers() -> dict:
-    text = (SKILL_DIR / 'SKILL.md').read_text(encoding='utf-8')
+EVALUATORQ_PATH = SKILL_DIR / 'resources' / 'evaluatorq-path.md'
+
+
+def _helpers(path: Path = EVALUATORQ_PATH) -> dict:
+    text = path.read_text(encoding='utf-8')
     block = re.search(r'```python\n(import math\n.*?)```', text, re.DOTALL)
-    assert block, 'step 4 must ship its helpers'
+    assert block, f'{path.name} must ship its helpers'
     namespace: dict = {}
     exec(block.group(1), namespace)  # noqa: S102 - our own SKILL.md, tested as written
     return namespace
@@ -69,7 +72,7 @@ def _point(*jobs: JobResult) -> DataPointResult:
 
 
 def test_step4_helpers_count_scored_errored_and_skipped() -> None:
-    table = _step4_helpers()['rubric_scores']([
+    table = _helpers()['rubric_scores']([
         _point(_job('a', 0.9), _job('b', 0.4)),
         _point(_job('a', 0.8), _job('b', error='boom')),
         _point(_job('a', score_error='no levels'), _job('b')),
@@ -79,7 +82,7 @@ def test_step4_helpers_count_scored_errored_and_skipped() -> None:
 
 
 def test_step4_gap_is_paired_and_refuses_under_the_shared_floor() -> None:
-    helpers = _step4_helpers()
+    helpers = _helpers()
     floor = helpers['MIN_SHARED']
     shared_points = [_point(_job('a', 0.9 if i % 2 else 0.7), _job('b', 0.5)) for i in range(floor)]
     table = helpers['rubric_scores']([
@@ -105,7 +108,7 @@ def test_step4_gap_is_paired_and_refuses_under_the_shared_floor() -> None:
 
 
 def test_step4_tie_rule_covers_an_exact_tie_and_both_directions() -> None:
-    helpers = _step4_helpers()
+    helpers = _helpers()
     same = {'scored': {i: 0.5 + i / 10 for i in range(helpers['MIN_SHARED'])}}
     assert helpers['tied'](helpers['paired_gap'](same, same)), 'identical scores must tie'
     assert helpers['tied'](None), 'too few shared datapoints must tie'
@@ -115,14 +118,14 @@ def test_step4_tie_rule_covers_an_exact_tie_and_both_directions() -> None:
 
 
 def test_helpers_are_defined_before_the_template_calls_them() -> None:
-    text = (SKILL_DIR / 'SKILL.md').read_text(encoding='utf-8')
+    text = EVALUATORQ_PATH.read_text(encoding='utf-8')
     assert text.index('def rubric_scores') < text.index('rubric_scores(results)'), (
         'the step 4 template prints rubric_scores, so its definition must come first'
     )
 
 
 def test_rubric_template_satisfies_the_numeric_judge() -> None:
-    text = (SKILL_DIR / 'SKILL.md').read_text(encoding='utf-8')
+    text = EVALUATORQ_PATH.read_text(encoding='utf-8')
     block = re.search(r"verdict_kind='numeric',.*?levels=(\[.*?\]),", text, re.DOTALL)
     assert block, 'the rubric template must set levels'
     assert len(ast.literal_eval(block.group(1))) >= 2, 'a score needs at least two anchors'
@@ -143,3 +146,26 @@ def test_rubric_template_satisfies_the_numeric_judge() -> None:
             label_names=None,
             threshold=0.5,
         )
+
+
+def test_native_row_gap_pairs_on_shared_rows_only() -> None:
+    helpers = _helpers(SKILL_DIR / 'SKILL.md')
+    floor = helpers['MIN_SHARED']
+    a = {f'r{i}': 0.9 if i % 2 else 0.7 for i in range(floor)}
+    b = {f'r{i}': 0.5 for i in range(floor)}
+    a['only_a'] = 0.0  # b failed this row, so it must not count
+    gap, standard_error, shared = helpers['paired_row_gap'](a, b)
+    assert shared == floor
+    assert gap == pytest.approx(sum(0.4 if i % 2 else 0.2 for i in range(floor)) / floor)
+    assert standard_error > 0
+
+
+def test_native_row_gap_refuses_under_the_shared_floor_and_ties() -> None:
+    helpers = _helpers(SKILL_DIR / 'SKILL.md')
+    floor = helpers['MIN_SHARED']
+    short = {f'r{i}': 1.0 for i in range(floor - 1)}
+    assert helpers['paired_row_gap'](short, {k: 0.0 for k in short}) is None
+    assert helpers['tied'](None)
+    same = {f'r{i}': 0.5 + i / 10 for i in range(floor)}
+    assert helpers['tied'](helpers['paired_row_gap'](same, same)), 'identical scores must tie'
+    assert not helpers['tied']((0.3, 0.1, 10))

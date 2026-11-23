@@ -258,6 +258,8 @@ orq datasets create  →  create-datapoint (batched, ≤100 per call)
                      →  create_experiment with task.type: agent + agent_key + evaluators[]
 ```
 
+For a regression check that will be re-run after each fix, the Experiments API in [experiments-api.md](../orq-shared/resources/experiments-api.md) does the last step instead: put the old and new agent versions as two agent task columns in one run, since `baseline_run_id` deltas do not work across runs for agent columns.
+
 `orq-run-experiment` owns dataset selection and materialises this; this skill supplies the ids and does not build datasets.
 
 > **Building a row needs the *content* of each trace, and content recovery is not guaranteed.** On the workspace this was probed against, no span carried message content: a router-passthrough root exposed `gen_ai.request` = `{model, stream}` only, and an OTLP root had `gen_ai.output` but no `gen_ai.input`. orq also documents PII redaction that deliberately strips input values from traces. **Try to build the rows; when the input content is not recoverable, say so and hand the ids over as a manual curation list. Never report a regression dataset that was not created.**

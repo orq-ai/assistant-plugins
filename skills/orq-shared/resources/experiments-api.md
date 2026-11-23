@@ -21,7 +21,7 @@ How `orq request` behaves:
 - a variant runs as a new run of the same experiment and is compared to a baseline run with deltas
 - you need to re-run only failed or new cells, cancel a run, or read per-cell outputs and trace IDs
 
-`create_experiment` (MCP) creates and runs a prompt-only experiment in one call and is fine for a quick one-off from chat. It cannot add agent columns, re-run cells, compare against a baseline run or page through cells.
+`create_experiment` (MCP) creates an experiment with prompt models or agents and can queue it in one call (`auto_run`), which is fine for a quick one-off from chat. It cannot add columns to an existing run, re-run only failed or new cells, compare against a baseline run or page through cells.
 
 ## Model
 

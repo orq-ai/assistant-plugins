@@ -297,7 +297,7 @@ A run can complete while every rubric cell failed, so read counts before scores.
 
 Per candidate, `GET .../runs/{run_id}/metrics` gives the rubric average at `{task_column_id}_{evaluator_id}` (`.number.avg`, with `.number.count` for how many scored), and cost and latency at `{task_column_id}_orq_cost` and `_orq_latency`. Do not rank on those averages: when counts differ they are not comparable.
 
-Compare two candidates on the rows both scored. Fetch per-row rubric scores for each candidate column with the evaluator query in experiments-api.md step 5 (page until `has_more` is false), save them as `{row_id: score}`, and use these helpers:
+Compare two candidates on the rows both scored. Fetch per-row rubric scores for each candidate column with the evaluator query in experiments-api.md step 5 (page until `has_more` is false), save them as `{row_id: score}`, and use these helpers. They take those flat dicts; the evaluatorq path has its own `paired_gap` for evaluatorq tables.
 
 ```python
 import math
@@ -306,7 +306,7 @@ import statistics
 MIN_SHARED = 5  # below this a standard error says little, so no gap is reported
 
 
-def paired_gap(a, b):
+def paired_row_gap(a, b):
     """a, b: {row_id: score} for two candidates, failed or missing rows left out.
     Mean of a minus b on shared rows, its standard error, and the shared count.
     None under MIN_SHARED."""
@@ -317,7 +317,7 @@ def paired_gap(a, b):
 
 
 def tied(gap):
-    """True when paired_gap cannot separate two candidates, in either direction."""
+    """True when paired_row_gap cannot separate two candidates, in either direction."""
     return gap is None or abs(gap[0]) <= 2 * gap[1]
 ```
 
@@ -325,8 +325,8 @@ Open the experiment in orq (link shape in [orq-trace-format](../orq-trace-format
 
 Report the winner with its margin and where it is weak, with two exceptions:
 
-- Compare two candidates with `paired_gap`, never by their overall means. One failed cell in fifty does not block a winner.
-- If `tied(paired_gap(a, b))` is true, report those candidates as tied: the absolute gap is at most twice its standard error, or fewer than `MIN_SHARED` rows were shared. Report the shared count next to the gap.
+- Compare two candidates with `paired_row_gap`, never by their overall means. One failed cell in fifty does not block a winner.
+- If `tied(paired_row_gap(a, b))` is true, report those candidates as tied: the absolute gap is at most twice its standard error, or fewer than `MIN_SHARED` rows were shared. Report the shared count next to the gap.
 
 ## Hard rules recap
 

@@ -1,6 +1,6 @@
 # Benchmark candidates with evaluatorq
 
-The alternative to step 4 of [SKILL.md](../SKILL.md) when a candidate is not a plain prompt call. Steps 1 to 3 are the same.
+The alternative to step 4 of [SKILL.md](../SKILL.md) when a candidate is not a plain prompt call. Steps 1 to 3 are the same. The helpers here take the tables `rubric_scores` builds from evaluatorq results, not the flat `{row_id: score}` dicts that `paired_row_gap` in SKILL.md takes.
 
 ## Run
 

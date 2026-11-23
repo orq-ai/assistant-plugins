@@ -16,8 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `orq-run-experiment`: the Experiments API is the default in steps 8, 9 and 18, with `baseline_run_id` comparison on re-runs; the `create_experiment` MCP tool stays for quick one-offs from chat. `allowed-tools` pre-approves `orq request GET /v3/experiments*` only, since writes still prompt.
+- `orq-run-experiment`: the Experiments API is the default in steps 8, 9 and 18, with `baseline_run_id` comparison on re-runs; the `create_experiment` MCP tool stays for quick one-offs from chat. `allowed-tools` pre-approves `orq request GET /v3/experiments*` only, since writes still prompt; `orq-compare-agents` gets the same grant.
 - `orq-cli`, `evaluatorq`: no longer say experiments are MCP or evaluatorq only; they route to the Experiments API via `orq request`.
+- `orq-improve-agent`: the hand-off to `orq-run-experiment` names the Experiments API for regression checks that re-run after each fix.
 - `orq-shared`: `model-slugs.md` and `doc-resolution.md` list the skills that use the new reference.
 
 ## [5.2.0] - 2026-11-19
