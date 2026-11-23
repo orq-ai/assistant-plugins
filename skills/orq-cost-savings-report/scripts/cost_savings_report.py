@@ -951,6 +951,7 @@ class Analyzer:
         members, relaxed = frontier_pool(sw or inc, cands, cost)
         assert not has_dominated(members, cost), [x.router_id for x in members]
         ids = [x.router_id for x in members]
+        assert all(self.v2(x) for x in ids), ids  # Smart Router rejects a pool model without a score
         enable = [x for x in ids + ([sw.router_id] if sw else []) if not (self.cards.get(x) or {}).get("enabled")]
         info = {"switch": sw.router_id if sw else None, "enable": sorted(set(enable)), "relaxed": relaxed}
         if len(members) < 2:
@@ -1641,7 +1642,7 @@ label();if(mq&&mq.addEventListener)mq.addEventListener('change',label);
 if(btn)btn.addEventListener('click',function(){var t=isDark()?'light':'dark';d.setAttribute('data-theme',t);
 try{localStorage.setItem('report-theme',t)}catch(e){}label()});
 document.querySelectorAll('.copy').forEach(function(b){b.addEventListener('click',function(e){
-e.preventDefault();e.stopPropagation();var t=b.parentNode.querySelector('pre').textContent;
+e.preventDefault();e.stopPropagation();var t=document.getElementById(b.getAttribute('data-copy')).textContent;
 var l=b.querySelector('b')||b,o=l.textContent;function done(){l.textContent='Copied';b.classList.add('ok');setTimeout(function(){l.textContent=o;b.classList.remove('ok')},1500)}
 function old(){var a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();
 try{document.execCommand('copy');done()}catch(x){}a.remove()}
@@ -1661,13 +1662,13 @@ CSS = """
 b,strong{font-weight:600}
 :root{--bg:#ffffff;--fg:#141319;--fg2:#3c3a48;--muted:#737373;--panel:#fafafa;--strip:#f7f6f5;--card:#ffffff;
 --line:#e6e6e6;--sep:#f6f6f6;--shadow:0 1px 2px 0 #14131908;--s1:#025558;--s2:#df5325;--kept:#dcdad6;--ns:#f3f3f3;--hl:#e6f6f5;
---hl2:#4ba9a7;--hlb:#b8e4e2;--pill:#ffffff;--rec-fg:#025558;--rec-bg:#e6f6f5;--btn:#025558;--btn-fg:#ffffff;--btn-hover:#013f41;color-scheme:light}
+--hl2:#4ba9a7;--hlb:#b8e4e2;--pill:#ffffff;--rec-fg:#025558;--rec-bg:#e6f6f5;--btn:#141319;--btn-fg:#ffffff;--btn-hover:#3c3a48;color-scheme:light}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){--bg:#1f1e1d;--fg:#faf9f5;--fg2:#c2c0b6;
 --muted:#9c9a92;--panel:#262624;--strip:#1f1e1d;--card:#30302e;--line:#42413d;--sep:#3a3935;--shadow:0 1px 2px 0 #00000040;
---s1:#2fbfba;--s2:#f27c3c;--kept:#55544f;--ns:#232221;--hl:#2fbfba2e;--hl2:#2fbfba66;--hlb:#2fbfba80;--pill:#42413d;--rec-fg:#2fbfba;--rec-bg:#2fbfba2e;--btn:#2fbfba;--btn-fg:#141319;--btn-hover:#5fd0cc;color-scheme:dark}}
+--s1:#2fbfba;--s2:#f27c3c;--kept:#55544f;--ns:#232221;--hl:#2fbfba2e;--hl2:#2fbfba66;--hlb:#2fbfba80;--pill:#42413d;--rec-fg:#2fbfba;--rec-bg:#2fbfba2e;--btn:#faf9f5;--btn-fg:#141319;--btn-hover:#dcdad6;color-scheme:dark}}
 :root[data-theme="dark"]{--bg:#1f1e1d;--fg:#faf9f5;--fg2:#c2c0b6;--muted:#9c9a92;--panel:#262624;--strip:#1f1e1d;
 --card:#30302e;--line:#42413d;--sep:#3a3935;--shadow:0 1px 2px 0 #00000040;--s1:#2fbfba;--s2:#f27c3c;--kept:#55544f;--ns:#232221;
---hl:#2fbfba2e;--hl2:#2fbfba66;--hlb:#2fbfba80;--pill:#42413d;--rec-fg:#2fbfba;--rec-bg:#2fbfba2e;--btn:#2fbfba;--btn-fg:#141319;--btn-hover:#5fd0cc;color-scheme:dark}
+--hl:#2fbfba2e;--hl2:#2fbfba66;--hlb:#2fbfba80;--pill:#42413d;--rec-fg:#2fbfba;--rec-bg:#2fbfba2e;--btn:#faf9f5;--btn-fg:#141319;--btn-hover:#dcdad6;color-scheme:dark}
 *{box-sizing:border-box}
 body{font:14px/1.5 "Avio Sans",Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 background:var(--bg);color:var(--fg);margin:0;padding-block:28px 56px;
@@ -1684,20 +1685,20 @@ font-size:12px;line-height:1.4;background:var(--fg);color:var(--bg);box-shadow:0
 [data-tip]{cursor:default}[data-tip]:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
 .setup+.setup{margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}
 .setup h3{font-size:15px;margin:0 0 4px;display:flex;align-items:center;gap:8px}.setup .ol{margin:8px 0 0}.setup .ol a{color:var(--fg);text-underline-offset:2px}
-.cpg{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),340px));gap:12px;margin:12px 0 4px;align-items:start}
-.cpt{min-width:0}
-.cpt .copy{display:flex;align-items:center;gap:14px;width:100%;min-height:56px;padding:12px 16px;font:inherit;text-align:left;
-cursor:pointer;color:var(--btn-fg);background:var(--btn);border:0;border-radius:6px;box-shadow:0 1px 2px 0 #14131926,inset 0 -2px 0 #00000026;transition:background .15s,transform .05s}
-.cpt .copy:active{transform:translateY(1px)}
-.cpt .copy:hover{background:var(--btn-hover)}.cpt .copy:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
-
+.cpg{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 0}
+.cpg .copy{display:inline-flex;align-items:center;gap:12px;max-width:100%;padding:8px 16px 8px 10px;font:inherit;text-align:left;
+cursor:pointer;color:var(--btn-fg);background:var(--btn);border:0;border-radius:6px;box-shadow:0 1px 2px 0 #14131926;transition:background .15s}
+.cpg .copy:hover{background:var(--btn-hover)}.cpg .copy:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+.cpg .copy.ok{background:var(--s1);color:#fff}
 .ags{display:inline-flex;flex:none}
-.ag{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--card);color:var(--fg);
-border:2px solid var(--btn);margin-left:-8px}.ag:first-child{margin-left:0}.ag svg{width:15px;height:15px;fill:currentColor}
-.ag.term{width:auto;padding:0 8px;border-radius:14px;font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
-
-.gs{display:flex;flex-direction:column;min-width:0}.gs b{font-size:15px;font-weight:600}.gs{flex:1}.gs small{font-size:12px;opacity:.8}.cpt .ci{flex:none;width:16px;height:16px;opacity:.85}.copy:hover .ag{border-color:var(--btn-hover)}
-details.cp{border:0;padding:0;margin:6px 0 0}
+.ag{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--card);color:var(--fg);
+border:2px solid var(--btn);margin-left:-7px}.ag:first-child{margin-left:0}.ag svg{width:13px;height:13px;fill:currentColor}
+.ag.term{width:auto;padding:0 7px;border-radius:12px;font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
+.copy:hover .ag{border-color:var(--btn-hover)}.copy.ok .ag{border-color:var(--s1)}
+.gs{display:flex;flex-direction:column;min-width:0}.gs b{font-size:14px;font-weight:600;line-height:1.3}
+.gs small{font-size:12px;opacity:.75;line-height:1.3}
+.cps{display:flex;flex-wrap:wrap;column-gap:20px;margin:4px 0 0}.cps details.cp[open]{flex-basis:100%;order:2}
+details.cp{border:0;padding:0;margin:0}
 details.cp>summary{list-style:none;cursor:pointer;padding:4px 0;font-size:13px;font-weight:400;color:var(--muted)}
 details.cp>summary::-webkit-details-marker{display:none}
 details.cp>summary::before{content:"\\25B8";display:inline-block;width:1em;color:var(--muted);transition:transform .15s}
@@ -2341,15 +2342,29 @@ def _setup_plan(report: dict, lever: str) -> dict:
 
 
 def _setup_commands(plan: dict) -> str:
-    lines = []
+    """Shell lines that apply the plan. A router is created only when every pool model has a Smart Router score
+    right now: the report can be older than the garden, and the service rejects an unscored pool model."""
+    router = plan["lever"] == "router"
+    if not plan["enable"] and not router:
+        return ""
+    lines = ["# mid: a model's id (the CLI enables by id, not by provider/model name)."
+             + (" scored: it has a Smart Router score, which every pool model needs." if router else ""),
+             "mid() { orq models list -o json -j \"[?refId=='$1'].id | [0]\" --raw; }"]
+    if router:
+        lines.append("scored() { [ \"$(orq models list -o json -j \"[?refId=='$1' && metadata.autorouter.v2].id "
+                     "| [0]\" --raw)\" != null ]; }")
     if plan["enable"]:
-        lines.append("# Enable models. The CLI takes the model's id, so each line looks it up first.")
-        lines += [f"orq models enable --model-id \"$(orq models list -o json -j \"[?refId=='{m}'].id | [0]\" --raw)\""
-                  for m in plan["enable"]]
-    if plan["lever"] == "router":
-        lines.append("# One Smart Router per model. Use the model_ref in each response as the new model name.")
-        lines += [" \\\n  ".join([f"orq smart-routers create --key {m['key']}", *(f"--models {x}" for x in m["pool"]),
-                                   f"--body-profile {ROUTER_PROFILE}"]) for m in plan["moves"]]
+        lines.append("# Enable models.")
+        lines += [f"orq models enable --model-id \"$(mid {m})\"" for m in plan["enable"]]
+    if router:
+        lines.append("# One Smart Router per model, made only when its pool is scored. Use the model_ref in each "
+                     "response as the new model name.")
+        for m in plan["moves"]:
+            lines.append(f"if {' && '.join(f'scored {x}' for x in m['pool'])}; then")
+            lines.append("  " + " \\\n    ".join([f"orq smart-routers create --key {m['key']}",
+                                                 *(f"--models {x}" for x in m["pool"]),
+                                                 f"--body-profile {ROUTER_PROFILE}"]))
+            lines.append(f"else echo \"skip {m['key']}: a pool model has no Smart Router score yet\" >&2; fi")
     return "\n".join(lines)
 
 
@@ -2363,7 +2378,9 @@ def _setup_prompt(plan: dict) -> str:
         step += 1
     if plan["lever"] == "router":
         out.append(f"{step}. Create one Smart Router per model with `orq smart-routers create`, profile "
-                   f"{ROUTER_PROFILE}, and keep the `model_ref` each response returns:")
+                   f"{ROUTER_PROFILE}, and keep the `model_ref` each response returns. Every pool model needs a Smart "
+                   "Router score (`metadata.autorouter.v2` in `orq models list -o json`): skip a router whose pool "
+                   "has a model without one, and tell me which:")
         out += [f"   - key {m['key']}, models {', '.join(m['pool'])} (replaces {m['model']})" for m in plan["moves"]]
         swap = "the `model_ref` of its router"
     else:
@@ -2396,21 +2413,25 @@ def _icon_sprite() -> str:
     return f"<svg width=0 height=0 style='position:absolute' aria-hidden=true>{syms}</svg>"
 
 
-def _copy_tile(kind: str, text: str, label: str, hint: str, show: str) -> str:
-    """One copy tile: a big button (agent marks or a terminal mark), then the text behind a disclosure."""
+def _copy_button(kind: str, text: str, label: str, hint: str) -> str:
+    """A compact copy button (agent marks or a terminal mark, label, hint) tied to its text by id."""
     if kind == "txt":
         marks = "".join(f"<span class=ag title='{n}'><svg aria-hidden=true><use href='#ic-{k}'/></svg></span>"
                         for k, n, _ in AGENT_ICONS)
     else:
         marks = "<span class='ag term' aria-hidden=true>&gt;_</span>"
-    return (f"<div class=cpt><button type=button class=copy aria-label='{html.escape(label)}'>"
+    return (f"<button type=button class=copy data-copy={_copy_id(text)} aria-label='{html.escape(label)}'>"
             f"<span class=ags>{marks}</span><span class=gs><b aria-live=polite>{html.escape(label)}</b>"
-            f"<small>{html.escape(hint)}</small></span>"
-            "<svg class=ci viewBox='0 0 24 24' fill=none stroke=currentColor stroke-width=2 stroke-linecap=round "
-            "stroke-linejoin=round aria-hidden=true><rect x='9' y='9' width='12' height='12' rx='2'/>"
-            "<path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/></svg></button>"
-            f"<details class=cp><summary>{html.escape(show)}</summary><pre class={kind}>{html.escape(text)}</pre>"
-            "</details></div>")
+            f"<small>{html.escape(hint)}</small></span></button>")
+
+
+def _copy_text(kind: str, text: str, show: str) -> str:
+    return (f"<details class=cp><summary>{html.escape(show)}</summary>"
+            f"<pre class={kind} id={_copy_id(text)}>{html.escape(text)}</pre></details>")
+
+
+def _copy_id(text: str) -> str:
+    return "cp" + hashlib.sha1(text.encode()).hexdigest()[:10]
 
 
 def _setup_card(report: dict, rec: str) -> str:
@@ -2433,16 +2454,16 @@ def _setup_card(report: dict, rec: str) -> str:
                  f"Enable {html.escape(m.split('/')[-1])}</a>" for m in plan["enable"]]
         if lever == "router":
             links.insert(0, f"<a href='{ORQ_APP}/{ws}/router/smart-router?id=new'>Create a Smart Router</a>")
+        prompt, cmds = _setup_prompt(plan), _setup_commands(plan)
         blocks.append(f"<div class=setup><h3>{name}{tag}</h3><p class=m>{html.escape(summary)}</p>"
                       + (f"<ul class=mv>{''.join(f'<li>{html.escape(_short(m['model']))} \u2192 {html.escape(_short(m['to']))}</li>' for m in plan['moves'])}</ul>"
                          if lever == "switch" else "")
                       + "<div class=cpg>"
-                      + _copy_tile("txt", _setup_prompt(plan), "Copy prompt",
-                                   "Paste into your coding agent", "Show prompt")
-                      + (_copy_tile("cmd", cmds, "Copy commands",
-                                    f"{cmds.count(chr(10)) + 1} line{'s' if '\n' in cmds else ''} for the orq CLI", "Show commands")
-                         if (cmds := _setup_commands(plan)) else "")
-                      + "</div>"
+                      + _copy_button("txt", prompt, "Copy prompt", "Paste into your coding agent")
+                      + (_copy_button("cmd", cmds, "Copy commands",
+                                      f"{cmds.count(chr(10)) + 1} lines for the orq CLI") if cmds else "")
+                      + "</div><div class=cps>" + _copy_text("txt", prompt, "Show prompt")
+                      + (_copy_text("cmd", cmds, "Show commands") if cmds else "") + "</div>"
                       + (f"<p class='m ol'>In orq.ai: {SEP.join(links)}</p>" if links else "") + "</div>")
     if not blocks:
         return ""

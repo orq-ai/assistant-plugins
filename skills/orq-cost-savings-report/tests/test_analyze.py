@@ -326,6 +326,18 @@ def test_models_without_a_default_effort_score_are_never_targets(tmp_path):
     assert any("zai/glm-x" in x["detail"] for x in an.report["checks"]["caveats"])
 
 
+def test_a_model_without_a_smart_router_score_is_never_a_target(tmp_path):
+    # in the garden (e.g. scored by another source) but its card has no autorouter.v2: Smart Router would reject it
+    an = _analyzer_with(tmp_path, [("openai", "gpt-x-unscored", 60.0, 0.1, 0.4, {}),
+                                   ("openai", "gpt-x-scored", 60.0, 0.1, 0.4, {})])
+    an.cards["openai/gpt-x-unscored"]["metadata"] = {}
+    assert "openai/gpt-x-unscored" in an.garden and not an.poolable("openai/gpt-x-unscored")
+    ids = [x.router_id for x in an.candidates("openai/gpt-6-sol", "any_provider:all")]
+    assert "openai/gpt-x-unscored" not in ids and "openai/gpt-x-scored" in ids
+    res = an.pool_for("openai/gpt-6-sol", "same_provider:all")
+    assert "openai/gpt-x-unscored" not in [p.id for p in res["pool"] or []] + [res["switch"]] + res["enable"]
+
+
 def test_report_has_no_quality_profile_and_a_minor_schema_version(tmp_path):
     _, rep = run(tmp_path)
     assert rep["schema_version"] == "1.1"

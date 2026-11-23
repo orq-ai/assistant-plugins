@@ -730,11 +730,16 @@ def test_setup_router_commands_enable_then_create_one_router_per_model():
     assert plan["enable"] == ["openai/gpt-6.1-terra"]
     assert [m["key"] for m in plan["moves"]] == ["savings-gpt-6-sol"]
     cmds = c._setup_commands(plan).splitlines()
-    # the CLI enables by the model's id, so the line looks it up from the provider/model name
-    assert cmds[1] == ("orq models enable --model-id \"$(orq models list -o json -j "
-                       "\"[?refId=='openai/gpt-6.1-terra'].id | [0]\" --raw)\"")
-    assert cmds[3:] == ["orq smart-routers create --key savings-gpt-6-sol \\", "  --models openai/gpt-6.1-terra \\",
-                        "  --models openai/gpt-6-luna \\", "  --body-profile SMART_ROUTER_PROFILE_BALANCED"]
+    # the CLI enables by the model's id, so a helper looks it up from the provider/model name
+    assert cmds[1] == "mid() { orq models list -o json -j \"[?refId=='$1'].id | [0]\" --raw; }"
+    assert "metadata.autorouter.v2" in cmds[2]  # scored(): the live Smart Router score check
+    assert cmds[4] == 'orq models enable --model-id "$(mid openai/gpt-6.1-terra)"'
+    # a router is made only when every pool model is scored now; the report can predate the garden
+    assert cmds[6:] == ["if scored openai/gpt-6.1-terra && scored openai/gpt-6-luna; then",
+                        "  orq smart-routers create --key savings-gpt-6-sol \\", "    --models openai/gpt-6.1-terra \\",
+                        "    --models openai/gpt-6-luna \\", "    --body-profile SMART_ROUTER_PROFILE_BALANCED",
+                        'else echo "skip savings-gpt-6-sol: a pool model has no Smart Router score yet" >&2; fi']
+    assert "metadata.autorouter.v2" in c._setup_prompt(plan)
 
 
 def test_setup_change_model_lists_replacements_and_only_their_enables():
@@ -743,6 +748,7 @@ def test_setup_change_model_lists_replacements_and_only_their_enables():
     assert {m["model"]: m["to"] for m in plan["moves"]} == {
         "openai/gpt-6-sol": "openai/gpt-6.1-terra", "anthropic/claude-sonnet-5": "anthropic/claude-haiku-5-5"}
     assert "smart-routers" not in c._setup_commands(plan) and "->" not in c._setup_commands(plan)
+    assert "scored" not in c._setup_commands(plan)  # a model switch needs no Smart Router score
     prompt = c._setup_prompt(plan)
     assert "anthropic/claude-sonnet-5 -> anthropic/claude-haiku-5-5" in prompt and "gpt-6-luna ->" not in prompt
 
