@@ -17,7 +17,7 @@ platform. Treat them as changes to the user's machine, not as reads.
 | `orq disconnect` | Undo what `connect` wrote (names every file first) |
 | `orq launch <agent>` | Run one agent through the orq AI Router, no persistent change |
 
-Agents: `claude`, `codex`, `kilo`, `kimi`, `opencode`, `pi`. Capabilities:
+Agents: `claude`, `codex`, `cursor`, `kilo`, `kimi`, `opencode`, `pi`. Capabilities:
 `gateway` (routes model calls, needs a credential), `skills` (installs the orq
 skills, offline, no credential), `mcp` (writes the MCP server URL only — the
 agent does its own OAuth), and `tracing`, which parses but **is not implemented
