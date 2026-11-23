@@ -811,6 +811,16 @@ class Analyzer:
             return None
         return w
 
+    def retention_days(self) -> int | None:
+        """The workspace's trace retention (`features.retention_period`), or None when the key cannot read it."""
+        try:
+            key = self.args.workspace or (self.orq("status", cache=False) or {}).get("active_workspace_key")
+            days = ((self.orq("workspaces", "get", key, cache=False) or {}).get("workspace") or {}) \
+                .get("features", {}).get("retention_period") if key else None
+        except OrqError:
+            return None
+        return int(days) if isinstance(days, (int, float)) and days > 0 else None
+
     def set_window(self) -> None:
         prev = self.previous_window()
         if prev:
@@ -818,7 +828,8 @@ class Analyzer:
             self.report["window"] = dict(prev)
             return
         to = datetime.now(UTC).replace(second=0, microsecond=0)
-        days = self.args.window
+        retention = self.retention_days()
+        days = min(self.args.window, retention) if retention else self.args.window
         for _ in range(2):
             self.to, self.frm = iso(to), iso(to - timedelta(days=days))
             try:
@@ -830,7 +841,8 @@ class Analyzer:
                     raise
                 days = max(1, int(m.group(1)) - 1)
         self.days = days
-        self.report["window"] = {"from": self.frm, "to": self.to, "days": days, "requested": self.args.window}
+        self.report["window"] = {"from": self.frm, "to": self.to, "days": days, "requested": self.args.window,
+                                 "retention": retention}
 
     # ---- models
 

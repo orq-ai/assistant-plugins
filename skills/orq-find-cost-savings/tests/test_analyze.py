@@ -39,13 +39,17 @@ LEAVES = {
 
 
 class FakeOrq:
-    def __init__(self):
-        self.decisions = 0
+    def __init__(self, retention=None):
+        self.decisions, self.retention = 0, retention
 
     def __call__(self, *args, body=None, cache=True):
         a = list(args)
         if a[:2] == ["telemetry", "query"]:
             return self.telemetry(a)
+        if a[:2] == ["workspaces", "get"]:
+            if self.retention is None:
+                raise c.OrqError(a, 1, "HTTP 403 not authorized")
+            return {"workspace": {"key": a[2], "features": {"retention_period": self.retention}}}
         if a[:2] == ["model-catalog", "list"]:
             return {"data": FIX["catalog"]}
         if a[:2] == ["models", "list"]:
@@ -234,6 +238,15 @@ def test_window_flag_sets_the_period_and_a_new_period_is_not_reused(tmp_path, mo
     assert first["window"]["days"] == first["window"]["requested"] == 30
     _, second = run(tmp_path, yes=False, window=14)
     assert second["window"]["days"] == second["window"]["requested"] == 14
+
+
+def test_window_is_capped_at_the_workspace_retention(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+    an = c.Analyzer(ns(tmp_path, window=90))
+    an.orq = FakeOrq(retention=30)
+    an.set_window()
+    assert an.report["window"]["days"] == 30 and an.report["window"]["retention"] == 30
+    assert an.report["window"]["requested"] == 90
 
 
 def test_disabled_decision_model_stops(tmp_path, monkeypatch):
