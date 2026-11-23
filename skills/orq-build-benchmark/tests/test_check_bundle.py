@@ -169,3 +169,4 @@ def test_native_row_gap_refuses_under_the_shared_floor_and_ties() -> None:
     same = {f'r{i}': 0.5 + i / 10 for i in range(floor)}
     assert helpers['tied'](helpers['paired_row_gap'](same, same)), 'identical scores must tie'
     assert not helpers['tied']((0.3, 0.1, 10))
+    assert not helpers['tied']((-0.3, 0.1, 10)), 'a clear negative gap must not tie'
