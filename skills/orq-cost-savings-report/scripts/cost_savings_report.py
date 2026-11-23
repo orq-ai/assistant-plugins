@@ -1661,13 +1661,13 @@ CSS = """
 b,strong{font-weight:600}
 :root{--bg:#ffffff;--fg:#141319;--fg2:#3c3a48;--muted:#737373;--panel:#fafafa;--strip:#f7f6f5;--card:#ffffff;
 --line:#e6e6e6;--sep:#f6f6f6;--shadow:0 1px 2px 0 #14131908;--s1:#025558;--s2:#df5325;--kept:#dcdad6;--ns:#f3f3f3;--hl:#e6f6f5;
---hl2:#4ba9a7;--hlb:#b8e4e2;--pill:#ffffff;--rec-fg:#025558;--rec-bg:#e6f6f5;--btn:#e6f6f5;--btn-fg:#141319;--btn-hover:#d3efed;--btn-line:#b8e4e2;--ok-fg:#ffffff;color-scheme:light}
+--hl2:#4ba9a7;--hlb:#b8e4e2;--pill:#ffffff;--rec-fg:#025558;--rec-bg:#e6f6f5;--btn:#025558;--btn-fg:#ffffff;--btn-hover:#013f41;color-scheme:light}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){--bg:#1f1e1d;--fg:#faf9f5;--fg2:#c2c0b6;
 --muted:#9c9a92;--panel:#262624;--strip:#1f1e1d;--card:#30302e;--line:#42413d;--sep:#3a3935;--shadow:0 1px 2px 0 #00000040;
---s1:#2fbfba;--s2:#f27c3c;--kept:#55544f;--ns:#232221;--hl:#2fbfba2e;--hl2:#2fbfba66;--hlb:#2fbfba80;--pill:#42413d;--rec-fg:#2fbfba;--rec-bg:#2fbfba2e;--btn:#2fbfba1f;--btn-fg:#faf9f5;--btn-hover:#2fbfba38;--btn-line:#2fbfba59;--ok-fg:#141319;color-scheme:dark}}
+--s1:#2fbfba;--s2:#f27c3c;--kept:#55544f;--ns:#232221;--hl:#2fbfba2e;--hl2:#2fbfba66;--hlb:#2fbfba80;--pill:#42413d;--rec-fg:#2fbfba;--rec-bg:#2fbfba2e;--btn:#2fbfba;--btn-fg:#141319;--btn-hover:#5fd0cc;color-scheme:dark}}
 :root[data-theme="dark"]{--bg:#1f1e1d;--fg:#faf9f5;--fg2:#c2c0b6;--muted:#9c9a92;--panel:#262624;--strip:#1f1e1d;
 --card:#30302e;--line:#42413d;--sep:#3a3935;--shadow:0 1px 2px 0 #00000040;--s1:#2fbfba;--s2:#f27c3c;--kept:#55544f;--ns:#232221;
---hl:#2fbfba2e;--hl2:#2fbfba66;--hlb:#2fbfba80;--pill:#42413d;--rec-fg:#2fbfba;--rec-bg:#2fbfba2e;--btn:#2fbfba1f;--btn-fg:#faf9f5;--btn-hover:#2fbfba38;--btn-line:#2fbfba59;--ok-fg:#141319;color-scheme:dark}
+--hl:#2fbfba2e;--hl2:#2fbfba66;--hlb:#2fbfba80;--pill:#42413d;--rec-fg:#2fbfba;--rec-bg:#2fbfba2e;--btn:#2fbfba;--btn-fg:#141319;--btn-hover:#5fd0cc;color-scheme:dark}
 *{box-sizing:border-box}
 body{font:14px/1.5 "Avio Sans",Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 background:var(--bg);color:var(--fg);margin:0;padding-block:28px 56px;
@@ -1684,18 +1684,19 @@ font-size:12px;line-height:1.4;background:var(--fg);color:var(--bg);box-shadow:0
 [data-tip]{cursor:default}[data-tip]:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
 .setup+.setup{margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}
 .setup h3{font-size:15px;margin:0 0 4px;display:flex;align-items:center;gap:8px}.setup .ol{margin:8px 0 0}.setup .ol a{color:var(--fg);text-underline-offset:2px}
-.cpg{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:12px;margin:12px 0 4px;align-items:start}
+.cpg{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),340px));gap:12px;margin:12px 0 4px;align-items:start}
 .cpt{min-width:0}
 .cpt .copy{display:flex;align-items:center;gap:14px;width:100%;min-height:56px;padding:12px 16px;font:inherit;text-align:left;
-cursor:pointer;color:var(--btn-fg);background:var(--btn);border:1px solid var(--btn-line);border-radius:6px;box-shadow:0 1px 2px 0 #14131908;transition:background .15s}
+cursor:pointer;color:var(--btn-fg);background:var(--btn);border:0;border-radius:6px;box-shadow:0 1px 2px 0 #14131926,inset 0 -2px 0 #00000026;transition:background .15s,transform .05s}
+.cpt .copy:active{transform:translateY(1px)}
 .cpt .copy:hover{background:var(--btn-hover)}.cpt .copy:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
-.cpt .copy.ok{background:var(--s1);border-color:var(--s1);color:var(--ok-fg)}
+
 .ags{display:inline-flex;flex:none}
 .ag{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--card);color:var(--fg);
-border:2px solid var(--btn-line);margin-left:-8px}.ag:first-child{margin-left:0}.ag svg{width:15px;height:15px;fill:currentColor}
+border:2px solid var(--btn);margin-left:-8px}.ag:first-child{margin-left:0}.ag svg{width:15px;height:15px;fill:currentColor}
 .ag.term{width:auto;padding:0 8px;border-radius:14px;font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
 
-.gs{display:flex;flex-direction:column;min-width:0}.gs b{font-size:15px;font-weight:600}.gs small{font-size:12px;color:var(--muted)}.copy.ok small{color:inherit;opacity:.8}
+.gs{display:flex;flex-direction:column;min-width:0}.gs b{font-size:15px;font-weight:600}.gs{flex:1}.gs small{font-size:12px;opacity:.8}.cpt .ci{flex:none;width:16px;height:16px;opacity:.85}.copy:hover .ag{border-color:var(--btn-hover)}
 details.cp{border:0;padding:0;margin:6px 0 0}
 details.cp>summary{list-style:none;cursor:pointer;padding:4px 0;font-size:13px;font-weight:400;color:var(--muted)}
 details.cp>summary::-webkit-details-marker{display:none}
@@ -2404,7 +2405,10 @@ def _copy_tile(kind: str, text: str, label: str, hint: str, show: str) -> str:
         marks = "<span class='ag term' aria-hidden=true>&gt;_</span>"
     return (f"<div class=cpt><button type=button class=copy aria-label='{html.escape(label)}'>"
             f"<span class=ags>{marks}</span><span class=gs><b aria-live=polite>{html.escape(label)}</b>"
-            f"<small>{html.escape(hint)}</small></span></button>"
+            f"<small>{html.escape(hint)}</small></span>"
+            "<svg class=ci viewBox='0 0 24 24' fill=none stroke=currentColor stroke-width=2 stroke-linecap=round "
+            "stroke-linejoin=round aria-hidden=true><rect x='9' y='9' width='12' height='12' rx='2'/>"
+            "<path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/></svg></button>"
             f"<details class=cp><summary>{html.escape(show)}</summary><pre class={kind}>{html.escape(text)}</pre>"
             "</details></div>")
 
@@ -2434,7 +2438,7 @@ def _setup_card(report: dict, rec: str) -> str:
                          if lever == "switch" else "")
                       + "<div class=cpg>"
                       + _copy_tile("txt", _setup_prompt(plan), "Copy prompt",
-                                   "For Claude Code, Codex, Cursor or Copilot", "Show prompt")
+                                   "Paste into your coding agent", "Show prompt")
                       + (_copy_tile("cmd", cmds, "Copy commands",
                                     f"{cmds.count(chr(10)) + 1} line{'s' if '\n' in cmds else ''} for the orq CLI", "Show commands")
                          if (cmds := _setup_commands(plan)) else "")
