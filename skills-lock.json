@@ -34,7 +34,7 @@
     "orq-compare-agents": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "f5ae2e063afb84b6349b74f60242415433ac82a7e56b4ea773cbc1bf7c3e0ddb"
+      "computedHash": "9642b55586098e6e6f3164d995149b8c8230d8f3861b7fcfbda48a388709b6f9"
     },
     "orq-create-skill": {
       "source": "orq-ai/assistant-plugins",
@@ -89,7 +89,7 @@
     "orq-run-experiment": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "75dac14be00cc07b0e680815d3d5560cb86d330aedfe907dfeb71c403cc8c028"
+      "computedHash": "bd65f7bb848d2db40a03652532503384bd346c292fcba4cde12d3d4257c36a7f"
     },
     "orq-setup-observability": {
       "source": "orq-ai/assistant-plugins",

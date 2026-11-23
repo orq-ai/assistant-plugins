@@ -109,14 +109,14 @@ The evaluator's config lives on the evaluator; change it there, not in the exper
 ```bash
 curl -s https://my.orq.ai/v3/experiments/$EXP/runs/$RUN/execute \
   -H "Authorization: Bearer $ORQ_API_KEY" -H "Content-Type: application/json" \
-  -d '{"scope": "EXECUTE_SCOPE_FULL", "constraints": {"llm": {"concurrency": 5, "timeout": "300s"}}}' | jq .status
+  -d '{"scope": "EXECUTE_SCOPE_FULL", "constraints": {"llm": {"concurrency": 5}}}' | jq .status
 
 # Poll until status is RUN_STATUS_COMPLETED, RUN_STATUS_FAILED or RUN_STATUS_CANCELED
 curl -s https://my.orq.ai/v3/experiments/$EXP/runs/$RUN \
   -H "Authorization: Bearer $ORQ_API_KEY" | jq '{status, row_count, cell_status_counts}'
 ```
 
-Scopes: `EXECUTE_SCOPE_FULL` (every cell), `EXECUTE_SCOPE_PARTIAL` (skips completed and running cells, so use it after adding a column or to retry failures), and `EXECUTE_SCOPE_ROW`, `EXECUTE_SCOPE_COLUMN`, `EXECUTE_SCOPE_CELL` with `targets`. A queued or running run rejects a new execute until it finishes or you cancel it (`POST .../runs/$RUN/cancel` with `{}`). Check `cell_status_counts.failed` before reading scores.
+Scopes: `EXECUTE_SCOPE_FULL` (every cell), `EXECUTE_SCOPE_PARTIAL` (skips completed and running cells, so use it after adding a column or to retry failures), and `EXECUTE_SCOPE_ROW`, `EXECUTE_SCOPE_COLUMN`, `EXECUTE_SCOPE_CELL` with `targets`. A queued or running run rejects a new execute until it finishes or you cancel it (`POST .../runs/$RUN/cancel` with `{}`). Check `cell_status_counts.failed` before reading scores; `not_run` cells on other columns after a clean run are normal. An optional `constraints.llm.timeout` (for example `"600s"`) must be at least the timeout of every agent in the run, or the execute call is rejected with `OPTIMIZATION_EXPERIMENTS_RUN_TIMEOUT_BELOW_AGENT_TIMEOUT`.
 
 ### 5. Read results
 
@@ -132,7 +132,9 @@ curl -s https://my.orq.ai/v3/experiments/$EXP/runs/$RUN/query \
   | jq '.rows[] | .cells[] | {status, text: .value.last_message.content[0].text, trace_id: .value.trace_id}'
 ```
 
-Metric keys are `{task_column_id}_{evaluator_id}` for evaluators and `{task_column_id}_orq_cost`, `_orq_latency`, `_orq_input_tokens` and so on for usage. A boolean evaluator reports `passed_rate` (0 to 100); a numeric one reports `min`, `max`, `avg`, `median`, `std_dev`.
+The response has `has_more`; page with `starting_after` set to the last `row_id`. The query also returns metric cells, so filter on the column you asked for if needed.
+
+Metric keys are `{task_column_id}_{evaluator_id}` for evaluators and `{task_column_id}_orq_cost`, `_orq_latency`, `_orq_input_tokens` and so on for usage. Each value holds one of `boolean`, `number` or `categorical`: a boolean evaluator reports `.boolean.passed_rate` (0 to 100); a numeric metric reports `.number.min`, `max`, `avg`, `sum` (the total, e.g. total cost), `median`, `std_dev`; a label evaluator reports `categorical` counts and gets no `baseline`.
 
 ### 6. Iterate: new run, change one thing, compare to baseline
 
@@ -153,7 +155,9 @@ curl -s --get https://my.orq.ai/v3/experiments/$EXP/runs/$RUN2/metrics \
   -H "Authorization: Bearer $ORQ_API_KEY" | jq '.metrics | map_values(.baseline)'
 ```
 
-`baseline` gives `avg`, `delta`, `pct_change` and `direction` (`up`, `down`, `same`) per metric. Agent task columns get a new `column_id` in each run, so look it up with `GET .../runs/$RUN2/tasks` before patching one.
+The PATCH replaces the whole task config, so resend `messages_source`, `engine` and `tools` if the column used non-default values.
+
+`baseline` gives `avg`, `delta`, `pct_change` and `direction` (`up`, `down`, `same`) per metric. Agent task columns get a new `column_id` in each run, so look it up with `GET .../runs/$RUN2/tasks` before patching one. Because metric keys contain the column id, `baseline` is null for agent columns: compare agent variants as two columns in the same run instead, and use the baseline flow for prompt columns. A new run starts with empty cells, so any execute on it, `EXECUTE_SCOPE_PARTIAL` included, runs and bills every cell.
 
 Other endpoints: list experiments `GET /v3/experiments`, list runs `GET /v3/experiments/$EXP/runs` (newest first), export a run `GET .../runs/$RUN/export`, delete an experiment `DELETE /v3/experiments/$EXP`.
 

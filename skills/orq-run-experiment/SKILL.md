@@ -6,7 +6,7 @@ description: >
   Use when evaluating LLM agents, deployments, conversations, or RAG pipelines
   end-to-end. Do NOT use without a dataset and evaluators. Do NOT use for
   cross-framework comparisons with external agents (use orq-compare-agents).
-allowed-tools: Read, Write, Edit, Grep, Glob, Bash(curl -s https://my.orq.ai/v3/experiments*), Bash(curl -s --get https://my.orq.ai/v3/experiments*), Bash(curl -s -X PATCH https://my.orq.ai/v3/experiments*), Task, AskUserQuestion, mcp__orq-workspace__list_experiment_runs, mcp__orq-workspace__get_experiment_run, mcp__orq-workspace__search_entities, mcp__orq-workspace__list_datapoints, mcp__orq-workspace__search_docs
+allowed-tools: Read, Write, Edit, Grep, Glob, Bash(curl -s https://my.orq.ai/v3/experiments*), Bash(curl -s --get https://my.orq.ai/v3/experiments*), Bash(curl -s -X PATCH https://my.orq.ai/v3/experiments*), Bash(jq *), Task, AskUserQuestion, mcp__orq-workspace__list_experiment_runs, mcp__orq-workspace__get_experiment_run, mcp__orq-workspace__search_entities, mcp__orq-workspace__list_datapoints, mcp__orq-workspace__search_docs
 ---
 
 # Run Experiment
@@ -181,7 +181,7 @@ Consult these docs as needed:
 
 8. **Create and run the experiment.** Pick the interface first:
    - **`create_experiment` MCP tool** for a one-off experiment from this conversation: link the dataset and evaluator(s), select the target model/deployment, set the system prompt if testing prompt variations, run and wait.
-   - **Experiments API (v3)** when the experiment must be repeatable without an agent present (script, CI, cron), when the task is an orq.ai agent, when several prompts or agents run side by side in one grid, or when the next iteration should be a new run compared against this one. Follow [resources/api-reference.md § Experiments API](resources/api-reference.md#experiments-api-v3): create the experiment with the dataset, add task columns (`prompt` or `agent`), add evaluator columns by ID, `execute` with `EXECUTE_SCOPE_FULL`, and poll the run until `RUN_STATUS_COMPLETED`.
+   - **Experiments API (v3)** when the experiment must be repeatable without an agent present (script, CI, cron), when the task is an orq.ai agent, when several prompts or agents run side by side in one grid, or when the next iteration should be a new run compared against this one. Follow [resources/api-reference.md § Experiments API](resources/api-reference.md#experiments-api-v3): create the experiment with the dataset, add task columns (`prompt` or `agent`), add evaluator columns by ID, `execute` with `EXECUTE_SCOPE_FULL`, and poll the run until `RUN_STATUS_COMPLETED`, `RUN_STATUS_FAILED` or `RUN_STATUS_CANCELED`.
    - Either way, confirm the run has no failed cells (`cell_status_counts.failed` in the API) before reading scores; retry failures with `EXECUTE_SCOPE_PARTIAL`.
 
 9. **Collect results.**
