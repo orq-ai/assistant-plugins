@@ -1514,6 +1514,8 @@ class Analyzer:
             "only from report.json; lead with percent of spend, then dollars per month; no statistics in prose "
             "(the page shows uncertainty in its appendix table).\n\n" + slots)
         self.log(f"wrote {self.out / 'report.json'}")
+        if self.report.get("status") == "ok" and "routing" in self.report:
+            self.log(f"next: fill {self.out / 'narrative.md'}, then run render; report.html is the deliverable")
 
 
 def _neg(s: str) -> str:
@@ -2587,9 +2589,9 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
            + "".join(f"<li><a href='#{k}'>{t}</a></li>" for k, t in toc if k != "setup" or setup) + "</ul></nav>")
     theme = f"<button type=button class=theme aria-label='Switch colour theme'>{SUN}{MOON}</button>"
     to_day = _day(win["to"])
-    head = (f"<header class=top><div><h1>LLM cost savings: {html.escape(ws)}</h1>"
-            f"<p class=m>{html.escape(_day(win['from']))} to {html.escape(to_day)}, scaled to a month: "
-            f"{_usd0(spend_pm)}/mo LLM spend.</p></div>{theme}</header>")
+    head = (f"<header class=top><div><h1>Where you can save on LLM spend</h1>"
+            f"<p class=m>{html.escape(ws)} · {html.escape(_day(win['from']))} to {html.escape(to_day)} "
+            f"({win['days']} days), scaled to a month: {_usd0(spend_pm)}/mo LLM spend.</p></div>{theme}</header>")
     parts = [_card("What to do", (_plan_caption("switch", p_switch, sw_pm) if rec == "s" else _plan_caption("router", p_router, h_pm))
                    + _actions_chart(report, per_month, "switch" if rec == "s" else "router"), "do"),
              setup,
@@ -2634,7 +2636,7 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
              f"figures re-price the sampled calls on the new model. Balanced routing profile, generated {gen}.</p>")
     parts.append(_card("Details", intro + "<div class=rows>" + "".join(dets) + "</div>", "details"))
     body = head + hero + nav + "".join(parts)
-    title = f"{ws} cost savings, {to_day.split(' ', 1)[-1]}"
+    title = f"Where you can save on LLM spend: {ws}, {to_day.split(' ', 1)[-1]}"
     return ("<!doctype html><html lang=en><head><meta charset=utf-8>"
             "<meta name=viewport content='width=device-width, initial-scale=1'>"
             f"<title>{html.escape(title)}</title><script>{THEME_BOOT}</script><style>{_font_css()}{CSS}</style></head>"
