@@ -28,16 +28,16 @@ Not for: creating a Smart Router (use `orq-cli`), debugging one trace (use `orq-
 ## Run
 
 ```
-uv run <this skill's directory>/scripts/cost_savings_report.py analyze --workspace <key> --out <dir> [--sample 100] [--counterfactual-test] [--yes]
+uv run <this skill's directory>/scripts/cost_savings_report.py analyze --workspace <key> --out <dir> [--window 30] [--sample 100] [--counterfactual-test] [--yes]
 # fill <dir>/narrative.md from <dir>/narrative-slots.md
 uv run <this skill's directory>/scripts/cost_savings_report.py render --out <dir> --narrative <dir>/narrative.md [--redact]
 ```
 
-`--sample` defaults to 100, also the current maximum. `--counterfactual-test` stops after the pilot and lists the recommended and the used model per ask; nothing is replayed. Before the paid decision calls `analyze` prints their count and estimated cost. Run without a terminal, it stops with check `confirmation` in `report.json`; rerun with `--yes` once the user agrees. Reads are cached under `<dir>/cache`, so the rerun does not fetch them again.
+`--window` is the number of days of traces to analyse, ending now (default 30). `--sample` defaults to 100, also the current maximum. `--counterfactual-test` stops after the pilot and lists the recommended and the used model per ask; nothing is replayed. Before the paid decision calls `analyze` prints their count and estimated cost. Run without a terminal, it stops with check `confirmation` in `report.json`; rerun with `--yes` once the user agrees. Reads are cached under `<dir>/cache`, so the rerun does not fetch them again.
 
 ## Workflow
 
-1. Confirm the workspace and output path.
+1. Confirm the workspace and output path, and ask which period to analyse: 2 weeks, 1 month (default), 3 months, or another number of days. Pass it as `--window <days>`; the workspace's trace retention can shorten it, and `report.json` keeps both `requested` and the `days` used.
 2. Run `analyze` without `--yes`. It stops at `confirmation` with the decision cost; tell the user the cost and rerun with `--yes` when they agree.
 3. If `report.json` has `status: stopped` on any other check, report that check and its numbers; do not work around it. `decision model enabled` means the workspace must enable `typesafe/jev-latest` first.
 4. Read `report.json` and write each slot in `narrative-slots.md`: the `summary` slot is one line, at most 12 words, with no model names: the recommended lever (the larger saving, Smart Router on ties) with its percent of spend and monthly dollars (for example `Save 38% ($150/mo) with Smart Router.`); the spend bar shows how much is possible today, the per-model rows carry the names, and the appendix holds coverage and the CI. The `routing` slot is one line per model in plain words (no "dominated", no raw index numbers), with no action list: the page renders the per-model plan. Quote percent of spend first, then monthly dollars (`per_month`), in the other slots, with no statistics in prose, and keep routing and caching savings separate. Call the two levers "Smart Router" and "change model"; never "switch", which reads like a router.

@@ -27,7 +27,8 @@
     "window": {
       "type": "object",
       "required": ["from", "to", "days"],
-      "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "days": {"type": "integer", "minimum": 1}}
+      "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "days": {"type": "integer", "minimum": 1},
+                     "requested": {"type": "integer", "minimum": 1}}
     },
     "spend": {
       "type": "object",

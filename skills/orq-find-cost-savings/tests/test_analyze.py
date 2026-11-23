@@ -97,7 +97,7 @@ class FakeOrq:
 
 def ns(tmp_path, **kw):
     d = {"workspace": "demo", "out": str(tmp_path), "sample": 10, "counterfactual_test": False, "cache_threads": 5,
-         "seed": 7, "redact": False, "yes": True}
+         "seed": 7, "redact": False, "yes": True, "window": 30}
     d.update(kw)
     return argparse.Namespace(**d)
 
@@ -226,6 +226,14 @@ def test_rerun_after_confirmation_reuses_window(tmp_path, monkeypatch):
     _, first = run(tmp_path, yes=False)
     _, second = run(tmp_path, yes=True)
     assert second["status"] == "ok" and second["window"] == first["window"]
+
+
+def test_window_flag_sets_the_period_and_a_new_period_is_not_reused(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+    _, first = run(tmp_path, yes=False)
+    assert first["window"]["days"] == first["window"]["requested"] == 30
+    _, second = run(tmp_path, yes=False, window=14)
+    assert second["window"]["days"] == second["window"]["requested"] == 14
 
 
 def test_disabled_decision_model_stops(tmp_path, monkeypatch):

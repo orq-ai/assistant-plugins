@@ -42,7 +42,7 @@ from evaluatorq.common import model_frontier as mf
 SCHEMA_VERSION = "1.1"
 MAX_SAMPLE = 100
 MIN_PER_STRATUM = 5
-WINDOW_DAYS = 29
+WINDOW_DAYS = 30
 BOOTSTRAP = 1000
 WORKERS = 8
 PRICING_GAP = 0.02
@@ -805,7 +805,7 @@ class Analyzer:
         except (OSError, json.JSONDecodeError):
             return None
         w = prev.get("window")
-        if not w or prev.get("workspace") != self.args.workspace:
+        if not w or prev.get("workspace") != self.args.workspace or w.get("requested") != self.args.window:
             return None
         if datetime.now(UTC) - parse_ts(w["to"]) > timedelta(hours=24):
             return None
@@ -818,7 +818,7 @@ class Analyzer:
             self.report["window"] = dict(prev)
             return
         to = datetime.now(UTC).replace(second=0, microsecond=0)
-        days = WINDOW_DAYS
+        days = self.args.window
         for _ in range(2):
             self.to, self.frm = iso(to), iso(to - timedelta(days=days))
             try:
@@ -830,7 +830,7 @@ class Analyzer:
                     raise
                 days = max(1, int(m.group(1)) - 1)
         self.days = days
-        self.report["window"] = {"from": self.frm, "to": self.to, "days": days}
+        self.report["window"] = {"from": self.frm, "to": self.to, "days": days, "requested": self.args.window}
 
     # ---- models
 
@@ -1696,7 +1696,7 @@ border:2px solid var(--btn);margin-left:-7px}.ag:first-child{margin-left:0}.ag s
 .ag.term{width:auto;padding:0 7px;border-radius:12px;font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
 .copy:hover .ag{border-color:var(--btn-hover)}.copy.ok .ag{border-color:var(--s1)}
 .gs{display:flex;flex-direction:column;min-width:0}.gs b{font-size:14px;font-weight:600;line-height:1.3}
-.gs small{font-size:12px;opacity:.75;line-height:1.3}
+.cpg .gs small{font-size:12px;color:inherit;opacity:.85;line-height:1.3}
 .cps{display:flex;flex-wrap:wrap;column-gap:20px;margin:4px 0 0}.cps details.cp[open]{flex-basis:100%;order:2}
 details.cp{border:0;padding:0;margin:0}
 details.cp>summary{list-style:none;cursor:pointer;padding:4px 0;font-size:13px;font-weight:400;color:var(--muted)}
@@ -2638,6 +2638,8 @@ def main(argv: list[str] | None = None) -> int:
     an = sub.add_parser("analyze", help="sample, score and estimate; writes report.json")
     an.add_argument("--workspace", help="workspace key (default: the CLI's active workspace)")
     an.add_argument("--out", required=True)
+    an.add_argument("--window", type=int, default=WINDOW_DAYS, metavar="DAYS",
+                    help="days of traces to analyse, ending now; capped by the workspace's trace retention")
     an.add_argument("--sample", type=int, default=MAX_SAMPLE)
     an.add_argument("--counterfactual-test", action="store_true")
     an.add_argument("--cache-threads", type=int, default=200, help="threads to scan for caching gaps")
