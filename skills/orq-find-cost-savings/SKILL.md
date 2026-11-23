@@ -41,13 +41,13 @@ uv run <this skill's directory>/scripts/cost_savings_report.py render --out <dir
 2. Run `analyze` without `--yes`. It stops at `confirmation` with the decision cost; tell the user the cost and rerun with `--yes` when they agree.
 3. If `report.json` has `status: stopped` on any other check, report that check and its numbers; do not work around it. `decision model enabled` means the workspace must enable `typesafe/jev-latest` first.
 4. Read `report.json` and write each slot in `narrative-slots.md`: the `summary` slot is one line, at most 12 words, with no model names: the lever named in `summary.recommended` (`router` is Smart Router, `switch` is change model) with its percent of spend and monthly dollars (for example `Save 38% ($150/mo) with Smart Router.`); the spend bar shows how much is possible today, the per-model rows carry the names, and the appendix holds coverage and the CI. The `routing` slot is one line per model in plain words (no "dominated", no raw index numbers), with no action list: the page renders the per-model plan. Quote percent of spend first, then monthly dollars (`per_month`), in the other slots, with no statistics in prose, and keep routing and caching savings separate. Call the two levers "Smart Router" and "change model"; never "switch", which reads like a router.
-5. Always run `render`: `report.html` is the deliverable, so the task is not done until it exists. Share its path. The one exception is a run with `--json`, where the caller asked for the data only: skip steps 4 and 5 and return `summary`. A `--counterfactual-test` run also has no `summary` or page: skip steps 4 and 5 and report `counterfactual_test` from `report.json`. The `caching` slot only appears on the page when caching saves $1 or more in the threads scanned (not a monthly figure).
+5. Always run `render`: `report.html` is the deliverable, so the task is not done until it exists. Share its path. The one exception is a run with `--json`, where the caller asked for the data only: skip steps 4 and 5 and return `summary`. A `--counterfactual-test` run also has no `summary` or page: skip steps 4 and 5 and report `counterfactual_test` from `report.json`. The `caching` slot is used only when caching saves $1 or more in the threads scanned (not a monthly figure); otherwise `render` does not require it.
 
 ## Common mistakes
 
 | Mistake | Fix |
 |---|---|
-| Quoting dollars without the percent of spend, or a figure without its coverage | Percent first, then dollars per month and coverage; the CI lives in the page appendix |
+| Quoting dollars without the percent of spend, or a figure without its coverage | Percent first, then dollars per month; the page shows coverage and the CI, so prose repeats them only in the caveats slot |
 | Adding routing and caching savings | They overlap; show side by side |
 | Adding Smart Router and change-model savings, or two scopes | They are alternatives; quote the headline scope and show the rest beside it |
 | Treating the counterfactual as a quality guarantee | It shows which model the router would pick, not that the answer would be as good |

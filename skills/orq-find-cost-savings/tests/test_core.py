@@ -352,6 +352,14 @@ def test_without_top3_drops_largest_contributions():
     assert c.without_top({"s": ds}, {"s": 5.0}, "balanced") < full
 
 
+def test_without_top3_ranks_by_contribution_to_the_estimate():
+    a = [c.Draw("a", 1, 0.01, {"balanced": 0.005})]  # tiny saving per call, but stratum a is where the spend is
+    b = [c.Draw("b", 1, 1.0, {"balanced": 0.5})]
+    spend = {"a": 1000.0, "b": 10.0}
+    # a's call is worth $500 of the $505 estimate, b's $5: dropping the top call leaves b's $5
+    assert c.without_top({"a": a, "b": b}, spend, "balanced", k=1) == pytest.approx(5.0)
+
+
 # ---- caching
 
 
@@ -456,6 +464,7 @@ def test_report_number_formats():
     assert c._usd(0.004) == "<$0.01" and c._usd(0) == "$0.00" and c._usd(1234.5) == "$1,234"
     assert c._change(-0.46) == "-46%" and c._change(45.4) == "46x the cost"
     assert c._day("2026-10-22T10:29:00Z") == "22 Oct 2026"
+    assert c._usd0(-0.2) == "$0" and c._usd0(-3.4) == "-$3" and c._usd0(0.2) == "$0"
     assert c._scrub("see /Users/someone/repo/a.py and /home/x/y") == "see <path> and <path>"
 
 
@@ -774,11 +783,33 @@ def test_setup_commands_rerun_safely(tmp_path, shell):
     assert r.stdout.splitlines() == ["enabled p/a", "k-exists exists: use ws@orq/k-exists",
                                      "k-new created: use ws@orq/k-new"]
     assert r.stderr.splitlines() == ["skip p/missing: not in this workspace's model list",
-                                     "skip k-unscored: p/unscored has no Smart Router score yet",
-                                     "skip k-disabled: p/disabled is not enabled"]
+                                     "skip k-unscored: p/unscored has no Smart Router score yet (or the lookup failed)",
+                                     "skip k-disabled: p/disabled is not enabled (or the lookup failed)"]
     creates = [x for x in (tmp_path / "log").read_text().splitlines() if x.startswith("smart-routers create")]
     assert creates == ["smart-routers create --key k-new --models p/a --models p/b "
                        "--body-profile SMART_ROUTER_PROFILE_BALANCED -o json -j model_ref --raw"]
+
+
+@pytest.mark.skipif(not shutil.which("bash"), reason="needs bash")
+def test_setup_commands_stop_on_failed_orq_and_carry_the_workspace(tmp_path):
+    (tmp_path / "orq").write_text('#!/bin/sh\necho "$*" >> "$ORQ_LOG"\necho "403" >&2\nexit 1\n')
+    (tmp_path / "orq").chmod(0o755)
+    plan = {"lever": "router", "enable": ["p/a"], "workspace": "acme", "moves": [
+        {"key": "k-new", "pool": ["p/a", "p/b"], "model": "p/z"}]}
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "ORQ_LOG": str(tmp_path / "log")}
+    r = subprocess.run(["bash", "--norc", "-c", c._setup_commands(plan)], env=env, capture_output=True, text=True)
+    assert r.stdout == ""  # a failed lookup is never "exists" nor "created"
+    assert "skip p/a: could not list models" in r.stderr and "skip k-new: could not list smart routers" in r.stderr
+    log = (tmp_path / "log").read_text().splitlines()
+    assert log and all(x.endswith("--workspace acme") for x in log)
+    assert not [x for x in log if "create" in x or "enable" in x]
+    assert "workspace acme" in c._setup_prompt(plan)
+
+
+def test_setup_prompt_tests_quality_before_changing_deployments():
+    out = c._setup_prompt(c._setup_plan(SETUP_REPORT, "switch"))
+    assert out.index("compare the answers") < out.index("Show me the diff") < out.index("deployments and agents")
+    assert "only after I confirm" in out
 
 
 def test_setup_change_model_lists_replacements_and_only_their_enables():
@@ -848,3 +879,27 @@ def test_switch_plan_skips_a_model_that_was_not_analysed():
                "switch": {"per_stratum": {"b": 3}}}]}
     plan = c._setup_plan(rep, "switch")
     assert [m["model"] for m in plan["moves"]] == ["b"]
+
+
+def test_render_needs_caching_slot_only_when_the_card_is_shown():
+    rep = {"summary": {"caching": {"savings_found": 0.2, "error": None}}}
+    n = {"summary": "S.", "routing": "R.", "caching": "", "caveats": "C."}
+    try:  # past the slot check: the caching slot was not demanded (the stub report fails later, elsewhere)
+        c.render(rep, n, redact=False)
+    except KeyError:
+        pass
+    rep["summary"]["caching"]["savings_found"] = 50
+    with pytest.raises(SystemExit, match="caching"):
+        c.render(rep, n, redact=False)
+
+
+def test_summary_today_split_equals_row_sums():
+    rep = _plan_report()
+    rep["window"] = {"days": 30}
+    rep["samples"] = []
+    for sc in rep["scenarios"]:
+        sc["switch"] = {"per_month": 50.0}
+    S = c.summary(rep)
+    rows = S["recommendations"]["router"]
+    assert S["router"]["saved_today_per_month"] == pytest.approx(
+        min(S["router"]["per_month"], sum(r["saved_today_per_month"] for r in rows)))

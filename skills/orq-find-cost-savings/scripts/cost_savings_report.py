@@ -25,6 +25,7 @@ import json
 import math
 import random
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -616,7 +617,12 @@ def estimate(draws_by: dict[str, list[Draw]], spend: dict[str, float], profile: 
 
 def without_top(draws_by: dict[str, list[Draw]], spend: dict[str, float], profile: str, k: int = 3) -> float:
     flat = [(s, i, d) for s, ds in draws_by.items() for i, d in enumerate(ds)]
-    top = sorted(flat, key=lambda x: -x[2].weight * x[2].savings.get(profile, 0.0))[:k]
+    den = {s: sum(d.weight * d.cur_price for d in ds) for s, ds in draws_by.items()}
+
+    def share(x: tuple) -> float:  # a draw's contribution to the estimate: its stratum's spend over its priced cost
+        s, _, d = x
+        return d.weight * d.savings.get(profile, 0.0) * spend.get(s, 0.0) / den[s] if den[s] > 0 else 0.0
+    top = sorted(flat, key=lambda x: -share(x))[:k]
     drop = {(s, i) for s, i, _ in top}
     kept = {s: [d for i, d in enumerate(ds) if (s, i) not in drop] for s, ds in draws_by.items()}
     return sum((stratum_rate(ds, profile) or 0.0) * spend.get(s, 0.0) for s, ds in kept.items() if ds)
@@ -1150,7 +1156,9 @@ class Analyzer:
             if not sys.stdin.isatty():
                 raise Stop("confirmation", {"detail": "rerun with --yes after the user approves the decision cost",
                                             "calls": len(texts), "estimated_usd": cost})
-            if input("continue? [y/N] ").strip().lower() != "y":
+            sys.stderr.write("continue? [y/N] ")  # stderr: stdout may be piped (--json)
+            sys.stderr.flush()
+            if sys.stdin.readline().strip().lower() != "y":
                 raise Stop("confirmation", {"detail": "declined", "calls": len(texts), "estimated_usd": cost})
         with ThreadPoolExecutor(WORKERS) as ex:
             list(ex.map(self.decide, sorted(texts)))
@@ -1496,6 +1504,8 @@ class Analyzer:
             ttl = min([_ttl_seconds(k.removeprefix("cache_write_")) for k in prices if k.startswith("cache_write_")]
                       or [300.0])
             res = caching_savings(turns, prices, ttl) if ok else {"savings": 0.0}
+            if ok and res["savings"] <= 0:
+                ok, why = False, "cache expires between turns or the write premium outweighs reads"
             prov = developer_of(self.canonical(m))
             action = {"anthropic": "set cache_control breakpoints", "openai": "keep the prompt prefix stable",
                       "google": "reads-only reporting; no figure"}.get(prov, "check provider caching")
@@ -1532,6 +1542,7 @@ class Analyzer:
         (self.out / "report.json").write_text(json.dumps(self.report, indent=1, default=str))
         if self.args.json:
             keys = ("status", "stop", "summary") + (("counterfactual_test",) if "counterfactual_test" in self.report else ())
+            keys = ("workspace", "generated_at") + keys
             print(json.dumps({k: self.report.get(k) for k in keys}, default=str))
             return
         slots = "\n\n".join(f"## {s}\n\n<!-- {h} -->\n" for s, h in SLOTS.items())
@@ -1599,7 +1610,7 @@ def _usd(x: Any) -> str:
 def _usd0(x: Any) -> str:
     if x is None:
         return "n/a"
-    return f"-${-x:,.0f}" if round(x) < 0 else f"${x:,.0f}"
+    return f"-${-x:,.0f}" if round(x) < 0 else f"${abs(x) if round(x) == 0 else x:,.0f}"
 
 
 def _pct(x: Any) -> str:
@@ -2234,8 +2245,12 @@ def summary(report: dict) -> dict:
     keys = {m["model"]: m["key"] for m in rp["moves"]}
     ca = report.get("caching") or {}
 
+    recs = {k: _rec_rows(report, per_month, k, keys) for k in ("router", "switch")}
+
     def lever(name: str, pm: Any, fig: dict, plan: dict, moves: list[dict]) -> dict:
         t = today[name]
+        if t is not None and recs[name]:  # the split the per-model rows show, so page and rows agree
+            t = sum(x["saved_today_per_month"] or 0.0 for x in recs[name])
         if t is not None and pm is not None:
             t = min(max(t, 0.0), max(pm, 0.0))
         return {"pct_of_spend": _of(pm, spend_pm), "per_month": pm, "ci90_per_month": fig.get("ci90_per_month"),
@@ -2252,7 +2267,7 @@ def summary(report: dict) -> dict:
                        "without_top3_per_month": (h["without_top3"] * per_month) if h.get("without_top3") is not None
                        else None},
             "switch": lever("switch", w_pm, w, wp, [{k: m[k] for k in ("model", "to")} for m in wp["moves"]]),
-            "recommendations": {k: _rec_rows(report, per_month, k, keys) for k in ("router", "switch")},
+            "recommendations": recs,
             "scopes": _scopes(report, spend_pm), "not_analysed": _not_analysed(report, per_month),
             "caching": {"threads_scanned": ca.get("threads_scanned"), "savings_found": ca.get("savings_found"),
                         "error": ca.get("error")}}
@@ -2481,7 +2496,7 @@ def _setup_plan(report: dict, lever: str) -> dict:
         else:
             continue
         enable += [e for e in new if e not in enable]
-    return {"lever": lever, "enable": enable, "moves": moves}
+    return {"lever": lever, "enable": enable, "moves": moves, "workspace": report.get("workspace")}
 
 
 def _setup_commands(plan: dict) -> str:
@@ -2492,23 +2507,27 @@ def _setup_commands(plan: dict) -> str:
     if not plan["enable"] and not router:
         return ""
     # No comment lines: an interactive zsh without interactivecomments runs `#` as a command and breaks on quotes.
-    lines = ["mid() { orq models list -o json -j \"[?refId=='$1'].id | [0]\" --raw; }",
-             "enable() {",
-             "  local id; id=$(mid \"$1\")",
-             "  if [ \"$id\" = null ]; then echo \"skip $1: not in this workspace's model list\" >&2",
-             "  else orq models enable --model-id \"$id\" >/dev/null && echo \"enabled $1\"; fi",
-             "}"]
+    # A failed or empty orq call is never read as "found": every lookup returns non-zero and the caller skips.
+    ws = plan.get("workspace")
+    lines = [f"orq() {{ command orq \"$@\" --workspace {shlex.quote(str(ws))}; }}"] if ws else []
+    lines += ["mid() { orq models list -o json -j \"[?refId=='$1'].id | [0]\" --raw; }",
+              "enable() {",
+              "  local id; id=$(mid \"$1\") || { echo \"skip $1: could not list models\" >&2; return 1; }",
+              "  if [ -z \"$id\" ] || [ \"$id\" = null ]; then echo \"skip $1: not in this workspace's model list\" >&2",
+              "  else orq models enable --model-id \"$id\" >/dev/null && echo \"enabled $1\"; fi",
+              "}"]
     if router:
-        lines += ["scored() { [ \"$(orq models list -o json -j \"[?refId=='$1' && metadata.autorouter.v2].id "
-                  "| [0]\" --raw)\" != null ]; }",
-                  "on() { [ \"$(orq models list -o json -j \"[?refId=='$1' && enabled].id | [0]\" --raw)\" != null ]; }",
+        lines += ["has() { local r; r=$(orq \"$@\") || return 2; [ -n \"$r\" ] && [ \"$r\" != null ]; }",
+                  "scored() { has models list -o json -j \"[?refId=='$1' && metadata.autorouter.v2].id | [0]\" --raw; }",
+                  "on() { has models list -o json -j \"[?refId=='$1' && enabled].id | [0]\" --raw; }",
                   "router() {",
                   "  local k=$1 ref m a; shift; a=()",
-                  "  ref=$(orq smart-routers list --limit 200 -o json -j \"data[?key=='$k'].model_ref | [0]\" --raw)",
-                  "  if [ \"$ref\" != null ]; then echo \"$k exists: use $ref\"; return; fi",
+                  "  ref=$(orq smart-routers list --limit 200 -o json -j \"data[?key=='$k'].model_ref | [0]\" --raw) || "
+                  "{ echo \"skip $k: could not list smart routers\" >&2; return 1; }",
+                  "  if [ -n \"$ref\" ] && [ \"$ref\" != null ]; then echo \"$k exists: use $ref\"; return; fi",
                   "  for m in \"$@\"; do",
-                  "    on \"$m\" || { echo \"skip $k: $m is not enabled\" >&2; return; }",
-                  "    scored \"$m\" || { echo \"skip $k: $m has no Smart Router score yet\" >&2; return; }",
+                  "    on \"$m\" || { echo \"skip $k: $m is not enabled (or the lookup failed)\" >&2; return 1; }",
+                  "    scored \"$m\" || { echo \"skip $k: $m has no Smart Router score yet (or the lookup failed)\" >&2; return 1; }",
                   "    a+=(--models \"$m\")",
                   "  done",
                   f"  ref=$(orq smart-routers create --key \"$k\" \"${{a[@]}}\" --body-profile {ROUTER_PROFILE} "
@@ -2522,7 +2541,9 @@ def _setup_commands(plan: dict) -> str:
 
 
 def _setup_prompt(plan: dict) -> str:
-    out = ["Apply this orq.ai cost-savings plan. Use the orq CLI (`orq --help`).", ""]
+    ws = f" in workspace {plan['workspace']} (pass `--workspace {plan['workspace']}` to every orq command)" \
+        if plan.get("workspace") else ""
+    out = [f"Apply this orq.ai cost-savings plan{ws}. Use the orq CLI (`orq --help`).", ""]
     step = 1
     if plan["enable"]:
         out.append(f"{step}. Enable these models in the orq.ai workspace with `orq models enable --model-id <id>`. "
@@ -2541,11 +2562,12 @@ def _setup_prompt(plan: dict) -> str:
         out.append(f"{step}. Use these replacements:")
         out += [f"   - {m['model']} -> {m['to']}" for m in plan["moves"]]
         swap = "its replacement"
-    out += [(f"{step + 1}. Find every place this codebase uses one of the replaced models: model ids in code and "
-             f"config, and orq.ai deployments or agents. Change each to {swap}. Leave other models alone."),
-            (f"{step + 2}. Before moving all traffic, run a sample of real prompts through the old and the new setup "
-             "and compare the answers. Report any quality differences."),
-            f"{step + 3}. Show me the diff before committing."]
+    out += [(f"{step + 1}. Before changing anything that serves traffic, run a sample of real prompts through the old "
+             f"and the new setup ({swap}) and compare the answers. Report any quality differences."),
+            (f"{step + 2}. Find every place this codebase uses one of the replaced models (model ids in code and "
+             f"config). Change each to {swap}. Leave other models alone. Show me the diff before committing."),
+            (f"{step + 3}. List the orq.ai deployments and agents that use a replaced model, and change them to "
+             f"{swap} only after I confirm.")]
     return "\n".join(out)
 
 
@@ -2671,15 +2693,18 @@ def _moves_rows(ro: dict) -> list[dict]:
 
 
 def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
-    missing = [s for s in SLOTS if not narrative.get(s)]
+    missing = [s for s in SLOTS if s != "caching" and not narrative.get(s)]
     if missing:
         raise SystemExit(f"narrative slots empty: {', '.join(missing)}")
     if "summary" not in report:
         raise SystemExit("report.json has no summary; rerun analyze")
     S = report["summary"]
+    cs = S["caching"]  # the caching slot is only used when the caching card is shown
+    if not cs.get("error") and (cs["savings_found"] or 0) >= 1 and not narrative.get("caching"):
+        raise SystemExit("narrative slots empty: caching")
     ro, ca = report.get("routing") or {}, report.get("caching") or {}
     win = S["window"]
-    ws = str(report.get("workspace"))
+    ws = str(report.get("workspace") or "your workspace")
     total = S["spend_total"] or 0
     h_pm = S["router"]["per_month"]
     n, cov = S["sampled_calls"], S["coverage"]
@@ -2706,8 +2731,11 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
         gap = ("<p class='m gap'>Both save about the same: the difference is within the margin of error, "
                "so either works.</p>")
     elif adds > 0:
-        more = f"{pts} point{'s' if pts != 1 else ''} more" if pts >= 1 else "slightly more"
+        more = f"{pts}% of spend more" if pts >= 1 else "slightly more"
         gap = f"<p class='m gap'>Router saves {more} (+${adds:,}/mo).</p>"
+        if rec == "s":
+            gap = (f"<p class='m gap'>Smart Router estimates {more} (+${adds:,}/mo), but no router can be set up "
+                   "from the enabled, scored models; change model is the plan you can apply.</p>")
     else:
         gap = "<p class='m gap'>Router adds nothing here.</p>"
 
@@ -2720,7 +2748,7 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
             f"<p class=verdict>{verdict}</p><div class=kpis>"
             f"{kpi('r', 'Smart Router', p_router, h_pm)}{kpi('s', 'Change model', p_switch, sw_pm)}</div>{gap}"
             + _card("Savings against monthly spend",
-                    f"{bar}<p class='m caveat'>From {n or 'the'} sampled calls on models that make up {_pct(cov)} of spend. "
+                    f"{bar}<p class='m caveat'>{n or 'The'} sampled calls; the estimate covers models that make up {_pct(cov)} of spend. "
                     "Test answer quality before moving traffic.</p>")
             + "</section>")
 
@@ -2730,9 +2758,12 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
            + "".join(f"<li><a href='#{k}'>{t}</a></li>" for k, t in toc if k != "setup" or setup) + "</ul></nav>")
     theme = f"<button type=button class=theme aria-label='Switch colour theme'>{SUN}{MOON}</button>"
     to_day = _day(win["to"])
+    cap = ""
+    if (win.get("requested") or 0) > win["days"]:
+        cap = f"; you asked for {win['requested']}, the workspace keeps traces for {win.get('retention')} days"
     head = (f"<header class=top><div><h1>Where you can save on LLM spend</h1>"
             f"<p class=m>{html.escape(ws)} · {html.escape(_day(win['from']))} to {html.escape(to_day)} "
-            f"({win['days']} days), scaled to a month: {_usd0(spend_pm)}/mo LLM spend.</p></div>{theme}</header>")
+            f"({win['days']} days{cap}), scaled to a month: {_usd0(spend_pm)}/mo LLM spend.</p></div>{theme}</header>")
     parts = [_card("What to do", (_plan_caption("switch", p_switch, sw_pm) if rec == "s" else _plan_caption("router", p_router, h_pm))
                    + _actions_chart(S["recommendations"]["switch" if rec == "s" else "router"], S["not_analysed"]),
                    "do"),
@@ -2815,6 +2846,8 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "analyze":
         if not 1 <= a.sample <= MAX_SAMPLE:
             ap.error(f"--sample must be between 1 and {MAX_SAMPLE}")
+        if a.window < 1:
+            ap.error("--window must be at least 1")
         rep = Analyzer(a).run()
         return 0 if rep["status"] == "ok" else 2
     report = json.loads((Path(a.out) / "report.json").read_text())
