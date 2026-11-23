@@ -1087,6 +1087,11 @@ class Analyzer:
             self.report["status"] = "stopped"
             self.report["stop"] = {"check": s.check, "numbers": s.numbers}
             self.log(f"stopped: {s.check} {json.dumps(s.numbers)}")
+        except OrqError as e:
+            hint = " (check the key has reporting.view)" if re.search(r"HTTP 40[13]", e.stderr) else ""
+            self.report["status"] = "stopped"
+            self.report["stop"] = {"check": "orq call failed", "numbers": {"detail": e.stderr.strip()[:300] + hint}}
+            self.log(f"stopped: orq call failed {e.stderr.strip()[:200]}")
         self.write()
         return self.report
 
@@ -1124,6 +1129,8 @@ class Analyzer:
         # routing inputs
         for d in drawn:
             d["input"], d["source"] = routing_input(d["span"].get("attributes") or {})
+        if not drawn:
+            raise Stop("sample not empty", {"drawn": 0})
         texts = {d["input"] for d in drawn if d["input"]}
         tokens = sum(len(t) / 4 + DECISION_OVERHEAD_TOKENS for t in texts)
         cost = tokens * DECISION_PRICE_PER_M / 1e6
@@ -1211,6 +1218,8 @@ class Analyzer:
                         continue
                     if not pool:  # no pool to route over: the router serves the top seat, which is the switch
                         row["scenario_savings"][key] = row["scenario_savings"][f"switch|{sc}"]
+                        if f"switch|{sc}" in row["unpriced"] and key not in row["unpriced"]:
+                            row["unpriced"].append(key)
                         if sc == HEADLINE_SCOPE:
                             row["picks"][p] = pools[m][sc]["switch"] or m
                         continue
@@ -2207,19 +2216,24 @@ def summary(report: dict) -> dict:
     today = {"router": ((en.get("router") or {}).get("balanced") or {}).get("per_month"),
              "switch": (en.get("switch") or {}).get("per_month")}
     rp, wp = _setup_plan(report, "router"), _setup_plan(report, "switch")
+    if rec == "router" and not rp["moves"] and wp["moves"]:
+        rec = "switch"  # the router figure comes from moves a router setup would not create
     keys = {m["model"]: m["key"] for m in rp["moves"]}
     ca = report.get("caching") or {}
 
     def lever(name: str, pm: Any, fig: dict, plan: dict, moves: list[dict]) -> dict:
         t = today[name]
+        if t is not None and pm is not None:
+            t = min(max(t, 0.0), max(pm, 0.0))
         return {"pct_of_spend": _of(pm, spend_pm), "per_month": pm, "ci90_per_month": fig.get("ci90_per_month"),
                 "saved_today_per_month": t,
                 "saved_after_enabling_per_month": max(0.0, pm - t) if pm is not None and t is not None else None,
                 "enable": plan["enable"], **({"routers": moves} if name == "router" else {"replacements": moves})}
 
-    return {"window": {k: report["window"].get(k) for k in ("from", "to", "days")},
+    return {"window": {k: report["window"].get(k) for k in ("from", "to", "days", "requested", "retention")},
+            "caveats": list((report.get("checks") or {}).get("caveats") or []),
             "spend_total": total, "spend_per_month": spend_pm, "scope": head.get("scope"),
-            "coverage": r.get("coverage"), "sampled_calls": (report.get("params") or {}).get("sample"),
+            "coverage": r.get("coverage"), "sampled_calls": len(report["samples"]) if "samples" in report else (report.get("params") or {}).get("sample"),
             "recommended": rec, "levers_overlap": _ranges_overlap(head),
             "router": {**lever("router", r_pm, r, rp, [{k: m[k] for k in ("model", "key", "pool")} for m in rp["moves"]]),
                        "without_top3_per_month": (h["without_top3"] * per_month) if h.get("without_top3") is not None
@@ -2227,7 +2241,8 @@ def summary(report: dict) -> dict:
             "switch": lever("switch", w_pm, w, wp, [{k: m[k] for k in ("model", "to")} for m in wp["moves"]]),
             "recommendations": {k: _rec_rows(report, per_month, k, keys) for k in ("router", "switch")},
             "scopes": _scopes(report, spend_pm), "not_analysed": _not_analysed(report, per_month),
-            "caching": {"threads_scanned": ca.get("threads_scanned"), "savings_found": ca.get("savings_found")}}
+            "caching": {"threads_scanned": ca.get("threads_scanned"), "savings_found": ca.get("savings_found"),
+                        "error": ca.get("error")}}
 
 
 def _ranges_overlap(head: dict) -> bool:
@@ -2311,7 +2326,7 @@ def _actions_chart(recs: list[dict], not_analysed: dict) -> str:
                    for m in kept)
     if not_analysed["model_count"]:
         foot += (f"<p class='m foot'>Not analysed: {_usd0(not_analysed['per_month'])}/mo of spend on "
-                 f"{not_analysed['model_count']} smaller models.</p>")
+                 f"{not_analysed['model_count']} other models.</p>")
     return legend + "</ul><div class=chart>" + "".join(rows) + "</div>" + foot
 
 
@@ -2432,7 +2447,12 @@ def _router_key(model: str) -> str:
 def _setup_plan(report: dict, lever: str) -> dict:
     """What applying one lever takes: models to enable, and per model in use its router pool or new model."""
     moves, enable = [], []
-    for info in _headline(report).get("models") or []:
+    head = _headline(report)
+    saving = ({s["model"]: s.get("savings") for s in (report.get("routing") or {}).get("strata") or []}
+              if lever == "router" else (head.get("switch") or {}).get("per_stratum") or {})
+    for info in head.get("models") or []:
+        if info["model"] in saving and not (saving[info["model"]] or 0) > 0:
+            continue  # the page says keep or not analysed for this model: set nothing up
         if lever == "router" and _lever(info) == "router":
             moves.append({"model": info["model"], "key": _router_key(info["model"]), "pool": list(info["pool"])})
             new = info.get("enable") or []
@@ -2452,20 +2472,17 @@ def _setup_commands(plan: dict) -> str:
     router = plan["lever"] == "router"
     if not plan["enable"] and not router:
         return ""
-    lines = ["# Helpers. mid: a model's id (the CLI enables by id, not by provider/model name).",
-             "mid() { orq models list -o json -j \"[?refId=='$1'].id | [0]\" --raw; }",
+    # No comment lines: an interactive zsh without interactivecomments runs `#` as a command and breaks on quotes.
+    lines = ["mid() { orq models list -o json -j \"[?refId=='$1'].id | [0]\" --raw; }",
              "enable() {",
              "  local id; id=$(mid \"$1\")",
              "  if [ \"$id\" = null ]; then echo \"skip $1: not in this workspace's model list\" >&2",
              "  else orq models enable --model-id \"$id\" >/dev/null && echo \"enabled $1\"; fi",
              "}"]
     if router:
-        lines += ["# on: the model is enabled. scored: it has a Smart Router score. Every pool model needs both.",
-                  "scored() { [ \"$(orq models list -o json -j \"[?refId=='$1' && metadata.autorouter.v2].id "
+        lines += ["scored() { [ \"$(orq models list -o json -j \"[?refId=='$1' && metadata.autorouter.v2].id "
                   "| [0]\" --raw)\" != null ]; }",
                   "on() { [ \"$(orq models list -o json -j \"[?refId=='$1' && enabled].id | [0]\" --raw)\" != null ]; }",
-                  "# router <key> <model>...: reuse the key if it exists, else create it when every pool model is "
-                  "enabled and scored.",
                   "router() {",
                   "  local k=$1 ref m a; shift; a=()",
                   "  ref=$(orq smart-routers list --limit 200 -o json -j \"data[?key=='$k'].model_ref | [0]\" --raw)",
@@ -2479,10 +2496,8 @@ def _setup_commands(plan: dict) -> str:
                   "-o json -j model_ref --raw) && echo \"$k created: use $ref\"",
                   "}"]
     if plan["enable"]:
-        lines.append("# Enable models.")
         lines += [f"enable {m}" for m in plan["enable"]]
     if router:
-        lines.append("# One Smart Router per model. Use the printed model_ref as the new model name.")
         lines += [f"router {m['key']} {' '.join(m['pool'])}" for m in plan["moves"]]
     return "\n".join(lines)
 
@@ -2600,7 +2615,7 @@ def _details(title: str, hint: str, body: str) -> str:
 
 
 GLOSSARY = [
-    ("Smart Router", "orq's router. For each call it picks the cheapest model in a pool that can handle the ask."),
+    ("Smart Router", "orq's router. For each call it picks a model from a pool by how hard the call looks; cheaper models get the easier calls."),
     ("Change model", "Replace a model with a cheaper, at least as strong model for all of its calls."),
     ("Pool", "The models the router may pick from: one at least as strong as today's, plus cheaper tiers."),
     ("Index", ("A benchmark score for overall model strength. Higher is stronger. Not a measure of fit for "
@@ -2610,7 +2625,7 @@ GLOSSARY = [
     ("Coverage", "The share of spend on the sampled models. Spend on other models is not estimated."),
     ("Ask, sampled call", "One LLM call (a span) from this workspace's traces, re-priced on the new model."),
     ("Easy, Medium, Hard", ("How demanding each sampled call is, as graded by the router. Easy and medium calls "
-                            "sent to a strong model are where a cheaper model does the same job.")),
+                            "are the ones the router sends to cheaper models; check answer quality before moving traffic.")),
     ("Ungraded", "Calls the router could not grade; they go to the strongest model in the pool."),
 ]
 
@@ -2649,7 +2664,8 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
     total = S["spend_total"] or 0
     h_pm = S["router"]["per_month"]
     n, cov = S["sampled_calls"], S["coverage"]
-    caching_small = (S["caching"]["savings_found"] or 0) < 1
+    caching_error = S["caching"].get("error")
+    caching_small = not caching_error and (S["caching"]["savings_found"] or 0) < 1
     spend_pm = S["spend_per_month"]
     first = re.split(r"\n\s*\n", narrative["summary"].strip())[0]
     verdict = html.escape(" ".join(first.split()))
@@ -2704,7 +2720,7 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
              setup,
              _card("Other model choices", "<p class=m>Share of monthly spend saved, by which models are allowed.</p>"
                    + _scope_grid(S["scopes"]) + f"<p class=m>{html.escape(TOKENIZER_NOTE)}</p>", "scopes")]
-    if not caching_small:
+    if not caching_small and not caching_error:
         parts.append(_card("Caching", (f"<p><b>Caching:</b> {_usd(ca.get('savings_found'))} in the "
                                        f"{ca.get('threads_scanned', 0)} costliest threads scanned, not scaled to the "
                                        "window.</p>") + _md(narrative["caching"]), "caching"))
@@ -2731,7 +2747,7 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
                                                   ("Calls that cost more", "costs_more", str),
                                                   ("Saving on the sampled calls", "weighted_savings", _usd)],
                             "Where sampled asks move"))]
-    if not caching_small:
+    if not caching_small and not caching_error:
         dets.append(_details("Caching candidates", f"{ca.get('threads_scanned', 0)} threads scanned",
                              _table([r for r in ca.get("rows", []) if r.get("candidate")][:20],
                                     [("Thread", "thread", lambda t: "(hidden)" if redact else t),
@@ -2739,6 +2755,8 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
                                      ("Turns", "turns", str), ("Saving", "savings", _usd), ("Action", "action", str)],
                                     "Caching candidates")))
     intro = "<p><b>Caching:</b> nothing worth changing.</p>" if caching_small else ""
+    if caching_error:
+        intro = f"<p><b>Caching:</b> not checked ({html.escape(str(caching_error))}).</p>"
     intro += (f"<p class=m>{_usd(total)} spent over the {win['days']}-day window. Covers {_pct(cov)} of spend; "
              f"figures re-price the sampled calls on the new model. Balanced routing profile, generated {gen}.</p>")
     parts.append(_card("Details", intro + "<div class=rows>" + "".join(dets) + "</div>", "details"))

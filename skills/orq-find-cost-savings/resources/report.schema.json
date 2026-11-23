@@ -3,6 +3,8 @@
   "title": "orq-find-cost-savings report.json",
   "type": "object",
   "required": ["schema_version", "generated_at", "workspace", "status", "stop", "params", "checks"],
+  "if": {"properties": {"status": {"const": "ok"}}, "required": ["status", "routing"]},
+  "then": {"required": ["summary"]},
   "properties": {
     "schema_version": {"const": "1.2"},
     "generated_at": {"type": "string"},
@@ -22,13 +24,17 @@
         "spend_total": {"type": ["number", "null"]}, "spend_per_month": {"type": ["number", "null"]},
         "recommended": {"enum": ["router", "switch", null]},
         "levers_overlap": {"type": "boolean"},
+        "sampled_calls": {"type": ["integer", "null"]}, "coverage": {"type": ["number", "null"]},
+        "caveats": {"type": "array"},
+        "caching": {"type": "object", "properties": {"threads_scanned": {"type": ["integer", "null"]}, "savings_found": {"type": ["number", "null"]}, "error": {"type": ["string", "null"]}}},
         "router": {
           "type": "object",
           "required": ["pct_of_spend", "per_month", "ci90_per_month", "saved_today_per_month",
-                       "saved_after_enabling_per_month", "enable", "routers"],
+                       "saved_after_enabling_per_month", "enable", "routers", "without_top3_per_month"],
           "properties": {
             "pct_of_spend": {"type": ["number", "null"]}, "per_month": {"type": ["number", "null"]}, "ci90_per_month": {"type": ["array", "null"], "items": {"type": "number"}},
             "saved_today_per_month": {"type": ["number", "null"]}, "saved_after_enabling_per_month": {"type": ["number", "null"]},
+            "without_top3_per_month": {"type": ["number", "null"]},
             "enable": {"type": "array", "items": {"type": "string"}},
             "routers": {"type": "array", "items": {"type": "object", "required": ["model", "key", "pool"]}}
           }

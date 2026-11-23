@@ -560,7 +560,7 @@ def test_keep_rows_and_not_sampled_spend_are_lines_not_bars():
     chart = _chart(report)
     assert chart.count("class=row>") == 3  # a, b, c; the keep row d has no bar
     assert "d: keep, already the cheapest model that is as strong." in chart
-    assert "Not analysed: $84/mo of spend on 2 smaller models." in chart
+    assert "Not analysed: $84/mo of spend on 2 other models." in chart
     assert "class=ns" not in chart and "Not sampled</li>" not in chart
 
 

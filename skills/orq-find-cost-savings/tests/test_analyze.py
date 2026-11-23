@@ -427,3 +427,41 @@ def test_json_flag_prints_the_summary_and_skips_the_narrative(tmp_path, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["status"] == "ok" and out["summary"]["recommendations"]["router"]
     assert not (tmp_path / "narrative-slots.md").exists()
+
+
+def test_an_orq_failure_stops_cleanly_and_replaces_the_old_report(tmp_path):
+    (tmp_path / "report.json").write_text(json.dumps({"status": "ok"}))
+
+    class Down(FakeOrq):
+        def __call__(self, *a, **kw):
+            raise c.OrqError(["x"], 1, "HTTP 401")
+
+    an = c.Analyzer(ns(tmp_path))
+    an.orq = Down()
+    rep = an.run()
+    assert rep["status"] == "stopped" and rep["stop"]["check"] == "orq call failed"
+    assert json.loads((tmp_path / "report.json").read_text())["status"] == "stopped"
+
+
+def test_summary_sampled_calls_counts_drawn_calls_and_carries_window_and_caching_error(tmp_path):
+    _, rep = run(tmp_path)
+    s = rep["summary"]
+    assert s["sampled_calls"] == len(rep["samples"])
+    assert s["window"]["requested"] == 30 and "retention" in s["window"] and "caveats" in s
+    rep["caching"] = {"error": "caching scan failed"}
+    assert c.summary(rep)["caching"]["error"] == "caching scan failed"
+
+
+def test_router_setup_skips_models_the_page_says_to_keep():
+    rep = {"workspace": "a", "routing": {"strata": [{"model": "openai/gpt-6-sol", "savings": -1.0}]},
+           "scenarios": SETUP_REPORT_FOR_KEEP["scenarios"]}
+    assert c._setup_plan(rep, "router")["moves"] == []
+
+
+SETUP_REPORT_FOR_KEEP = {"scenarios": [{"headline": True, "models": [
+    {"model": "openai/gpt-6-sol", "pool": ["openai/a", "openai/b"], "switch": None, "enable": []}]}]}
+
+
+def test_setup_commands_have_no_comment_lines():
+    plan = {"lever": "router", "enable": ["openai/a"], "moves": [{"model": "m", "key": "k", "pool": ["openai/a"]}]}
+    assert not [x for x in c._setup_commands(plan).splitlines() if x.lstrip().startswith("#")]
