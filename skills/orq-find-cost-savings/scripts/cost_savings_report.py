@@ -632,6 +632,8 @@ def caching_savings(turns: list[dict], prices: dict, ttl_s: float) -> dict:
     if read is None:
         return {"savings": 0.0, "eligible": False, "reason": "no cache-read price"}
     gain = cost = 0.0
+    if write is not None and turns:  # the first turn writes the prefix the later turns read
+        cost += max(0, turns[0]["prompt"] - turns[0]["written"]) * (write - inp)
     for k in range(1, len(turns)):
         alive = turns[k]["t"] - turns[k - 1]["t"] <= ttl_s
         read_k = turns[k - 1]["prompt"] if alive else 0
@@ -847,10 +849,10 @@ class Analyzer:
     # ---- models
 
     def load_models(self) -> None:
-        cat = self.orq("model-catalog", "list")
+        cat = self.orq("model-catalog", "list", cache=False)
         cat = cat.get("data", cat) if isinstance(cat, dict) else cat
         self.cat = {m["id"]: m for m in cat}
-        cards = self.orq("models", "list")
+        cards = self.orq("models", "list", cache=False)
         cards = cards.get("data", cards) if isinstance(cards, dict) else cards
         self.cards = {model_key(c.get("provider", ""), c.get("model_id", "")): c for c in cards}
         self.garden = mf.garden_from_cards([c for c in cards if isinstance(c, dict)])
@@ -1092,11 +1094,19 @@ class Analyzer:
             self.report["status"] = "stopped"
             self.report["stop"] = {"check": "orq call failed", "numbers": {"detail": e.stderr.strip()[:300] + hint}}
             self.log(f"stopped: orq call failed {e.stderr.strip()[:200]}")
+        except Exception as e:  # missing binary, timeout, non-JSON output: report.json must still describe this run
+            self.report["status"] = "stopped"
+            self.report["stop"] = {"check": "analyze failed", "numbers": {"detail": f"{type(e).__name__}: {e}"[:300]}}
+            self.log(f"stopped: analyze failed {type(e).__name__}: {e}"[:300])
         self.write()
         return self.report
 
     def _run(self) -> None:
         a = self.args
+        if not a.workspace:  # pin the active workspace so the cache keys, the window reuse and the page name it
+            key = (self.orq("status", cache=False) or {}).get("active_workspace_key")
+            if key:
+                a.workspace = self.orq.workspace = self.report["workspace"] = key
         self.set_window()
         self.log(f"window {self.frm} .. {self.to} ({self.days} days)")
         self.load_models()
@@ -1521,7 +1531,8 @@ class Analyzer:
             self.report = dict(items[:5] + [("summary", summary(self.report))] + items[5:])
         (self.out / "report.json").write_text(json.dumps(self.report, indent=1, default=str))
         if self.args.json:
-            print(json.dumps({k: self.report.get(k) for k in ("status", "stop", "summary")}, default=str))
+            keys = ("status", "stop", "summary") + (("counterfactual_test",) if "counterfactual_test" in self.report else ())
+            print(json.dumps({k: self.report.get(k) for k in keys}, default=str))
             return
         slots = "\n\n".join(f"## {s}\n\n<!-- {h} -->\n" for s, h in SLOTS.items())
         (self.out / "narrative-slots.md").write_text(
@@ -1539,8 +1550,8 @@ def _neg(s: str) -> str:
 
 
 SLOTS = {
-    "summary": "one line, at most 12 words, no model names: the recommended lever (the larger saving, Smart Router "
-               "on ties) with its percent of spend and monthly dollars (for example `Save 38% ($150/mo) with Smart "
+    "summary": "one line, at most 12 words, no model names: the lever named in summary.recommended (router is Smart Router, switch is change model) "
+               "with its percent of spend and monthly dollars (for example `Save 38% ($150/mo) with Smart "
                "Router.`); the spend bar shows how much is possible today",
     "routing": "why each model moves where it does: one line per model, plain words, no 'dominated', no raw index "
                "numbers; no action list, the page renders the per-model plan; monthly figures",
@@ -1586,7 +1597,9 @@ def _usd(x: Any) -> str:
 
 
 def _usd0(x: Any) -> str:
-    return "n/a" if x is None else f"${x:,.0f}"
+    if x is None:
+        return "n/a"
+    return f"-${-x:,.0f}" if round(x) < 0 else f"${x:,.0f}"
 
 
 def _pct(x: Any) -> str:
@@ -2379,7 +2392,7 @@ def _uncertainty_rows(scopes: list[dict]) -> list[dict]:
     ends = [v for r in rows if r["range"] for v in (r["range"][0], r["range"][2])]
     # one shared scale for every row, from just below the lowest bound to the highest, so overlaps show
     span = (max(ends) - min(ends)) if ends else 0
-    axis = (max(0.0, min(ends) - span * 0.05), max(ends) + span * 0.05) if span > 0 else None
+    axis = (min(ends) - span * 0.05, max(ends) + span * 0.05) if span > 0 else None
     for r in rows:
         r["range"] = (*r["range"], *axis) if r["range"] and axis else None
     return rows
@@ -2396,9 +2409,10 @@ def _range_cell(v: Any) -> str:
     x = [max(0.0, min(1.0, ((a or 0) - a0) / (a1 - a0))) * (RANGE_W - 8) + 4 for a in (lo, est, hi)]
     cls = "lv-s" if lever == "Change model" else "lv-r"
     step = next(st for st in (5, 10, 20, 25, 50, 100, 200, 500, 1000, 2000, 5000, 1e9) if (a1 - a0) / st <= 5)
+    zero = [0] if a0 < 0 < a1 else []
     grid = "".join(f"<line class=gl x1={(t - a0) / (a1 - a0) * (RANGE_W - 8) + 4:.1f} "
                    f"x2={(t - a0) / (a1 - a0) * (RANGE_W - 8) + 4:.1f} y1=0 y2=14></line>"
-                   for t in range(int(math.ceil(a0 / step) * step), int(a1) + 1, int(step)))
+                   for t in sorted({*range(int(math.ceil(a0 / step) * step), int(a1) + 1, int(step)), *zero}))
     label = f"90% range {_usd0(lo)} to {_usd0(hi)} a month, estimate {_usd0(est)}"
     return (f"<svg class='rg {cls}' width={RANGE_W} height=14 viewBox='0 0 {RANGE_W} 14' role=img "
             f"aria-label='{html.escape(label)}'>{grid}<line class=tk x1=4 x2={RANGE_W - 4} y1=7 y2=7></line>"
@@ -2441,15 +2455,20 @@ SEP = " \u00b7 "
 
 
 def _router_key(model: str) -> str:
-    return "savings-" + re.sub(r"[^a-z0-9]+", "-", model.split("/")[-1].lower()).strip("-")
+    return "savings-" + re.sub(r"[^a-z0-9]+", "-", model.lower()).strip("-")
 
 
 def _setup_plan(report: dict, lever: str) -> dict:
     """What applying one lever takes: models to enable, and per model in use its router pool or new model."""
     moves, enable = [], []
     head = _headline(report)
-    saving = ({s["model"]: s.get("savings") for s in (report.get("routing") or {}).get("strata") or []}
-              if lever == "router" else (head.get("switch") or {}).get("per_stratum") or {})
+    strata = (report.get("routing") or {}).get("strata") or []
+    if lever == "router":
+        saving = {s["model"]: s.get("savings") for s in strata}
+    else:  # a model with no covered per-stratum figure was not analysed: treat it as no saving
+        per = (head.get("switch") or {}).get("per_stratum") or {}
+        saving = {s["model"]: per.get(s["model"]) for s in strata}
+        saving.update(per)
     for info in head.get("models") or []:
         if info["model"] in saving and not (saving[info["model"]] or 0) > 0:
             continue  # the page says keep or not analysed for this model: set nothing up
@@ -2701,7 +2720,7 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
             f"<p class=verdict>{verdict}</p><div class=kpis>"
             f"{kpi('r', 'Smart Router', p_router, h_pm)}{kpi('s', 'Change model', p_switch, sw_pm)}</div>{gap}"
             + _card("Savings against monthly spend",
-                    f"{bar}<p class='m caveat'>From {n or 'the'} sampled calls ({_pct(cov)} of spend). "
+                    f"{bar}<p class='m caveat'>From {n or 'the'} sampled calls on models that make up {_pct(cov)} of spend. "
                     "Test answer quality before moving traffic.</p>")
             + "</section>")
 
@@ -2736,7 +2755,7 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
             _details("Why each move", "the reasoning per model", _md(narrative["routing"])),
             _details("Method and caveats", "sample, coverage, limits, terms",
                      _md(narrative["caveats"]) + (
-                         f"<p class=m>Excluding the 3 largest sampled calls, the headline is "
+                         f"<p class=m>Without the 3 sampled calls that save the most, the Smart Router estimate is "
                          f"{_usd0(S['router']['without_top3_per_month'] or 0)}/mo.</p>"
                          "<dl class=gl>" + "".join(f"<dt>{html.escape(t)}</dt><dd>{html.escape(d)}</dd>"
                                                    for t, d in GLOSSARY) + "</dl>")),

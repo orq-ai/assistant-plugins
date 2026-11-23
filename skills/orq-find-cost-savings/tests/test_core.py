@@ -365,19 +365,20 @@ PRICES = {"input": 1.0, "cache_read": 0.1, "cache_write_5m": 1.25}
 def test_caching_read_and_write_per_turn():
     turns = [turn(0, 2000), turn(10, 3000), turn(20, 4000)]
     r = c.caching_savings(turns, PRICES, 300)
-    # reads: 2000 + 3000 at (1 - 0.1); writes: 1000 + 1000 at (1.25 - 1)
-    assert r["savings"] == pytest.approx(5000 * 0.9 - 2000 * 0.25)
+    # reads: 2000 + 3000 at (1 - 0.1); writes: the first prompt 2000, then 1000 + 1000, at (1.25 - 1)
+    assert r["savings"] == pytest.approx(5000 * 0.9 - 4000 * 0.25)
 
 
 def test_caching_ttl_expiry_rewrites_whole_prompt():
     turns = [turn(0, 2000), turn(1000, 3000)]
     r = c.caching_savings(turns, PRICES, 300)
-    assert r["savings"] == pytest.approx(-3000 * 0.25)
+    assert r["savings"] == pytest.approx(-5000 * 0.25)
 
 
 def test_caching_nets_out_existing_reads_and_writes():
     turns = [turn(0, 2000), turn(10, 3000, cached=2000, written=1000)]
-    assert c.caching_savings(turns, PRICES, 300)["savings"] == pytest.approx(0.0)
+    # the first turn still pays the write premium on its 2000 tokens
+    assert c.caching_savings(turns, PRICES, 300)["savings"] == pytest.approx(-2000 * 0.25)
 
 
 def test_caching_candidate_rules():
@@ -736,10 +737,10 @@ SETUP_REPORT = {"workspace": "acme", "scenarios": [{"headline": True, "models": 
 def test_setup_router_commands_enable_then_create_one_router_per_model():
     plan = c._setup_plan(SETUP_REPORT, "router")
     assert plan["enable"] == ["openai/gpt-6.1-terra"]
-    assert [m["key"] for m in plan["moves"]] == ["savings-gpt-6-sol"]
+    assert [m["key"] for m in plan["moves"]] == ["savings-openai-gpt-6-sol"]
     cmds = c._setup_commands(plan).splitlines()
     assert "enable openai/gpt-6.1-terra" in cmds
-    assert cmds[-1] == "router savings-gpt-6-sol openai/gpt-6.1-terra openai/gpt-6-luna"
+    assert cmds[-1] == "router savings-openai-gpt-6-sol openai/gpt-6.1-terra openai/gpt-6-luna"
     assert "metadata.autorouter.v2" in c._setup_prompt(plan)
 
 
@@ -824,3 +825,26 @@ def test_waterfall_steps_add_up_and_drop_empty_enable_step():
     assert "−$91" in w and "<span>New bill</span><span>60%</span>" in w
     w2 = c._waterfall(400.0, 158.0, 0.0, 242.0, "Change model")
     assert w2.count("class=wc") == 3 and "After enabling" not in w2
+
+
+def test_router_key_keeps_the_provider_so_two_providers_do_not_collide():
+    assert c._router_key("openai/gpt-4o") != c._router_key("azure/gpt-4o")
+
+
+def test_range_axis_is_not_floored_at_zero_and_negatives_print_with_a_sign():
+    assert c._usd0(-40) == "-$40" and c._usd0(65) == "$65"
+    scopes = [{"scope": "same_all", "headline": True,
+               "router": {"per_month": 5, "pct_of_spend": 0.1, "ci90_per_month": [-40, 60]},
+               "switch": {"per_month": 3, "pct_of_spend": 0.1, "ci90_per_month": [1, 10]}}]
+    rows = c._uncertainty_rows(scopes)
+    assert rows[0]["range"][4] < -40
+
+
+def test_switch_plan_skips_a_model_that_was_not_analysed():
+    rep = {"workspace": "w", "routing": {"strata": [{"model": "a", "savings": None}, {"model": "b", "savings": 5}]},
+           "scenarios": [{"headline": True, "models": [
+               {"model": "a", "pool": None, "switch": "x", "enable": ["openai/x"]},
+               {"model": "b", "pool": None, "switch": "y", "enable": ["openai/y"]}],
+               "switch": {"per_stratum": {"b": 3}}}]}
+    plan = c._setup_plan(rep, "switch")
+    assert [m["model"] for m in plan["moves"]] == ["b"]

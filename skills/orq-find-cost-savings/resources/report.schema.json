@@ -5,6 +5,7 @@
   "required": ["schema_version", "generated_at", "workspace", "status", "stop", "params", "checks"],
   "if": {"properties": {"status": {"const": "ok"}}, "required": ["status", "routing"]},
   "then": {"required": ["summary"]},
+  "allOf": [{"if": {"properties": {"params": {"properties": {"counterfactual_test": {"const": true}}, "required": ["counterfactual_test"]}, "status": {"const": "ok"}}, "required": ["params", "status"]}, "then": {"required": ["counterfactual_test"]}}],
   "properties": {
     "schema_version": {"const": "1.2"},
     "generated_at": {"type": "string"},
@@ -19,14 +20,15 @@
       "description": "Written by analyze on a finished run: every number the page shows. render only formats these; it does not recompute them.",
       "type": "object",
       "required": ["window", "spend_total", "spend_per_month", "scope", "coverage", "sampled_calls", "recommended",
-                   "levers_overlap", "router", "switch", "recommendations", "scopes", "not_analysed", "caching"],
+                   "levers_overlap", "router", "switch", "recommendations", "scopes", "not_analysed", "caching", "caveats"],
       "properties": {
         "spend_total": {"type": ["number", "null"]}, "spend_per_month": {"type": ["number", "null"]},
         "recommended": {"enum": ["router", "switch", null]},
         "levers_overlap": {"type": "boolean"},
         "sampled_calls": {"type": ["integer", "null"]}, "coverage": {"type": ["number", "null"]},
         "caveats": {"type": "array"},
-        "caching": {"type": "object", "properties": {"threads_scanned": {"type": ["integer", "null"]}, "savings_found": {"type": ["number", "null"]}, "error": {"type": ["string", "null"]}}},
+        "window": {"type": "object", "required": ["from", "to", "days", "requested", "retention"], "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "days": {"type": "integer"}, "requested": {"type": ["integer", "null"]}, "retention": {"type": ["integer", "null"]}}},
+        "caching": {"type": "object", "required": ["threads_scanned", "savings_found", "error"], "properties": {"threads_scanned": {"type": ["integer", "null"]}, "savings_found": {"type": ["number", "null"]}, "error": {"type": ["string", "null"]}}},
         "router": {
           "type": "object",
           "required": ["pct_of_spend", "per_month", "ci90_per_month", "saved_today_per_month",

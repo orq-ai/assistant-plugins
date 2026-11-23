@@ -8,7 +8,7 @@ Spec for `scripts/cost_savings_report.py`. Statements marked **V** were checked 
 |---|---|
 | Who runs it | The customer, on their own workspace |
 | Form | The script does all arithmetic and writes `report.json`; the agent writes the narrative; `render` merges both into HTML |
-| Window | `to` = run start; `from` = `to` - min(29 days, workspace retention - 1 day) |
+| Window | `to` = run start; `from` = `to` - min(`--window` days, default 30, workspace retention) |
 | Sample | `--sample N` leaf LLM spans, default and v1 maximum 100 |
 | Excluded from the sample | `span.cache_retrieval` (response cache hits), embedding models, decision models (`typesafe/*`, `orq/decider-*`) |
 | Routing policy | The Smart Router's `jev-general-v1` decision, reproduced client-side and unchanged |
@@ -24,7 +24,7 @@ skills/orq-find-cost-savings/
   SKILL.md
   resources/design.md            this file
   resources/report.schema.json   output contract
-  scripts/cost_savings_report.py PEP 723 header, standard library only
+  scripts/cost_savings_report.py PEP 723 header; depends on evaluatorq
   tests/requirements.txt         makes CI run the suite
   tests/test_*.py                load the script with importlib.util.spec_from_file_location
   tests/fixtures/                synthetic spans, decisions and catalog entries; never customer data
@@ -33,7 +33,7 @@ skills/orq-find-cost-savings/
 Commands:
 
 ```
-uv run <skill dir>/scripts/cost_savings_report.py analyze --workspace <key> --out <dir> [--sample 100] [--counterfactual-test] [--cache-threads 200] [--yes]
+uv run <skill dir>/scripts/cost_savings_report.py analyze --workspace <key> --out <dir> [--window 30] [--sample 100] [--counterfactual-test] [--json] [--cache-threads 200] [--yes]
 uv run <skill dir>/scripts/cost_savings_report.py render --out <dir> --narrative <dir>/narrative.md [--redact]
 ```
 
@@ -317,6 +317,8 @@ Routing savings are scaled to the window; caching savings cover the scanned thre
 The gateway records the calling harness as `trace_framework`, groupable on the `orq.gen_ai.*` metrics but not on `genai.cost` (V). The two metrics disagree in both directions (V: on one workspace `orq.gen_ai.cost` summed to about a third more than `genai.cost`), so the section names its metric and shows each framework's share of it; it shows an "unattributed" row to the summary total only when that difference is positive, and a caveat otherwise. The field also carries SDK names; the report lists every value and marks known coding harnesses as "caching not controllable".
 
 ## Report sections
+
+The page shows the summary, routing and caching parts. Spend by agent and deployment, under-powered ask examples, harness traffic and the Pareto line are in `report.json` only; `render` does not show them.
 
 1. Summary: spend in the window and per month; routing savings with 90% CI, the top-3-excluded figure and coverage; caching savings beside it; Pareto line.
 2. Spend by model, agent, deployment.

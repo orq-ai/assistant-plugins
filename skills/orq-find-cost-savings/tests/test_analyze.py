@@ -465,3 +465,17 @@ SETUP_REPORT_FOR_KEEP = {"scenarios": [{"headline": True, "models": [
 def test_setup_commands_have_no_comment_lines():
     plan = {"lever": "router", "enable": ["openai/a"], "moves": [{"model": "m", "key": "k", "pool": ["openai/a"]}]}
     assert not [x for x in c._setup_commands(plan).splitlines() if x.lstrip().startswith("#")]
+
+
+def test_a_non_orq_failure_also_stops_cleanly_and_replaces_the_old_report(tmp_path):
+    (tmp_path / "report.json").write_text(json.dumps({"status": "ok"}))
+
+    class Missing(FakeOrq):
+        def __call__(self, *a, **kw):
+            raise FileNotFoundError("orq")
+
+    an = c.Analyzer(ns(tmp_path))
+    an.orq = Missing()
+    rep = an.run()
+    assert rep["status"] == "stopped" and rep["stop"]["check"] == "analyze failed"
+    assert json.loads((tmp_path / "report.json").read_text())["status"] == "stopped"
