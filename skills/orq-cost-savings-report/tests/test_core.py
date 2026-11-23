@@ -751,7 +751,7 @@ def test_setup_card_puts_recommended_lever_first_with_collapsed_copyable_blocks(
     card = c._setup_card(SETUP_REPORT, "s")
     assert card.index("<h3>Change model") < card.index("<h3>Smart Router")
     assert card.count("<details class=cp>") == 4 and card.count("class=copy") == 4
-    assert "<summary>Enable models</summary>" in card and "gpt-6-sol \u2192 gpt-6.1-terra</li>" in card
+    assert "Copy commands" in card and "<summary>Show prompt</summary>" in card and "gpt-6-sol \u2192 gpt-6.1-terra</li>" in card
     assert "<button" not in card.split("<summary>")[1].split("</summary>")[0]  # no button inside a summary
     assert "https://my.orq.ai/acme/router/smart-router?id=new" in card
     assert "https://my.orq.ai/acme/router/models?q=gpt-6.1-terra" in card

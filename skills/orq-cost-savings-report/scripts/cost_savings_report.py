@@ -1642,7 +1642,7 @@ if(btn)btn.addEventListener('click',function(){var t=isDark()?'light':'dark';d.s
 try{localStorage.setItem('report-theme',t)}catch(e){}label()});
 document.querySelectorAll('.copy').forEach(function(b){b.addEventListener('click',function(e){
 e.preventDefault();e.stopPropagation();var t=b.parentNode.querySelector('pre').textContent;
-function done(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy'},1500)}
+var l=b.querySelector('b')||b,o=l.textContent;function done(){l.textContent='Copied';b.classList.add('ok');setTimeout(function(){l.textContent=o;b.classList.remove('ok')},1500)}
 function old(){var a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();
 try{document.execCommand('copy');done()}catch(x){}a.remove()}
 if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(done,old);else old()})});
@@ -1661,13 +1661,13 @@ CSS = """
 b,strong{font-weight:600}
 :root{--bg:#ffffff;--fg:#141319;--fg2:#3c3a48;--muted:#737373;--panel:#fafafa;--strip:#f7f6f5;--card:#ffffff;
 --line:#e6e6e6;--sep:#f6f6f6;--shadow:0 1px 2px 0 #14131908;--s1:#025558;--s2:#df5325;--kept:#dcdad6;--ns:#f3f3f3;--hl:#e6f6f5;
---hl2:#4ba9a7;--hlb:#b8e4e2;--pill:#ffffff;--rec-fg:#025558;--rec-bg:#e6f6f5;color-scheme:light}
+--hl2:#4ba9a7;--hlb:#b8e4e2;--pill:#ffffff;--rec-fg:#025558;--rec-bg:#e6f6f5;--btn:#141319;--btn-fg:#ffffff;--btn-hover:#3c3a48;color-scheme:light}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){--bg:#1f1e1d;--fg:#faf9f5;--fg2:#c2c0b6;
 --muted:#9c9a92;--panel:#262624;--strip:#1f1e1d;--card:#30302e;--line:#42413d;--sep:#3a3935;--shadow:0 1px 2px 0 #00000040;
---s1:#2fbfba;--s2:#f27c3c;--kept:#55544f;--ns:#232221;--hl:#2fbfba2e;--hl2:#2fbfba66;--hlb:#2fbfba80;--pill:#42413d;--rec-fg:#2fbfba;--rec-bg:#2fbfba2e;color-scheme:dark}}
+--s1:#2fbfba;--s2:#f27c3c;--kept:#55544f;--ns:#232221;--hl:#2fbfba2e;--hl2:#2fbfba66;--hlb:#2fbfba80;--pill:#42413d;--rec-fg:#2fbfba;--rec-bg:#2fbfba2e;--btn:#faf9f5;--btn-fg:#141319;--btn-hover:#dcdad6;color-scheme:dark}}
 :root[data-theme="dark"]{--bg:#1f1e1d;--fg:#faf9f5;--fg2:#c2c0b6;--muted:#9c9a92;--panel:#262624;--strip:#1f1e1d;
 --card:#30302e;--line:#42413d;--sep:#3a3935;--shadow:0 1px 2px 0 #00000040;--s1:#2fbfba;--s2:#f27c3c;--kept:#55544f;--ns:#232221;
---hl:#2fbfba2e;--hl2:#2fbfba66;--hlb:#2fbfba80;--pill:#42413d;--rec-fg:#2fbfba;--rec-bg:#2fbfba2e;color-scheme:dark}
+--hl:#2fbfba2e;--hl2:#2fbfba66;--hlb:#2fbfba80;--pill:#42413d;--rec-fg:#2fbfba;--rec-bg:#2fbfba2e;--btn:#faf9f5;--btn-fg:#141319;--btn-hover:#dcdad6;color-scheme:dark}
 *{box-sizing:border-box}
 body{font:14px/1.5 "Avio Sans",Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 background:var(--bg);color:var(--fg);margin:0;padding-block:28px 56px;
@@ -1684,19 +1684,28 @@ font-size:12px;line-height:1.4;background:var(--fg);color:var(--bg);box-shadow:0
 [data-tip]{cursor:default}[data-tip]:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
 .setup+.setup{margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}
 .setup h3{font-size:15px;margin:0 0 4px;display:flex;align-items:center;gap:8px}.setup .ol{margin:8px 0 0}.setup .ol a{color:var(--fg);text-underline-offset:2px}
-.cpw{position:relative;margin:8px 0}
-details.cp{border:1px solid var(--line);border-radius:4px;padding:0 12px;margin:0}
-details.cp>summary{list-style:none;cursor:pointer;padding:10px 80px 10px 0}
+.cpg{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:12px;margin:12px 0 4px;align-items:start}
+.cpt{min-width:0}
+.cpt .copy{display:flex;align-items:center;gap:14px;width:100%;min-height:56px;padding:12px 16px;font:inherit;text-align:left;
+cursor:pointer;color:var(--btn-fg);background:var(--btn);border:0;border-radius:6px;box-shadow:0 1px 2px 0 #14131908;transition:background .15s}
+.cpt .copy:hover{background:var(--btn-hover)}.cpt .copy:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+.cpt .copy.ok{background:var(--s1)}
+.ags{display:inline-flex;flex:none}
+.ag{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--card);color:var(--fg);
+border:2px solid var(--btn);margin-left:-8px}.ag:first-child{margin-left:0}.ag svg{width:15px;height:15px;fill:currentColor}
+.ag.term{width:auto;padding:0 8px;border-radius:14px;font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
+.copy:hover .ag{border-color:var(--btn-hover)}
+.gs{display:flex;flex-direction:column;min-width:0}.gs b{font-size:15px;font-weight:600}.gs small{font-size:12px;opacity:.75}
+details.cp{border:0;padding:0;margin:6px 0 0}
+details.cp>summary{list-style:none;cursor:pointer;padding:4px 0;font-size:13px;font-weight:400;color:var(--muted)}
 details.cp>summary::-webkit-details-marker{display:none}
 details.cp>summary::before{content:"\\25B8";display:inline-block;width:1em;color:var(--muted);transition:transform .15s}
 details.cp[open]>summary::before{transform:rotate(90deg)}
-.cpw .copy{position:absolute;top:5px;right:6px;min-height:32px;font:inherit;font-size:13px;color:var(--fg);
-background:var(--pill);border:1px solid var(--line);border-radius:6px;padding:4px 12px;cursor:pointer}
 details.cp pre{margin:0 0 10px;padding:10px 12px;background:var(--panel);border-radius:4px;font:12px/1.5 ui-monospace,
 SFMono-Regular,Menlo,monospace;color:var(--fg)}
 details.cp pre.cmd{white-space:pre;overflow-x:auto}details.cp pre.txt{white-space:pre-wrap;overflow-wrap:break-word}
 .setup .mv{margin:8px 0;padding-left:18px}.setup .mv li{margin:2px 0}
-@media (prefers-reduced-motion:reduce){details.cp>summary::before{transition:none}}
+@media (prefers-reduced-motion:reduce){details>summary::before{transition:none}}
 .top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.top>div{min-width:0}
 .toc{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 16px;margin:20px 0 4px;font-size:13px}
 .toc span{color:var(--muted)}
@@ -1819,9 +1828,14 @@ details,summary,table,thead,tbody,tr,th,td,caption,dl,dt,dd{background:none;box-
 details,summary,td,li,dt,dd{color:var(--fg)}caption{color:var(--muted)}
 details{border:0;border-top:1px solid var(--line);border-radius:0;margin:0;padding:2px 16px}
 details:not(.cp):first-child{border-top:0}
-details[open]{padding-bottom:12px}
+details[open]{padding-bottom:4px}
 summary{cursor:pointer;padding:10px 0;margin:0;border:0;border-radius:0;font-weight:500;color:var(--fg)}
 summary span{font-weight:400;color:var(--muted)}
+details:not(.cp)>summary{list-style:none;position:relative;padding-left:1.25em}
+details:not(.cp)>summary::-webkit-details-marker{display:none}
+details:not(.cp)>summary::before{content:"\\25B8";position:absolute;left:0;width:1em;text-align:center;color:var(--muted);transition:transform .15s}
+details:not(.cp)[open]>summary::before{transform:rotate(90deg)}
+details:not(.cp)>summary span{display:block;font-size:13px;line-height:18px;margin-top:2px}
 .t{overflow-x:auto;margin:8px 0 12px}
 svg.rg{display:block}svg.rg .gl{stroke:var(--line);stroke-width:1}svg.rg .tk{stroke:var(--ns);stroke-width:2;stroke-linecap:round}
 svg.rg .ci{stroke-width:6;stroke-linecap:round}svg.rg.lv-r .ci{stroke:var(--s1)}svg.rg.lv-s .ci{stroke:var(--s2)}
@@ -2363,10 +2377,36 @@ def _setup_prompt(plan: dict) -> str:
     return "\n".join(out)
 
 
-def _copy_block(title: str, text: str, kind: str = "txt") -> str:
-    t = html.escape(title)
-    return (f"<div class=cpw><details class=cp><summary>{t}</summary><pre class={kind}>{html.escape(text)}</pre>"
-            f"</details><button type=button class=copy aria-live=polite aria-label='Copy: {t}'>Copy</button></div>")
+# Agent marks for the prompt copy button, as on saaf-project.orq.ai; one <symbol> each, used by reference.
+AGENT_ICONS = (
+    ('claude', 'Claude Code',
+     '<path d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z"></path>'),
+    ('codex', 'Codex',
+     '<path d="M21.55 10.004a5.416 5.416 0 00-.478-4.501c-1.217-2.09-3.662-3.166-6.05-2.66A5.59 5.59 0 0010.831 1C8.39.995 6.224 2.546 5.473 4.838A5.553 5.553 0 001.76 7.496a5.487 5.487 0 00.691 6.5 5.416 5.416 0 00.477 4.502c1.217 2.09 3.662 3.165 6.05 2.66A5.586 5.586 0 0013.168 23c2.443.006 4.61-1.546 5.361-3.84a5.553 5.553 0 003.715-2.66 5.488 5.488 0 00-.693-6.497v.001zm-8.381 11.558a4.199 4.199 0 01-2.675-.954c.034-.018.093-.05.132-.074l4.44-2.53a.71.71 0 00.364-.623v-6.176l1.877 1.069c.02.01.033.029.036.05v5.115c-.003 2.274-1.87 4.118-4.174 4.123zM4.192 17.78a4.059 4.059 0 01-.498-2.763c.032.02.09.055.131.078l4.44 2.53c.225.13.504.13.73 0l5.42-3.088v2.138a.068.068 0 01-.027.057L9.9 19.288c-1.999 1.136-4.552.46-5.707-1.51h-.001zM3.023 8.216A4.15 4.15 0 015.198 6.41l-.002.151v5.06a.711.711 0 00.364.624l5.42 3.087-1.876 1.07a.067.067 0 01-.063.005l-4.489-2.559c-1.995-1.14-2.679-3.658-1.53-5.63h.001zm15.417 3.54l-5.42-3.088L14.896 7.6a.067.067 0 01.063-.006l4.489 2.557c1.998 1.14 2.683 3.662 1.529 5.633a4.163 4.163 0 01-2.174 1.807V12.38a.71.71 0 00-.363-.623zm1.867-2.773a6.04 6.04 0 00-.132-.078l-4.44-2.53a.731.731 0 00-.729 0l-5.42 3.088V7.325a.068.068 0 01.027-.057L14.1 4.713c2-1.137 4.555-.46 5.707 1.513.487.833.664 1.809.499 2.757h.001zm-11.741 3.81l-1.877-1.068a.065.065 0 01-.036-.051V6.559c.001-2.277 1.873-4.122 4.181-4.12.976 0 1.92.338 2.671.954-.034.018-.092.05-.131.073l-4.44 2.53a.71.71 0 00-.365.623l-.003 6.173v.002zm1.02-2.168L12 9.25l2.414 1.375v2.75L12 14.75l-2.415-1.375v-2.75z"></path>'),
+    ('cursor', 'Cursor',
+     '<path d="M22.106 5.68L12.5.135a.998.998 0 00-.998 0L1.893 5.68a.84.84 0 00-.419.726v11.186c0 .3.16.577.42.727l9.607 5.547a.999.999 0 00.998 0l9.608-5.547a.84.84 0 00.42-.727V6.407a.84.84 0 00-.42-.726zm-.603 1.176L12.228 22.92c-.063.108-.228.064-.228-.061V12.34a.59.59 0 00-.295-.51l-9.11-5.26c-.107-.062-.063-.228.062-.228h18.55c.264 0 .428.286.296.514z"></path>'),
+    ('copilot', 'GitHub Copilot',
+     '<path d="M19.245 5.364c1.322 1.36 1.877 3.216 2.11 5.817.622 0 1.2.135 1.592.654l.73.964c.21.278.323.61.323.955v2.62c0 .339-.173.669-.453.868C20.239 19.602 16.157 21.5 12 21.5c-4.6 0-9.205-2.583-11.547-4.258-.28-.2-.452-.53-.453-.868v-2.62c0-.345.113-.679.321-.956l.73-.963c.392-.517.974-.654 1.593-.654l.029-.297c.25-2.446.81-4.213 2.082-5.52 2.461-2.54 5.71-2.851 7.146-2.864h.198c1.436.013 4.685.323 7.146 2.864zm-7.244 4.328c-.284 0-.613.016-.962.05-.123.447-.305.85-.57 1.108-1.05 1.023-2.316 1.18-2.994 1.18-.638 0-1.306-.13-1.851-.464-.516.165-1.012.403-1.044.996a65.882 65.882 0 00-.063 2.884l-.002.48c-.002.563-.005 1.126-.013 1.69.002.326.204.63.51.765 2.482 1.102 4.83 1.657 6.99 1.657 2.156 0 4.504-.555 6.985-1.657a.854.854 0 00.51-.766c.03-1.682.006-3.372-.076-5.053-.031-.596-.528-.83-1.046-.996-.546.333-1.212.464-1.85.464-.677 0-1.942-.157-2.993-1.18-.266-.258-.447-.661-.57-1.108-.32-.032-.64-.049-.96-.05zm-2.525 4.013c.539 0 .976.426.976.95v1.753c0 .525-.437.95-.976.95a.964.964 0 01-.976-.95v-1.752c0-.525.437-.951.976-.951zm5 0c.539 0 .976.426.976.95v1.753c0 .525-.437.95-.976.95a.964.964 0 01-.976-.95v-1.752c0-.525.437-.951.976-.951zM7.635 5.087c-1.05.102-1.935.438-2.385.906-.975 1.037-.765 3.668-.21 4.224.405.394 1.17.657 1.995.657h.09c.649-.013 1.785-.176 2.73-1.11.435-.41.705-1.433.675-2.47-.03-.834-.27-1.52-.63-1.813-.39-.336-1.275-.482-2.265-.394zm6.465.394c-.36.292-.6.98-.63 1.813-.03 1.037.24 2.06.675 2.47.968.957 2.136 1.104 2.776 1.11h.044c.825 0 1.59-.263 1.995-.657.555-.556.765-3.187-.21-4.224-.45-.468-1.335-.804-2.385-.906-.99-.088-1.875.058-2.265.394zM12 7.615c-.24 0-.525.015-.84.044.03.16.045.336.06.526l-.001.159a2.94 2.94 0 01-.014.25c.225-.022.425-.027.612-.028h.366c.187 0 .387.006.612.028-.015-.146-.015-.277-.015-.409.015-.19.03-.365.06-.526a9.29 9.29 0 00-.84-.044z"></path>'),
+)
+
+
+def _icon_sprite() -> str:
+    syms = "".join(f"<symbol id=ic-{k} viewBox='0 0 24 24'>{body}</symbol>" for k, _, body in AGENT_ICONS)
+    return f"<svg width=0 height=0 style='position:absolute' aria-hidden=true>{syms}</svg>"
+
+
+def _copy_tile(kind: str, text: str, label: str, hint: str, show: str) -> str:
+    """One copy tile: a big button (agent marks or a terminal mark), then the text behind a disclosure."""
+    if kind == "txt":
+        marks = "".join(f"<span class=ag title='{n}'><svg aria-hidden=true><use href='#ic-{k}'/></svg></span>"
+                        for k, n, _ in AGENT_ICONS)
+    else:
+        marks = "<span class='ag term' aria-hidden=true>&gt;_</span>"
+    return (f"<div class=cpt><button type=button class=copy aria-label='{html.escape(label)}'>"
+            f"<span class=ags>{marks}</span><span class=gs><b aria-live=polite>{html.escape(label)}</b>"
+            f"<small>{html.escape(hint)}</small></span></button>"
+            f"<details class=cp><summary>{html.escape(show)}</summary><pre class={kind}>{html.escape(text)}</pre>"
+            "</details></div>")
 
 
 def _setup_card(report: dict, rec: str) -> str:
@@ -2392,13 +2432,17 @@ def _setup_card(report: dict, rec: str) -> str:
         blocks.append(f"<div class=setup><h3>{name}{tag}</h3><p class=m>{html.escape(summary)}</p>"
                       + (f"<ul class=mv>{''.join(f'<li>{html.escape(_short(m['model']))} \u2192 {html.escape(_short(m['to']))}</li>' for m in plan['moves'])}</ul>"
                          if lever == "switch" else "")
-                      + (_copy_block("Commands" if lever == "router" else "Enable models", _setup_commands(plan), "cmd")
-                         if _setup_commands(plan) else "")
-                      + _copy_block("Prompt for your coding agent", _setup_prompt(plan))
+                      + "<div class=cpg>"
+                      + _copy_tile("txt", _setup_prompt(plan), "Copy prompt",
+                                   "For Claude Code, Codex, Cursor or Copilot", "Show prompt")
+                      + (_copy_tile("cmd", cmds, "Copy commands",
+                                    f"{cmds.count(chr(10)) + 1} line{'s' if '\n' in cmds else ''} for the orq CLI", "Show commands")
+                         if (cmds := _setup_commands(plan)) else "")
+                      + "</div>"
                       + (f"<p class='m ol'>In orq.ai: {SEP.join(links)}</p>" if links else "") + "</div>")
     if not blocks:
         return ""
-    return _card("Set it up", "".join(blocks), "setup")
+    return _card("Set it up", _icon_sprite() + "".join(blocks), "setup")
 
 
 def _details(title: str, hint: str, body: str) -> str:
