@@ -1818,7 +1818,7 @@ dl.gl dt{font-weight:500}dl.gl dd{margin:0}
 details,summary,table,thead,tbody,tr,th,td,caption,dl,dt,dd{background:none;box-shadow:none}
 details,summary,td,li,dt,dd{color:var(--fg)}caption{color:var(--muted)}
 details{border:0;border-top:1px solid var(--line);border-radius:0;margin:0;padding:2px 16px}
-details:first-child{border-top:0}
+details:not(.cp):first-child{border-top:0}
 details[open]{padding-bottom:12px}
 summary{cursor:pointer;padding:10px 0;margin:0;border:0;border-radius:0;font-weight:500;color:var(--fg)}
 summary span{font-weight:400;color:var(--muted)}
