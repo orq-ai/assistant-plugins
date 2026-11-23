@@ -360,7 +360,7 @@ orq doctor -o json -j "checks[?status!='pass']"      # real problems ('info' row
 
 Use `orq <group> --help` and then `orq <group> <operation> --help` to discover the current surface. For model and agent inference, default to `orq responses create` on `/v3/router/responses`, with `openai/gpt-6-luna` for model examples or `agent/<key>` for managed agents.
 
-There is no `experiments` group — experiments are MCP/evaluatorq-only.
+There is no `experiments` group: call `/v3/experiments` through `orq request` (below), as in [experiments-api.md](../../orq-shared/resources/experiments-api.md).
 `annotation-queues` is the CLI surface for the eval-corrections /
 unified-annotation model (annotation review workflows); its subcommands were
 listed from `--help` and not called on either version.

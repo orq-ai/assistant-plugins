@@ -51,3 +51,19 @@ mcp_tool_exists,get_span,,get_span listed on MCP server
 mcp_tool_exists,update_agent,,update_agent listed on MCP server
 mcp_tool_args,search_entities,"{""type"": ""agent"", ""query"": ""support""}",search_entities(type=agent, query=...) matches the schema
 cli_flag,reporting query,--metric,orq reporting query accepts --metric
+doc_url,https://docs.orq.ai/reference/experiments/list-experiments,,Experiments API list-experiments page reachable
+doc_url,https://docs.orq.ai/reference/experiments/delete-an-experiment,,Experiments API delete-an-experiment page reachable
+doc_url,https://docs.orq.ai/reference/experiments/list-runs,,Experiments API list-runs page reachable
+doc_url,https://docs.orq.ai/reference/experiments/cancel-a-run,,Experiments API cancel-a-run page reachable
+doc_url,https://docs.orq.ai/reference/experiments/export-a-run,,Experiments API export-a-run page reachable
+doc_url,https://docs.orq.ai/reference/experiments/list-task-columns,,Experiments API list-task-columns page reachable
+doc_url,https://docs.orq.ai/reference/experiments/update-a-task-column,,Experiments API update-a-task-column page reachable
+doc_url,https://docs.orq.ai/reference/experiments/create-an-experiment,,Experiments API create-an-experiment page reachable
+doc_url,https://docs.orq.ai/reference/experiments/execute-a-run,,Experiments API execute-a-run page reachable
+doc_url,https://docs.orq.ai/reference/experiments/query-run-cells,,Experiments API query-run-cells page reachable
+doc_url,https://docs.orq.ai/reference/experiments/get-run-metrics,,Experiments API get-run-metrics page reachable
+cli_subcommand,request,,orq request exists
+cli_flag,request,--raw,orq request accepts --raw
+cli_flag,request,--force,orq request accepts --force
+cli_flag,request,-j,orq request accepts -j
+cli_flag,request,-o,orq request accepts -o

@@ -9,12 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `orq-run-experiment`: the orq.ai Experiments API (`/v3/experiments`) is now a documented way to run experiments, next to the `create_experiment` MCP tool. `resources/api-reference.md` walks through the full flow (create, prompt and agent task columns, evaluator columns, execute and poll, metrics and per-cell results, a new run compared to a baseline with `baseline_run_id`), and steps 8 and 9 say when to pick the API over MCP.
-- `orq-compare-agents`: new Phase 4A compares orq.ai agents through the Experiments API, one agent task column per agent in a single run, with no evaluatorq script. External agents still use evaluatorq.
+- `orq-shared/resources/experiments-api.md`: one reference for the orq.ai Experiments API (`/v3/experiments`) through `orq request`, verified live: create, prompt and agent task columns, evaluator columns, execute and poll, metrics, per-row outputs and evaluator scores with paging, a new run compared to a baseline, cancel, export and delete, plus the API's gotchas (agent timeout, no baseline for agent columns, PARTIAL on new runs).
+- `orq-compare-agents`: Phase 4 path A compares orq.ai agents as one agent task column each in a single run, with no evaluatorq script. External agents still use evaluatorq (path B).
+- `orq-build-benchmark`: step 4 runs the candidates as a native orq experiment, one prompt task column per model in one run, and step 5 computes the paired gap from per-row scores. The evaluatorq template moved to `resources/evaluatorq-path.md` for candidates that are not plain prompts.
+- Factual rows for the Experiments API reference pages and `orq request` flags.
 
 ### Changed
 
-- Both skills allow `curl` against `https://my.orq.ai/v3/experiments*` in `allowed-tools`.
+- `orq-run-experiment`: the Experiments API is the default in steps 8, 9 and 18, with `baseline_run_id` comparison on re-runs; the `create_experiment` MCP tool stays for quick one-offs from chat. `allowed-tools` pre-approves `orq request GET /v3/experiments*` only, since writes still prompt.
+- `orq-cli`, `evaluatorq`: no longer say experiments are MCP or evaluatorq only; they route to the Experiments API via `orq request`.
+- `orq-shared`: `model-slugs.md` and `doc-resolution.md` list the skills that use the new reference.
 
 ## [5.2.0] - 2026-11-19
 

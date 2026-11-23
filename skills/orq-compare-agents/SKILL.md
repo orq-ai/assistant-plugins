@@ -9,7 +9,7 @@ description: >
   Use when comparing agents, benchmarking, or wanting side-by-side evaluation.
   Do NOT use when comparing only orq.ai prompt or model configurations with no
   agents (use orq-run-experiment instead).
-allowed-tools: Read, Write, Edit, Grep, Glob, Bash(curl -s https://my.orq.ai/v3/experiments*), Bash(curl -s --get https://my.orq.ai/v3/experiments*), Bash(curl -s -X PATCH https://my.orq.ai/v3/experiments*), Bash(jq *), WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__create_dataset, mcp__orq-workspace__create_datapoints, mcp__orq-workspace__create_llm_eval
+allowed-tools: Read, Write, Edit, Grep, Glob, Bash(orq request GET /v3/experiments*), WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__create_dataset, mcp__orq-workspace__create_datapoints, mcp__orq-workspace__create_llm_eval
 ---
 
 # Compare Agents
@@ -41,7 +41,7 @@ Supported comparison modes:
 
 - `orq-generate-synthetic-dataset` — create the evaluation dataset
 - `orq-build-evaluator` — design the LLM-as-a-judge evaluator
-- `orq-run-experiment` — run orq.ai-native experiments that compare prompt or model configurations (no agents)
+- `orq-run-experiment`: run orq.ai-native experiments on one system, prompt or agent, and compare its runs over time
 - `orq-build-agent` — create orq.ai agents to include in comparisons
 - `orq-analyze-traces` — diagnose agent failures from trace data
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `-o json` output. See its "MCP tools or the CLI?" table before choosing.
@@ -55,7 +55,7 @@ Agent Comparison Progress:
 - [ ] Phase 1: Identify agents, frameworks, and language (Python/TS)
 - [ ] Phase 2: Create dataset (→ orq-generate-synthetic-dataset)
 - [ ] Phase 3: Create evaluator (→ orq-build-evaluator)
-- [ ] Phase 4: Generate comparison script (or 4A: Experiments API when all agents are orq.ai agents)
+- [ ] Phase 4: Build the comparison (A: Experiments API when all agents are orq.ai agents, B: evaluatorq script)
 - [ ] Phase 5: Run and view results in orq.ai
 ```
 
@@ -135,8 +135,8 @@ Agent Comparison Progress:
    - Test each agent independently before proceeding
 
 4. **Pick the execution path:**
-   - **Every agent is an orq.ai agent** → use the **Experiments API** path (Phase 4A, after Phase 5). No script: one agent task column per agent in the same run, so all agents get the same rows and the same evaluators, and the comparison lives in the orq.ai Experiment UI.
-   - **Any agent is external** (LangGraph, CrewAI, OpenAI Agents SDK, Vercel AI SDK, an HTTP endpoint) → use the **evaluatorq** path (Phase 4). Ask the user's language preference: Python or TypeScript. Default to Python if no preference.
+   - **Every agent is an orq.ai agent** → use the **Experiments API** path (Phase 4, path A). No script: one agent task column per agent in the same run, so all agents get the same rows and the same evaluators, and the comparison lives in the orq.ai Experiment UI.
+   - **Any agent is external** (LangGraph, CrewAI, OpenAI Agents SDK, Vercel AI SDK, an HTTP endpoint) → use the **evaluatorq** path (Phase 4, path B, then Phase 5). Ask the user's language preference: Python or TypeScript. Default to Python if no preference.
 
 ### Phase 2: Create Dataset
 
@@ -154,7 +154,19 @@ Agent Comparison Progress:
 
    For quick experiments, use the `create_llm_eval` MCP tool directly with a response-quality prompt. Ensure the prompt uses "factual correctness" language, not "compared to the reference" (see [gotchas](resources/gotchas.md)).
 
-### Phase 4: Generate Comparison Script
+### Phase 4: Build the Comparison
+
+#### Path A: every agent is an orq.ai agent (Experiments API)
+
+Run the flow in [experiments-api.md](../orq-shared/resources/experiments-api.md) through `orq request`, with these points specific to a comparison:
+
+7a. **One run, one agent task column per agent.** Create the experiment on the Phase 2 dataset, then add each agent as an `agent` task column in the same run (`agent_key` from Phase 1). Keep every agent in this one run: agent columns get a new column ID in each new run, so `baseline_run_id` deltas are null for them. To add an agent later, add its column to this run and execute with `EXECUTE_SCOPE_PARTIAL`, which runs only the new and failed cells.
+7b. **Add the Phase 3 evaluator(s) once.** Every evaluator scores every agent column, so scoring is identical across agents.
+7c. **Execute and poll** until the run is terminal. Read scores only after `RUN_STATUS_COMPLETED` with `cell_status_counts.failed` at 0; otherwise fix the cause and retry with `EXECUTE_SCOPE_PARTIAL`.
+7d. **Compare from `/metrics`.** Per agent, report the pass rate from `{task_column_id}_{evaluator_id}` (`.boolean.passed_rate`, already a percentage from 0 to 100, or `.number.avg` for a numeric judge), total cost from `{task_column_id}_orq_cost` (`.number.sum`) and median latency from `{task_column_id}_orq_latency` (`.number.median`). Then read the outputs and `trace_id`s behind the losing rows with `/query`.
+7e. Continue at step 12 to open the experiment, and step 14 to iterate.
+
+#### Path B: any agent is external (evaluatorq script)
 
 7. **Select job patterns** from [resources/job-patterns.md](resources/job-patterns.md) for each agent's framework.
 
@@ -201,19 +213,6 @@ Agent Comparison Progress:
 
 14. **Iterate:** If one agent consistently underperforms, investigate with `orq-analyze-traces`, improve with `orq-improve-agent`, then re-run the comparison.
 
-
-### Phase 4A (alternative to 4 and 5): Compare orq.ai agents with the Experiments API
-
-Use this instead of Phases 4 and 5 when every agent is an orq.ai agent. Full requests and response fields: [orq-run-experiment API reference § Experiments API](../orq-run-experiment/resources/api-reference.md#experiments-api-v3).
-
-7a. **Create the experiment** with the dataset from Phase 2: `POST /v3/experiments` with `display_name` and `dataset_id`. Keep `experiment_id` and `selected_run_id`.
-7b. **Add one agent task column per agent:** `POST /v3/experiments/{experiment_id}/runs/{run_id}/tasks` with `{"display_name": "<agent label>", "agent": {"agent_key": "<key>", "messages_source": "MESSAGES_SOURCE_PROMPT_CONFIG", "messages": [{"role": "user", "content": "{{<input variable>}}"}]}}`. For multi-turn datasets use `"messages_source": "MESSAGES_SOURCE_MESSAGES_COLUMN"` and no `messages`.
-7c. **Add the evaluator(s) from Phase 3** once: `POST .../runs/{run_id}/evaluators` with `{"evaluator_id": "<id>"}`. Every evaluator scores every agent column, which keeps scoring fair.
-7d. **Execute** with `{"scope": "EXECUTE_SCOPE_FULL"}` on `.../execute`, then poll `GET .../runs/{run_id}` until `status` is `RUN_STATUS_COMPLETED`, `RUN_STATUS_FAILED` or `RUN_STATUS_CANCELED`; only read scores after `RUN_STATUS_COMPLETED`. If `cell_status_counts.failed` is above zero, inspect those cells, fix the cause, and re-run with `EXECUTE_SCOPE_PARTIAL`.
-7e. **Compare:** `GET .../runs/{run_id}/metrics` returns one entry per agent column and evaluator (`{task_column_id}_{evaluator_id}`), plus `_orq_cost` and `_orq_latency` per agent. Present pass rate (`.boolean.passed_rate`, or `.number.avg` for a score), total cost (`_orq_cost` `.number.sum`) and median latency (`_orq_latency` `.number.median`) per agent, then use `POST .../runs/{run_id}/query` to read the outputs and `trace_id`s behind the losing rows.
-7f. **Adding an agent later:** keep all agents in one run, because `baseline_run_id` deltas do not work for agent columns (they get a new id per run). Add its column to the same run and execute with `EXECUTE_SCOPE_PARTIAL`, so only the new cells and any failed cells run; completed cells of the existing agents are not re-run.
-
-Then use step 12 to open the experiment in the UI and step 14 to iterate.
 
 ---
 

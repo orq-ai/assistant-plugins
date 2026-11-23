@@ -97,7 +97,7 @@ This suite ships an MCP server, so you will often have both. They are not interc
 | Endpoint with no MCP tool — or no generated command either | **CLI** | the command surface is generated from the whole spec; `orq request <method> <path>` covers the rest |
 | Checking why auth or routing is broken | **CLI** | `orq doctor` has no MCP equivalent |
 | Acting as a specific profile or a self-hosted host | **CLI** | `--profile` and `--server` are CLI-only |
-| Running experiments (create/run/export) | **MCP or evaluatorq SDK** | the CLI has no `experiments` group |
+| Running experiments (create/run/compare/export) | **CLI (`orq request`)** | no `experiments` group, so call `/v3/experiments` through `orq request`; see [experiments-api.md](../orq-shared/resources/experiments-api.md) |
 | Finding an entity by name, browsing docs | **MCP** | `search_entities` / `search_docs` have no CLI equivalent |
 | Schedules, identities, projects, API keys, webhooks, KBs, memory stores, files | **CLI** | no MCP tools exist for these areas |
 | Alerts, notifiers, budgets, annotation queues, smart routers, MCP gateways, workspace security/settings, reporting | **CLI** | likewise — and several have no UI equivalent either |
@@ -344,7 +344,7 @@ Every generated group is one API tag. `orq request <method> <path>` is the escap
 
 Discover one group at a time using the installed CLI's help. Do not copy a full command inventory into generated guidance.
 
-There is still no `experiments` group — use the MCP tools or the evaluatorq SDK for those.
+There is still no `experiments` group: drive `/v3/experiments` with `orq request` as in [experiments-api.md](../orq-shared/resources/experiments-api.md).
 
 Local setup and coding-agent wiring commands can write config files. See "Wiring coding agents" below before running them.
 
