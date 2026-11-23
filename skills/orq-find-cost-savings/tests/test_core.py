@@ -742,6 +742,7 @@ FAKE_ORQ = r"""#!/bin/sh
 echo "$*" >> "$ORQ_LOG"
 case "$*" in
   "models list"*autorouter*) case "$*" in *unscored*) echo null;; *) echo id;; esac;;
+  "models list"*"&& enabled"*) case "$*" in *disabled*) echo null;; *) echo id;; esac;;
   "models list"*) case "$*" in *missing*) echo null;; *) echo id;; esac;;
   "models enable"*) echo null;;
   "smart-routers list"*) case "$*" in *k-exists*) echo ws@orq/k-exists;; *) echo null;; esac;;
@@ -760,13 +761,15 @@ def test_setup_commands_rerun_safely(tmp_path, shell):
     plan = {"lever": "router", "enable": ["p/a", "p/missing"], "moves": [
         {"key": "k-exists", "pool": ["p/a", "p/b"], "model": "p/x"},
         {"key": "k-unscored", "pool": ["p/a", "p/unscored"], "model": "p/y"},
+        {"key": "k-disabled", "pool": ["p/a", "p/disabled"], "model": "p/w"},
         {"key": "k-new", "pool": ["p/a", "p/b"], "model": "p/z"}]}
     env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "ORQ_LOG": str(tmp_path / "log")}
     r = subprocess.run([*shell, "-c", c._setup_commands(plan)], env=env, capture_output=True, text=True)
     assert r.stdout.splitlines() == ["enabled p/a", "k-exists exists: use ws@orq/k-exists",
                                      "k-new created: use ws@orq/k-new"]
     assert r.stderr.splitlines() == ["skip p/missing: not in this workspace's model list",
-                                     "skip k-unscored: p/unscored has no Smart Router score yet"]
+                                     "skip k-unscored: p/unscored has no Smart Router score yet",
+                                     "skip k-disabled: p/disabled is not enabled"]
     creates = [x for x in (tmp_path / "log").read_text().splitlines() if x.startswith("smart-routers create")]
     assert creates == ["smart-routers create --key k-new --models p/a --models p/b "
                        "--body-profile SMART_ROUTER_PROFILE_BALANCED -o json -j model_ref --raw"]

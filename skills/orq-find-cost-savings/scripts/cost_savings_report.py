@@ -2370,15 +2370,18 @@ def _setup_commands(plan: dict) -> str:
              "  else orq models enable --model-id \"$id\" >/dev/null && echo \"enabled $1\"; fi",
              "}"]
     if router:
-        lines += ["# scored: the model has a Smart Router score, which every pool model needs.",
+        lines += ["# on: the model is enabled. scored: it has a Smart Router score. Every pool model needs both.",
                   "scored() { [ \"$(orq models list -o json -j \"[?refId=='$1' && metadata.autorouter.v2].id "
                   "| [0]\" --raw)\" != null ]; }",
-                  "# router <key> <model>...: reuse the key if it exists, else create it when the pool is scored.",
+                  "on() { [ \"$(orq models list -o json -j \"[?refId=='$1' && enabled].id | [0]\" --raw)\" != null ]; }",
+                  "# router <key> <model>...: reuse the key if it exists, else create it when every pool model is "
+                  "enabled and scored.",
                   "router() {",
                   "  local k=$1 ref m a; shift; a=()",
                   "  ref=$(orq smart-routers list --limit 200 -o json -j \"data[?key=='$k'].model_ref | [0]\" --raw)",
                   "  if [ \"$ref\" != null ]; then echo \"$k exists: use $ref\"; return; fi",
                   "  for m in \"$@\"; do",
+                  "    on \"$m\" || { echo \"skip $k: $m is not enabled\" >&2; return; }",
                   "    scored \"$m\" || { echo \"skip $k: $m has no Smart Router score yet\" >&2; return; }",
                   "    a+=(--models \"$m\")",
                   "  done",
@@ -2406,7 +2409,7 @@ def _setup_prompt(plan: dict) -> str:
         out.append(f"{step}. Create one Smart Router per model with `orq smart-routers create`, profile "
                    f"{ROUTER_PROFILE}, and keep the `model_ref` each response returns. Every pool model needs a Smart "
                    "Router score (`metadata.autorouter.v2` in `orq models list -o json`): skip a router whose pool "
-                   "has a model without one, and tell me which. If a key already exists (`orq smart-routers list`), reuse "
+                   "has a model without one or one that is not enabled, and tell me which. If a key already exists (`orq smart-routers list`), reuse "
                    "its `model_ref` instead of creating it again:")
         out += [f"   - key {m['key']}, models {', '.join(m['pool'])} (replaces {m['model']})" for m in plan["moves"]]
         swap = "the `model_ref` of its router"
