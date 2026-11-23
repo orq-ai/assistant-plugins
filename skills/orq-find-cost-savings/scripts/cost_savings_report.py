@@ -2067,8 +2067,7 @@ def _plan_rows(report: dict, per_month: float, lever: str = "router") -> list[di
         fl = _flow(m, f["h_info"].get(m, {}), f["e_info"].get(m), ro.get("moves") or [], now, spend)
         rows.append({"model": m, "n": n_calls, "spend": spend, "saved": saved, "today": now,
                      "after": saved - now, "rate": st.get("rate"), "hard": None,
-                     "lines": _action_lines(m, f["h_info"].get(m, {}), f["e_info"].get(m), saved, fl["enable"]),
-                     **fl})
+                     "move": f["h_info"].get(m, {}), "today_move": f["e_info"].get(m), **fl})
     flagged = [r for r in rows if r["model"] in hard and r["saved"] > 0]
     if flagged:
         top = max(flagged, key=lambda r: r["saved"])
@@ -2155,39 +2154,79 @@ def _waterfall(spend: float, now_v: float, more_v: float, left_v: float, how: st
     return f"<div class=wf role=img aria-label='{html.escape(aria)}'>{''.join(cols)}</div>"
 
 
-def summary(report: dict) -> dict:
-    """The page's headline numbers and plan, for a caller that uses report.json without rendering the page."""
-    head = _headline(report)
-    spend_pm = (report.get("spend") or {}).get("per_month")
-    r, w = (head.get("router") or {}).get("balanced") or {}, head.get("switch") or {}
-    r_pm, w_pm = ((report.get("routing") or {}).get("headline") or {}).get("per_month"), w.get("per_month")
-    rec = "router" if r_pm is not None and (w_pm is None or r_pm >= w_pm) else "switch" if w_pm is not None else None
-    rp, wp = _setup_plan(report, "router"), _setup_plan(report, "switch")
-    ca = report.get("caching") or {}
-    total = (report.get("spend") or {}).get("total")
-    per_month = spend_pm / total if total and spend_pm else 30 / max(1, report["window"]["days"])
-    keys = {m["model"]: m["key"] for m in rp["moves"]}
-    recs = []
-    for x in _plan_rows(report, per_month, rec or "router"):
+def _move(info: dict | None) -> dict | None:
+    return None if info is None else {"pool": info.get("pool"), "switch": info.get("switch")}
+
+
+def _rec_rows(report: dict, per_month: float, lever: str, keys: dict[str, str]) -> list[dict]:
+    """One recommendation per sampled model under one lever, with everything the page draws for it."""
+    out = []
+    for x in _plan_rows(report, per_month, lever):
         act = x["lever"] if x["saved"] > 0 and x["lever"] in ("router", "switch") else "keep"
-        recs.append({"model": x["model"], "action": act, "router_key": keys.get(x["model"]) if act == "router" else None,
-                     "targets": [{"model": b["model"], "share_of_calls": b["share"]} for b in x["branches"]
-                                 if not b["stays"]] if act != "keep" else [],
-                     "enable": x["enable"] if act != "keep" else [],
-                     "spend_per_month": x["spend"], "saved_per_month": x["saved"],
-                     "pct_of_model_spend": _of(x["saved"], x["spend"]),
-                     "saved_today_per_month": x["today"], "saved_after_enabling_per_month": x["after"],
-                     "sampled_calls": x["n"], "small_sample": x["n"] < MIN_SAMPLE, "mostly_hard": x["hard"] is not None})
-    return {"window": {k: report["window"].get(k) for k in ("from", "to", "days")}, "spend_per_month": spend_pm,
-            "scope": head.get("scope"), "coverage": r.get("coverage"), "recommended": rec,
-            "levers_overlap": _ranges_overlap(head),
-            "router": {"pct_of_spend": _of(r_pm, spend_pm), "per_month": r_pm,
-                       "ci90_per_month": r.get("ci90_per_month"), "enable": rp["enable"],
-                       "routers": [{k: m[k] for k in ("model", "key", "pool")} for m in rp["moves"]]},
-            "switch": {"pct_of_spend": _of(w_pm, spend_pm), "per_month": w_pm,
-                       "ci90_per_month": w.get("ci90_per_month"), "enable": wp["enable"],
-                       "replacements": [{k: m[k] for k in ("model", "to")} for m in wp["moves"]]},
-            "recommendations": recs,
+        out.append({"model": x["model"], "action": act, "router_key": keys.get(x["model"]) if act == "router" else None,
+                    "move": _move(x["move"]), "today_move": _move(x["today_move"]),
+                    "targets": [{"model": b["model"], "share_of_calls": b["share"], "tiers": b["tiers"],
+                                 "unscored_calls": b["unscored"], "enable": b["enable"], "stays": b["stays"]}
+                                for b in x["branches"]],
+                    "enable": x["enable"], "spend_per_month": x["spend"], "saved_per_month": x["saved"],
+                    "pct_of_model_spend": _of(x["saved"], x["spend"]),
+                    "saved_today_per_month": x["today"], "saved_after_enabling_per_month": x["after"],
+                    "sampled_calls": x["n"], "small_sample": x["n"] < MIN_SAMPLE, "share_hard": x["hard"]})
+    return out
+
+
+def _scopes(report: dict, spend_pm: float | None) -> list[dict]:
+    """Both levers in every scope, headline first."""
+    out = []
+    for sc in sorted(report.get("scenarios") or [], key=lambda x: not x.get("headline")):
+        r, w = sc["router"]["balanced"], sc["switch"]
+        out.append({"scope": sc["scope"], "headline": bool(sc.get("headline")), "coverage": r.get("coverage"),
+                    "enable": list(dict.fromkeys(e for m in sc.get("models") or [] for e in m.get("enable") or [])),
+                    **{k: {"pct_of_spend": _of(f.get("per_month"), spend_pm), "per_month": f.get("per_month"),
+                           "ci90_per_month": f.get("ci90_per_month")} for k, f in (("router", r), ("switch", w))}})
+    return out
+
+
+def _not_analysed(report: dict, per_month: float) -> dict:
+    nc = (report.get("routing") or {}).get("not_covered") or []
+    return {"per_month": sum(x.get("spend") or 0 for x in nc) * per_month, "model_count": len(nc)}
+
+
+def summary(report: dict) -> dict:
+    """Every number the page shows, so render only formats and a caller can skip the page."""
+    head = _headline(report)
+    sp = report.get("spend") or {}
+    spend_pm = sp.get("per_month")
+    total = sp.get("total")
+    per_month = spend_pm / total if total and spend_pm else 30 / max(1, report["window"]["days"])
+    h = (report.get("routing") or {}).get("headline") or {}
+    r, w = (head.get("router") or {}).get("balanced") or {}, head.get("switch") or {}
+    r_pm, w_pm = h.get("per_month"), w.get("per_month")
+    rec = "router" if r_pm is not None and (w_pm is None or r_pm >= w_pm) else "switch" if w_pm is not None else None
+    en = _enabled_scope(report, head) or {}
+    today = {"router": ((en.get("router") or {}).get("balanced") or {}).get("per_month"),
+             "switch": (en.get("switch") or {}).get("per_month")}
+    rp, wp = _setup_plan(report, "router"), _setup_plan(report, "switch")
+    keys = {m["model"]: m["key"] for m in rp["moves"]}
+    ca = report.get("caching") or {}
+
+    def lever(name: str, pm: Any, fig: dict, plan: dict, moves: list[dict]) -> dict:
+        t = today[name]
+        return {"pct_of_spend": _of(pm, spend_pm), "per_month": pm, "ci90_per_month": fig.get("ci90_per_month"),
+                "saved_today_per_month": t,
+                "saved_after_enabling_per_month": max(0.0, pm - t) if pm is not None and t is not None else None,
+                "enable": plan["enable"], **({"routers": moves} if name == "router" else {"replacements": moves})}
+
+    return {"window": {k: report["window"].get(k) for k in ("from", "to", "days")},
+            "spend_total": total, "spend_per_month": spend_pm, "scope": head.get("scope"),
+            "coverage": r.get("coverage"), "sampled_calls": (report.get("params") or {}).get("sample"),
+            "recommended": rec, "levers_overlap": _ranges_overlap(head),
+            "router": {**lever("router", r_pm, r, rp, [{k: m[k] for k in ("model", "key", "pool")} for m in rp["moves"]]),
+                       "without_top3_per_month": (h["without_top3"] * per_month) if h.get("without_top3") is not None
+                       else None},
+            "switch": lever("switch", w_pm, w, wp, [{k: m[k] for k in ("model", "to")} for m in wp["moves"]]),
+            "recommendations": {k: _rec_rows(report, per_month, k, keys) for k in ("router", "switch")},
+            "scopes": _scopes(report, spend_pm), "not_analysed": _not_analysed(report, per_month),
             "caching": {"threads_scanned": ca.get("threads_scanned"), "savings_found": ca.get("savings_found")}}
 
 
@@ -2210,11 +2249,23 @@ def _tip(what: str, v: float, spend: float | None, of: str = "this model's spend
     return f"{what}: {_usd0(v)}/mo{share}"
 
 
-def _actions_chart(report: dict, per_month: float, lever: str = "router") -> str:
-    ro = report.get("routing") or {}
-    rows_in = _plan_rows(report, per_month, lever)
-    nc = ro.get("not_covered") or []
-    nc_spend = sum(x.get("spend") or 0 for x in nc) * per_month
+def _row_view(x: dict) -> dict:
+    """A stored recommendation in the shape the chart draws, plus its plain-language lines."""
+    move, today, spend, now = x["move"] or {}, x["today_move"], x["spend_per_month"], x["saved_today_per_month"]
+    note = ""
+    if x["enable"] and today and _lever(today) and not _same_move(today, move) and (now or 0) > 0:
+        note = f"Before enabling: {_phrase(today)} now, {_pc(_of(now, spend))} saved ({_usd0(now)}/mo)."
+    return {"model": x["model"], "spend": spend, "saved": x["saved_per_month"], "today": now,
+            "after": x["saved_after_enabling_per_month"], "lever": _lever(move), "enable": x["enable"],
+            "n": x["sampled_calls"], "hard": x["share_hard"], "note": note,
+            "branches": [{"model": b["model"], "share": b["share_of_calls"], "tiers": b["tiers"],
+                          "unscored": b["unscored_calls"], "enable": b["enable"], "stays": b["stays"]}
+                         for b in x["targets"]],
+            "lines": _action_lines(x["model"], move, today, x["saved_per_month"], x["enable"])}
+
+
+def _actions_chart(recs: list[dict], not_analysed: dict) -> str:
+    rows_in = [_row_view(x) for x in recs]
     drawn = [r for r in rows_in if r["saved"] > 0]
     kept = [r["model"] for r in rows_in if r["saved"] <= 0]
     rows = []
@@ -2258,8 +2309,9 @@ def _actions_chart(report: dict, per_month: float, lever: str = "router") -> str
         legend += "<li><span class='lk dash'></span>Dashed: enable this model in your orq.ai workspace first</li>"
     foot = "".join(f"<p class='m foot'>{html.escape(_short(m))}: keep, already the cheapest model that is as strong.</p>"
                    for m in kept)
-    if nc:
-        foot += f"<p class='m foot'>Not analysed: {_usd0(nc_spend)}/mo of spend on {len(nc)} smaller models.</p>"
+    if not_analysed["model_count"]:
+        foot += (f"<p class='m foot'>Not analysed: {_usd0(not_analysed['per_month'])}/mo of spend on "
+                 f"{not_analysed['model_count']} smaller models.</p>")
     return legend + "</ul><div class=chart>" + "".join(rows) + "</div>" + foot
 
 
@@ -2267,16 +2319,15 @@ def _ci_short(c: Any) -> str:
     return f"{_usd0(c[0])}\u2013{_usd0(c[1])}" if c else "n/a"
 
 
-def _scope_cell(sc: dict | None, approx: bool, coverage_note: str, spend_pm: float | None) -> str:
+def _scope_cell(sc: dict | None, approx: bool, coverage_note: str) -> str:
     if not sc:
         return "<div class=cell><p class=m>n/a</p></div>"
-    r, w = sc["router"]["balanced"], sc["switch"]
-    enable = list(dict.fromkeys(e for m in sc.get("models") or [] for e in m.get("enable") or []))
+    r, w, enable = sc["router"], sc["switch"], sc["enable"]
     out = ["<div class='cell hl'><p class=tag>This report's figure</p>" if sc.get("headline") else "<div class=cell>",
-           f"<p class=f1>{_pc(_of(r.get('per_month'), spend_pm))}<span>Smart Router</span></p>",
-           f"<p class=ci>{_usd0(r.get('per_month'))}/mo</p>",
-           f"<p class=f2>{_pc(_of(w.get('per_month'), spend_pm))}<span>Change model</span></p>",
-           f"<p class=ci>{_usd0(w.get('per_month'))}/mo</p>"]
+           f"<p class=f1>{_pc(r['pct_of_spend'])}<span>Smart Router</span></p>",
+           f"<p class=ci>{_usd0(r['per_month'])}/mo</p>",
+           f"<p class=f2>{_pc(w['pct_of_spend'])}<span>Change model</span></p>",
+           f"<p class=ci>{_usd0(w['per_month'])}/mo</p>"]
     if enable:
         names = html.escape(", ".join(enable), quote=True)
         out.append(f"<p class=en title='{names}'>enable {len(enable)} model{'s' if len(enable) != 1 else ''}</p>")
@@ -2287,30 +2338,27 @@ def _scope_cell(sc: dict | None, approx: bool, coverage_note: str, spend_pm: flo
     return "".join(out) + "</div>"
 
 
-def _scope_grid(report: dict, spend_pm: float | None = None) -> str:
+def _scope_grid(scopes: list[dict]) -> str:
     """2x2 grid: provider scope in columns, availability in rows; the headline cell is tinted."""
-    by = {sc["scope"]: sc for sc in report.get("scenarios") or []}
-    covs = {sc["router"]["balanced"].get("coverage") for sc in by.values()}
+    by = {sc["scope"]: sc for sc in scopes}
+    covs = {sc["coverage"] for sc in scopes}
     out = ["<div class=grid><span class=corner></span><p class=ch>Same provider</p><p class=ch>Any provider</p>"]
     for avail, label in (("all", "All available"), ("enabled", "Enabled only")):
         out.append(f"<p class=rh>{label}</p>")
         for prov in ("same_provider", "any_provider"):
             sc = by.get(f"{prov}:{avail}")
-            cov = ""
-            if sc and len(covs) > 1:
-                cov = f"{_pct(sc['router']['balanced'].get('coverage'))} of spend covered"
-            out.append(_scope_cell(sc, prov == "any_provider", cov, spend_pm))
+            cov = f"{_pct(sc['coverage'])} of spend covered" if sc and len(covs) > 1 else ""
+            out.append(_scope_cell(sc, prov == "any_provider", cov))
     return "".join(out) + "</div>"
 
 
-def _uncertainty_rows(report: dict, spend_pm: float | None) -> list[dict]:
+def _uncertainty_rows(scopes: list[dict]) -> list[dict]:
     rows = []
-    for sc in sorted(report.get("scenarios") or [], key=lambda x: not x.get("headline")):
-        label = SCOPE_LABEL.get(sc["scope"], sc["scope"]) + (" (headline)" if sc.get("headline") else "")
-        for lever, fig in (("Smart Router", sc["router"]["balanced"]), ("Change model", sc["switch"])):
-            ci = fig.get("ci90_per_month")
-            rows.append({"scope": label, "lever": lever, "pm": fig.get("per_month"),
-                         "pct": _of(fig.get("per_month"), spend_pm),
+    for sc in scopes:
+        label = SCOPE_LABEL.get(sc["scope"], sc["scope"]) + (" (headline)" if sc["headline"] else "")
+        for lever, fig in (("Smart Router", sc["router"]), ("Change model", sc["switch"])):
+            ci = fig["ci90_per_month"]
+            rows.append({"scope": label, "lever": lever, "pm": fig["per_month"], "pct": fig["pct_of_spend"],
                          "ci": f"{_usd0(ci[0])} to {_usd0(ci[1])}" if ci else "n/a",
                          "range": (ci[0], fig.get("per_month"), ci[1], lever) if ci else None})
     ends = [v for r in rows if r["range"] for v in (r["range"][0], r["range"][2])]
@@ -2506,11 +2554,16 @@ def _copy_id(text: str) -> str:
     return "cp" + hashlib.sha1(text.encode()).hexdigest()[:10]
 
 
-def _setup_card(report: dict, rec: str) -> str:
-    ws = urllib.parse.quote(str(report.get("workspace") or ""), safe="")
+def _stored_plans(summ: dict) -> dict[str, dict]:
+    return {k: {"lever": k, "enable": summ[k]["enable"], "moves": summ[k][m]}
+            for k, m in (("router", "routers"), ("switch", "replacements"))}
+
+
+def _setup_card(plans: dict[str, dict], rec: str, workspace: Any) -> str:
+    ws = urllib.parse.quote(str(workspace or ""), safe="")
     blocks = []
     for lever in (["switch", "router"] if rec == "s" else ["router", "switch"]):
-        plan = _setup_plan(report, lever)
+        plan = plans[lever]
         if not plan["moves"]:
             continue
         name = "Smart Router" if lever == "router" else "Change model"
@@ -2590,39 +2643,31 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
     if "summary" not in report:
         raise SystemExit("report.json has no summary; rerun analyze")
     S = report["summary"]
-    sp, ro, ca = report.get("spend") or {}, report.get("routing") or {}, report.get("caching") or {}
-    win = report["window"]
+    ro, ca = report.get("routing") or {}, report.get("caching") or {}
+    win = S["window"]
     ws = str(report.get("workspace"))
-    total = sp.get("total") or 0
-    per_month = (sp["per_month"] / total) if total and sp.get("per_month") else 30 / max(1, win["days"])
-    h = ro.get("headline") or {}
+    total = S["spend_total"] or 0
     h_pm = S["router"]["per_month"]
-    scen = _scenario_rows(report)
-    head_row = next((r for r in scen if r["headline"]), {})
-    enabled = next((r for r in scen if r["scope"].startswith(SCOPE_LABEL["same_provider:enabled"])), {})
-    n = (report.get("params") or {}).get("sample")
-    cov = h.get("coverage")
-    caching_small = (ca.get("savings_found") or 0) < 1
-
+    n, cov = S["sampled_calls"], S["coverage"]
+    caching_small = (S["caching"]["savings_found"] or 0) < 1
     spend_pm = S["spend_per_month"]
-    e_pm = enabled.get("router")
     first = re.split(r"\n\s*\n", narrative["summary"].strip())[0]
     verdict = html.escape(" ".join(first.split()))
     sw_pm = S["switch"]["per_month"]
     p_router, p_switch = S["router"]["pct_of_spend"], S["switch"]["pct_of_spend"]
     rec = {"router": "r", "switch": "s"}.get(S["recommended"], "")
     # the spend bar and the plan follow the recommended lever
-    plan_pm, plan_e = (sw_pm, enabled.get("switch")) if rec == "s" else (h_pm, e_pm)
+    plan = S["switch" if rec == "s" else "router"]
     bar = ""
-    if spend_pm and plan_pm is not None and plan_e is not None:
-        now_v, more_v = max(0.0, plan_e), max(0.0, plan_pm - plan_e)
+    if spend_pm and plan["per_month"] is not None and plan["saved_today_per_month"] is not None:
+        now_v, more_v = max(0.0, plan["saved_today_per_month"]), plan["saved_after_enabling_per_month"]
         left_v = max(0.0, spend_pm - now_v - more_v)
         bar = _waterfall(spend_pm, now_v, more_v, left_v, "Smart Router" if rec == "r" else "Change model")
     adds = round((h_pm or 0) - (sw_pm or 0)) if h_pm is not None and sw_pm is not None else None
     pts = round((p_router - p_switch) * 100) if p_router is not None and p_switch is not None else 0
     if adds is None:
         gap = ""
-    elif _ranges_overlap(_headline(report)):
+    elif S["levers_overlap"]:
         gap = ("<p class='m gap'>Both save about the same: the difference is within the margin of error, "
                "so either works.</p>")
     elif adds > 0:
@@ -2644,7 +2689,7 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
                     "Test answer quality before moving traffic.</p>")
             + "</section>")
 
-    setup = _setup_card(report, rec)
+    setup = _setup_card(_stored_plans(S), rec, report.get("workspace"))
     toc = [("do", "What to do"), ("setup", "Set it up"), ("scopes", "Other model choices"), ("details", "Details")]
     nav = ("<nav class=toc aria-label='On this page'><span>On this page</span><ul>"
            + "".join(f"<li><a href='#{k}'>{t}</a></li>" for k, t in toc if k != "setup" or setup) + "</ul></nav>")
@@ -2654,16 +2699,17 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
             f"<p class=m>{html.escape(ws)} · {html.escape(_day(win['from']))} to {html.escape(to_day)} "
             f"({win['days']} days), scaled to a month: {_usd0(spend_pm)}/mo LLM spend.</p></div>{theme}</header>")
     parts = [_card("What to do", (_plan_caption("switch", p_switch, sw_pm) if rec == "s" else _plan_caption("router", p_router, h_pm))
-                   + _actions_chart(report, per_month, "switch" if rec == "s" else "router"), "do"),
+                   + _actions_chart(S["recommendations"]["switch" if rec == "s" else "router"], S["not_analysed"]),
+                   "do"),
              setup,
              _card("Other model choices", "<p class=m>Share of monthly spend saved, by which models are allowed.</p>"
-                   + _scope_grid(report, spend_pm) + f"<p class=m>{html.escape(TOKENIZER_NOTE)}</p>", "scopes")]
+                   + _scope_grid(S["scopes"]) + f"<p class=m>{html.escape(TOKENIZER_NOTE)}</p>", "scopes")]
     if not caching_small:
         parts.append(_card("Caching", (f"<p><b>Caching:</b> {_usd(ca.get('savings_found'))} in the "
                                        f"{ca.get('threads_scanned', 0)} costliest threads scanned, not scaled to the "
                                        "window.</p>") + _md(narrative["caching"]), "caching"))
     gen = html.escape(_day(report["generated_at"]) if report.get("generated_at") else to_day)
-    unc = _uncertainty_rows(report, spend_pm)
+    unc = _uncertainty_rows(S["scopes"])
     dets = [_details("Estimates with uncertainty", "90% CI per scope and lever",
                      "<p class=m>The 90% CI covers sampling noise only, not answer quality. The range plot "
                      "shows it on one scale for every row (it does not start at $0): where two bars overlap, the "
@@ -2675,7 +2721,7 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
             _details("Method and caveats", "sample, coverage, limits, terms",
                      _md(narrative["caveats"]) + (
                          f"<p class=m>Excluding the 3 largest sampled calls, the headline is "
-                         f"{_usd0((h.get('without_top3') or 0) * per_month)}/mo.</p>"
+                         f"{_usd0(S['router']['without_top3_per_month'] or 0)}/mo.</p>"
                          "<dl class=gl>" + "".join(f"<dt>{html.escape(t)}</dt><dd>{html.escape(d)}</dd>"
                                                    for t, d in GLOSSARY) + "</dl>")),
             _details("Pools and models to enable", "what each move needs, per scope", _pool_tables(report)),

@@ -483,8 +483,13 @@ def _plan_report() -> dict:
                      {"model": "openai/d", "pool": None, "switch": None, "enable": []}]}]}
 
 
-def _rows(report: dict) -> dict:
-    return {r["model"]: r for r in c._plan_rows(report, 1.0)}
+def _rows(report: dict, lever: str = "router") -> dict:
+    """Rows as the page draws them: analysed and stored by analyze, then viewed by render."""
+    return {x["model"]: c._row_view(x) for x in c._rec_rows(report, 1.0, lever, {})}
+
+
+def _chart(report: dict, lever: str = "router") -> str:
+    return c._actions_chart(c._rec_rows(report, 1.0, lever, {}), c._not_analysed(report, 1.0))
 
 
 def test_plan_rows_split_sums_to_enabled_and_headline_figures():
@@ -527,14 +532,14 @@ def test_hard_flag_shows_on_the_flagged_row_with_the_largest_saving_only():
     rows = _rows(report)
     assert rows["openai/b"]["hard"] == 0.8  # biggest saving among flagged
     assert rows["openai/a"]["hard"] is None and rows["openai/d"]["hard"] is None  # keep row has no move to warn about
-    page = c._actions_chart(report, 1.0)
+    page = _chart(report)
     assert page.count("Mostly hard work") == 1 and "Mostly hard work: spot-check answers before moving it." in page
 
 
 def test_row_percent_leads_the_right_column():
     report = _plan_report()
     report["routing"]["strata"][1].update(spend=100.0)
-    chart = c._actions_chart(report, 1.0)
+    chart = _chart(report)
     assert "<b>50% saved</b><span>$50 of $100/mo</span>" in chart  # model b: 50 saved of 100 spend
 
 
@@ -543,7 +548,7 @@ def test_uncertainty_rows_carry_percent_and_ci():
     for sc in report["scenarios"]:
         sc["switch"] = {"per_month": 20.0, "ci90_per_month": [15.0, 25.0]}
         sc["router"]["balanced"]["ci90_per_month"] = [90.0, 110.0]
-    rows = c._uncertainty_rows(report, 400.0)
+    rows = c._uncertainty_rows(c._scopes(report, 400.0))
     assert rows[0]["lever"] == "Smart Router" and rows[0]["pct"] == 0.25 and rows[0]["ci"] == "$90 to $110"
     assert rows[1]["pct"] == 0.05
 
@@ -552,7 +557,7 @@ def test_keep_rows_and_not_sampled_spend_are_lines_not_bars():
     report = _plan_report()
     report["routing"]["strata"][3]["model"] = "openai/d"
     report["routing"]["not_covered"] = [{"model": "x/1", "spend": 60.0}, {"model": "x/2", "spend": 24.0}]
-    chart = c._actions_chart(report, 1.0)
+    chart = _chart(report)
     assert chart.count("class=row>") == 3  # a, b, c; the keep row d has no bar
     assert "d: keep, already the cheapest model that is as strong." in chart
     assert "Not analysed: $84/mo of spend on 2 smaller models." in chart
@@ -564,11 +569,11 @@ def test_scope_grid_marks_headline_and_enable_first():
     for sc in report["scenarios"]:
         sc["switch"] = {"per_month": 80.0, "ci90_per_month": [70.0, 90.0]}
         sc["router"]["balanced"]["ci90_per_month"] = [90.0, 110.0]
-    grid = c._scope_grid(report)
+    grid = c._scope_grid(c._scopes(report, None))
     assert grid.count("class='cell hl'") == 1 and "<p class=ch>Any provider</p>" in grid
     assert "enable 2 models" in grid and "title='openai/y, openai/z'" in grid
     assert "90% CI" not in grid and "n/a" in grid  # the two any-provider scopes are absent
-    pct = c._scope_grid(report, 1000.0)
+    pct = c._scope_grid(c._scopes(report, 1000.0))
     assert "<p class=f1>10%<span>Smart Router</span></p>" in pct and "<p class=f2>8%<span>Change model</span></p>" in pct
     assert "$100/mo" in pct and "$80/mo" in pct
 
@@ -638,7 +643,7 @@ def test_legend_chart_caption_and_kept_sliver():
     report["routing"]["strata"][1].update(spend=100.0)
     report["routing"]["moves"] = [{"used": "openai/b", "pick": "openai/y", "n": 3, "fallback": 0},
                                   {"used": "openai/b", "pick": "openai/x", "n": 3, "fallback": 0}]
-    chart = c._actions_chart(report, 1.0)
+    chart = _chart(report)
     assert "Arrow: move all calls" in chart and "Fork: Smart Router picks a model per call" in chart
     assert "Dashed: enable this model in your orq.ai workspace first" in chart
     shown = re.sub(r"data-tip='[^']*'", "", chart)  # bar tooltips name the lever on purpose
@@ -647,7 +652,7 @@ def test_legend_chart_caption_and_kept_sliver():
         in c._plan_caption("router", 0.25, 100.0)
     assert chart.count("<i class=kept") == 1  # b only: a and c keep nothing worth a segment
     report["routing"]["strata"][2].update(spend=40.5)  # c saves 40 of 40.5: kept sliver under 2% of its spend
-    assert c._actions_chart(report, 1.0).count("<i class=kept") == 1
+    assert _chart(report).count("<i class=kept") == 1
 
 
 def test_flow_change_model_is_one_arrow_without_shares():
@@ -663,7 +668,7 @@ def test_small_sample_note_under_min_sample():
     report["routing"]["moves"] = [{"used": "openai/a", "pick": "openai/x", "n": c.MIN_SAMPLE - 1},
                                   {"used": "openai/b", "pick": "openai/y", "n": c.MIN_SAMPLE},
                                   {"used": "openai/b", "pick": "openai/x", "n": 3}]
-    chart = c._actions_chart(report, 1.0)
+    chart = _chart(report)
     assert chart.count("Small sample:") == 2  # a (14) and c (no moves: 0 calls); b has 18
     assert f"Small sample: {c.MIN_SAMPLE - 1} calls." in chart and "Small sample: 0 calls." in chart
 
@@ -709,7 +714,7 @@ def test_uncertainty_range_plot_shares_one_scale():
                              "router": {"balanced": sc(150, 158, 165)}, "switch": sc(151, 153, 156)},
                             {"scope": "any_provider:all", "headline": False,
                              "router": {"balanced": sc(190, 200, 220)}, "switch": {"per_month": 10.0}}]}
-    rows = c._uncertainty_rows(report, 400.0)
+    rows = c._uncertainty_rows(c._scopes(report, 400.0))
     assert len({r["range"][4:] for r in rows if r["range"]}) == 1  # every bar on one shared axis
     assert rows[0]["range"][4] < 150 and rows[0]["range"][5] > 220
     assert rows[-1]["range"] is None and c._range_cell(None) == ""  # no CI: no bar, no claim
@@ -787,7 +792,7 @@ def test_setup_change_model_lists_replacements_and_only_their_enables():
 
 
 def test_setup_card_puts_recommended_lever_first_with_collapsed_copyable_blocks():
-    card = c._setup_card(SETUP_REPORT, "s")
+    card = c._setup_card({k: c._setup_plan(SETUP_REPORT, k) for k in ("router", "switch")}, "s", "acme")
     assert card.index("<h3>Change model") < card.index("<h3>Smart Router")
     assert card.count("<details class=cp>") == 4 and card.count("class=copy") == 4
     assert "Copy commands" in card and "<summary>Show prompt</summary>" in card and "gpt-6-sol \u2192 gpt-6.1-terra</li>" in card
@@ -795,7 +800,7 @@ def test_setup_card_puts_recommended_lever_first_with_collapsed_copyable_blocks(
     assert "https://my.orq.ai/acme/router/smart-router?id=new" in card
     assert "https://my.orq.ai/acme/router/models?q=gpt-6.1-terra" in card
     assert "&lt;" not in c._setup_prompt(c._setup_plan(SETUP_REPORT, "router")).replace("<id>", "")
-    assert c._setup_card({"scenarios": []}, "r") == ""
+    assert c._setup_card({k: c._setup_plan({"scenarios": []}, k) for k in ("router", "switch")}, "r", "x") == ""
 
 
 def test_plan_bars_explain_each_segment_on_hover():

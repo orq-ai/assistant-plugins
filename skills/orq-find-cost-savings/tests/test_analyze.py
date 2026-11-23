@@ -398,7 +398,7 @@ def test_summary_holds_the_headline_numbers_and_recommendations(tmp_path):
     assert s["switch"]["per_month"] == head["switch"]["per_month"]
     assert s["router"]["pct_of_spend"] == pytest.approx(s["router"]["per_month"] / rep["spend"]["per_month"])
     assert s["recommended"] in ("router", "switch")
-    sol = next(r for r in s["recommendations"] if r["model"] == SOL)
+    sol = next(r for r in s["recommendations"][s["recommended"]] if r["model"] == SOL)
     assert sol["action"] == s["recommended"] and sol["saved_per_month"] > 0 and sol["targets"]
     assert sol["saved_today_per_month"] + sol["saved_after_enabling_per_month"] == pytest.approx(sol["saved_per_month"])
     assert sol["small_sample"] and sol["sampled_calls"] == 10
@@ -425,5 +425,5 @@ def test_render_reads_the_stored_summary(tmp_path):
 def test_json_flag_prints_the_summary_and_skips_the_narrative(tmp_path, capsys):
     run(tmp_path, json=True)
     out = json.loads(capsys.readouterr().out)
-    assert out["status"] == "ok" and out["summary"]["recommendations"]
+    assert out["status"] == "ok" and out["summary"]["recommendations"]["router"]
     assert not (tmp_path / "narrative-slots.md").exists()
