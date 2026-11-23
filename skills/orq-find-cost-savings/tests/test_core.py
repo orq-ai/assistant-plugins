@@ -1,4 +1,7 @@
 import importlib.util
+import os
+import shutil
+import subprocess
 import json
 import random
 import re
@@ -730,16 +733,43 @@ def test_setup_router_commands_enable_then_create_one_router_per_model():
     assert plan["enable"] == ["openai/gpt-6.1-terra"]
     assert [m["key"] for m in plan["moves"]] == ["savings-gpt-6-sol"]
     cmds = c._setup_commands(plan).splitlines()
-    # the CLI enables by the model's id, so a helper looks it up from the provider/model name
-    assert cmds[1] == "mid() { orq models list -o json -j \"[?refId=='$1'].id | [0]\" --raw; }"
-    assert "metadata.autorouter.v2" in cmds[2]  # scored(): the live Smart Router score check
-    assert cmds[4] == 'orq models enable --model-id "$(mid openai/gpt-6.1-terra)"'
-    # a router is made only when every pool model is scored now; the report can predate the garden
-    assert cmds[6:] == ["if scored openai/gpt-6.1-terra && scored openai/gpt-6-luna; then",
-                        "  orq smart-routers create --key savings-gpt-6-sol \\", "    --models openai/gpt-6.1-terra \\",
-                        "    --models openai/gpt-6-luna \\", "    --body-profile SMART_ROUTER_PROFILE_BALANCED",
-                        'else echo "skip savings-gpt-6-sol: a pool model has no Smart Router score yet" >&2; fi']
+    assert "enable openai/gpt-6.1-terra" in cmds
+    assert cmds[-1] == "router savings-gpt-6-sol openai/gpt-6.1-terra openai/gpt-6-luna"
     assert "metadata.autorouter.v2" in c._setup_prompt(plan)
+
+
+FAKE_ORQ = r"""#!/bin/sh
+echo "$*" >> "$ORQ_LOG"
+case "$*" in
+  "models list"*autorouter*) case "$*" in *unscored*) echo null;; *) echo id;; esac;;
+  "models list"*) case "$*" in *missing*) echo null;; *) echo id;; esac;;
+  "models enable"*) echo null;;
+  "smart-routers list"*) case "$*" in *k-exists*) echo ws@orq/k-exists;; *) echo null;; esac;;
+  "smart-routers create"*) echo ws@orq/k-new;;
+esac
+"""
+
+
+# -f / --norc: a user's zsh or bash startup file can put the real orq back first on PATH
+@pytest.mark.parametrize("shell", [s for s in (["bash", "--norc"], ["zsh", "-f"]) if shutil.which(s[0])],
+                         ids=lambda s: s[0])
+def test_setup_commands_rerun_safely(tmp_path, shell):
+    # the user pastes these; a rerun must not hit "key already exists", and enable must not print "null"
+    (tmp_path / "orq").write_text(FAKE_ORQ)
+    (tmp_path / "orq").chmod(0o755)
+    plan = {"lever": "router", "enable": ["p/a", "p/missing"], "moves": [
+        {"key": "k-exists", "pool": ["p/a", "p/b"], "model": "p/x"},
+        {"key": "k-unscored", "pool": ["p/a", "p/unscored"], "model": "p/y"},
+        {"key": "k-new", "pool": ["p/a", "p/b"], "model": "p/z"}]}
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "ORQ_LOG": str(tmp_path / "log")}
+    r = subprocess.run([*shell, "-c", c._setup_commands(plan)], env=env, capture_output=True, text=True)
+    assert r.stdout.splitlines() == ["enabled p/a", "k-exists exists: use ws@orq/k-exists",
+                                     "k-new created: use ws@orq/k-new"]
+    assert r.stderr.splitlines() == ["skip p/missing: not in this workspace's model list",
+                                     "skip k-unscored: p/unscored has no Smart Router score yet"]
+    creates = [x for x in (tmp_path / "log").read_text().splitlines() if x.startswith("smart-routers create")]
+    assert creates == ["smart-routers create --key k-new --models p/a --models p/b "
+                       "--body-profile SMART_ROUTER_PROFILE_BALANCED -o json -j model_ref --raw"]
 
 
 def test_setup_change_model_lists_replacements_and_only_their_enables():
