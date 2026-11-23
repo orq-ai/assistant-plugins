@@ -515,7 +515,7 @@ def test_plan_rows_split_sums_to_enabled_and_headline_figures():
 def test_plan_rows_text_and_keep_rows():
     rows = _rows(_plan_report())
     assert rows["openai/a"]["lines"] == ["Change to x"]
-    assert rows["openai/b"]["lines"] == ["Today: change to x.", "After enabling y: route over y and x."]
+    assert rows["openai/b"]["lines"] == ["Now: change to x.", "After enabling y: route over y and x."]
     assert rows["openai/c"]["lines"] == ["After enabling z: change to z."]
     assert rows["openai/d"]["lines"] == ["Keep it: no cheaper OpenAI model is as strong"]
 
@@ -570,7 +570,7 @@ def test_keep_rows_and_not_sampled_spend_are_lines_not_bars():
     chart = _chart(report)
     assert chart.count("class=row>") == 3  # a, b, c; the keep row d has no bar
     assert "d: keep, already the cheapest model that is as strong." in chart
-    assert "Not analysed: $84/mo of spend on 2 other models." in chart
+    assert "Not analysed: $84/mo of spend on 2 models." in chart
     assert "class=ns" not in chart and "Not sampled</li>" not in chart
 
 
@@ -745,12 +745,38 @@ SETUP_REPORT = {"workspace": "acme", "scenarios": [{"headline": True, "models": 
 
 def test_setup_router_commands_enable_then_create_one_router_per_model():
     plan = c._setup_plan(SETUP_REPORT, "router")
-    assert plan["enable"] == ["openai/gpt-6.1-terra"]
+    # sonnet has no pool: the router figure serves it on its switch target, so the router plan changes it too
+    assert plan["enable"] == ["openai/gpt-6.1-terra", "anthropic/claude-haiku-5-5"]
     assert [m["key"] for m in plan["moves"]] == ["savings-openai-gpt-6-sol"]
+    assert plan["replacements"] == [{"model": "anthropic/claude-sonnet-5", "to": "anthropic/claude-haiku-5-5"}]
     cmds = c._setup_commands(plan).splitlines()
-    assert "enable openai/gpt-6.1-terra" in cmds
-    assert cmds[-1] == "router savings-openai-gpt-6-sol openai/gpt-6.1-terra openai/gpt-6-luna"
-    assert "metadata.autorouter.v2" in c._setup_prompt(plan)
+    assert "enable openai/gpt-6.1-terra" in cmds and "enable anthropic/claude-haiku-5-5" in cmds
+    assert cmds[-2] == "router savings-openai-gpt-6-sol openai/gpt-6.1-terra openai/gpt-6-luna"
+    assert cmds[-1] == ("echo 'then change anthropic/claude-sonnet-5 to anthropic/claude-haiku-5-5 in your code "
+                        "and deployments'")
+    prompt = c._setup_prompt(plan)
+    assert "metadata.autorouter.v2" in prompt and "anthropic/claude-sonnet-5 -> anthropic/claude-haiku-5-5" in prompt
+    assert prompt.index("smart-routers create") < prompt.index("Then change") < prompt.index("compare the answers")
+    assert "its router, or its replacement" in prompt
+
+
+def test_router_plan_without_pools_is_only_model_changes():
+    rep = {"scenarios": [{"headline": True, "models": [SETUP_REPORT["scenarios"][0]["models"][1]]}]}
+    plan = c._setup_plan(rep, "router")
+    assert plan["moves"] == [] and len(plan["replacements"]) == 1
+    prompt = c._setup_prompt(plan)
+    assert "smart-routers create" not in prompt and "2. Change these models" in prompt
+    card = c._setup_card({"router": plan, "switch": c._setup_plan(rep, "switch")}, "r", "acme")
+    router = card.split("<h3>Smart Router")[1].split("<h3>")[0]
+    assert "Enable 1 model, then change claude-sonnet-5." in router and "claude-sonnet-5 → claude-haiku-5-5" in router
+
+
+def test_router_setup_card_says_create_routers_then_change_models():
+    plans = {k: c._setup_plan(SETUP_REPORT, k) for k in ("router", "switch")}
+    card = c._setup_card(plans, "r", "acme")
+    router = card.split("<h3>Smart Router")[1].split("<h3>")[0]
+    assert "Enable 2 models, then create 1 router and point gpt-6-sol at them, then change claude-sonnet-5." in router
+    assert "<li>claude-sonnet-5 → claude-haiku-5-5</li>" in router
 
 
 FAKE_ORQ = r"""#!/bin/sh
@@ -836,8 +862,8 @@ def test_setup_card_puts_recommended_lever_first_with_collapsed_copyable_blocks(
 
 
 def test_plan_bars_explain_each_segment_on_hover():
-    tip = c._tip("Saved today with Smart Router", 51.0, 95.0)
-    assert tip == "Saved today with Smart Router: $51/mo \u00b7 54% of this model's spend"
+    tip = c._tip("Possible now with Smart Router", 51.0, 95.0)
+    assert tip == "Possible now with Smart Router: $51/mo \u00b7 54% of this model's spend"
     assert c._tip("Still spent", 20.0, 400.0, "your total spend").endswith("5% of your total spend")
 
 
@@ -854,6 +880,7 @@ def test_waterfall_steps_add_up_and_drop_empty_enable_step():
     hs = [float(x) for x in re.findall(r"height:([\d.]+)%", w)]
     assert tops == [0.0, 0.0, 22.75, 39.5] and abs(hs[1] + hs[2] + hs[3] - 100) < 0.01  # steps sum to the bill
     assert "−$91" in w and "<span>New bill</span><span>60%</span>" in w
+    assert "<span>Possible now</span>" in w and "<span>After enabling</span>" in w and "Saved today" not in w
     w2 = c._waterfall(400.0, 158.0, 0.0, 242.0, "Change model")
     assert w2.count("class=wc") == 3 and "After enabling" not in w2
 
@@ -903,3 +930,44 @@ def test_summary_today_split_equals_row_sums():
     rows = S["recommendations"]["router"]
     assert S["router"]["saved_today_per_month"] == pytest.approx(
         min(S["router"]["per_month"], sum(r["saved_today_per_month"] for r in rows)))
+
+
+def test_now_and_after_enabling_labels_replace_saved_today():
+    report = _plan_report()
+    report["routing"]["strata"][1].update(spend=100.0)
+    chart = _chart(report)
+    assert "<span class='sw sr'></span>Possible now</li>" in chart and "<span class='sw sr2'></span>After enabling</li>" in chart
+    assert "Saved today" not in chart and "saved today" not in chart and "Today:" not in chart
+    assert "Possible now with Smart Router: $20/mo" in chart and "20% now \u00b7 $20" in chart
+
+
+def test_a_model_the_lever_does_not_cover_is_not_analysed_not_kept():
+    report = _plan_report()
+    report["routing"]["strata"][3]["savings"] = None  # d: pricing check failed, no figure
+    recs = {x["model"]: x for x in c._rec_rows(report, 1.0, "router", {})}
+    assert recs["openai/d"]["action"] == "not_analysed" and recs["openai/a"]["action"] == "switch"
+    chart = _chart(report)
+    assert "d: not analysed, its sampled calls could not be priced reliably." in chart and "d: keep" not in chart
+    report["scenarios"][0]["switch"] = {"per_month": 50.0, "per_stratum": {"openai/a": 10.0, "openai/b": 0.0}}
+    sw = {x["model"]: x["action"] for x in c._rec_rows(report, 1.0, "switch", {})}
+    assert sw == {"openai/a": "switch", "openai/b": "keep", "openai/c": "not_analysed", "openai/d": "not_analysed"}
+
+
+def test_scopes_keep_enable_and_coverage_per_lever():
+    report = _plan_report()
+    report["scenarios"][0]["models"][1] = {"model": "openai/b", "pool": ["openai/y", "openai/w"], "switch": "openai/y",
+                                           "enable": ["openai/y", "openai/w"]}
+    for sc in report["scenarios"]:
+        sc["router"]["balanced"]["coverage"], sc["switch"] = 0.9, {"per_month": 20.0, "coverage": 0.9}
+    head = c._scopes(report, 100.0)[0]
+    assert "enable" not in head and "coverage" not in head
+    assert head["router"]["enable"] == ["openai/y", "openai/w", "openai/z"]  # pool members and switch targets
+    assert head["switch"]["enable"] == ["openai/y", "openai/z"]  # switch targets only
+    assert head["router"]["coverage"] == head["switch"]["coverage"] == 0.9
+    grid = c._scope_grid(c._scopes(report, 100.0))
+    assert "title='openai/y, openai/w, openai/z'>enable 3 models" in grid and "title='openai/y, openai/z'>enable 2 models" in grid
+    assert "of spend covered" not in grid  # one coverage everywhere: no note
+    report["scenarios"][0]["switch"]["coverage"] = 0.6
+    cell = c._scope_grid(c._scopes(report, 100.0)).split("class='cell hl'")[1].split("<p class=rh>")[0]
+    router, switch = cell.split("<p class=f2>")
+    assert "90% of spend covered" in router and "60% of spend covered" in switch

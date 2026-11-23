@@ -19,41 +19,47 @@
     "summary": {
       "description": "Written by analyze on a finished run: every number the page shows. render only formats these; it does not recompute them.",
       "type": "object",
-      "required": ["window", "spend_total", "spend_per_month", "scope", "coverage", "sampled_calls", "recommended",
-                   "levers_overlap", "router", "switch", "recommendations", "scopes", "not_analysed", "caching", "caveats"],
+      "required": ["window", "spend_total", "spend_per_month", "scope", "sampled_calls", "recommended",
+                   "levers_overlap", "router", "switch", "recommendations", "scopes", "not_analysed", "sampled_moves",
+                   "caching", "caveats"],
       "properties": {
         "spend_total": {"type": ["number", "null"]}, "spend_per_month": {"type": ["number", "null"]},
-        "recommended": {"enum": ["router", "switch", null]},
+        "recommended": {"enum": ["router", "switch", null], "description": "null when neither lever saves anything (per_month <= 0 or null)."},
         "levers_overlap": {"type": "boolean"},
-        "sampled_calls": {"type": ["integer", "null"]}, "coverage": {"type": ["number", "null"]},
+        "sampled_calls": {"type": ["integer", "null"]},
         "caveats": {"type": "array"},
         "window": {"type": "object", "required": ["from", "to", "days", "requested", "retention"], "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "days": {"type": "integer"}, "requested": {"type": ["integer", "null"]}, "retention": {"type": ["integer", "null"]}}},
-        "caching": {"type": "object", "required": ["threads_scanned", "savings_found", "error"], "properties": {"threads_scanned": {"type": ["integer", "null"]}, "savings_found": {"type": ["number", "null"]}, "error": {"type": ["string", "null"]}}},
+        "caching": {"type": "object", "required": ["threads_scanned", "savings_found", "error", "rows"], "properties": {"threads_scanned": {"type": ["integer", "null"]}, "savings_found": {"type": ["number", "null"]}, "error": {"type": ["string", "null"]},
+                    "rows": {"description": "Up to 20 candidate threads, largest saving first.", "type": "array", "items": {"type": "object", "required": ["thread", "agent", "model", "turns", "savings", "action"]}}}},
+        "sampled_moves": {"description": "Per (model in use, balanced pick) in the headline scope: sampled calls, fallbacks among them, and their saving.", "type": "array", "items": {"type": "object", "required": ["used", "pick", "tier", "n", "fallback", "costs_more", "weighted_savings"]}},
         "router": {
           "type": "object",
-          "required": ["pct_of_spend", "per_month", "ci90_per_month", "saved_today_per_month",
-                       "saved_after_enabling_per_month", "enable", "routers", "without_top3_per_month"],
+          "required": ["pct_of_spend", "per_month", "ci90_per_month", "coverage", "saved_today_per_month",
+                       "saved_after_enabling_per_month", "enable", "routers", "replacements", "without_top3_per_month"],
           "properties": {
             "pct_of_spend": {"type": ["number", "null"]}, "per_month": {"type": ["number", "null"]}, "ci90_per_month": {"type": ["array", "null"], "items": {"type": "number"}},
+            "coverage": {"type": ["number", "null"], "description": "Share of spend on the models this lever's estimate covers."},
             "saved_today_per_month": {"type": ["number", "null"]}, "saved_after_enabling_per_month": {"type": ["number", "null"]},
             "without_top3_per_month": {"type": ["number", "null"]},
             "enable": {"type": "array", "items": {"type": "string"}},
-            "routers": {"type": "array", "items": {"type": "object", "required": ["model", "key", "pool"]}}
+            "routers": {"type": "array", "items": {"type": "object", "required": ["model", "key", "pool"]}},
+            "replacements": {"description": "Models with no pool to route over: the router figure serves them on their change-model target, so the router plan changes them too.", "type": "array", "items": {"type": "object", "required": ["model", "to"]}}
           }
         },
         "switch": {
           "type": "object",
-          "required": ["pct_of_spend", "per_month", "ci90_per_month", "saved_today_per_month",
+          "required": ["pct_of_spend", "per_month", "ci90_per_month", "coverage", "saved_today_per_month",
                        "saved_after_enabling_per_month", "enable", "replacements"],
           "properties": {
             "pct_of_spend": {"type": ["number", "null"]}, "per_month": {"type": ["number", "null"]}, "ci90_per_month": {"type": ["array", "null"], "items": {"type": "number"}},
+            "coverage": {"type": ["number", "null"], "description": "Share of spend on the models this lever's estimate covers."},
             "saved_today_per_month": {"type": ["number", "null"]}, "saved_after_enabling_per_month": {"type": ["number", "null"]},
             "enable": {"type": "array", "items": {"type": "string"}},
             "replacements": {"type": "array", "items": {"type": "object", "required": ["model", "to"]}}
           }
         },
         "recommendations": {
-          "description": "One row per sampled model, per lever; action keep means no cheaper model is as strong.",
+          "description": "One row per sampled model, per lever; action keep means no cheaper model is as strong, not_analysed that the lever's estimate does not cover the model.",
           "type": "object",
           "required": ["router", "switch"],
           "properties": {"router": {
@@ -64,7 +70,7 @@
                            "saved_per_month", "pct_of_model_spend", "saved_today_per_month",
                            "saved_after_enabling_per_month", "sampled_calls", "small_sample", "share_hard"],
               "properties": {
-                "action": {"enum": ["router", "switch", "keep"]},
+                "action": {"enum": ["router", "switch", "keep", "not_analysed"]},
                 "router_key": {"type": ["string", "null"]},
                 "move": {"type": ["object", "null"], "required": ["pool", "switch"], "properties": {"pool": {"type": ["array", "null"], "items": {"type": "string"}}, "switch": {"type": ["string", "null"]}}},
                 "today_move": {"type": ["object", "null"], "required": ["pool", "switch"], "properties": {"pool": {"type": ["array", "null"], "items": {"type": "string"}}, "switch": {"type": ["string", "null"]}}},
@@ -91,7 +97,7 @@
                            "saved_per_month", "pct_of_model_spend", "saved_today_per_month",
                            "saved_after_enabling_per_month", "sampled_calls", "small_sample", "share_hard"],
               "properties": {
-                "action": {"enum": ["router", "switch", "keep"]},
+                "action": {"enum": ["router", "switch", "keep", "not_analysed"]},
                 "router_key": {"type": ["string", "null"]},
                 "move": {"type": ["object", "null"], "required": ["pool", "switch"], "properties": {"pool": {"type": ["array", "null"], "items": {"type": "string"}}, "switch": {"type": ["string", "null"]}}},
                 "today_move": {"type": ["object", "null"], "required": ["pool", "switch"], "properties": {"pool": {"type": ["array", "null"], "items": {"type": "string"}}, "switch": {"type": ["string", "null"]}}},
@@ -116,8 +122,9 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["scope", "headline", "coverage", "enable", "router", "switch"],
-            "properties": {"headline": {"type": "boolean"}, "enable": {"type": "array", "items": {"type": "string"}}, "router": {"type": "object", "required": ["pct_of_spend", "per_month", "ci90_per_month"], "properties": {"pct_of_spend": {"type": ["number", "null"]}, "per_month": {"type": ["number", "null"]}, "ci90_per_month": {"type": ["array", "null"], "items": {"type": "number"}}}}, "switch": {"type": "object", "required": ["pct_of_spend", "per_month", "ci90_per_month"], "properties": {"pct_of_spend": {"type": ["number", "null"]}, "per_month": {"type": ["number", "null"]}, "ci90_per_month": {"type": ["array", "null"], "items": {"type": "number"}}}}}
+            "required": ["scope", "headline", "router", "switch", "models"],
+            "properties": {"headline": {"type": "boolean"}, "router": {"$ref": "#/$defs/scopeLever"}, "switch": {"$ref": "#/$defs/scopeLever"},
+                           "models": {"type": "array", "items": {"type": "object", "required": ["model", "pool", "switch", "enable"]}}}
           }
         },
         "not_analysed": {"type": "object", "required": ["per_month", "model_count"],
@@ -132,7 +139,8 @@
         "profile": {"const": "balanced"},
         "policy": {"const": "jev-general-v1"},
         "seed": {"type": "integer"},
-        "counterfactual_test": {"type": "boolean"}
+        "counterfactual_test": {"type": "boolean"},
+        "cell_grain": {"description": "Per sampled model, the bucket of the request-count query: hour, or coarser when hourly cells exceed the time-series budget.", "type": "object", "additionalProperties": {"enum": ["hour", "6h", "day"]}}
       }
     },
     "window": {
@@ -328,6 +336,12 @@
     }
   },
   "$defs": {
+    "scopeLever": {
+      "type": "object",
+      "required": ["pct_of_spend", "per_month", "ci90_per_month", "coverage", "enable"],
+      "properties": {"pct_of_spend": {"type": ["number", "null"]}, "per_month": {"type": ["number", "null"]}, "ci90_per_month": {"type": ["array", "null"], "items": {"type": "number"}},
+                     "coverage": {"type": ["number", "null"]}, "enable": {"type": "array", "items": {"type": "string"}}}
+    },
     "interval": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
     "estimate": {
       "type": "object",

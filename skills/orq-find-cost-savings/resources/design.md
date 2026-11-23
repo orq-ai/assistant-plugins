@@ -54,7 +54,7 @@ uv run <skill dir>/scripts/cost_savings_report.py render --out <dir> --narrative
 | Thread filter | `--filters '[{"field":"thread_id","op":"eq","values":["<id>"]}]'` with `--project`; without `--project` it returns 0 rows |
 | Telemetry paging | no cursor; `--limit` up to 5000 and `.has_more` |
 | Telemetry filters | `[{"field":"model","op":"eq","values":["<bare model>"]},{"field":"provider","op":"eq","values":["<provider>"]}]`; the prefixed id matches nothing |
-| Request counts per cell | `genai.requests` with op `count` (not `sum`), grouped by `project`, `--mode timeseries --grain hour`; `trace_count` cannot be grouped by project |
+| Request counts per cell | `genai.requests` with op `count` (not `sum`), grouped by `project`, `--mode timeseries --grain hour`; `trace_count` cannot be grouped by project. Time-series results are complete only within 5000 rows, 5000 buckets and 50000 values (`orq telemetry query --help`); past that the result has `has_more` or the query fails, so a model used in 7+ projects over 30 days falls back to 6-hour buckets (`--interval-seconds 21600`) and then `--grain day`. `params.cell_grain` records the bucket per model; a `telemetry truncated` caveat is added only when even daily cells are truncated. A draw searches windows inside its bucket |
 | Thread and retention on a span | `.span.attributes.orq.thread_id`, `.span.attributes.orq.retention_days` |
 | Region and speed on a span | `.span.attributes.gen_ai.usage.inference_geo` (`global` means none), `.span.attributes.gen_ai.usage.speed` |
 | `orq models list -o json` | a bare array, not `.data` |
@@ -336,7 +336,7 @@ Unit tests on synthetic fixtures, no network:
 - Bands: pools of 2 to 5 models, index ties, empty bands, pick-in-band tie-breaks, invalid pools, and a 2-model pool whose index order reverses the table order.
 - Tier resolution: all regression ids above, plus disabled and unpriced models and the region tie-break.
 - Pricing: each `when` variable and operator, `||`, the modulo off-peak form, partial overrides, overlapping variants (the US-region batch long-context case picks the three-condition variant), a span that shows nothing stays on base, unknown variables, missing tier variant, missing TTL, `service_tier` `default`.
-- Savings: pick equals current model; negative savings; same tokens on the picked model; a model with no pool takes its switch figure in the router scenario.
+- Savings: pick equals current model; negative savings; same tokens on the picked model; a model with no pool takes its switch figure in the router scenario, and the router setup plan lists it under `replacements` so following the plan yields the figure.
 - Sampling and estimator: allocation with a minimum of 5, weights, weighted ratio on a hand-computed fixture, cell bootstrap, top-3-excluded figure, coverage.
 - Caching: read and write per turn, TTL expiry, already-cached and already-written tokens, mixed-model threads.
 - Span filter: root and `span.agent` dropped, leaf spans kept, cache hits and decision models dropped, already-routed spans kept with savings 0.
@@ -350,8 +350,14 @@ Unit tests on synthetic fixtures, no network:
 
 ## Report display
 
-- Hero: the lever saving more per month carries a "Recommended" tag (Smart Router on ties, unless no router can be set up from the enabled, scored models: then change model, and the gap line says why). A header note says when the window was capped at retention.
+- Hero: the lever saving more per month carries a "Recommended" tag (Smart Router on ties, unless no router can be set up from the enabled, scored models: then change model, and the gap line says why). When neither lever saves anything (`per_month` <= 0 or null), `summary.recommended` is null: no tag, no spend bar, and the plan caption says no saving was found. A header note says when the window was capped at retention.
+- Spend bar and per-model bars: "Possible now" is the saving with models already enabled, "After enabling" the extra once the listed models are enabled. Neither is money already saved. Row text says "Now: ..." for the move available before enabling.
+- Actions: `keep` means no cheaper model is as strong; `not_analysed` means the lever's estimate does not cover the model (pricing check failed, no billed cost, or a target has no price for the span's tier). Both are footnotes, not bars.
+- Coverage is stored per lever (`summary.router.coverage`, `summary.switch.coverage`, `scopes[].router|switch.coverage`): the levers can leave out different models when a target has no price. The page quotes the recommended lever's coverage; the scope grid shows each lever's when they differ anywhere.
+- Scopes keep models to enable per lever: the router needs every disabled pool member and switch target, change model only the switch targets.
+- Setup: the Smart Router plan has `routers` and `replacements` (models with no pool, served on their switch target). Its card, prompt and commands create the routers, then change those models.
+- `render` reads only `summary` plus the run header (`workspace`, `generated_at`): the pool tables (`scopes[].models`), the moves table (`sampled_moves`) and the caching candidates (`caching.rows`) are in `summary` too.
 - What to do: a model with fewer than `MIN_SAMPLE` (15) sampled calls gets "Small sample: N calls." N is the sum of `routing.moves[].n` where `used` is the model.
-- What to do diagram: shares are by sample weight (`routing.moves[].weight`, else `n`) over drawn targets only; unscored picks get no tier and show "+N unscored"; "enable" marks only drawn targets other than the model itself. Today amounts come from the enabled scenario's `per_stratum` (kept in every scenario's router/switch estimate); old reports fall back to the reconciled split.
+- What to do diagram: shares are by sample weight (`routing.moves[].weight`, else `n`) over drawn targets only; unscored picks get no tier and show "+N unscored"; "enable" marks only drawn targets other than the model itself. Possible-now amounts come from the enabled scenario's `per_stratum` (kept in every scenario's router/switch estimate); old reports fall back to the reconciled split.
 - Call counts include fallback samples (asks with no routing decision) in every table; the moves table shows "N (incl. M fallback)". `underpowered[].n` counts all samples, `n_scored` only the scored ones.
 - `schema_version` is `1.2`: 1.1 dropped the quality profile; 1.2 adds `summary`, every number the page shows (headline, per-lever plan, per-model recommendations for both levers, scopes, spend not analysed). `analyze` computes it; `render` only formats it.

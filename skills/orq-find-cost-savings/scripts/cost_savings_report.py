@@ -766,6 +766,18 @@ PROMPT_BUCKETS = [(8_000, "0-8k"), (32_000, "8k-32k"), (math.inf, ">32k")]
 # --------------------------------------------------------------------------------------------- analyze
 
 
+class Truncated(Exception):
+    """A telemetry result past its row budget (`has_more`); carries the partial rows."""
+
+    def __init__(self, rows: list[dict]):
+        super().__init__("telemetry truncated")
+        self.rows = rows
+
+
+# bucket label, --grain value (digits: --interval-seconds), bucket minutes; finest first
+CELL_GRAINS = (("hour", "hour", 60), ("6h", "21600", 360), ("day", "day", 1440))
+
+
 class Stop(Exception):
     def __init__(self, check: str, numbers: dict):
         super().__init__(check)
@@ -792,7 +804,7 @@ class Analyzer:
     # ---- telemetry
 
     def tq(self, compute: list, group_by: list[str], filters: list | None = None, mode: str = "scalar",
-           grain: str | None = None) -> list[dict]:
+           grain: str | None = None, strict: bool = False) -> list[dict]:
         a = ["telemetry", "query", "--source", "TELEMETRY_SOURCE_TRACES", "--mode", mode, "--from", self.frm,
              "--to", self.to, "--compute", json.dumps(compute), "--limit", "5000"]
         for g in group_by:
@@ -800,9 +812,11 @@ class Analyzer:
         if filters:
             a += ["--filters", json.dumps(filters)]
         if grain:
-            a += ["--grain", grain]
-        r = self.orq(*a)
+            a += ["--interval-seconds", grain] if grain.isdigit() else ["--grain", grain]
+        r = self.orq(*a) or {}
         if r.get("has_more"):
+            if strict:
+                raise Truncated(r.get("data") or [])
             self.report["checks"]["caveats"].append({"check": "telemetry truncated", "detail": " ".join(group_by)})
         return r.get("data") or []
 
@@ -993,15 +1007,34 @@ class Analyzer:
         return sorted([{"key": r["group"].get(dim) or "(not set)", "spend": r["metrics"].get("genai.cost:sum") or 0.0}
                        for r in rows], key=lambda r: -r["spend"])
 
-    def cells(self, model: str) -> list[tuple[str, str, float]]:
+    def cells(self, model: str) -> list[tuple[str, str, float, int]]:
+        """Request counts per (project, time bucket). Hourly first; a model in many projects can exceed the
+        time-series budget (5000 rows over the window), which truncates or fails the query, so it falls back to
+        6-hour and then daily buckets, and records the grain used in `params.cell_grain`."""
         prov, bare = split_model(model)
         filters = [{"field": "model", "op": "eq", "values": [bare]}]
         if prov:
             filters.append({"field": "provider", "op": "eq", "values": [prov]})
-        rows = self.tq([{"metric": "genai.requests", "op": "count"}], ["project"], filters, mode="timeseries",
-                       grain="hour")
-        return [(r["group"].get("project") or "", r["timestamp"], float(r["metrics"].get("genai.requests:count") or 0))
-                for r in rows if r.get("timestamp") and (r["metrics"].get("genai.requests:count") or 0) > 0]
+        got: tuple | None = None  # (rows, grain label, bucket minutes, complete)
+        err: OrqError | None = None
+        for label, grain, minutes in CELL_GRAINS:
+            try:
+                got = (self.tq([{"metric": "genai.requests", "op": "count"}], ["project"], filters,
+                               mode="timeseries", grain=grain, strict=True), label, minutes, True)
+                break
+            except Truncated as t:
+                got = (t.rows, label, minutes, False)
+            except OrqError as e:  # the budget can fail the query instead of truncating it
+                err = e
+        if got is None:
+            raise err  # type: ignore[misc]
+        rows, label, minutes, complete = got
+        self.report["params"].setdefault("cell_grain", {})[model] = label
+        if not complete:
+            self.report["checks"]["caveats"].append(
+                {"check": "telemetry truncated", "detail": f"{model}: request counts per project and {label}"})
+        return [(r["group"].get("project") or "", r["timestamp"], float(r["metrics"].get("genai.requests:count") or 0),
+                 minutes) for r in rows if r.get("timestamp") and (r["metrics"].get("genai.requests:count") or 0) > 0]
 
     def search(self, project: str, frm: datetime, to: datetime, filters: list) -> list[dict]:
         a = ["traces", "search", "--from", iso(frm), "--to", iso(to), "--limit", "100", "--filters",
@@ -1032,7 +1065,7 @@ class Analyzer:
         return [s for s in spans if s.get("type") in LLM_SPAN_TYPES and not s.get("has_children")
                 and (model is None or model_key(s.get("provider", ""), s.get("model", "")) == model)]
 
-    def draw_one(self, model: str, cells: list[tuple[str, str, float]], seed: int) -> dict | None:
+    def draw_one(self, model: str, cells: list[tuple[str, str, float, int]], seed: int) -> dict | None:
         rng = random.Random(seed)
         total = sum(c[2] for c in cells)
         for _attempt in range(6):
@@ -1042,11 +1075,11 @@ class Analyzer:
                 if acc >= x:
                     cell = c
                     break
-            project, ts, _ = cell
-            hour = parse_ts(ts)
+            project, ts, _, minutes = cell
+            begin = parse_ts(ts)
             traces: list[dict] = []
-            for width in (1, 5, 15, 60):
-                start = hour + timedelta(minutes=rng.randrange(0, 61 - width))
+            for width in dict.fromkeys((1, 5, 15, 60, minutes)):
+                start = begin + timedelta(minutes=rng.randrange(0, minutes + 1 - width))
                 traces = self.search(project, start, start + timedelta(minutes=width),
                                      [{"field": "model", "op": "eq", "values": [model]}])
                 if traces:
@@ -1977,7 +2010,7 @@ def _phrase(info: dict) -> str:
 
 
 def _action_lines(model: str, head: dict, today: dict | None, saved: float, enable: list[str] | None = None) -> list[str]:
-    """Plain row text: what to do with this model, today and after enabling models, as short sentences."""
+    """Plain row text: what to do with this model, now and after enabling models, as short sentences."""
     if saved <= 0:
         prov = PROVIDER_NAME.get(model.split("/")[0], model.split("/")[0])
         return [f"Keep it: no cheaper {prov} model is as strong"]
@@ -1988,7 +2021,7 @@ def _action_lines(model: str, head: dict, today: dict | None, saved: float, enab
     names = " and ".join(_short(e) for e in enable)
     later = f"After enabling {names}: {_phrase(head)}."
     if today and _lever(today) and not _same_move(today, head):
-        return [f"Today: {_phrase(today)}.", later]
+        return [f"Now: {_phrase(today)}.", later]
     return [later]
 
 
@@ -2058,8 +2091,12 @@ def _plan_figures(report: dict, per_month: float, lever: str = "router") -> dict
     now.sort(key=lambda x: -(x[2] if x[2] is not None else -1))
     later = [m for m, i in h_info.items() if i.get("enable") and strata.get(m, 0) > 0]
     enable = list(dict.fromkeys(e for m in later for e in h_info[m]["enable"]))
+    if sw:
+        analysed = {m for m, v in ((head.get("switch") or {}).get("per_stratum") or {}).items() if v is not None}
+    else:
+        analysed = {s["model"] for s in ro.get("strata") or [] if s.get("savings") is not None}
     return {"now": now, "e_pm": e_pm, "h_pm": h_pm, "later": later, "enable": enable, "h_info": h_info,
-            "e_info": e_info, "strata": strata}
+            "e_info": e_info, "strata": strata, "analysed": analysed}
 
 
 def _today_amounts(f: dict) -> dict[str, float]:
@@ -2099,6 +2136,7 @@ def _plan_rows(report: dict, per_month: float, lever: str = "router") -> list[di
         spend = (st.get("spend") or 0) * per_month
         fl = _flow(m, f["h_info"].get(m, {}), f["e_info"].get(m), ro.get("moves") or [], now, spend)
         rows.append({"model": m, "n": n_calls, "spend": spend, "saved": saved, "today": now,
+                     "analysed": m in f["analysed"],
                      "after": saved - now, "rate": st.get("rate"), "hard": None,
                      "move": f["h_info"].get(m, {}), "today_move": f["e_info"].get(m), **fl})
     flagged = [r for r in rows if r["model"] in hard and r["saved"] > 0]
@@ -2166,10 +2204,10 @@ def _flow_html(r: dict) -> str:
 
 
 def _waterfall(spend: float, now_v: float, more_v: float, left_v: float, how: str) -> str:
-    """Vertical waterfall: today's bill, the saving with enabled models, the extra saving after enabling more
-    (dropped when zero), and the new bill. Steps are % of today's bill; a dashed line carries each level across."""
+    """Vertical waterfall: today's bill, the saving possible now with enabled models, the extra saving after enabling
+    more (dropped when zero), and the new bill. Steps are % of today's bill; a dashed line carries each level across."""
     steps = [("tot", "Spend now", spend, 0.0, ""),
-             ("sr", "Saved today", now_v, 0.0, "\u2212"),
+             ("sr", "Possible now", now_v, 0.0, "\u2212"),
              ("sr2", "After enabling", more_v, now_v, "\u2212"),
              ("tot", "New bill", left_v, spend - left_v, "")]
     steps = [s for s in steps if s[0] != "sr2" or more_v > 0]
@@ -2182,7 +2220,7 @@ def _waterfall(spend: float, now_v: float, more_v: float, left_v: float, how: st
         cols.append(f"<div class=wc><div class=wp><i class={c} style='top:{y * 100:.2f}%;height:{h * 100:.2f}%' "
                     f"tabindex=0 data-tip='{tip}'></i>{cn}</div><p><b>{sign}{_usd0(v)}</b>"
                     f"<span>{label}</span><span>{_pc(h)}</span></p></div>")
-    aria = (f"{_usd0(spend)} a month now; {_usd0(now_v)} saved today, {_usd0(more_v)} more after enabling "
+    aria = (f"{_usd0(spend)} a month now; {_usd0(now_v)} possible now, {_usd0(more_v)} more after enabling "
             f"models, {_usd0(left_v)} a month after")
     return f"<div class=wf role=img aria-label='{html.escape(aria)}'>{''.join(cols)}</div>"
 
@@ -2195,7 +2233,8 @@ def _rec_rows(report: dict, per_month: float, lever: str, keys: dict[str, str]) 
     """One recommendation per sampled model under one lever, with everything the page draws for it."""
     out = []
     for x in _plan_rows(report, per_month, lever):
-        act = x["lever"] if x["saved"] > 0 and x["lever"] in ("router", "switch") else "keep"
+        act = ("not_analysed" if not x["analysed"] else
+               x["lever"] if x["saved"] > 0 and x["lever"] in ("router", "switch") else "keep")
         out.append({"model": x["model"], "action": act, "router_key": keys.get(x["model"]) if act == "router" else None,
                     "move": _move(x["move"]), "today_move": _move(x["today_move"]),
                     "targets": [{"model": b["model"], "share_of_calls": b["share"], "tiers": b["tiers"],
@@ -2213,10 +2252,14 @@ def _scopes(report: dict, spend_pm: float | None) -> list[dict]:
     out = []
     for sc in sorted(report.get("scenarios") or [], key=lambda x: not x.get("headline")):
         r, w = sc["router"]["balanced"], sc["switch"]
-        out.append({"scope": sc["scope"], "headline": bool(sc.get("headline")), "coverage": r.get("coverage"),
-                    "enable": list(dict.fromkeys(e for m in sc.get("models") or [] for e in m.get("enable") or [])),
+        models = sc.get("models") or []
+        enable = {"router": [e for m in models for e in m.get("enable") or []],
+                  "switch": [e for m in models for e in _as_switch(m)["enable"]]}
+        out.append({"scope": sc["scope"], "headline": bool(sc.get("headline")),
                     **{k: {"pct_of_spend": _of(f.get("per_month"), spend_pm), "per_month": f.get("per_month"),
-                           "ci90_per_month": f.get("ci90_per_month")} for k, f in (("router", r), ("switch", w))}})
+                           "ci90_per_month": f.get("ci90_per_month"), "coverage": f.get("coverage"),
+                           "enable": list(dict.fromkeys(enable[k]))} for k, f in (("router", r), ("switch", w))},
+                    "models": [{k: m.get(k) for k in ("model", "pool", "switch", "enable")} for m in sc.get("models") or []]})
     return out
 
 
@@ -2235,7 +2278,9 @@ def summary(report: dict) -> dict:
     h = (report.get("routing") or {}).get("headline") or {}
     r, w = (head.get("router") or {}).get("balanced") or {}, head.get("switch") or {}
     r_pm, w_pm = h.get("per_month"), w.get("per_month")
-    rec = "router" if r_pm is not None and (w_pm is None or r_pm >= w_pm) else "switch" if w_pm is not None else None
+    saves = {k for k, pm in (("router", r_pm), ("switch", w_pm)) if pm is not None and pm > 0}
+    rec = ("router" if "router" in saves and ("switch" not in saves or r_pm >= w_pm) else  # type: ignore[operator]
+           "switch" if "switch" in saves else None)  # None: neither lever saves anything
     en = _enabled_scope(report, head) or {}
     today = {"router": ((en.get("router") or {}).get("balanced") or {}).get("per_month"),
              "switch": (en.get("switch") or {}).get("per_month")}
@@ -2254,23 +2299,30 @@ def summary(report: dict) -> dict:
         if t is not None and pm is not None:
             t = min(max(t, 0.0), max(pm, 0.0))
         return {"pct_of_spend": _of(pm, spend_pm), "per_month": pm, "ci90_per_month": fig.get("ci90_per_month"),
-                "saved_today_per_month": t,
+                "coverage": fig.get("coverage"), "saved_today_per_month": t,
                 "saved_after_enabling_per_month": max(0.0, pm - t) if pm is not None and t is not None else None,
                 "enable": plan["enable"], **({"routers": moves} if name == "router" else {"replacements": moves})}
 
     return {"window": {k: report["window"].get(k) for k in ("from", "to", "days", "requested", "retention")},
             "caveats": list((report.get("checks") or {}).get("caveats") or []),
             "spend_total": total, "spend_per_month": spend_pm, "scope": head.get("scope"),
-            "coverage": r.get("coverage"), "sampled_calls": len(report["samples"]) if "samples" in report else (report.get("params") or {}).get("sample"),
+            "sampled_calls": len(report["samples"]) if "samples" in report else (report.get("params") or {}).get("sample"),
             "recommended": rec, "levers_overlap": _ranges_overlap(head),
             "router": {**lever("router", r_pm, r, rp, [{k: m[k] for k in ("model", "key", "pool")} for m in rp["moves"]]),
+                       "replacements": [{k: m[k] for k in ("model", "to")} for m in rp["replacements"]],
                        "without_top3_per_month": (h["without_top3"] * per_month) if h.get("without_top3") is not None
                        else None},
             "switch": lever("switch", w_pm, w, wp, [{k: m[k] for k in ("model", "to")} for m in wp["moves"]]),
             "recommendations": recs,
             "scopes": _scopes(report, spend_pm), "not_analysed": _not_analysed(report, per_month),
+            "sampled_moves": [{k: mv.get(k) for k in MOVE_FIELDS} for mv in (report.get("routing") or {}).get("moves") or []],
             "caching": {"threads_scanned": ca.get("threads_scanned"), "savings_found": ca.get("savings_found"),
-                        "error": ca.get("error")}}
+                        "error": ca.get("error"),
+                        "rows": [{k: r.get(k) for k in CACHE_FIELDS} for r in ca.get("rows") or [] if r.get("candidate")][:20]}}
+
+
+MOVE_FIELDS = ("used", "pick", "tier", "n", "fallback", "costs_more", "weighted_savings")
+CACHE_FIELDS = ("thread", "agent", "model", "turns", "savings", "action")
 
 
 def _ranges_overlap(head: dict) -> bool:
@@ -2300,6 +2352,7 @@ def _row_view(x: dict) -> dict:
         note = f"Before enabling: {_phrase(today)} now, {_pc(_of(now, spend))} saved ({_usd0(now)}/mo)."
     return {"model": x["model"], "spend": spend, "saved": x["saved_per_month"], "today": now,
             "after": x["saved_after_enabling_per_month"], "lever": _lever(move), "enable": x["enable"],
+            "action": x["action"],
             "n": x["sampled_calls"], "hard": x["share_hard"], "note": note,
             "branches": [{"model": b["model"], "share": b["share_of_calls"], "tiers": b["tiers"],
                           "unscored": b["unscored_calls"], "enable": b["enable"], "stays": b["stays"]}
@@ -2310,24 +2363,24 @@ def _row_view(x: dict) -> dict:
 def _actions_chart(recs: list[dict], not_analysed: dict) -> str:
     rows_in = [_row_view(x) for x in recs]
     drawn = [r for r in rows_in if r["saved"] > 0]
-    kept = [r["model"] for r in rows_in if r["saved"] <= 0]
+    kept = [r for r in rows_in if r["saved"] <= 0]
     rows = []
     for r in drawn:
         seg = [("sr", r["today"]), ("sr2", r["after"]), ("kept", max(0.0, r["spend"] - r["saved"]))]
         how = "Smart Router" if r.get("lever") == "router" else "Change model"
         on = ", ".join(_short(x) for x in r.get("enable") or [])
-        what = {"sr": f"Saved today with {how}", "sr2": f"Saved with {how} after enabling {on or 'models'}",
+        what = {"sr": f"Possible now with {how}", "sr2": f"Possible with {how} after enabling {on or 'models'}",
                 "kept": "Still spent"}
         sp = r["spend"] or 1e-9
         bars = "".join(f"<i class={c} style='flex:{v / sp:.4f} 1 0' tabindex=0 "
                        f"data-tip='{html.escape(_tip(what[c], v, r['spend']))}'></i>" for c, v in seg
                        if v / sp > (0.02 if c == "kept" else 0))
-        split = [("sr", f"{_pc(_of(r['today'], sp))} today", r["today"]),
+        split = [("sr", f"{_pc(_of(r['today'], sp))} now", r["today"]),
                  ("sr2", f"+{_pc(_of(r['after'], sp))} after enabling", r["after"])]
         split_html = "".join(f"<li><span class='sw {c}'></span>{t} \u00b7 {_usd0(v)}</li>" for c, t, v in split
                              if v > 0)
         pct = _of(r["saved"], r["spend"])
-        tip = (f"{_short(r['model'])}: {_pc(_of(r['today'], r['spend']))} saved today, "
+        tip = (f"{_short(r['model'])}: {_pc(_of(r['today'], r['spend']))} possible now, "
                f"{_pc(_of(r['after'], r['spend']))} more after enabling, of {_usd0(r['spend'])} a month")
         notes = f"<span>{html.escape(r['note'])}</span>" if r["note"] else ""
         if r["n"] < MIN_SAMPLE:
@@ -2339,9 +2392,9 @@ def _actions_chart(recs: list[dict], not_analysed: dict) -> str:
                     f"<ul class='legend mini'>{split_html}</ul></div>"
                     f"<div class=val><b>{_pc(pct)} saved</b>"
                     f"<span>{_usd0(r['saved'])} of {_usd0(r['spend'])}/mo</span></div></div>")
-    legend = "<ul class=legend><li><span class='sw sr'></span>Saved today</li>"
+    legend = "<ul class=legend><li><span class='sw sr'></span>Possible now</li>"
     if any(r["after"] > 0 for r in drawn):
-        legend += "<li><span class='sw sr2'></span>Saved after enabling</li>"
+        legend += "<li><span class='sw sr2'></span>After enabling</li>"
     legend += "<li><span class='sw kept'></span>Still spent</li>"
     levers = {r["lever"] for r in drawn}
     if "switch" in levers:
@@ -2350,11 +2403,12 @@ def _actions_chart(recs: list[dict], not_analysed: dict) -> str:
         legend += "<li><span class='lk fork'></span>Fork: Smart Router picks a model per call, % is its share of calls</li>"
     if any(r["enable"] for r in drawn):
         legend += "<li><span class='lk dash'></span>Dashed: enable this model in your orq.ai workspace first</li>"
-    foot = "".join(f"<p class='m foot'>{html.escape(_short(m))}: keep, already the cheapest model that is as strong.</p>"
-                   for m in kept)
+    foot = "".join(f"<p class='m foot'>{html.escape(_short(r['model']))}: "
+                   + ("not analysed, its sampled calls could not be priced reliably." if r["action"] == "not_analysed"
+                      else "keep, already the cheapest model that is as strong.") + "</p>" for r in kept)
     if not_analysed["model_count"]:
         foot += (f"<p class='m foot'>Not analysed: {_usd0(not_analysed['per_month'])}/mo of spend on "
-                 f"{not_analysed['model_count']} other models.</p>")
+                 f"{not_analysed['model_count']} model{'s' if not_analysed['model_count'] != 1 else ''}.</p>")
     return legend + "</ul><div class=chart>" + "".join(rows) + "</div>" + foot
 
 
@@ -2362,36 +2416,36 @@ def _ci_short(c: Any) -> str:
     return f"{_usd0(c[0])}\u2013{_usd0(c[1])}" if c else "n/a"
 
 
-def _scope_cell(sc: dict | None, approx: bool, coverage_note: str) -> str:
+def _scope_cell(sc: dict | None, approx: bool, show_coverage: bool) -> str:
+    """Both levers in one scope, each with the models it needs enabled and, when coverage varies, its coverage."""
     if not sc:
         return "<div class=cell><p class=m>n/a</p></div>"
-    r, w, enable = sc["router"], sc["switch"], sc["enable"]
-    out = ["<div class='cell hl'><p class=tag>This report's figure</p>" if sc.get("headline") else "<div class=cell>",
-           f"<p class=f1>{_pc(r['pct_of_spend'])}<span>Smart Router</span></p>",
-           f"<p class=ci>{_usd0(r['per_month'])}/mo</p>",
-           f"<p class=f2>{_pc(w['pct_of_spend'])}<span>Change model</span></p>",
-           f"<p class=ci>{_usd0(w['per_month'])}/mo</p>"]
-    if enable:
-        names = html.escape(", ".join(enable), quote=True)
-        out.append(f"<p class=en title='{names}'>enable {len(enable)} model{'s' if len(enable) != 1 else ''}</p>")
+    out = ["<div class='cell hl'><p class=tag>This report's figure</p>" if sc.get("headline") else "<div class=cell>"]
+    for cls, lever, name in (("f1", "router", "Smart Router"), ("f2", "switch", "Change model")):
+        f = sc[lever]
+        out += [f"<p class={cls}>{_pc(f['pct_of_spend'])}<span>{name}</span></p>",
+                f"<p class=ci>{_usd0(f['per_month'])}/mo</p>"]
+        if f["enable"]:
+            names = html.escape(", ".join(f["enable"]), quote=True)
+            out.append(f"<p class=en title='{names}'>enable {len(f['enable'])} model"
+                       f"{'s' if len(f['enable']) != 1 else ''}</p>")
+        if show_coverage:
+            out.append(f"<p class=en>{_pct(f['coverage'])} of spend covered</p>")
     if approx:
         out.append("<p class=en>approximate</p>")
-    if coverage_note:
-        out.append(f"<p class=en>{coverage_note}</p>")
     return "".join(out) + "</div>"
 
 
 def _scope_grid(scopes: list[dict]) -> str:
     """2x2 grid: provider scope in columns, availability in rows; the headline cell is tinted."""
     by = {sc["scope"]: sc for sc in scopes}
-    covs = {sc["coverage"] for sc in scopes}
+    covs = {sc[k]["coverage"] for sc in scopes for k in ("router", "switch")}
     out = ["<div class=grid><span class=corner></span><p class=ch>Same provider</p><p class=ch>Any provider</p>"]
     for avail, label in (("all", "All available"), ("enabled", "Enabled only")):
         out.append(f"<p class=rh>{label}</p>")
         for prov in ("same_provider", "any_provider"):
             sc = by.get(f"{prov}:{avail}")
-            cov = f"{_pct(sc['coverage'])} of spend covered" if sc and len(covs) > 1 else ""
-            out.append(_scope_cell(sc, prov == "any_provider", cov))
+            out.append(_scope_cell(sc, prov == "any_provider", len(covs) > 1))
     return "".join(out) + "</div>"
 
 
@@ -2446,9 +2500,9 @@ def _range_head(rows: list[dict]) -> str:
     return f"Range, {_usd0(r[4])} to {_usd0(r[5])}, lines every {_usd0(step)}"  # table formatters that return markup, not text
 
 
-def _pool_tables(report: dict) -> str:
+def _pool_tables(scopes: list[dict]) -> str:
     out = []
-    for sc in report.get("scenarios") or []:
+    for sc in scopes:
         cap = SCOPE_LABEL.get(sc["scope"], sc["scope"]) + (" (headline)" if sc["headline"] else "")
         out.append(_table(sc["models"], [("Model in use", "model", str),
                                          ("Router pool", "pool", lambda p: ", ".join(p or []) or "none"),
@@ -2474,8 +2528,11 @@ def _router_key(model: str) -> str:
 
 
 def _setup_plan(report: dict, lever: str) -> dict:
-    """What applying one lever takes: models to enable, and per model in use its router pool or new model."""
-    moves, enable = [], []
+    """What applying one lever takes: models to enable, and per model in use its router pool or new model.
+
+    The router plan also lists `replacements`: a model with no pool to route over is served by its switch target in
+    the router figure, so following the router plan means changing that model too."""
+    moves, enable, replacements = [], [], []
     head = _headline(report)
     strata = (report.get("routing") or {}).get("strata") or []
     if lever == "router":
@@ -2490,13 +2547,17 @@ def _setup_plan(report: dict, lever: str) -> dict:
         if lever == "router" and _lever(info) == "router":
             moves.append({"model": info["model"], "key": _router_key(info["model"]), "pool": list(info["pool"])})
             new = info.get("enable") or []
+        elif lever == "router" and _lever(info) == "switch":
+            replacements.append({"model": info["model"], "to": info["switch"]})
+            new = _as_switch(info)["enable"]
         elif lever == "switch" and info.get("switch"):
             moves.append({"model": info["model"], "to": info["switch"]})
             new = _as_switch(info)["enable"]
         else:
             continue
         enable += [e for e in new if e not in enable]
-    return {"lever": lever, "enable": enable, "moves": moves, "workspace": report.get("workspace")}
+    plan = {"lever": lever, "enable": enable, "moves": moves, "workspace": report.get("workspace")}
+    return {**plan, "replacements": replacements} if lever == "router" else plan
 
 
 def _setup_commands(plan: dict) -> str:
@@ -2537,6 +2598,8 @@ def _setup_commands(plan: dict) -> str:
         lines += [f"enable {m}" for m in plan["enable"]]
     if router:
         lines += [f"router {m['key']} {' '.join(m['pool'])}" for m in plan["moves"]]
+        lines += ["echo " + shlex.quote(f"then change {m['model']} to {m['to']} in your code and deployments")
+                  for m in plan.get("replacements") or []]
     return "\n".join(lines)
 
 
@@ -2551,13 +2614,22 @@ def _setup_prompt(plan: dict) -> str:
         out += [f"   - {m}" for m in plan["enable"]]
         step += 1
     if plan["lever"] == "router":
-        out.append(f"{step}. Create one Smart Router per model with `orq smart-routers create`, profile "
-                   f"{ROUTER_PROFILE}, and keep the `model_ref` each response returns. Every pool model needs a Smart "
-                   "Router score (`metadata.autorouter.v2` in `orq models list -o json`): skip a router whose pool "
-                   "has a model without one or one that is not enabled, and tell me which. If a key already exists (`orq smart-routers list`), reuse "
-                   "its `model_ref` instead of creating it again:")
-        out += [f"   - key {m['key']}, models {', '.join(m['pool'])} (replaces {m['model']})" for m in plan["moves"]]
-        swap = "the `model_ref` of its router"
+        swaps = plan.get("replacements") or []
+        if plan["moves"]:
+            out.append(f"{step}. Create one Smart Router per model with `orq smart-routers create`, profile "
+                       f"{ROUTER_PROFILE}, and keep the `model_ref` each response returns. Every pool model needs a Smart "
+                       "Router score (`metadata.autorouter.v2` in `orq models list -o json`): skip a router whose pool "
+                       "has a model without one or one that is not enabled, and tell me which. If a key already exists (`orq smart-routers list`), reuse "
+                       "its `model_ref` instead of creating it again:")
+            out += [f"   - key {m['key']}, models {', '.join(m['pool'])} (replaces {m['model']})" for m in plan["moves"]]
+        if swaps:
+            step += bool(plan["moves"])
+            out.append(f"{step}. {'Then change' if plan['moves'] else 'Change'} these models, which have no pool to "
+                       "route over, to their replacement for all of their calls (the Smart Router figure counts "
+                       "these changes too):")
+            out += [f"   - {m['model']} -> {m['to']}" for m in swaps]
+        swap = ("the `model_ref` of its router, or its replacement" if swaps and plan["moves"]
+                else "its replacement" if swaps else "the `model_ref` of its router")
     else:
         out.append(f"{step}. Use these replacements:")
         out += [f"   - {m['model']} -> {m['to']}" for m in plan["moves"]]
@@ -2611,8 +2683,14 @@ def _copy_id(text: str) -> str:
 
 
 def _stored_plans(summ: dict) -> dict[str, dict]:
-    return {k: {"lever": k, "enable": summ[k]["enable"], "moves": summ[k][m]}
-            for k, m in (("router", "routers"), ("switch", "replacements"))}
+    return {"router": {"lever": "router", "enable": summ["router"]["enable"], "moves": summ["router"]["routers"],
+                       "replacements": summ["router"]["replacements"]},
+            "switch": {"lever": "switch", "enable": summ["switch"]["enable"], "moves": summ["switch"]["replacements"]}}
+
+
+def _and(moves: list[dict]) -> str:
+    names = [m["model"].split("/")[-1] for m in moves]
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
 def _setup_card(plans: dict[str, dict], rec: str, workspace: Any) -> str:
@@ -2620,15 +2698,18 @@ def _setup_card(plans: dict[str, dict], rec: str, workspace: Any) -> str:
     blocks = []
     for lever in (["switch", "router"] if rec == "s" else ["router", "switch"]):
         plan = plans[lever]
-        if not plan["moves"]:
+        swaps = plan["moves"] if lever == "switch" else plan.get("replacements") or []
+        if not plan["moves"] and not swaps:
             continue
         name = "Smart Router" if lever == "router" else "Change model"
         tag = " <span class=rec>Recommended</span>" if lever[0] == rec else ""
         n_on, n_mv = len(plan["enable"]), len(plan["moves"])
-        names = [m["model"].split("/")[-1] for m in plan["moves"]]
-        moved = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
-        what = (f"create {n_mv} router{'s' if n_mv != 1 else ''} and point {moved} at them" if lever == "router"
-                else f"change {moved}")
+        steps = []
+        if lever == "router" and n_mv:
+            steps.append(f"create {n_mv} router{'s' if n_mv != 1 else ''} and point {_and(plan['moves'])} at them")
+        if swaps:
+            steps.append(f"change {_and(swaps)}")
+        what = ", then ".join(steps)
         summary = (f"Enable {n_on} model{'s' if n_on != 1 else ''}, then {what}." if n_on
                    else what[0].upper() + what[1:] + ".")
         links = [f"<a href='{ORQ_APP}/{ws}/router/models?q={urllib.parse.quote(m.split('/')[-1])}'>"
@@ -2637,8 +2718,8 @@ def _setup_card(plans: dict[str, dict], rec: str, workspace: Any) -> str:
             links.insert(0, f"<a href='{ORQ_APP}/{ws}/router/smart-router?id=new'>Create a Smart Router</a>")
         prompt, cmds = _setup_prompt(plan), _setup_commands(plan)
         blocks.append(f"<div class=setup><h3>{name}{tag}</h3><p class=m>{html.escape(summary)}</p>"
-                      + (f"<ul class=mv>{''.join(f'<li>{html.escape(_short(m['model']))} \u2192 {html.escape(_short(m['to']))}</li>' for m in plan['moves'])}</ul>"
-                         if lever == "switch" else "")
+                      + (f"<ul class=mv>{''.join(f'<li>{html.escape(_short(m['model']))} \u2192 {html.escape(_short(m['to']))}</li>' for m in swaps)}</ul>"
+                         if swaps else "")
                       + "<div class=cpg>"
                       + _copy_button("txt", prompt, "Copy prompt", "Paste into your coding agent")
                       + (_copy_button("cmd", cmds, "Copy commands",
@@ -2686,10 +2767,10 @@ def _font_css() -> str:
     return "".join(out)
 
 
-def _moves_rows(ro: dict) -> list[dict]:
+def _moves_rows(moves: list[dict]) -> list[dict]:
     """Moves with a call count that says how many of the calls were fallbacks (no routing decision)."""
     return [dict(mv, calls=f"{mv.get('n', 0)}" + (f" (incl. {mv['fallback']} fallback)" if mv.get("fallback") else ""))
-            for mv in ro.get("moves") or []]
+            for mv in moves]
 
 
 def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
@@ -2702,12 +2783,11 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
     cs = S["caching"]  # the caching slot is only used when the caching card is shown
     if not cs.get("error") and (cs["savings_found"] or 0) >= 1 and not narrative.get("caching"):
         raise SystemExit("narrative slots empty: caching")
-    ro, ca = report.get("routing") or {}, report.get("caching") or {}
     win = S["window"]
     ws = str(report.get("workspace") or "your workspace")
     total = S["spend_total"] or 0
     h_pm = S["router"]["per_month"]
-    n, cov = S["sampled_calls"], S["coverage"]
+    n = S["sampled_calls"]
     caching_error = S["caching"].get("error")
     caching_small = not caching_error and (S["caching"]["savings_found"] or 0) < 1
     spend_pm = S["spend_per_month"]
@@ -2715,11 +2795,12 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
     verdict = html.escape(" ".join(first.split()))
     sw_pm = S["switch"]["per_month"]
     p_router, p_switch = S["router"]["pct_of_spend"], S["switch"]["pct_of_spend"]
-    rec = {"router": "r", "switch": "s"}.get(S["recommended"], "")
-    # the spend bar and the plan follow the recommended lever
+    rec = {"router": "r", "switch": "s"}.get(S["recommended"], "")  # "": neither lever saves anything
+    # the spend bar, the plan and the coverage line follow the recommended lever
     plan = S["switch" if rec == "s" else "router"]
+    cov = plan["coverage"]
     bar = ""
-    if spend_pm and plan["per_month"] is not None and plan["saved_today_per_month"] is not None:
+    if rec and spend_pm and plan["per_month"] is not None and plan["saved_today_per_month"] is not None:
         now_v, more_v = max(0.0, plan["saved_today_per_month"]), plan["saved_after_enabling_per_month"]
         left_v = max(0.0, spend_pm - now_v - more_v)
         bar = _waterfall(spend_pm, now_v, more_v, left_v, "Smart Router" if rec == "r" else "Change model")
@@ -2727,6 +2808,8 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
     pts = round((p_router - p_switch) * 100) if p_router is not None and p_switch is not None else 0
     if adds is None:
         gap = ""
+    elif not rec:
+        gap = "<p class='m gap'>Neither lever saves money on the sampled calls.</p>"
     elif S["levers_overlap"]:
         gap = ("<p class='m gap'>Both save about the same: the difference is within the margin of error, "
                "so either works.</p>")
@@ -2764,15 +2847,17 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
     head = (f"<header class=top><div><h1>Where you can save on LLM spend</h1>"
             f"<p class=m>{html.escape(ws)} · {html.escape(_day(win['from']))} to {html.escape(to_day)} "
             f"({win['days']} days{cap}), scaled to a month: {_usd0(spend_pm)}/mo LLM spend.</p></div>{theme}</header>")
-    parts = [_card("What to do", (_plan_caption("switch", p_switch, sw_pm) if rec == "s" else _plan_caption("router", p_router, h_pm))
+    caption = (_plan_caption("switch", p_switch, sw_pm) if rec == "s" else _plan_caption("router", p_router, h_pm)
+               if rec else "<p class=m>No saving found: no sampled model has a cheaper model that is as strong.</p>")
+    parts = [_card("What to do", caption
                    + _actions_chart(S["recommendations"]["switch" if rec == "s" else "router"], S["not_analysed"]),
                    "do"),
              setup,
              _card("Other model choices", "<p class=m>Share of monthly spend saved, by which models are allowed.</p>"
                    + _scope_grid(S["scopes"]) + f"<p class=m>{html.escape(TOKENIZER_NOTE)}</p>", "scopes")]
     if not caching_small and not caching_error:
-        parts.append(_card("Caching", (f"<p><b>Caching:</b> {_usd(ca.get('savings_found'))} in the "
-                                       f"{ca.get('threads_scanned', 0)} costliest threads scanned, not scaled to the "
+        parts.append(_card("Caching", (f"<p><b>Caching:</b> {_usd(cs['savings_found'])} in the "
+                                       f"{cs['threads_scanned']} costliest threads scanned, not scaled to the "
                                        "window.</p>") + _md(narrative["caching"]), "caching"))
     gen = html.escape(_day(report["generated_at"]) if report.get("generated_at") else to_day)
     unc = _uncertainty_rows(S["scopes"])
@@ -2790,16 +2875,16 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
                          f"{_usd0(S['router']['without_top3_per_month'] or 0)}/mo.</p>"
                          "<dl class=gl>" + "".join(f"<dt>{html.escape(t)}</dt><dd>{html.escape(d)}</dd>"
                                                    for t, d in GLOSSARY) + "</dl>")),
-            _details("Pools and models to enable", "what each move needs, per scope", _pool_tables(report)),
+            _details("Pools and models to enable", "what each move needs, per scope", _pool_tables(S["scopes"])),
             _details("Where sampled asks move", "headline scope, balanced profile",
-                     _table(_moves_rows(ro), [("Model in use", "used", str), ("Router pick", "pick", str),
+                     _table(_moves_rows(S["sampled_moves"]), [("Model in use", "used", str), ("Router pick", "pick", str),
                                                   ("Difficulty tiers", "tier", str), ("Sampled calls", "calls", str),
                                                   ("Calls that cost more", "costs_more", str),
                                                   ("Saving on the sampled calls", "weighted_savings", _usd)],
                             "Where sampled asks move"))]
     if not caching_small and not caching_error:
-        dets.append(_details("Caching candidates", f"{ca.get('threads_scanned', 0)} threads scanned",
-                             _table([r for r in ca.get("rows", []) if r.get("candidate")][:20],
+        dets.append(_details("Caching candidates", f"{cs['threads_scanned']} threads scanned",
+                             _table(cs["rows"],
                                     [("Thread", "thread", lambda t: "(hidden)" if redact else t),
                                      ("Agent", "agent", lambda a: a or "no agent"), ("Model", "model", str),
                                      ("Turns", "turns", str), ("Saving", "savings", _usd), ("Action", "action", str)],

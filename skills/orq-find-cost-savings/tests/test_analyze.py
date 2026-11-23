@@ -175,6 +175,11 @@ def test_router_without_pool_serves_the_switch_target(tmp_path, monkeypatch):
         for sc in c.SCOPES:
             assert r["scenario_savings"][f"router|{sc}|balanced"] == r["scenario_savings"][f"switch|{sc}"]
     assert rep["samples"][0]["scenario_savings"]["switch|same_provider:all"] > 0
+    # the router figure includes that model change, so following the router plan must make it too
+    s = rep["summary"]
+    assert s["router"]["per_month"] > 0 and s["router"]["routers"] == []
+    assert s["router"]["replacements"] == [{"model": SOL, "to": SOL61}] and SOL61 in s["router"]["enable"]
+    jsonschema.validate(rep, SCHEMA)
 
 
 def test_render_merges_narrative(tmp_path):
@@ -375,7 +380,7 @@ def test_underpowered_and_moves_count_fallback_samples(tmp_path):
     up = an.underpowered()[0]
     assert up["n"] == len(an.samples) == 2 and up["n_scored"] == 1  # the fallback counts in n, not in the shares
     assert sum(m["n"] for m in an.moves()) == 2 and sum(m["fallback"] for m in an.moves()) == 1
-    row = c._moves_rows({"moves": [{"used": "a", "pick": "b", "n": 11, "fallback": 1}, {"n": 3, "fallback": 0}]})
+    row = c._moves_rows([{"used": "a", "pick": "b", "n": 11, "fallback": 1}, {"n": 3, "fallback": 0}])
     assert row[0]["calls"] == "11 (incl. 1 fallback)" and row[1]["calls"] == "3"
 
 
@@ -479,3 +484,93 @@ def test_a_non_orq_failure_also_stops_cleanly_and_replaces_the_old_report(tmp_pa
     rep = an.run()
     assert rep["status"] == "stopped" and rep["stop"]["check"] == "analyze failed"
     assert json.loads((tmp_path / "report.json").read_text())["status"] == "stopped"
+
+
+class Budget(FakeOrq):
+    """Hourly cells exceed the time-series budget; `mode` says how the coarser grains behave."""
+
+    def __init__(self, mode):
+        super().__init__()
+        self.mode, self.grains = mode, []
+
+    def __call__(self, *args, body=None, cache=True):
+        a = list(args)
+        if a[:2] == ["telemetry", "query"] and "project" in a and "--mode" in a:
+            grain = a[a.index("--grain") + 1] if "--grain" in a else a[a.index("--interval-seconds") + 1]
+            self.grains.append(grain)
+            rows = [{"group": {"project": "p1"}, "timestamp": f"2026-11-{d:02d}T00:00:00Z",
+                     "metrics": {"genai.requests:count": 4}} for d in (9, 10)]
+            if grain == "hour" or self.mode == "truncated":
+                return {"data": rows[:1], "has_more": True}
+            if grain == "21600":
+                raise c.OrqError(a, 1, "HTTP 400 time-series result exceeds the safety budget")
+            return {"data": rows}
+        if a[:2] == ["traces", "search"]:
+            self.windows = getattr(self, "windows", []) + [(a[a.index("--from") + 1], a[a.index("--to") + 1])]
+        return super().__call__(*args, body=body, cache=cache)
+
+
+def test_hourly_cells_over_budget_fall_back_to_a_coarser_grain(tmp_path):
+    an = c.Analyzer(ns(tmp_path))
+    an.orq = Budget("ok")
+    rep = an.run()
+    assert rep["status"] == "ok", rep["stop"]
+    assert an.orq.grains == ["hour", "21600", "day"]  # 6h failed the query, day fits
+    assert rep["params"]["cell_grain"] == {SOL: "day"}
+    assert not [x for x in rep["checks"]["caveats"] if x["check"] == "telemetry truncated"]
+    assert rep["samples"] and all(c.parse_ts(f).date() in (c.parse_ts("2026-11-09T00:00:00Z").date(),
+                                                           c.parse_ts("2026-11-10T00:00:00Z").date())
+                                  for f, _ in an.orq.windows)  # draws span the whole day bucket
+    jsonschema.validate(rep, SCHEMA)
+
+
+def test_cells_caveat_only_when_even_daily_cells_are_truncated(tmp_path):
+    an = c.Analyzer(ns(tmp_path))
+    an.orq = Budget("truncated")
+    rep = an.run()
+    assert rep["params"]["cell_grain"] == {SOL: "day"}
+    trunc = [x for x in rep["checks"]["caveats"] if x["check"] == "telemetry truncated"]
+    assert trunc == [{"check": "telemetry truncated", "detail": f"{SOL}: request counts per project and day"}]
+
+
+def test_coverage_is_stored_per_lever(tmp_path):
+    _, rep = run(tmp_path)
+    s, head = rep["summary"], next(sc for sc in rep["scenarios"] if sc["headline"])
+    assert "coverage" not in s
+    assert s["router"]["coverage"] == head["router"]["balanced"]["coverage"]
+    assert s["switch"]["coverage"] == head["switch"]["coverage"]
+    assert all({"coverage", "enable"} <= set(sc[k]) for sc in s["scopes"] for k in ("router", "switch"))
+
+
+def test_no_saving_means_no_recommended_lever(tmp_path):
+    _, rep = run(tmp_path)
+    rep["routing"]["headline"]["per_month"] = 0.0
+    for sc in rep["scenarios"]:
+        sc["switch"]["per_month"] = -1.0
+        sc["router"]["balanced"]["per_month"] = 0.0
+    S = c.summary(rep)
+    assert S["recommended"] is None
+    rep["summary"] = S
+    jsonschema.validate(rep, SCHEMA)
+    n = {"summary": "No saving found.", "routing": "x", "caching": "x", "caveats": "x"}
+    page = c.render(rep, n, redact=False)
+    assert "<span class=rec>Recommended</span>" not in page and "class=wf" not in page
+    assert "No saving found: no sampled model has a cheaper model that is as strong." in page
+    assert "Neither lever saves money on the sampled calls." in page and "Recommended plan" not in page
+    rep["summary"]["recommended"] = "router"  # a lever that saves: the tag and the plan caption come back
+    assert "<span class=rec>Recommended</span>" in c.render(rep, n, redact=False)
+
+
+def test_render_reads_only_the_summary(tmp_path):
+    _, rep = run(tmp_path)
+    rep["caching"] = {"threads_scanned": 2, "savings_found": 9.0, "rows": [
+        {"thread": "thread-kept-1", "agent": None, "model": SOL, "turns": 4, "candidate": True, "savings": 9.0, "action": "a"},
+        {"thread": "thread-dropped-2", "agent": "x", "model": SOL, "turns": 3, "candidate": False, "savings": 0.0, "action": "b"}]}
+    rep["summary"] = c.summary(rep)
+    assert [r["thread"] for r in rep["summary"]["caching"]["rows"]] == ["thread-kept-1"]
+    jsonschema.validate(rep, SCHEMA)
+    n = {"summary": "S.", "routing": "R.", "caching": "C.", "caveats": "V."}
+    page = c.render(rep, n, redact=False)
+    only = {k: rep[k] for k in ("summary", "workspace", "generated_at")}
+    assert c.render(only, n, redact=False) == page  # nothing outside summary and the run header is read
+    assert "thread-kept-1" in page and "thread-dropped-2" not in page and "(hidden)" in c.render(only, n, redact=True)
