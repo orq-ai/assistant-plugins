@@ -28,12 +28,12 @@ Not for: creating a Smart Router (use `orq-cli`), debugging one trace (use `orq-
 ## Run
 
 ```
-uv run <this skill's directory>/scripts/cost_savings_report.py analyze --workspace <key> --out <dir> [--window 30] [--sample 100] [--counterfactual-test] [--yes]
+uv run <this skill's directory>/scripts/cost_savings_report.py analyze --workspace <key> --out <dir> [--window 30] [--sample 100] [--counterfactual-test] [--yes] [--json]
 # fill <dir>/narrative.md from <dir>/narrative-slots.md
 uv run <this skill's directory>/scripts/cost_savings_report.py render --out <dir> --narrative <dir>/narrative.md [--redact]
 ```
 
-`--window` is the number of days of traces to analyse, ending now (default 30). `--sample` defaults to 100, also the current maximum. `--counterfactual-test` stops after the pilot and lists the recommended and the used model per ask; nothing is replayed. Before the paid decision calls `analyze` prints their count and estimated cost. Run without a terminal, it stops with check `confirmation` in `report.json`; rerun with `--yes` once the user agrees. Reads are cached under `<dir>/cache`, so the rerun does not fetch them again.
+`--window` is the number of days of traces to analyse, ending now (default 30). `--sample` defaults to 100, also the current maximum. `--counterfactual-test` stops after the pilot and lists the recommended and the used model per ask; nothing is replayed. Before the paid decision calls `analyze` prints their count and estimated cost. Run without a terminal, it stops with check `confirmation` in `report.json`; rerun with `--yes` once the user agrees. Reads are cached under `<dir>/cache`, so the rerun does not fetch them again. `report.json` opens with `summary`: the headline numbers (spend, each lever's percent and monthly saving with its 90% range, the recommended lever) and one recommendation per model (action, router key or replacement, targets, models to enable, saving today and after enabling, sample size). The page reads those numbers; it does not recompute them. `--json` prints `status`, `stop` and `summary` on stdout and skips the narrative slots: use it when a caller such as an orq agent wants the result without the HTML report.
 
 ## Workflow
 
@@ -41,7 +41,7 @@ uv run <this skill's directory>/scripts/cost_savings_report.py render --out <dir
 2. Run `analyze` without `--yes`. It stops at `confirmation` with the decision cost; tell the user the cost and rerun with `--yes` when they agree.
 3. If `report.json` has `status: stopped` on any other check, report that check and its numbers; do not work around it. `decision model enabled` means the workspace must enable `typesafe/jev-latest` first.
 4. Read `report.json` and write each slot in `narrative-slots.md`: the `summary` slot is one line, at most 12 words, with no model names: the recommended lever (the larger saving, Smart Router on ties) with its percent of spend and monthly dollars (for example `Save 38% ($150/mo) with Smart Router.`); the spend bar shows how much is possible today, the per-model rows carry the names, and the appendix holds coverage and the CI. The `routing` slot is one line per model in plain words (no "dominated", no raw index numbers), with no action list: the page renders the per-model plan. Quote percent of spend first, then monthly dollars (`per_month`), in the other slots, with no statistics in prose, and keep routing and caching savings separate. Call the two levers "Smart Router" and "change model"; never "switch", which reads like a router.
-5. Always run `render`: `report.html` is the deliverable, so the task is not done until it exists. Share its path.
+5. Always run `render`: `report.html` is the deliverable, so the task is not done until it exists. Share its path. The one exception is a run with `--json`, where the caller asked for the data only: skip steps 4 and 5 and return `summary`.
 
 ## Common mistakes
 
@@ -53,4 +53,4 @@ uv run <this skill's directory>/scripts/cost_savings_report.py render --out <dir
 | Treating the counterfactual as a quality guarantee | It shows which model the router would pick, not that the answer would be as good |
 | Estimating savings by hand when `analyze` stops | Report the failing check; the numbers come only from `report.json` |
 | Passing `--yes` before the user has seen the decision cost | Run once without it and relay the cost |
-| Answering from `report.json` without running `render` | Always render; share `report.html` |
+| Answering from `report.json` without running `render` | Always render and share `report.html`, unless the caller asked for `--json` |

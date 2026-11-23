@@ -4,7 +4,7 @@
   "type": "object",
   "required": ["schema_version", "generated_at", "workspace", "status", "stop", "params", "checks"],
   "properties": {
-    "schema_version": {"const": "1.1"},
+    "schema_version": {"const": "1.2"},
     "generated_at": {"type": "string"},
     "workspace": {"type": ["string", "null"]},
     "status": {"enum": ["ok", "stopped"]},
@@ -12,6 +12,52 @@
       "type": ["object", "null"],
       "required": ["check", "numbers"],
       "properties": {"check": {"type": "string"}, "numbers": {"type": "object"}}
+    },
+    "summary": {
+      "description": "Written by analyze on a finished run: the headline numbers the page shows and the per-model plan for the recommended lever. render reads these; it does not recompute them.",
+      "type": "object",
+      "required": ["window", "spend_per_month", "scope", "coverage", "recommended", "levers_overlap", "router", "switch",
+                   "recommendations", "caching"],
+      "properties": {
+        "spend_per_month": {"type": ["number", "null"]},
+        "recommended": {"enum": ["router", "switch", null]},
+        "levers_overlap": {"type": "boolean"},
+        "router": {
+          "type": "object",
+          "required": ["pct_of_spend", "per_month", "ci90_per_month", "enable", "routers"],
+          "properties": {
+            "pct_of_spend": {"type": ["number", "null"]}, "per_month": {"type": ["number", "null"]},
+            "ci90_per_month": {"type": ["array", "null"], "items": {"type": "number"}},
+            "enable": {"type": "array", "items": {"type": "string"}},
+            "routers": {"type": "array", "items": {"type": "object", "required": ["model", "key", "pool"]}}
+          }
+        },
+        "switch": {
+          "type": "object",
+          "required": ["pct_of_spend", "per_month", "ci90_per_month", "enable", "replacements"],
+          "properties": {
+            "pct_of_spend": {"type": ["number", "null"]}, "per_month": {"type": ["number", "null"]},
+            "ci90_per_month": {"type": ["array", "null"], "items": {"type": "number"}},
+            "enable": {"type": "array", "items": {"type": "string"}},
+            "replacements": {"type": "array", "items": {"type": "object", "required": ["model", "to"]}}
+          }
+        },
+        "recommendations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["model", "action", "router_key", "targets", "enable", "spend_per_month", "saved_per_month",
+                         "pct_of_model_spend", "saved_today_per_month", "saved_after_enabling_per_month",
+                         "sampled_calls", "small_sample", "mostly_hard"],
+            "properties": {
+              "action": {"enum": ["router", "switch", "keep"]},
+              "router_key": {"type": ["string", "null"]},
+              "targets": {"type": "array", "items": {"type": "object", "required": ["model", "share_of_calls"]}},
+              "enable": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        }
+      }
     },
     "params": {
       "type": "object",

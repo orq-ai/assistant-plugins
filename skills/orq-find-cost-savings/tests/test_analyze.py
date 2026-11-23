@@ -101,7 +101,7 @@ class FakeOrq:
 
 def ns(tmp_path, **kw):
     d = {"workspace": "demo", "out": str(tmp_path), "sample": 10, "counterfactual_test": False, "cache_threads": 5,
-         "seed": 7, "redact": False, "yes": True, "window": 30}
+         "seed": 7, "redact": False, "yes": True, "window": 30, "json": False}
     d.update(kw)
     return argparse.Namespace(**d)
 
@@ -361,7 +361,7 @@ def test_a_model_without_a_smart_router_score_is_never_a_target(tmp_path):
 
 def test_report_has_no_quality_profile_and_a_minor_schema_version(tmp_path):
     _, rep = run(tmp_path)
-    assert rep["schema_version"] == "1.1"
+    assert rep["schema_version"] == "1.2"
     assert set(rep["routing"]["profiles"]) == {"balanced", "cost"}
     assert all(set(s["router"]) == {"balanced", "cost"} for s in rep["scenarios"])
 
@@ -388,3 +388,42 @@ def test_hero_tags_the_bigger_lever_and_small_samples_get_a_note(tmp_path):
     hero = page.split("<section class=hero")[1].split("<h2 id=do>")[0]
     assert hero.count("<span class=rec>Recommended</span>") == 1
     assert "Small sample: 10 calls." in page.split("<h2 id=do>")[1].split("<h2 id=scopes>")[0]
+
+
+def test_summary_holds_the_headline_numbers_and_recommendations(tmp_path):
+    _, rep = run(tmp_path)
+    s = rep["summary"]
+    head = next(sc for sc in rep["scenarios"] if sc["headline"])
+    assert s["router"]["per_month"] == rep["routing"]["headline"]["per_month"]
+    assert s["switch"]["per_month"] == head["switch"]["per_month"]
+    assert s["router"]["pct_of_spend"] == pytest.approx(s["router"]["per_month"] / rep["spend"]["per_month"])
+    assert s["recommended"] in ("router", "switch")
+    sol = next(r for r in s["recommendations"] if r["model"] == SOL)
+    assert sol["action"] == s["recommended"] and sol["saved_per_month"] > 0 and sol["targets"]
+    assert sol["saved_today_per_month"] + sol["saved_after_enabling_per_month"] == pytest.approx(sol["saved_per_month"])
+    assert sol["small_sample"] and sol["sampled_calls"] == 10
+    if sol["action"] == "router":
+        assert sol["router_key"] == s["router"]["routers"][0]["key"]
+
+
+def test_render_reads_the_stored_summary(tmp_path):
+    run(tmp_path)
+    rep = json.loads((tmp_path / "report.json").read_text())
+    rep["summary"]["router"]["pct_of_spend"] = 0.77  # a stored figure the page must show, not recompute
+    rep["summary"]["recommended"] = "router"
+    (tmp_path / "report.json").write_text(json.dumps(rep))
+    narrative = tmp_path / "narrative.md"
+    narrative.write_text("## summary\n\nx\n\n## routing\n\nx\n\n## caching\n\nx\n\n## caveats\n\nx\n")
+    assert c.main(["render", "--out", str(tmp_path), "--narrative", str(narrative)]) == 0
+    assert "77%" in (tmp_path / "report.html").read_text().split("<h2 id=do>")[0]
+    del rep["summary"]
+    (tmp_path / "report.json").write_text(json.dumps(rep))
+    with pytest.raises(SystemExit, match="no summary"):
+        c.main(["render", "--out", str(tmp_path), "--narrative", str(narrative)])
+
+
+def test_json_flag_prints_the_summary_and_skips_the_narrative(tmp_path, capsys):
+    run(tmp_path, json=True)
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "ok" and out["summary"]["recommendations"]
+    assert not (tmp_path / "narrative-slots.md").exists()

@@ -39,7 +39,7 @@ from typing import Any
 
 from evaluatorq.common import model_frontier as mf
 
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
 MAX_SAMPLE = 100
 MIN_PER_STRATUM = 5
 WINDOW_DAYS = 30
@@ -1507,7 +1507,13 @@ class Analyzer:
     # ---- output
 
     def write(self) -> None:
+        if self.report["status"] == "ok" and "routing" in self.report:
+            items = list(self.report.items())  # summary right after the run header, before the bulky sections
+            self.report = dict(items[:5] + [("summary", summary(self.report))] + items[5:])
         (self.out / "report.json").write_text(json.dumps(self.report, indent=1, default=str))
+        if self.args.json:
+            print(json.dumps({k: self.report.get(k) for k in ("status", "stop", "summary")}, default=str))
+            return
         slots = "\n\n".join(f"## {s}\n\n<!-- {h} -->\n" for s, h in SLOTS.items())
         (self.out / "narrative-slots.md").write_text(
             "# Narrative slots\n\nCopy this file to narrative.md and replace each comment with prose. Quote numbers "
@@ -2149,6 +2155,42 @@ def _waterfall(spend: float, now_v: float, more_v: float, left_v: float, how: st
     return f"<div class=wf role=img aria-label='{html.escape(aria)}'>{''.join(cols)}</div>"
 
 
+def summary(report: dict) -> dict:
+    """The page's headline numbers and plan, for a caller that uses report.json without rendering the page."""
+    head = _headline(report)
+    spend_pm = (report.get("spend") or {}).get("per_month")
+    r, w = (head.get("router") or {}).get("balanced") or {}, head.get("switch") or {}
+    r_pm, w_pm = ((report.get("routing") or {}).get("headline") or {}).get("per_month"), w.get("per_month")
+    rec = "router" if r_pm is not None and (w_pm is None or r_pm >= w_pm) else "switch" if w_pm is not None else None
+    rp, wp = _setup_plan(report, "router"), _setup_plan(report, "switch")
+    ca = report.get("caching") or {}
+    total = (report.get("spend") or {}).get("total")
+    per_month = spend_pm / total if total and spend_pm else 30 / max(1, report["window"]["days"])
+    keys = {m["model"]: m["key"] for m in rp["moves"]}
+    recs = []
+    for x in _plan_rows(report, per_month, rec or "router"):
+        act = x["lever"] if x["saved"] > 0 and x["lever"] in ("router", "switch") else "keep"
+        recs.append({"model": x["model"], "action": act, "router_key": keys.get(x["model"]) if act == "router" else None,
+                     "targets": [{"model": b["model"], "share_of_calls": b["share"]} for b in x["branches"]
+                                 if not b["stays"]] if act != "keep" else [],
+                     "enable": x["enable"] if act != "keep" else [],
+                     "spend_per_month": x["spend"], "saved_per_month": x["saved"],
+                     "pct_of_model_spend": _of(x["saved"], x["spend"]),
+                     "saved_today_per_month": x["today"], "saved_after_enabling_per_month": x["after"],
+                     "sampled_calls": x["n"], "small_sample": x["n"] < MIN_SAMPLE, "mostly_hard": x["hard"] is not None})
+    return {"window": {k: report["window"].get(k) for k in ("from", "to", "days")}, "spend_per_month": spend_pm,
+            "scope": head.get("scope"), "coverage": r.get("coverage"), "recommended": rec,
+            "levers_overlap": _ranges_overlap(head),
+            "router": {"pct_of_spend": _of(r_pm, spend_pm), "per_month": r_pm,
+                       "ci90_per_month": r.get("ci90_per_month"), "enable": rp["enable"],
+                       "routers": [{k: m[k] for k in ("model", "key", "pool")} for m in rp["moves"]]},
+            "switch": {"pct_of_spend": _of(w_pm, spend_pm), "per_month": w_pm,
+                       "ci90_per_month": w.get("ci90_per_month"), "enable": wp["enable"],
+                       "replacements": [{k: m[k] for k in ("model", "to")} for m in wp["moves"]]},
+            "recommendations": recs,
+            "caching": {"threads_scanned": ca.get("threads_scanned"), "savings_found": ca.get("savings_found")}}
+
+
 def _ranges_overlap(head: dict) -> bool:
     """Whether the 90% ranges of the two levers' monthly savings overlap (a rough, conservative test: both come
     from the same sampled calls, so a paired comparison would separate them sooner)."""
@@ -2545,13 +2587,16 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
     missing = [s for s in SLOTS if not narrative.get(s)]
     if missing:
         raise SystemExit(f"narrative slots empty: {', '.join(missing)}")
+    if "summary" not in report:
+        raise SystemExit("report.json has no summary; rerun analyze")
+    S = report["summary"]
     sp, ro, ca = report.get("spend") or {}, report.get("routing") or {}, report.get("caching") or {}
     win = report["window"]
     ws = str(report.get("workspace"))
     total = sp.get("total") or 0
     per_month = (sp["per_month"] / total) if total and sp.get("per_month") else 30 / max(1, win["days"])
     h = ro.get("headline") or {}
-    h_pm = h.get("per_month")
+    h_pm = S["router"]["per_month"]
     scen = _scenario_rows(report)
     head_row = next((r for r in scen if r["headline"]), {})
     enabled = next((r for r in scen if r["scope"].startswith(SCOPE_LABEL["same_provider:enabled"])), {})
@@ -2559,13 +2604,13 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
     cov = h.get("coverage")
     caching_small = (ca.get("savings_found") or 0) < 1
 
-    spend_pm = sp.get("per_month")
+    spend_pm = S["spend_per_month"]
     e_pm = enabled.get("router")
     first = re.split(r"\n\s*\n", narrative["summary"].strip())[0]
     verdict = html.escape(" ".join(first.split()))
-    sw_pm = head_row.get("switch")
-    p_router, p_switch = _of(h_pm, spend_pm), _of(sw_pm, spend_pm)
-    rec = "r" if h_pm is not None and (sw_pm is None or h_pm >= sw_pm) else "s" if sw_pm is not None else ""
+    sw_pm = S["switch"]["per_month"]
+    p_router, p_switch = S["router"]["pct_of_spend"], S["switch"]["pct_of_spend"]
+    rec = {"router": "r", "switch": "s"}.get(S["recommended"], "")
     # the spend bar and the plan follow the recommended lever
     plan_pm, plan_e = (sw_pm, enabled.get("switch")) if rec == "s" else (h_pm, e_pm)
     bar = ""
@@ -2676,6 +2721,9 @@ def main(argv: list[str] | None = None) -> int:
     an.add_argument("--seed", type=int, default=1917)
     an.add_argument("--redact", action="store_true", help="leave ask examples out of report.json")
     an.add_argument("--yes", action="store_true", help="skip the decision-cost confirmation")
+    an.add_argument("--json", action="store_true",
+                    help="print status and summary as JSON on stdout and skip the narrative slots; for callers "
+                         "that use report.json without rendering the page")
     rn = sub.add_parser("render", help="merge narrative.md into report.html")
     rn.add_argument("--out", required=True)
     rn.add_argument("--narrative", required=True)
