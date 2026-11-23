@@ -36,11 +36,6 @@
       "sourceType": "github",
       "computedHash": "34b1df153792acfb68ad05bcd67edd3d99d9c2f4858dc6f8095e2ca7907a5d26"
     },
-    "orq-cost-savings-report": {
-      "source": "orq-ai/assistant-plugins",
-      "sourceType": "github",
-      "computedHash": "b9f93d7b3cac1b5c15bc5a4235c9d9d65d6038ad2a769f1be351588713a5c188"
-    },
     "orq-create-skill": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
@@ -50,6 +45,11 @@
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
       "computedHash": "2080dee4ad657bb8a775030bea1b9bafe2509a6a4cc081bb7b2870f7e39806b4"
+    },
+    "orq-find-cost-savings": {
+      "source": "orq-ai/assistant-plugins",
+      "sourceType": "github",
+      "computedHash": "4333be6004ea218760debd6ee7425e1d21f31ac3b8650bcc92026ce836c70ee1"
     },
     "orq-generate-synthetic-dataset": {
       "source": "orq-ai/assistant-plugins",

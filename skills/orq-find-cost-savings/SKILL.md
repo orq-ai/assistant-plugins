@@ -1,9 +1,9 @@
 ---
-name: orq-cost-savings-report
+name: orq-find-cost-savings
 description: Use when a customer or teammate asks where an orq.ai workspace could save on LLM spend or token cost, wants a cost-savings report from their traces, asks whether a cheaper model or the Smart Router would have handled their traffic, or asks which agents miss prompt caching.
 ---
 
-# orq cost savings report
+# orq find cost savings
 
 ## Overview
 

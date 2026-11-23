@@ -1,8 +1,8 @@
-id: cost-savings-report-fires
-skill: orq-cost-savings-report
+id: find-cost-savings-fires
+skill: orq-find-cost-savings
 kind: invocation
 prompt: Where could our orq workspace save on LLM spend? Would the Smart Router have been cheaper for our traffic?
-expect_skill: orq-cost-savings-report
+expect_skill: orq-find-cost-savings
 runs: 3
 pass_threshold: 0.66  # 2 of 3
 max_turns: 2

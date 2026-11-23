@@ -1,4 +1,4 @@
-# orq-cost-savings-report: design
+# orq-find-cost-savings: design
 
 Spec for `scripts/cost_savings_report.py`. Statements marked **V** were checked against the live orq API and `orq` CLI. Where the script differs from the first draft of this spec, the section says so.
 
@@ -20,7 +20,7 @@ Spec for `scripts/cost_savings_report.py`. Statements marked **V** were checked 
 ## Layout
 
 ```
-skills/orq-cost-savings-report/
+skills/orq-find-cost-savings/
   SKILL.md
   resources/design.md            this file
   resources/report.schema.json   output contract

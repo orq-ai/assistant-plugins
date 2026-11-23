@@ -200,7 +200,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 | **orq-cli** | Drive the `orq` command-line interface — install check, auth, workspace selection, `orq doctor` troubleshooting, and read/write commands with JSON output and JMESPath queries | [SKILL.md](skills/orq-cli/SKILL.md) |
 | **orq-build-benchmark** | Turn a team's own work into a custom orq benchmark — interview the user, stage real task instances, build an orq dataset and evaluators, and run candidate models with evaluatorq, graded against known answers | [SKILL.md](skills/orq-build-benchmark/SKILL.md) |
 | **orq-quickstart** | Onboarding in any coding agent — API key, MCP registration for your harness, a verified workspace read, a snapshot, and a first task | [SKILL.md](skills/orq-quickstart/SKILL.md) |
-| **orq-cost-savings-report** | Estimate what a workspace would save from Smart Router routing and prompt caching, from a sample of its own traces, with a confidence interval and coverage | [SKILL.md](skills/orq-cost-savings-report/SKILL.md) |
+| **orq-find-cost-savings** | Estimate what a workspace would save from Smart Router routing and prompt caching, from a sample of its own traces, with a confidence interval and coverage | [SKILL.md](skills/orq-find-cost-savings/SKILL.md) |
 | **orq-trace-format** | Show traces and spans as clickable Studio links instead of raw trace ids — URL shape, workspace key and host, and the "opens empty" fix | [SKILL.md](skills/orq-trace-format/SKILL.md) |
 <!-- END_SKILLS_TABLE -->
 

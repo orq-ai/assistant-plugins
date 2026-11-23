@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "orq-cost-savings-report report.json",
+  "title": "orq-find-cost-savings report.json",
   "type": "object",
   "required": ["schema_version", "generated_at", "workspace", "status", "stop", "params", "checks"],
   "properties": {

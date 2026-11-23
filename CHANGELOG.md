@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `orq-cost-savings-report` skill (RES-1917): estimates what a workspace would save from Smart Router routing (`jev-general-v1`), switching off dominated models, and prompt caching, from a sample of its own traces, with a 90% CI and coverage. `scripts/cost_savings_report.py` runs `analyze` (sampling, pricing, decision calls after a cost confirmation, estimator, caching scan) and `render` (merges the agent's narrative into HTML); `resources/report.schema.json` is the output contract and `resources/design.md` the spec.
+- `orq-find-cost-savings` skill (RES-1917): estimates what a workspace would save from Smart Router routing (`jev-general-v1`), switching off dominated models, and prompt caching, from a sample of its own traces, with a 90% CI and coverage. `scripts/cost_savings_report.py` runs `analyze` (sampling, pricing, decision calls after a cost confirmation, estimator, caching scan) and `render` (merges the agent's narrative into HTML); `resources/report.schema.json` is the output contract and `resources/design.md` the spec.
 
 ## [5.2.0] - 2026-11-19
 

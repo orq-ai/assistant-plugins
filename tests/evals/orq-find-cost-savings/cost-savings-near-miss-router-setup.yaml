@@ -1,5 +1,5 @@
 id: cost-savings-near-miss-router-setup
-skill: orq-cost-savings-report
+skill: orq-find-cost-savings
 kind: invocation
 prompt: Create a Smart Router in my orq workspace with gpt-6-luna and claude-sonnet-5-5 in the pool.
 expect_skill: orq-cli
