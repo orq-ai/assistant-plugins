@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.3.0] - 2026-11-23
+
+### Added
+
+- `orq-run-experiment`: the orq.ai Experiments API (`/v3/experiments`) is now a documented way to run experiments, next to the `create_experiment` MCP tool. `resources/api-reference.md` walks through the full flow (create, prompt and agent task columns, evaluator columns, execute and poll, metrics and per-cell results, a new run compared to a baseline with `baseline_run_id`), and steps 8 and 9 say when to pick the API over MCP.
+- `orq-compare-agents`: new Phase 4A compares orq.ai agents through the Experiments API, one agent task column per agent in a single run, with no evaluatorq script. External agents still use evaluatorq.
+
+### Changed
+
+- Both skills allow `curl` against `https://my.orq.ai/v3/experiments*` in `allowed-tools`.
+
 ## [5.2.0] - 2026-11-19
 
 ### Added

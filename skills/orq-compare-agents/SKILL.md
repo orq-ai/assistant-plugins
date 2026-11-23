@@ -4,10 +4,12 @@ description: >
   Run cross-framework agent comparisons using evaluatorq from orqkit — compares
   any combination of agents (orq.ai, LangGraph, CrewAI, OpenAI Agents SDK,
   Vercel AI SDK) head-to-head on the same dataset with LLM-as-a-judge scoring.
+  When every agent is an orq.ai agent, runs the comparison through the orq.ai
+  Experiments API instead (one agent column per agent, no script).
   Use when comparing agents, benchmarking, or wanting side-by-side evaluation.
-  Do NOT use when comparing only orq.ai configurations with no external agents
-  (use orq-run-experiment instead).
-allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__create_dataset, mcp__orq-workspace__create_datapoints, mcp__orq-workspace__create_llm_eval
+  Do NOT use when comparing only orq.ai prompt or model configurations with no
+  agents (use orq-run-experiment instead).
+allowed-tools: Read, Write, Edit, Grep, Glob, Bash(curl -s https://my.orq.ai/v3/experiments*), Bash(curl -s --get https://my.orq.ai/v3/experiments*), Bash(curl -s -X PATCH https://my.orq.ai/v3/experiments*), WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__create_dataset, mcp__orq-workspace__create_datapoints, mcp__orq-workspace__create_llm_eval
 ---
 
 # Compare Agents
@@ -53,7 +55,7 @@ Agent Comparison Progress:
 - [ ] Phase 1: Identify agents, frameworks, and language (Python/TS)
 - [ ] Phase 2: Create dataset (→ orq-generate-synthetic-dataset)
 - [ ] Phase 3: Create evaluator (→ orq-build-evaluator)
-- [ ] Phase 4: Generate comparison script
+- [ ] Phase 4: Generate comparison script (or 4A: Experiments API when all agents are orq.ai agents)
 - [ ] Phase 5: Run and view results in orq.ai
 ```
 
@@ -75,7 +77,7 @@ Agent Comparison Progress:
 
 - Just need a dataset? → `orq-generate-synthetic-dataset`
 - Just need an evaluator? → `orq-build-evaluator`
-- Comparing orq.ai configurations only (no external agents)? → `orq-run-experiment`
+- Comparing orq.ai prompt or model configurations only (no agents)? → `orq-run-experiment`
 - Need to identify failure modes first? → `orq-analyze-traces`
 
 ## Resources
@@ -88,7 +90,7 @@ Agent Comparison Progress:
 
 > **Official documentation:** [Evaluatorq Tutorial](https://docs.orq.ai/docs/tutorials/evaluator-q)
 
-[Experiments](https://docs.orq.ai/docs/experiments/creating) · [Evaluators](https://docs.orq.ai/docs/evaluators/overview) · [Agent Responses API](https://docs.orq.ai/reference/responses/create-response) · [Datasets](https://docs.orq.ai/docs/datasets/overview)
+[Experiments](https://docs.orq.ai/docs/experiments/creating) · [Experiments API](https://docs.orq.ai/reference/experiments/create-an-experiment) · [Evaluators](https://docs.orq.ai/docs/evaluators/overview) · [Agent Responses API](https://docs.orq.ai/reference/responses/create-response) · [Datasets](https://docs.orq.ai/docs/datasets/overview)
 
 ### Key Concepts
 
@@ -132,7 +134,9 @@ Agent Comparison Progress:
    - Verify import paths, API endpoints, or local availability
    - Test each agent independently before proceeding
 
-4. **Ask the user's language preference**: Python or TypeScript. Default to Python if no preference.
+4. **Pick the execution path:**
+   - **Every agent is an orq.ai agent** → use the **Experiments API** path (Phase 4A). No script: one agent task column per agent in the same run, so all agents get the same rows and the same evaluators, and the comparison lives in the orq.ai Experiment UI.
+   - **Any agent is external** (LangGraph, CrewAI, OpenAI Agents SDK, Vercel AI SDK, an HTTP endpoint) → use the **evaluatorq** path (Phase 4). Ask the user's language preference: Python or TypeScript. Default to Python if no preference.
 
 ### Phase 2: Create Dataset
 
@@ -149,6 +153,19 @@ Agent Comparison Progress:
 6. **Delegate to `orq-build-evaluator`** to create an LLM-as-a-judge evaluator. Save the returned evaluator ID.
 
    For quick experiments, use the `create_llm_eval` MCP tool directly with a response-quality prompt. Ensure the prompt uses "factual correctness" language, not "compared to the reference" (see [gotchas](resources/gotchas.md)).
+
+### Phase 4A: Compare orq.ai agents with the Experiments API
+
+Use this instead of Phases 4 and 5 when every agent is an orq.ai agent. Full requests and response fields: [orq-run-experiment API reference § Experiments API](../orq-run-experiment/resources/api-reference.md#experiments-api-v3).
+
+1. **Create the experiment** with the dataset from Phase 2: `POST /v3/experiments` with `display_name` and `dataset_id`. Keep `experiment_id` and `selected_run_id`.
+2. **Add one agent task column per agent:** `POST /v3/experiments/{experiment_id}/runs/{run_id}/tasks` with `{"display_name": "<agent label>", "agent": {"agent_key": "<key>", "messages_source": "MESSAGES_SOURCE_PROMPT_CONFIG", "messages": [{"role": "user", "content": "{{<input variable>}}"}]}}`. For multi-turn datasets use `"messages_source": "MESSAGES_SOURCE_MESSAGES_COLUMN"` and no `messages`.
+3. **Add the evaluator(s) from Phase 3** once: `POST .../runs/{run_id}/evaluators` with `{"evaluator_id": "<id>"}`. Every evaluator scores every agent column, which keeps scoring fair.
+4. **Execute** with `{"scope": "EXECUTE_SCOPE_FULL"}` on `.../execute`, then poll `GET .../runs/{run_id}` until `status` is `RUN_STATUS_COMPLETED`. If `cell_status_counts.failed` is above zero, inspect those cells, fix the cause, and re-run with `EXECUTE_SCOPE_PARTIAL`.
+5. **Compare:** `GET .../runs/{run_id}/metrics` returns one entry per agent column and evaluator (`{task_column_id}_{evaluator_id}`), plus `_orq_cost` and `_orq_latency` per agent. Present pass rate (or average score), total cost and median latency per agent, then use `POST .../runs/{run_id}/query` to read the outputs and `trace_id`s behind the losing rows.
+6. **Adding an agent later:** add its column to the same run and execute with `EXECUTE_SCOPE_PARTIAL`, so only the new cells run and the existing agents are not re-billed.
+
+Then continue at step 12 (view results) and step 14 (iterate).
 
 ### Phase 4: Generate Comparison Script
 

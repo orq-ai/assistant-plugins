@@ -6,7 +6,7 @@ description: >
   Use when evaluating LLM agents, deployments, conversations, or RAG pipelines
   end-to-end. Do NOT use without a dataset and evaluators. Do NOT use for
   cross-framework comparisons with external agents (use orq-compare-agents).
-allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, mcp__orq-workspace__list_experiment_runs, mcp__orq-workspace__get_experiment_run, mcp__orq-workspace__search_entities, mcp__orq-workspace__list_datapoints, mcp__orq-workspace__search_docs
+allowed-tools: Read, Write, Edit, Grep, Glob, Bash(curl -s https://my.orq.ai/v3/experiments*), Bash(curl -s --get https://my.orq.ai/v3/experiments*), Bash(curl -s -X PATCH https://my.orq.ai/v3/experiments*), Task, AskUserQuestion, mcp__orq-workspace__list_experiment_runs, mcp__orq-workspace__get_experiment_run, mcp__orq-workspace__search_entities, mcp__orq-workspace__list_datapoints, mcp__orq-workspace__search_docs
 ---
 
 # Run Experiment
@@ -179,16 +179,16 @@ Consult these docs as needed:
 
 ### Phase 3: Measure — Run the Experiment
 
-8. **Create and run the experiment** on orq.ai using `create_experiment` MCP tool:
-   - Link the dataset and evaluator(s)
-   - Select the target model/deployment
-   - Configure system prompt (if testing prompt variations)
-   - Run and wait for completion
+8. **Create and run the experiment.** Pick the interface first:
+   - **`create_experiment` MCP tool** for a one-off experiment from this conversation: link the dataset and evaluator(s), select the target model/deployment, set the system prompt if testing prompt variations, run and wait.
+   - **Experiments API (v3)** when the experiment must be repeatable without an agent present (script, CI, cron), when the task is an orq.ai agent, when several prompts or agents run side by side in one grid, or when the next iteration should be a new run compared against this one. Follow [resources/api-reference.md § Experiments API](resources/api-reference.md#experiments-api-v3): create the experiment with the dataset, add task columns (`prompt` or `agent`), add evaluator columns by ID, `execute` with `EXECUTE_SCOPE_FULL`, and poll the run until `RUN_STATUS_COMPLETED`.
+   - Either way, confirm the run has no failed cells (`cell_status_counts.failed` in the API) before reading scores; retry failures with `EXECUTE_SCOPE_PARTIAL`.
 
-9. **Collect results** using `get_experiment_run` and `list_experiment_runs` MCP tools:
-   - Retrieve experiment run results — use `list_experiment_runs` to find the latest run, then `get_experiment_run` for detailed per-datapoint scores
-   - Extract per-datapoint scores and overall metrics
-   - Note the run cost for budget tracking
+9. **Collect results.**
+   - MCP: use `list_experiment_runs` to find the latest run, then `get_experiment_run` for detailed per-datapoint scores.
+   - API: `GET .../runs/{run_id}/metrics` for pass rates, averages, cost and latency per task column, and `POST .../runs/{run_id}/query` for per-row outputs and trace ids.
+   - Extract per-datapoint scores and overall metrics, and note the run cost for budget tracking.
+   - On a re-run (compared in step 12), create a new run in the same experiment and read its metrics with `baseline_run_id` set to the previous run, so the deltas come from the API instead of hand comparison.
 
 ### Phase 4: Act — Analyze Results, Plan Improvements, File Tickets
 
@@ -386,5 +386,5 @@ Is the average score above your threshold?
 
 ## Documentation & Resolution
 
-**Lookup order: [`doc-resolution.md`](../orq-shared/resources/doc-resolution.md).** Live queries first — for this skill that means `mcp__orq-workspace__create_experiment`, `get_experiment_run`, `list_experiment_runs`.
+**Lookup order: [`doc-resolution.md`](../orq-shared/resources/doc-resolution.md).** Live queries first — for this skill that means `mcp__orq-workspace__create_experiment`, `get_experiment_run`, `list_experiment_runs`, or the Experiments API (`/v3/experiments`, see [resources/api-reference.md](resources/api-reference.md#experiments-api-v3)).
 
