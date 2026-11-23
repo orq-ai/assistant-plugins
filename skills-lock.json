@@ -39,7 +39,7 @@
     "orq-cost-savings-report": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "73935c68c45db6cf9bd6787ef00f557b31094ed4462eda308595a21523c8f601"
+      "computedHash": "0f1eb90551fbbd6c4a7def9f6666a8529de6e9eb65729de533bdb7c948054fae"
     },
     "orq-create-skill": {
       "source": "orq-ai/assistant-plugins",
