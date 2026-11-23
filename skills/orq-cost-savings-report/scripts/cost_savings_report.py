@@ -1745,13 +1745,13 @@ list-style:none}
 .r{background:var(--s1)}.s{background:var(--s2)}
 .caveat{margin:12px 0 0;font-size:13px}
 .chart{margin:12px 0 0}
-.row{display:grid;grid-template-columns:minmax(0,2.2fr) minmax(0,1fr) 7em;gap:6px 16px;align-items:start;
+.row{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1.15fr) 6.5em;gap:6px 16px;align-items:start;
 padding:12px 0;border-bottom:1px solid var(--line)}
 .row:first-child{padding-top:0}.row:last-child{border-bottom:0;padding-bottom:0}
 .who{min-width:0}
 .who>span{display:block;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
 .who>span:first-of-type{margin-top:8px}
-.flow{display:grid;grid-template-columns:11em auto minmax(0,1fr);align-items:center;min-width:0;
+.flow{display:grid;grid-template-columns:10em auto minmax(0,1fr);align-items:center;min-width:0;
 --lv:var(--fg2);--chip-h:25px}
 .chip{display:inline-flex;align-items:center;gap:6px;height:var(--chip-h);border:1px solid var(--line);
 background:var(--card);border-radius:4px;padding:0 8px;font-size:13px;font-weight:500;line-height:1.3;
@@ -1767,11 +1767,8 @@ line-height:calc(var(--chip-h) - 2px);background:var(--panel);color:var(--fg2)}
 .flow.switch .link::after{content:"";position:absolute;right:-6px;top:-4px;border:5px solid transparent;
 border-left:6px solid var(--lv);border-right:0}
 .to{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;min-width:0}
-.to li{display:flex;flex-wrap:nowrap;position:relative;min-width:0}
-.br{display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;min-width:0}
-.meta{display:inline-flex;align-items:center;gap:6px}
-.share{display:inline-block;flex:none;width:32px;height:4px;border-radius:2px;
-background:linear-gradient(90deg,var(--fg2) calc(var(--p)*100%),var(--ns) 0)}
+.to li{display:flex;flex-wrap:nowrap;align-items:center;gap:8px;position:relative;min-width:0}
+.to li small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .to.fork li{padding-left:16px}
 .to.fork li::before{content:"";position:absolute;left:0;top:calc(var(--chip-h)/2 - 1px);width:12px;height:2px;
 background:var(--lv)}
@@ -1787,7 +1784,14 @@ border-left:5px solid var(--fg2);border-right:0}
 .lk.dash{width:16px;height:10px;background:none;border:1px dashed var(--s1);border-radius:3px}
 .val,.kpis,.cell,.legend,.num,td,th{font-variant-numeric:tabular-nums}
 .who span.hard{color:var(--muted);font-weight:400}
-.track{display:flex;gap:2px;height:6px;align-items:stretch;margin-top:8px}
+.track{display:flex;gap:2px;height:6px;align-items:stretch;margin-top:10px}
+.bx{min-width:0}
+.legend.mini{margin:6px 0 0;gap:2px 12px;font-size:12px;color:var(--muted)}
+.wf{display:flex;gap:28px;align-items:flex-start}.wc{flex:0 0 112px;min-width:0}
+.wp{position:relative;height:140px;width:56px}.wp i{position:absolute;left:0;right:0;min-height:2px;border-radius:2px}
+.wp i.tot{background:var(--fg2)}.wp i.sr{background:var(--s1)}.wp i.sr2{background:var(--hl2)}
+.cn{position:absolute;left:100%;width:84px;border-top:1px dashed var(--muted)}
+.wc p{margin:8px 0 0;font-size:12px;color:var(--muted)}.wc b,.wc span{display:block}.wc b{font-size:16px;color:var(--fg)}
 .track i{display:block;min-width:3px;border-radius:2px}
 .track i.kept{min-width:0}
 .foot{margin:8px 0 0;font-size:13px}
@@ -1843,9 +1847,11 @@ white-space:pre-wrap;overflow-wrap:anywhere;max-height:12em;overflow:auto}
 .hero .verdict{font-size:16px}
 .card>.cb{--pad:12px}
 .row{grid-template-columns:minmax(0,1fr) auto;padding:12px 0}
-.who{grid-column:1/-1}.track{grid-column:1;grid-row:2}.val{grid-row:2}
+.who{grid-column:1/-1}.bx{grid-column:1;grid-row:2}.val{grid-row:2}
+.wf{gap:8px}.wc{flex:1 1 0}.cn{width:calc(25vw - 40px)}.wp{height:110px;width:40px}.wc b{font-size:14px}
 .flow{grid-template-columns:9.5em auto minmax(0,1fr);--chip-h:23px}
 .chip{font-size:12px;padding:0 6px}.chip em{font-size:10px}.to small{font-size:11px}
+.to li{flex-wrap:wrap;gap:2px 8px}.to li small{white-space:normal}.to.fork li::after{bottom:-5px}
 dl.gl{grid-template-columns:1fr}dl.gl dd{margin-bottom:8px}
 }
 """
@@ -2074,23 +2080,43 @@ def _flow_html(r: dict) -> str:
     items = []
     for b in r["branches"]:
         cls = "chip" + (" new" if b["enable"] else "") + (" same" if b["stays"] else "")
-        meta = []
+        meta, title = [], b["model"]
         if len(r["branches"]) > 1:
             if b["share"] is not None:
-                meta.append(("<1%" if 0 < b["share"] < 0.005 else f"{b['share']:.0%}") + " of calls")
+                meta.append("<1%" if 0 < b["share"] < 0.005 else f"{b['share']:.0%}")
             if b["tiers"]:
                 meta.append(", ".join(t.capitalize() for t in b["tiers"]))
             if b["unscored"]:
-                meta.append(f"+{b['unscored']} ungraded")
+                title += f" \u00b7 {b['unscored']} ungraded call{'s' if b['unscored'] != 1 else ''}"
         tag = "<em>enable</em>" if b["enable"] else "<em>stays</em>" if b["stays"] else ""
-        bar = f"<i class=share style='--p:{b['share']:.2f}'></i>" if meta and b["share"] is not None else ""
-        text = html.escape(" \u00b7 ".join(meta))
-        small = f"<span class=meta>{bar}<small>{text}</small></span>" if meta else ""
-        items.append(f"<li><div class=br><span class='{cls}' title='{html.escape(b['model'])}'>"
-                     f"{html.escape(_short(b['model']))}{tag}</span>{small}</div></li>")
+        small = f"<small>{html.escape(' · '.join(meta))}</small>" if meta else ""
+        items.append(f"<li><span class='{cls}' title='{html.escape(title)}'>"
+                     f"{html.escape(_short(b['model']))}{tag}</span>{small}</li>")
     kind = "fork" if len(items) > 1 else "one"
     return (f"<div class='flow {r['lever']}' role=img aria-label='{html.escape(' '.join(r['lines']))}'>{src}"
             f"<span class=link></span><ul class='to {kind}'>{''.join(items)}</ul></div>")
+
+
+def _waterfall(spend: float, now_v: float, more_v: float, left_v: float, how: str) -> str:
+    """Vertical waterfall: today's bill, the saving with enabled models, the extra saving after enabling more
+    (dropped when zero), and the new bill. Steps are % of today's bill; a dashed line carries each level across."""
+    steps = [("tot", "Spend now", spend, 0.0, ""),
+             ("sr", "Saved today", now_v, 0.0, "\u2212"),
+             ("sr2", "After enabling", more_v, now_v, "\u2212"),
+             ("tot", "New bill", left_v, spend - left_v, "")]
+    steps = [s for s in steps if s[0] != "sr2" or more_v > 0]
+    cols = []
+    for i, (c, label, v, top, sign) in enumerate(steps):
+        h, y = _of(v, spend) or 0.0, _of(top, spend) or 0.0
+        nxt = None if i == len(steps) - 1 else (y if c == "tot" and i == 0 else y + h)
+        cn = f"<span class=cn style='top:{nxt * 100:.2f}%'></span>" if nxt is not None else ""
+        tip = html.escape(_tip(f"{label} with {how}" if sign else label, v, spend, "today's bill"))
+        cols.append(f"<div class=wc><div class=wp><i class={c} style='top:{y * 100:.2f}%;height:{h * 100:.2f}%' "
+                    f"tabindex=0 data-tip='{tip}'></i>{cn}</div><p><b>{sign}{_usd0(v)}</b>"
+                    f"<span>{label}</span><span>{_pc(h)}</span></p></div>")
+    aria = (f"{_usd0(spend)} a month now; {_usd0(now_v)} saved today, {_usd0(more_v)} more after enabling "
+            f"models, {_usd0(left_v)} a month after")
+    return f"<div class=wf role=img aria-label='{html.escape(aria)}'>{''.join(cols)}</div>"
 
 
 def _ranges_overlap(head: dict) -> bool:
@@ -2104,7 +2130,7 @@ def _ranges_overlap(head: dict) -> bool:
 def _plan_caption(lever: str, pct: float | None, pm: float | None) -> str:
     name = "change model" if lever == "switch" else "Smart Router"
     return (f"<p class=m>Recommended plan ({name}): one move per model. Together: {_pc(pct)} saved "
-            f"({_usd0(pm)}/mo). Bar length is the model's monthly spend.</p>")
+            f"({_usd0(pm)}/mo). Each bar is that model's monthly spend.</p>")
 
 
 def _tip(what: str, v: float, spend: float | None, of: str = "this model's spend") -> str:
@@ -2119,7 +2145,6 @@ def _actions_chart(report: dict, per_month: float, lever: str = "router") -> str
     nc_spend = sum(x.get("spend") or 0 for x in nc) * per_month
     drawn = [r for r in rows_in if r["saved"] > 0]
     kept = [r["model"] for r in rows_in if r["saved"] <= 0]
-    top = max([r["spend"] for r in drawn] + [1e-9])
     rows = []
     for r in drawn:
         seg = [("sr", r["today"]), ("sr2", r["after"]), ("kept", max(0.0, r["spend"] - r["saved"]))]
@@ -2127,9 +2152,14 @@ def _actions_chart(report: dict, per_month: float, lever: str = "router") -> str
         on = ", ".join(_short(x) for x in r.get("enable") or [])
         what = {"sr": f"Saved today with {how}", "sr2": f"Saved with {how} after enabling {on or 'models'}",
                 "kept": "Still spent"}
-        bars = "".join(f"<i class={c} style='width:{v / top * 100:.2f}%' tabindex=0 "
+        sp = r["spend"] or 1e-9
+        bars = "".join(f"<i class={c} style='flex:{v / sp:.4f} 1 0' tabindex=0 "
                        f"data-tip='{html.escape(_tip(what[c], v, r['spend']))}'></i>" for c, v in seg
-                       if v / top > (0.02 if c == "kept" else 0))
+                       if v / sp > (0.02 if c == "kept" else 0))
+        split = [("sr", f"{_pc(_of(r['today'], sp))} today", r["today"]),
+                 ("sr2", f"+{_pc(_of(r['after'], sp))} after enabling", r["after"])]
+        split_html = "".join(f"<li><span class='sw {c}'></span>{t} \u00b7 {_usd0(v)}</li>" for c, t, v in split
+                             if v > 0)
         pct = _of(r["saved"], r["spend"])
         tip = (f"{_short(r['model'])}: {_pc(_of(r['today'], r['spend']))} saved today, "
                f"{_pc(_of(r['after'], r['spend']))} more after enabling, of {_usd0(r['spend'])} a month")
@@ -2139,7 +2169,8 @@ def _actions_chart(report: dict, per_month: float, lever: str = "router") -> str
         if r["hard"] is not None:
             notes += "<span class=hard>Mostly hard work: spot-check answers before moving it.</span>"
         rows.append(f"<div class=row><div class=who>{_flow_html(r)}{notes}</div>"
-                    f"<div class=track role=img aria-label='{html.escape(tip)}'>{bars}</div>"
+                    f"<div class=bx><div class=track role=img aria-label='{html.escape(tip)}'>{bars}</div>"
+                    f"<ul class='legend mini'>{split_html}</ul></div>"
                     f"<div class=val><b>{_pc(pct)} saved</b>"
                     f"<span>{_usd0(r['saved'])} of {_usd0(r['spend'])}/mo</span></div></div>")
     legend = "<ul class=legend><li><span class='sw sr'></span>Saved today</li>"
@@ -2150,7 +2181,7 @@ def _actions_chart(report: dict, per_month: float, lever: str = "router") -> str
     if "switch" in levers:
         legend += "<li><span class='lk arrow'></span>Arrow: move all calls</li>"
     if "router" in levers:
-        legend += "<li><span class='lk fork'></span>Fork: Smart Router picks a model per call</li>"
+        legend += "<li><span class='lk fork'></span>Fork: Smart Router picks a model per call, % is its share of calls</li>"
     if any(r["enable"] for r in drawn):
         legend += "<li><span class='lk dash'></span>Dashed: enable this model in your orq.ai workspace first</li>"
     foot = "".join(f"<p class='m foot'>{html.escape(_short(m))}: keep, already the cheapest model that is as strong.</p>"
@@ -2442,20 +2473,7 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
     if spend_pm and plan_pm is not None and plan_e is not None:
         now_v, more_v = max(0.0, plan_e), max(0.0, plan_pm - plan_e)
         left_v = max(0.0, spend_pm - now_v - more_v)
-        segs = [("b1", now_v, "sr"), ("b2", more_v, "sr2"), ("b3", left_v, "kept")]
-        how = "Smart Router" if rec == "r" else "Change model"
-        names = {"b1": f"Saved today with {how}", "b2": f"Saved with {how} after enabling models", "b3": "Still spent"}
-        bars = "".join(f"<i class={c} style='flex:{v / spend_pm:.4f} 1 0' tabindex=0 data-tip='"
-                       f"{html.escape(_tip(names[c], v, spend_pm, 'your total spend'))}'></i>"
-                       for c, v, _ in segs if v > 0)
-        items = [("sr", f"{_pc(now_v / spend_pm)} saved today", now_v),
-                 ("sr2", f"+{_pc(more_v / spend_pm)} after enabling", more_v),
-                 ("kept", f"{_pc(left_v / spend_pm)} still spent", left_v)]
-        legend = "".join(f"<li><span class='sw {c}'></span>{t} \u00b7 {_usd0(v)}/mo</li>" for c, t, v in items
-                         if v > 0 or c == "sr")
-        bar = (f"<div class=bar role=img aria-label='{_pc(now_v / spend_pm)} saved today, {_pc(more_v / spend_pm)} "
-               f"more after enabling, of {_usd0(spend_pm)} a month spend'>{bars}</div>"
-               f"<ul class=legend>{legend}</ul>")
+        bar = _waterfall(spend_pm, now_v, more_v, left_v, "Smart Router" if rec == "r" else "Change model")
     adds = round((h_pm or 0) - (sw_pm or 0)) if h_pm is not None and sw_pm is not None else None
     pts = round((p_router - p_switch) * 100) if p_router is not None and p_switch is not None else 0
     if adds is None:

@@ -582,8 +582,8 @@ def test_flow_router_fork_shares_tiers_and_enable():
         ("openai/s", 0.75, ["medium", "hard"], False, True), ("openai/h", 0.25, ["easy"], True, False)]
     assert f["note"] == "Before enabling: change to m now, 25% saved ($12/mo)."
     out = c._flow_html({"model": "openai/s", "lines": ["x"], **f})
-    assert "class='to fork'" in out and "75% of calls \u00b7 Medium, Hard" in out and "<em>enable</em>" in out
-    assert "<em>stays</em>" in out and "--p:0.75" in out and "<div class=br>" in out
+    assert "class='to fork'" in out and "75% \u00b7 Medium, Hard" in out and "<em>enable</em>" in out
+    assert "<em>stays</em>" in out and "class=share" not in out  # one line per target, no mini bar
     assert "asks" not in out and out.count("<em>enable</em>") == 1
 
 
@@ -609,7 +609,7 @@ def test_flow_shares_weight_drawn_targets_only_and_fallbacks_get_no_tier():
     assert got["openai/h"]["tiers"] == ["hard"] and got["openai/h"]["unscored"] == 2
     assert f["enable"] == ["openai/h"] and not got["openai/s"]["enable"]  # enable only on drawn targets, never itself
     out = c._flow_html({"model": "openai/s", "lines": ["x"], **f})
-    assert "+2 ungraded" in out
+    assert "2 ungraded calls'" in out and "ungraded</small>" not in out  # in the chip's tooltip
     moves[1].pop("weight"), moves[0].pop("weight")
     assert {b["model"]: b["share"] for b in c._flow("openai/s", head, None, moves)["branches"]} == {
         "openai/h": 0.5, "openai/s": 0.5}  # falls back to n
@@ -640,10 +640,10 @@ def test_legend_chart_caption_and_kept_sliver():
     assert "Dashed: enable this model in your orq.ai workspace first" in chart
     shown = re.sub(r"data-tip='[^']*'", "", chart)  # bar tooltips name the lever on purpose
     assert "Smart Router splits asks" not in shown and "Change model" not in shown
-    assert "Recommended plan (Smart Router): one move per model. Together: 25% saved ($100/mo). Bar length is the model's monthly spend." \
+    assert "Recommended plan (Smart Router): one move per model. Together: 25% saved ($100/mo). Each bar is that model's monthly spend." \
         in c._plan_caption("router", 0.25, 100.0)
     assert chart.count("<i class=kept") == 1  # b only: a and c keep nothing worth a segment
-    report["routing"]["strata"][2].update(spend=40.5)  # c saves 40 of 40.5: kept sliver under 2% of the top spend
+    report["routing"]["strata"][2].update(spend=40.5)  # c saves 40 of 40.5: kept sliver under 2% of its spend
     assert c._actions_chart(report, 1.0).count("<i class=kept") == 1
 
 
@@ -674,7 +674,7 @@ def test_flow_tiny_share_reads_below_one_percent():
     moves = [{"used": "openai/s", "pick": "openai/a", "tier": "hard", "n": 999},
              {"used": "openai/s", "pick": "openai/b", "tier": "easy", "n": 1}]
     out = c._flow_html({"model": "openai/s", "lines": ["x"], **c._flow("openai/s", head, None, moves)})
-    assert "&lt;1% of calls" in out and not re.search(r"[^0-9]0% of calls", out)
+    assert "&lt;1% \u00b7" in out and not re.search(r"[^0-9]0% \u00b7", out)
 
 
 def test_plan_rows_follow_change_model_when_it_is_the_recommended_lever():
@@ -768,3 +768,15 @@ def test_plan_bars_explain_each_segment_on_hover():
 def test_range_plot_draws_gridlines_at_round_values():
     svg = c._range_cell((150, 158, 165, "Smart Router", 80.0, 222.0))
     assert svg.count("class=gl") == 3  # $80..$222 in steps of $50: lines at $100, $150, $200
+
+
+def test_waterfall_steps_add_up_and_drop_empty_enable_step():
+    import re
+    w = c._waterfall(400.0, 91.0, 67.0, 242.0, "Smart Router")
+    assert w.count("class=wc") == 4 and w.count("class=cn") == 3  # a connector between each pair
+    tops = [float(x) for x in re.findall(r"top:([\d.]+)%;height", w)]
+    hs = [float(x) for x in re.findall(r"height:([\d.]+)%", w)]
+    assert tops == [0.0, 0.0, 22.75, 39.5] and abs(hs[1] + hs[2] + hs[3] - 100) < 0.01  # steps sum to the bill
+    assert "−$91" in w and "<span>New bill</span><span>60%</span>" in w
+    w2 = c._waterfall(400.0, 158.0, 0.0, 242.0, "Change model")
+    assert w2.count("class=wc") == 3 and "After enabling" not in w2
