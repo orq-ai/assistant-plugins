@@ -23,8 +23,8 @@ Spec for `scripts/cost_savings_report.py`. Statements marked **V** were checked 
 skills/orq-find-cost-savings/
   SKILL.md
   resources/design.md            this file
-  resources/report.schema.json   output contract
-  scripts/cost_savings_report.py PEP 723 header; depends on evaluatorq
+  resources/report.schema.json   output contract, generated from the script's pydantic models
+  scripts/cost_savings_report.py PEP 723 header; depends on evaluatorq (which brings pydantic)
   tests/requirements.txt         makes CI run the suite
   tests/test_*.py                load the script with importlib.util.spec_from_file_location
   tests/fixtures/                synthetic spans, decisions and catalog entries; never customer data
@@ -341,6 +341,7 @@ Unit tests on synthetic fixtures, no network:
 - Caching: read and write per turn, TTL expiry, already-cached and already-written tokens, mixed-model threads.
 - Span filter: root and `span.agent` dropped, leaf spans kept, cache hits and decision models dropped, already-routed spans kept with savings 0.
 - Output: `report.json` validates against `resources/report.schema.json`; `render` refuses empty slots.
+- Contract: the `Report` pydantic models in the script are the source of truth. `analyze` validates the report against them (strict) before writing `report.json`, so a break fails the run instead of a caller. `resources/report.schema.json` is generated, never hand-edited; after changing a model, regenerate it from the skill folder with `uv run scripts/cost_savings_report.py schema > resources/report.schema.json`. A test fails when the file and the models differ.
 
 `tests/requirements.txt` lists `pytest` and `jsonschema` so CI runs the suite; `tests/test_analyze.py` runs `analyze` and `render` end to end against a fake `orq` CLI. Live smoke test (manual): `analyze --sample 20 --counterfactual-test` on an internal workspace whose decision model is enabled; pilot checks pass and the JSON validates.
 

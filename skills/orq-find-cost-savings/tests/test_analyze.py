@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import jsonschema
+import pydantic
 import pytest
 
 ROOT = Path(__file__).parents[1]
@@ -574,3 +575,16 @@ def test_render_reads_only_the_summary(tmp_path):
     only = {k: rep[k] for k in ("summary", "workspace", "generated_at")}
     assert c.render(only, n, redact=False) == page  # nothing outside summary and the run header is read
     assert "thread-kept-1" in page and "thread-dropped-2" not in page and "(hidden)" in c.render(only, n, redact=True)
+
+
+def test_schema_file_is_generated_from_the_models():
+    # regenerate: uv run scripts/cost_savings_report.py schema > resources/report.schema.json
+    assert SCHEMA == c.report_schema()
+
+
+def test_analyze_refuses_to_write_a_report_that_breaks_the_contract(tmp_path, monkeypatch):
+    real = c.summary
+    monkeypatch.setattr(c, "summary", lambda rep: {**real(rep), "recommended": "both"})
+    with pytest.raises(pydantic.ValidationError, match="recommended"):
+        run(tmp_path)
+    assert not (tmp_path / "report.json").exists()

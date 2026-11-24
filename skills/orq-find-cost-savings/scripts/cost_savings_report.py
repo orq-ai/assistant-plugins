@@ -36,9 +36,10 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from evaluatorq.common import model_frontier as mf
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SCHEMA_VERSION = "1.2"
 MAX_SAMPLE = 100
@@ -1572,7 +1573,9 @@ class Analyzer:
         if self.report["status"] == "ok" and "routing" in self.report:
             items = list(self.report.items())  # summary right after the run header, before the bulky sections
             self.report = dict(items[:5] + [("summary", summary(self.report))] + items[5:])
-        (self.out / "report.json").write_text(json.dumps(self.report, indent=1, default=str))
+        text = json.dumps(self.report, indent=1, default=str)
+        Report.model_validate_json(text, strict=True)  # a contract break fails here, not in a caller
+        (self.out / "report.json").write_text(text)
         if self.args.json:
             keys = ("status", "stop", "summary") + (("counterfactual_test",) if "counterfactual_test" in self.report else ())
             keys = ("workspace", "generated_at") + keys
@@ -2903,6 +2906,443 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
             f"<body class=auto><main>{body}</main><script>{PAGE_JS}</script></body></html>")
 
 
+# --------------------------------------------------------------------------------------------- report.json contract
+# The models are the contract; resources/report.schema.json is generated from them (`schema` subcommand). Keys the
+# contract leaves untyped are Any, free objects dict[str, Any], and every object accepts extra keys. A non-null key
+# that may be absent defaults to None, which is never validated; report_schema() drops the default.
+
+
+class _Obj(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+Interval = Annotated[list[float], Field(min_length=2, max_length=2)]
+Share = Annotated[float, Field(ge=0, le=1)]
+
+
+class StopInfo(_Obj):
+    check: str
+    numbers: dict[str, Any]
+
+
+class SummaryWindow(_Obj):
+    from_: str = Field(alias="from")
+    to: str
+    days: int
+    requested: int | None
+    retention: int | None
+
+
+class CacheRow(_Obj):
+    thread: Any
+    agent: Any
+    model: Any
+    turns: Any
+    savings: Any
+    action: Any
+
+
+class SummaryCaching(_Obj):
+    threads_scanned: int | None
+    savings_found: float | None
+    error: str | None
+    rows: list[CacheRow] = Field(description="Up to 20 candidate threads, largest saving first.")
+    cached_share: float | None = None  # these three become required once summary() writes them
+    saved_by_cache: float | None = None
+    threads_caching: int | None = None
+
+
+class SampledMove(_Obj):
+    used: Any
+    pick: Any
+    tier: Any
+    n: Any
+    fallback: Any
+    costs_more: Any
+    weighted_savings: Any
+
+
+class RouterSetup(_Obj):
+    model: Any
+    key: Any
+    pool: Any
+
+
+class Replacement(_Obj):
+    model: Any
+    to: Any
+
+
+COVERAGE_DOC = "Share of spend on the models this lever's estimate covers."
+
+
+class RouterLever(_Obj):
+    pct_of_spend: float | None
+    per_month: float | None
+    ci90_per_month: list[float] | None
+    coverage: float | None = Field(description=COVERAGE_DOC)
+    saved_today_per_month: float | None
+    saved_after_enabling_per_month: float | None
+    without_top3_per_month: float | None
+    enable: list[str]
+    routers: list[RouterSetup]
+    replacements: list[Replacement] = Field(
+        description="Models with no pool to route over: the router figure serves them on their change-model target, "
+                    "so the router plan changes them too.")
+
+
+class SwitchLever(_Obj):
+    pct_of_spend: float | None
+    per_month: float | None
+    ci90_per_month: list[float] | None
+    coverage: float | None = Field(description=COVERAGE_DOC)
+    saved_today_per_month: float | None
+    saved_after_enabling_per_month: float | None
+    enable: list[str]
+    replacements: list[Replacement]
+
+
+class Move(_Obj):
+    pool: list[str] | None
+    switch: str | None
+
+
+class Target(_Obj):
+    model: Any
+    share_of_calls: float | None
+    tiers: list[str]
+    unscored_calls: int
+    enable: bool
+    stays: bool
+
+
+class Recommendation(_Obj):
+    model: Any
+    action: Literal["router", "switch", "keep", "not_analysed"]
+    router_key: str | None
+    move: Move | None
+    today_move: Move | None
+    targets: list[Target]
+    enable: list[str]
+    spend_per_month: float
+    saved_per_month: float
+    pct_of_model_spend: float | None
+    saved_today_per_month: float | None
+    saved_after_enabling_per_month: float | None
+    sampled_calls: int
+    small_sample: bool
+    share_hard: float | None
+
+
+class Recommendations(_Obj):
+    router: list[Recommendation]
+    switch: list[Recommendation]
+
+
+class ScopeLever(_Obj):
+    pct_of_spend: float | None
+    per_month: float | None
+    ci90_per_month: list[float] | None
+    coverage: float | None
+    enable: list[str]
+
+
+class ScopeModel(_Obj):
+    model: Any
+    pool: Any
+    switch: Any
+    enable: Any
+
+
+class SummaryScope(_Obj):
+    scope: Any
+    headline: bool
+    router: ScopeLever
+    switch: ScopeLever
+    models: list[ScopeModel]
+
+
+class NotAnalysed(_Obj):
+    per_month: float
+    model_count: int
+
+
+class Summary(_Obj):
+    window: SummaryWindow
+    spend_total: float | None
+    spend_per_month: float | None
+    scope: Any
+    sampled_calls: int | None
+    recommended: Literal["router", "switch"] | None = Field(
+        description="null when neither lever saves anything (per_month <= 0 or null).")
+    levers_overlap: bool
+    router: RouterLever
+    switch: SwitchLever
+    recommendations: Recommendations = Field(
+        description="One row per sampled model, per lever; action keep means no cheaper model is as strong, "
+                    "not_analysed that the lever's estimate does not cover the model.")
+    scopes: list[SummaryScope]
+    not_analysed: NotAnalysed
+    sampled_moves: list[SampledMove] = Field(
+        description="Per (model in use, balanced pick) in the headline scope: sampled calls, fallbacks among them, "
+                    "and their saving.")
+    caching: SummaryCaching
+    caveats: list[Any]
+
+
+class Params(_Obj):
+    sample: int = Field(ge=1, le=MAX_SAMPLE)
+    profile: Literal["balanced"]
+    policy: Literal["jev-general-v1"]
+    seed: int
+    counterfactual_test: bool
+    cell_grain: dict[str, Literal["hour", "6h", "day"]] = Field(
+        None, description="Per sampled model, the bucket of the request-count query: hour, or coarser when hourly "
+                          "cells exceed the time-series budget.")
+
+
+class Window(_Obj):
+    from_: str = Field(alias="from")
+    to: str
+    days: int = Field(ge=1)
+    requested: int = Field(None, ge=1)
+    retention: Annotated[int, Field(ge=1)] | None = None
+
+
+class SpendRow(_Obj):
+    key: str
+    spend: float
+
+
+class Spend(_Obj):
+    total: float
+    per_month: float
+    by_model: list[SpendRow]
+    by_agent: list[SpendRow] | None = None
+    by_deployment: list[SpendRow] | None = None
+
+
+class RoutingDecisionCost(_Obj):
+    calls: int
+    estimated_usd: float
+
+
+class StoppingCheck(_Obj):
+    check: str
+    pass_: bool = Field(alias="pass")
+    numbers: dict[str, Any]
+
+
+class Caveat(_Obj):
+    check: str
+    detail: str
+
+
+class Checks(_Obj):
+    stopping: list[StoppingCheck]
+    caveats: list[Caveat]
+
+
+class PerProfile(_Obj):
+    __pydantic_extra__: dict[str, float] = Field(init=False)
+    balanced: float
+    cost: float
+
+
+class Sample(_Obj):
+    trace_id: Any
+    span_id: Any
+    model: Any
+    weight: float = Field(gt=0)
+    cur_price: float
+    billed: float
+    savings: PerProfile
+    picks: dict[str, Any]
+    fallback: str | None
+
+
+class Estimate(_Obj):
+    savings: float
+    ci90: Interval
+    coverage: Share
+    per_month: float
+    ci90_per_month: Interval
+    without_top3: float
+    unpriced_models: list[str]
+    per_stratum: dict[str, float | None] = None
+
+
+class ScenarioRouter(_Obj):
+    __pydantic_extra__: dict[str, Estimate] = Field(init=False)
+    balanced: Estimate
+    cost: Estimate
+
+
+class ScenarioModel(_Obj):
+    model: str
+    pool: list[str] | None
+    switch: str | None
+    enable: list[str]
+    relaxed: bool
+    reason: str
+
+
+class Scenario(_Obj):
+    scope: Literal["same_provider:all", "same_provider:enabled", "any_provider:all", "any_provider:enabled"]
+    provider: Literal["same_provider", "any_provider"]
+    availability: Literal["all", "enabled"]
+    headline: bool
+    router: ScenarioRouter
+    switch: Estimate
+    models: list[ScenarioModel]
+
+
+class Headline(_Obj):
+    savings: float
+    ci90: Interval
+    without_top3: float
+    coverage: Share
+    per_month: float
+    ci90_per_month: Interval
+
+
+class ProfileFigure(_Obj):
+    savings: float
+    ci90: Interval
+
+
+class Profiles(_Obj):
+    __pydantic_extra__: dict[str, ProfileFigure] = Field(init=False)
+    balanced: ProfileFigure
+    cost: ProfileFigure
+
+
+class RoutingMove(_Obj):
+    used: str
+    pick: str
+    n: int
+    fallback: int
+    weight: float = None
+
+
+class Stratum(_Obj):
+    model: str
+    spend: float
+    n: int
+    clusters: int
+    covered: bool
+    savings: float | None = None
+    pool: list[str] | None
+    pool_reason: Any
+
+
+class NotCovered(_Obj):
+    model: str
+    spend: float
+    reason: str
+
+
+class Routing(_Obj):
+    headline: Headline
+    profiles: Profiles
+    moves: list[RoutingMove] = None
+    strata: list[Stratum]
+    not_covered: list[NotCovered]
+    buckets: Any
+    fallbacks: Any
+    underpowered: Any
+    pareto: Any
+
+
+class Ask(_Obj):
+    span_id: Any
+    used: Any
+    recommended: Any
+    differs: bool
+
+
+class CounterfactualTest(_Obj):
+    asks: list[Ask]
+    per_model: dict[str, Any]
+
+
+class Caching(_Obj):
+    threads_scanned: int = None
+    label: str = None
+    savings_found: float = None
+    savings_orq: float = None
+    rows: list[Any] = None
+    error: str = None
+    cached_share: float | None = None
+    saved_by_cache: float | None = None
+    threads_caching: int | None = None
+
+
+class Harness(_Obj):
+    metric: str = None
+    rows: list[Any] = None
+    unattributed: float | None = None
+
+
+REPORT_RULES = {  # the JSON Schema form of Report._finished_run_parts
+    "if": {"properties": {"status": {"const": "ok"}}, "required": ["status", "routing"]},
+    "then": {"required": ["summary"]},
+    "allOf": [{"if": {"properties": {"params": {"properties": {"counterfactual_test": {"const": True}},
+                                                "required": ["counterfactual_test"]},
+                                     "status": {"const": "ok"}},
+                      "required": ["params", "status"]},
+               "then": {"required": ["counterfactual_test"]}}],
+}
+
+
+class Report(_Obj):
+    model_config = ConfigDict(extra="allow", title="orq-find-cost-savings report.json", json_schema_extra=REPORT_RULES)
+    schema_version: Literal["1.2"]
+    generated_at: str
+    workspace: str | None
+    status: Literal["ok", "stopped"]
+    stop: StopInfo | None
+    summary: Summary = Field(
+        None, description="Written by analyze on a finished run: every number the page shows. render only formats "
+                          "these; it does not recompute them.")
+    params: Params
+    window: Window = None
+    spend: Spend = None
+    routing_decision_cost: RoutingDecisionCost = None
+    checks: Checks
+    samples: list[Sample] = None
+    scenarios: list[Scenario] = Field(None, min_length=4, max_length=4)
+    routing: Routing = None
+    counterfactual_test: CounterfactualTest = None
+    caching: Caching = None
+    harness: Harness = None
+
+    @model_validator(mode="after")
+    def _finished_run_parts(self) -> Report:
+        given = self.model_fields_set
+        if self.status == "ok" and "routing" in given and "summary" not in given:
+            raise ValueError("a finished run (status ok, with routing) must carry summary")
+        if self.status == "ok" and self.params.counterfactual_test and "counterfactual_test" not in given:
+            raise ValueError("status ok with params.counterfactual_test must carry counterfactual_test")
+        return self
+
+
+def report_schema() -> dict:
+    """JSON Schema of report.json, generated from Report; resources/report.schema.json holds it."""
+    def clean(node: Any, keyed: bool = False) -> Any:  # keyed: a map of names to schemas (properties, $defs)
+        if isinstance(node, list):
+            return [clean(x) for x in node]
+        if not isinstance(node, dict):
+            return node
+        if keyed:
+            return {k: clean(v) for k, v in node.items()}
+        return {k: clean(v, k in ("properties", "$defs")) for k, v in node.items()
+                if k not in ("title", "default") and not (k == "additionalProperties" and v is True)}
+
+    return {"$schema": "https://json-schema.org/draft/2020-12/schema", "title": Report.model_config["title"],
+            **clean(Report.model_json_schema())}
+
+
 # --------------------------------------------------------------------------------------------- CLI
 
 
@@ -2927,7 +3367,11 @@ def main(argv: list[str] | None = None) -> int:
     rn.add_argument("--out", required=True)
     rn.add_argument("--narrative", required=True)
     rn.add_argument("--redact", action="store_true", help="hide thread ids and ask examples")
+    sub.add_parser("schema", help="print the JSON Schema of report.json, generated from the Report model")
     a = ap.parse_args(argv)
+    if a.cmd == "schema":
+        print(json.dumps(report_schema(), indent=2))
+        return 0
     if a.cmd == "analyze":
         if not 1 <= a.sample <= MAX_SAMPLE:
             ap.error(f"--sample must be between 1 and {MAX_SAMPLE}")
