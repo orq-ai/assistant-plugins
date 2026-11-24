@@ -204,6 +204,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 | **orq-trace-format** | Show traces and spans as clickable Studio links instead of raw trace ids — URL shape, workspace key and host, and the "opens empty" fix | [SKILL.md](skills/orq-trace-format/SKILL.md) |
 | **orq-link** | Give the Studio link to an agent, dataset, experiment, evaluator or other workspace entity, built from the id the CLI lists | [SKILL.md](skills/orq-link/SKILL.md) |
 | **orq-provider-credentials** | Connect provider credentials: the Studio page for main provider keys, and validated custom models for Azure, Bedrock, Vertex and OpenAI-compatible endpoints, with no secret in chat | [SKILL.md](skills/orq-provider-credentials/SKILL.md) |
+| **orq-admin** | Workspace admin from the CLI: invite and remove members, mint scoped API keys, rotate, disable and delete keys, with every write confirmed and no token printed | [SKILL.md](skills/orq-admin/SKILL.md) |
 <!-- END_SKILLS_TABLE -->
 
 ---

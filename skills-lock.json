@@ -6,6 +6,11 @@
       "sourceType": "github",
       "computedHash": "89e44a35d361afbaee862dcaa9c45115f1174894f3d41e8f1cf6aaea16f7a375"
     },
+    "orq-admin": {
+      "source": "orq-ai/assistant-plugins",
+      "sourceType": "github",
+      "computedHash": "17f090e6840579c99cdd2b4c2a62fca27f72e29505c6883b8efbe8d13cd6d240"
+    },
     "orq-analyze-traces": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",

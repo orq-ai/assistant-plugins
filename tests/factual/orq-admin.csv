@@ -1,0 +1,18 @@
+test_type,target,assertion,description
+cli_subcommand,users list,,orq users list exists
+cli_flag,users create,--emails,orq users create accepts --emails
+cli_flag,users create,--roles,orq users create accepts --roles
+cli_flag,users update,--role,orq users update accepts --role
+cli_flag,users delete,--force,orq users delete accepts --force
+cli_subcommand,api-keys list,,orq api-keys list exists
+cli_subcommand,api-keys get,,orq api-keys get exists
+cli_flag,api-keys create,--from-file,orq api-keys create accepts --from-file
+cli_flag,api-keys update,--status,orq api-keys update accepts --status
+cli_flag,api-keys delete,--force,orq api-keys delete accepts --force
+cli_subcommand,api-keys list-capabilities,,orq api-keys list-capabilities exists
+cli_subcommand,management-keys list,,orq management-keys list exists
+cli_flag,management-keys create,--from-file,orq management-keys create accepts --from-file
+cli_flag,management-keys update,--status,orq management-keys update accepts --status
+cli_flag,management-keys delete,--force,orq management-keys delete accepts --force
+cli_subcommand,management-keys list-capabilities,,orq management-keys list-capabilities exists
+cli_flag,auth profile add,--api-key-file,orq auth profile add accepts --api-key-file

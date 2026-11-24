@@ -756,6 +756,25 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Ask: "Which model is cheapest for my traffic?"
 - Verify: this skill does not fire
 
+## `orq-admin`
+
+### Scenario 1: Product key is refused before any write
+
+- Provide: a project API key as the CLI credential
+- Ask: "Invite alice@example.com to my orq workspace"
+- Verify: runs `orq users list` first, reads the 403 as "needs a management key or admin login" and makes no write
+
+### Scenario 2: Invite with an admin credential
+
+- Provide: a management key profile or an admin login
+- Ask: "Invite alice@example.com as a developer"
+- Verify: takes the team UUID and role values from `users list`, says a welcome email will be sent, confirms, then runs `users create`
+
+### Scenario 3: Rotation order
+
+- Ask: "Rotate the key named ci-prod"
+- Verify: `get`, create with the same scope into a profile (token never printed), one read with the new profile, waits for the user to switch consumers, disables the old key, deletes only after a second yes
+
 ## `orq-trace-format`
 
 ### Scenario 1: Traces in a reply
@@ -854,6 +873,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-trace-format/SKILL.md`
 - `skills/orq-link/SKILL.md`
 - `skills/orq-provider-credentials/SKILL.md`
+- `skills/orq-admin/SKILL.md`
 - `commands/traces.md`
 - `skills/orq-create-skill/resources/template.md`
 - `skills/orq-create-skill/resources/writing-guide.md`
