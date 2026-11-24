@@ -3,13 +3,13 @@ name: orq-link
 description: >
   Use when a reply should give the orq.ai Studio link to a workspace entity:
   an agent, dataset, deployment, experiment, prompt, evaluator, knowledge
-  base, memory store, tool, skill, annotation queue, project, MCP server or
-  gateway, monitor or alert, or a list page such as API keys, integrations,
-  budgets or a provider's settings. Triggers on "link to that dataset",
-  "where do I open this agent in orq", "send me the URL of experiment X".
+  base, tool, skill, annotation queue, project, MCP server or gateway, or a
+  list page such as API keys, integrations or a provider's settings.
+  Triggers on "link to that dataset", "where do I open this agent in orq",
+  "send me the URL of experiment X".
   Builds `<host>/<workspace-key>/<route>` from the CLI ids. Do NOT use for
   traces or spans (use orq-trace-format), or for orq documentation pages.
-allowed-tools: Read, Skill, Bash(orq auth whoami:*), Bash(orq agents list:*), Bash(orq datasets list:*), Bash(orq deployments list:*), Bash(orq experiments list:*), Bash(orq prompts list:*), Bash(orq evals all:*), Bash(orq knowledge-bases list:*), Bash(orq memory-stores list:*), Bash(orq tools list:*), Bash(orq skills list:*), Bash(orq annotation-queues list:*), Bash(orq projects list:*), Bash(orq mcp-servers list:*), Bash(orq mcp-gateways list:*), Bash(orq file-systems list:*), Bash(orq monitors list:*), Bash(orq alerts list:*), Bash(orq models list:*)
+allowed-tools: Read, Skill, Bash(orq auth whoami:*), Bash(orq agents list:*), Bash(orq datasets list:*), Bash(orq deployments list:*), Bash(orq experiments list:*), Bash(orq prompts list:*), Bash(orq evals all:*), Bash(orq knowledge-bases list:*), Bash(orq tools list:*), Bash(orq skills list:*), Bash(orq annotation-queues list:*), Bash(orq projects list:*), Bash(orq mcp-servers list:*), Bash(orq mcp-gateways list:*), Bash(orq models list:*)
 metadata:
   verified: "2026-11-24"
   surface: cli
@@ -25,8 +25,7 @@ Probed 2026-11-24 with CLI 12.13.0 on prod, research workspace, project API key.
 
 - **Routes take the id, never the key or name.** `datasets/<display_name>` opens nothing. The id field differs per group; the routes file names it per row.
 - **Datasets, experiments, skills and annotation queues have no `key`.** Match the user's name against `display_name`. Names are not unique: two datasets can share one, so ask when the match is not a single row.
-- **Lists page.** `--limit 200` is accepted; when `has_more` is `true`, page with `--starting-after <last id>` before saying an entity does not exist.
-- **`ORQ_API_KEY` hides the workspace key.** `whoami` then returns `active_workspace_key: null`; resolve it as [`orq-trace-format`](../orq-trace-format/SKILL.md) step 2 does, which rejects `null`.
+- **Lists page.** Pass each group's maximum `--limit` from the [`orq-cli`](../orq-cli/SKILL.md) "Lists truncate silently" table (`deployments` stops at 50); when `has_more` is `true`, page with `--starting-after <last id>` before saying an entity does not exist.
 - **A project-scoped key lists only its project.** An entity in another project of the same workspace is missing from the list, not deleted.
 
 ## When to use
@@ -39,7 +38,7 @@ Probed 2026-11-24 with CLI 12.13.0 on prod, research workspace, project API key.
 
 - A trace or span: use `orq-trace-format`
 - orq documentation pages (docs.orq.ai): this skill builds app links only
-- Entities with no row in the routes file (teams, roles, routing rules, workflows): say there is no CLI way to find the id and give the closest list page if one exists
+- Entities with no row in the routes file (teams, roles, routing rules, workflows, memory stores, monitors): say there is no checked route and give the closest list page if one exists
 
 ## Constraints
 
@@ -61,7 +60,7 @@ Probed 2026-11-24 with CLI 12.13.0 on prod, research workspace, project API key.
 ## Steps
 
 1. **Find the row.** Read [`studio-routes.md`](../orq-shared/resources/studio-routes.md). Take the route, the CLI field and the name field. No row: stop and say so (see When NOT to use).
-2. **Resolve host and workspace key** once per session with the snippet in [`orq-trace-format`](../orq-trace-format/SKILL.md) step 2. If the entity came from a call against another workspace, use that one.
+2. **Resolve host and workspace key** once per session, by the rules of [`orq-trace-format`](../orq-trace-format/SKILL.md) step 2: `ORQ_WORKSPACE` and `ORQ_UI_BASE_URL` when set, otherwise `orq auth whoami -o json -j '{key: active_workspace_key, host: urls.api_base_url || server}'`. A `null` key (for example under `ORQ_API_KEY`) means ask the user for the workspace key. If the entity came from a call against another workspace, use that one.
 3. **Find the id.** Skip this when the id is already in the conversation from CLI output. Otherwise list and project the id and name fields, for example for a dataset:
 
    ```sh
@@ -69,11 +68,7 @@ Probed 2026-11-24 with CLI 12.13.0 on prod, research workspace, project API key.
    ```
 
    Evaluators list with `orq evals all`. More than one match: show them and ask which. No match and `has_more` is `true`: page with `--starting-after`. No match at all: say so; with a project-scoped key, say it may sit in another project.
-4. **Build the link.** Accept only id characters (letters, digits, `-`, `_`); reject `/`, `:`, `?`, `#` and parentheses.
-
-   ```sh
-   echo "${host}/${workspace_key}/datasets/${id}"
-   ```
+4. **Build the link** in your reply as `<host>/<workspace-key>/<route>`, with the trailing `/` of the host dropped. Accept only id characters (letters, digits, `-`, `_`); reject `/`, `:`, `?`, `#` and parentheses.
 
    For a provider page take `<name>` from the `provider` field of `orq models list -o json`. List pages have no id.
 5. **Hand it over** as `[<name>](<url>)`, with angle brackets when the route has parentheses. Under it, when the row is unverified: *this route was read from the app source and has not been opened in a browser yet.*

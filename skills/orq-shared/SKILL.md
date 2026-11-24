@@ -4,8 +4,9 @@ description: >
   Reference bundle shared by the other orq skills — the verified `orq` CLI trace
   query contract, the run-key preflight that resolves an agent or deployment
   key before any call, the Studio route table for linking to an entity, and the
-  rubrics an agent is built, reviewed and improved against. Read the file another skill points you at; do not invoke
-  this skill on its own. Use when a skill tells you to read
+  rubrics an agent is built, reviewed and improved against. Read the file
+  another skill points you at; do not invoke this skill on its own. Use when a
+  skill tells you to read
   `../orq-shared/resources/<file>.md`, or when you need the CLI trace filter,
   projection, and write-path rules verbatim. Do NOT use to run CLI commands (use
   orq-cli), to analyze traces (use orq-analyze-traces), or to fix an agent (use

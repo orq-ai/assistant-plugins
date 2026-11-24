@@ -9,7 +9,7 @@
     "orq-admin": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "187df8cb0e6729a063584d8c05bf5c0ee8b9ea40aeecc7187c283cb17aa6df7d"
+      "computedHash": "c4e8d051d1cedad09f4594d3cc79c86b0f67704decec4ebbf501c0eed2f2b636"
     },
     "orq-analyze-traces": {
       "source": "orq-ai/assistant-plugins",
@@ -64,7 +64,7 @@
     "orq-instrumentation-health": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "0758619d404f8be3acdd96c9b5dd88f1f769886d7339cdf8cc8bfa07fe4c6aa6"
+      "computedHash": "9656afc53b44b9eb70d6b309451fb79b053028e226535bcd0b584c2afe01a318"
     },
     "orq-invoke-deployment": {
       "source": "orq-ai/assistant-plugins",
@@ -74,7 +74,7 @@
     "orq-link": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "b1fd9bf5c03146001196294b8ab449d4b7403930809f76a8cc441adf5b36ea14"
+      "computedHash": "0c34e9f5e0521667c7c76964486589fa81f2ece203c7905c8fd9c6679746b5cf"
     },
     "orq-manage-skills": {
       "source": "orq-ai/assistant-plugins",
@@ -84,7 +84,7 @@
     "orq-provider-credentials": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "de263334b403addddbcfa5dbc042185ea3580bbb988e51eaf5ab561ec74880a1"
+      "computedHash": "e9ee2554774e67d3f438e0b1a6cf3be59f273d2f68f08583082298f2635e1227"
     },
     "orq-quickstart": {
       "source": "orq-ai/assistant-plugins",
@@ -119,7 +119,7 @@
     "orq-shared": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "8ce263e9ce9a265b162a37a5fe92d8ed21cf0119d58ee7538722547afd1c6979"
+      "computedHash": "ba940016cd1cfe70c801137c49ef790d965d1636ff26463d6efbf37a6ee30105"
     },
     "orq-simulate-agent": {
       "source": "orq-ai/assistant-plugins",

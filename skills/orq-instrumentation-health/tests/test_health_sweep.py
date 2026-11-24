@@ -43,6 +43,17 @@ def llm(sid, parent, tokens=10, cost=0.001, **kw):
     return span(sid, parent, **{**fields, **kw})
 
 
+def test_init_creates_the_run_subdirectories(tmp_path):
+    h.cmd_init(tmp_path, 7)
+    assert all((tmp_path / d).is_dir() for d in ("spans", "conversation", "pii", "bodies"))
+    assert (tmp_path / "bodies" / "examples-model-tokens-zero.json").exists()
+
+
+def test_main_prints_json(tmp_path, capsys):
+    h.main(["init", str(tmp_path), "--days", "3"])
+    assert json.loads(capsys.readouterr().out)["window"]["days"] == 3
+
+
 def test_init_writes_window_and_count_bodies(tmp_path):
     now = datetime(2026, 11, 24, 12, 0, 0, tzinfo=timezone.utc)
     out = h.cmd_init(tmp_path, 7, now)
@@ -57,7 +68,7 @@ def test_init_writes_window_and_count_bodies(tmp_path):
 def test_plan_has_one_search_per_group_with_the_no_agent_bucket(run):
     groups = json.loads((run / "groups.json").read_text())
     assert {g["agent"] for g in groups} == {
-        "eq-throwaway-11171454", "no agent", "pizza-faq-agent", "res1933-tagtest"
+        "eq-throwaway-11171454", h.NO_AGENT, "pizza-faq-agent", "res1933-tagtest"
     }
     no_agent = next(g for g in groups if g["agent"] == h.NO_AGENT)
     assert no_agent["traces"] == 2112
@@ -196,6 +207,9 @@ def test_missing_count_file_is_unobservable_and_null(run):
         ([span("r"), llm("w", "r", cost=0, provider="agent")], "", set()),
         ([span("r"), llm("w", "r", cost=0), llm("c", "w")], "", set()),
         ([span("r"), span("a", "gone")], "", {"orphan_parent"}),
+        # orphans have no depth, so they do not make a trace flat
+        ([span("r"), span("a", "gone"), span("b", "gone")], "", {"orphan_parent"}),
+        ([span("r", name=h.CLAUDE_CODE_ROOT), span("a", "r"), span("b", "r")], "", {"flat_claude_code"}),
         ([span("r"), span("a", "r"), span("b", "r")], "", {"flat"}),
         ([span("r"), span("a", "r"), span("b", "r")], "router", set()),
         ([span("r"), span("a", "r"), span("b", "a")], "", set()),
@@ -232,3 +246,56 @@ def test_load_reads_utf16_from_powershell(tmp_path):
     p = tmp_path / "x.json"
     p.write_bytes(codecs.BOM_UTF16_LE + json.dumps({"data": []}).encode("utf-16-le"))
     assert h.load(p) == {"data": []}
+
+
+@pytest.mark.parametrize("content", ["", "[]", "not json"])
+def test_empty_or_odd_count_file_is_unobservable(run, content):
+    (run / "count-user-id.json").write_text(content)
+    card = h.cmd_score(run)
+    assert group(card, h.NO_AGENT)["counts"]["user_id_set"] is None
+    assert {"check": "user-id", "reason": "count-user-id.json has no data list"} in card["unobservable"]
+
+
+def test_empty_span_page_is_not_complete(run):
+    pizza_trace = "d9bdf3b32599079220af79dd5378289b"
+    (run / "spans" / f"{pizza_trace}.1.json").write_text("")
+    assert h.trace_spans(run, pizza_trace) == ([], False)
+
+
+def test_unobservable_names_the_project(run):
+    (run / "conversation" / f"{next(iter(h.content_traces(run).values()))[0]}.json").unlink()
+    entry = next(u for u in h.cmd_score(run)["unobservable"] if u["check"] == "content")
+    assert entry["project_id"] == PROJECT
+
+
+def test_score_deletes_trace_text(run):
+    h.cmd_score(run)
+    assert not (run / "conversation").exists()
+    assert not list((run / "pii").glob("*.body.json"))
+
+
+def test_pii_bodies_are_private(run):
+    h.cmd_pii(run)
+    bodies = list((run / "pii").glob("*.body.json"))
+    assert bodies and all(b.stat().st_mode & 0o077 == 0 for b in bodies)
+
+
+def test_groups_in_two_projects_stay_apart(tmp_path):
+    other = "019b0000-0000-7000-8000-000000000002"
+    h.cmd_init(tmp_path, 7)
+    rows = [{"group": {"project_id": p, "agent_name": "a"}, "metrics": {"trace_id.count": n}} for p, n in ((PROJECT, 3), (other, 5))]
+    (tmp_path / "count-total.json").write_text(json.dumps({"data": rows}))
+    groups = h.cmd_plan(tmp_path)["groups"]
+    assert sorted((g["project_id"], g["traces"]) for g in groups) == [(PROJECT, 3), (other, 5)]
+    bodies = [json.loads((tmp_path / "bodies" / f"search-{g['n']}.json").read_text()) for g in groups]
+    assert {b["filters"][0]["values"][0] for b in bodies} == {PROJECT, other}
+
+
+def test_sample_is_capped_across_groups(tmp_path):
+    h.cmd_init(tmp_path, 7)
+    rows = [{"group": {"project_id": PROJECT, "agent_name": f"a{i}"}, "metrics": {"trace_id.count": 50}} for i in range(6)]
+    (tmp_path / "count-total.json").write_text(json.dumps({"data": rows}))
+    for g in h.cmd_plan(tmp_path)["groups"]:
+        data = [{"trace_id": f"{g['n']}-{i}", "product": "", "session_id": "s"} for i in range(30)]
+        (tmp_path / f"search-{g['n']}.json").write_text(json.dumps({"data": data}))
+    assert len(h.cmd_sample(tmp_path)["list_spans"]) == h.SAMPLE_TOTAL
