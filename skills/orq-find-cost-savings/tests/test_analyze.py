@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import jsonschema
+import pydantic
 import pytest
 
 ROOT = Path(__file__).parents[1]
@@ -590,3 +591,16 @@ def test_caching_card_shows_current_caching_with_a_check(tmp_path):
     rep["caching"]["cached_share"] = 0.0  # nothing cached and nothing to gain: still a check, different words
     rep["summary"] = c.summary(rep)
     assert "No caching change needed." in c.render(rep, n, redact=False)
+
+
+def test_schema_file_is_generated_from_the_models():
+    # regenerate: uv run scripts/cost_savings_report.py schema > resources/report.schema.json
+    assert SCHEMA == c.report_schema()
+
+
+def test_analyze_refuses_to_write_a_report_that_breaks_the_contract(tmp_path, monkeypatch):
+    real = c.summary
+    monkeypatch.setattr(c, "summary", lambda rep: {**real(rep), "recommended": "both"})
+    with pytest.raises(pydantic.ValidationError, match="recommended"):
+        run(tmp_path)
+    assert not (tmp_path / "report.json").exists()
