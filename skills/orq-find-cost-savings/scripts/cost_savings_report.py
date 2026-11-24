@@ -659,10 +659,7 @@ def caching_candidate(turns: list[dict], prices: dict) -> tuple[bool, str]:
         return False, "no cache-read price"
     if min(t["prompt"] for t in turns[:-1]) < 1024:
         return False, "prefix under 1,024 tokens"
-    tot = sum(t["prompt"] for t in turns)
-    if tot and sum(t["cached"] for t in turns) / tot >= 0.20:
-        return False, "already caching (read ratio >= 20%)"
-    return True, ""
+    return True, ""  # a thread that already caches can still miss turns; caching_savings counts only uncached reads
 
 
 # --------------------------------------------------------------------------------------------- orq CLI
@@ -1513,7 +1510,7 @@ class Analyzer:
                 "savings_found": found,
                 "cached_share": sum(c.get("cached_tokens", 0) for c in cands) / prompt if prompt else None,
                 "saved_by_cache": sum(c.get("cache_saved", 0.0) for c in cands),
-                "threads_caching": len({c["thread"] for c in cands if c.get("reason", "").startswith("already")}),
+                "threads_caching": len({c["thread"] for c in cands if c["cached_tokens"] >= 0.2 * c["prompt_tokens"] > 0}),
                 "savings_orq": sum(c["savings"] for c in cands if c["candidate"] and c["product"] in
                                    ("agents", "deployments")),
                 "rows": sorted(cands, key=lambda c: -c["savings"])[:50]}

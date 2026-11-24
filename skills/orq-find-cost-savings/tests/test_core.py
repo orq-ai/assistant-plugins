@@ -396,7 +396,10 @@ def test_caching_candidate_rules():
     assert not c.caching_candidate(good, {"input": 1.0})[0]
     assert not c.caching_candidate([turn(0, 500), turn(1, 3000), turn(2, 4000)], PRICES)[0]
     cached = [turn(0, 2000), turn(1, 3000, cached=2000), turn(2, 4000, cached=3000)]
-    assert not c.caching_candidate(cached, PRICES)[0]
+    assert c.caching_candidate(cached, PRICES)[0]  # already caching still counts: it can miss turns
+    missed = [turn(0, 2000), turn(1, 3000, cached=2000), turn(2, 4000)]  # the last turn missed the cache
+    gap = c.caching_savings(missed, PRICES, 300)["savings"] - c.caching_savings(cached, PRICES, 300)["savings"]
+    assert gap == pytest.approx(3000 * (PRICES["input"] - PRICES["cache_read"]))  # only the missed read counts
 
 
 # ---- span filter

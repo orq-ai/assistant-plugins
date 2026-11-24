@@ -290,7 +290,7 @@ Grouped scalar queries take one compute per call (V). `agent` and `thread` canno
 
 Unit: (thread, model), turns sorted by `started_at`, a turn being one leaf LLM span. Threads come from telemetry grouped by thread; scan those with 3 or more requests, top 200 by spend in v1. Caching savings are reported for the scanned threads as found, not scaled to the window, and labelled that way.
 
-Candidate: 3 or more turns, a model with a cache-read price, a prefix of at least 1,024 tokens, and cache-read ratio (`cached / prompt_tokens`) below 20%.
+Candidate: 3 or more turns, a model with a cache-read price, and a prefix of at least 1,024 tokens. Threads that already cache count too: a thread can cache most turns and still miss some (a pause longer than the TTL, a changed prefix), and the saving below only counts input that was not read from cache.
 
 Per turn k from 2 to n:
 - alive_k: the gap since turn k-1 is within the cache TTL.
