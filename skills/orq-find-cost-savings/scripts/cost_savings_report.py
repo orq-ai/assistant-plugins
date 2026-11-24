@@ -30,16 +30,19 @@ import subprocess
 import sys
 import time
 import urllib.parse
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NamedTuple, TypeVar
 
 from evaluatorq.common import model_frontier as mf
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+Json = dict[str, Any]  # an object as the orq CLI or report.json carries it
+T = TypeVar("T")
 
 SCHEMA_VERSION = "1.2"
 MAX_SAMPLE = 100
@@ -593,9 +596,17 @@ def allocate(spend: list[tuple[str, float]], n: int, minimum: int = MIN_PER_STRA
     return alloc
 
 
+@dataclass
+class BootEstimate:
+    savings: float
+    ci90: list[float]
+    per_stratum: dict[str, float | None]  # None: the stratum has no priced cost
+
+
 def estimate(draws_by: dict[str, list[Draw]], spend: dict[str, float], profile: str, rng: random.Random,
-             boots: int = BOOTSTRAP) -> dict:
-    per, total = {}, 0.0
+             boots: int = BOOTSTRAP) -> BootEstimate:
+    per: dict[str, float | None] = {}
+    total = 0.0
     for s, ds in draws_by.items():
         r = stratum_rate(ds, profile)
         per[s] = None if r is None else r * spend.get(s, 0.0)
@@ -613,7 +624,7 @@ def estimate(draws_by: dict[str, list[Draw]], spend: dict[str, float], profile: 
     samples.sort()
     lo = samples[int(0.05 * (len(samples) - 1))] if samples else total
     hi = samples[int(math.ceil(0.95 * (len(samples) - 1)))] if samples else total
-    return {"savings": total, "ci90": [lo, hi], "per_stratum": per}
+    return BootEstimate(total, [lo, hi], per)
 
 
 def without_top(draws_by: dict[str, list[Draw]], spend: dict[str, float], profile: str, k: int = 3) -> float:
@@ -632,32 +643,38 @@ def without_top(draws_by: dict[str, list[Draw]], spend: dict[str, float], profil
 # --------------------------------------------------------------------------------------------- caching
 
 
-def caching_savings(turns: list[dict], prices: dict, ttl_s: float) -> dict:
-    """turns: [{t (unix), prompt, cached, written}] sorted by time, one (thread, model)."""
+@dataclass
+class Turn:
+    """One LLM call of a (thread, model): when it started and its prompt tokens."""
+    t: float  # unix seconds
+    prompt: int
+    cached: int  # read from cache
+    written: int  # written to cache
+
+
+def caching_savings(turns: list[Turn], prices: dict[str, float], ttl_s: float) -> float:
+    """What caching the shared prefix would save over these turns (sorted by time), net of the write premium."""
     inp, read = prices.get("input", 0.0), prices.get("cache_read")
     write = write_price(prices, None)
     if read is None:
-        return {"savings": 0.0, "eligible": False, "reason": "no cache-read price"}
+        return 0.0
     gain = cost = 0.0
     if write is not None and turns:  # the first turn writes the prefix the later turns read
-        cost += max(0, turns[0]["prompt"] - turns[0]["written"]) * (write - inp)
-    for k in range(1, len(turns)):
-        alive = turns[k]["t"] - turns[k - 1]["t"] <= ttl_s
-        read_k = turns[k - 1]["prompt"] if alive else 0
-        read_k = min(read_k, turns[k]["prompt"])
-        write_k = turns[k]["prompt"] - read_k
-        gain += max(0, read_k - turns[k]["cached"]) * (inp - read)
+        cost += max(0, turns[0].prompt - turns[0].written) * (write - inp)
+    for prev, cur in zip(turns, turns[1:]):
+        read_k = min(prev.prompt if cur.t - prev.t <= ttl_s else 0, cur.prompt)
+        gain += max(0, read_k - cur.cached) * (inp - read)
         if write is not None:
-            cost += max(0, write_k - turns[k]["written"]) * (write - inp)
-    return {"savings": gain - cost, "eligible": True, "reason": ""}
+            cost += max(0, cur.prompt - read_k - cur.written) * (write - inp)
+    return gain - cost
 
 
-def caching_candidate(turns: list[dict], prices: dict) -> tuple[bool, str]:
+def caching_candidate(turns: list[Turn], prices: dict[str, float]) -> tuple[bool, str]:
     if len(turns) < 3:
         return False, "fewer than 3 turns"
     if prices.get("cache_read") is None:
         return False, "no cache-read price"
-    if min(t["prompt"] for t in turns[:-1]) < 1024:
+    if min(t.prompt for t in turns[:-1]) < 1024:
         return False, "prefix under 1,024 tokens"
     return True, ""  # a thread that already caches can still miss turns; caching_savings counts only uncached reads
 
@@ -776,10 +793,119 @@ class Truncated(Exception):
 CELL_GRAINS = (("hour", "hour", 60), ("6h", "21600", 360), ("day", "day", 1440))
 
 
+class Cell(NamedTuple):
+    """Requests on one model in one (project, time bucket): what draw_one samples from."""
+    project: str
+    start: str  # ISO
+    requests: float
+    minutes: int  # bucket width
+
+
 class Stop(Exception):
-    def __init__(self, check: str, numbers: dict):
+    def __init__(self, check: str, numbers: Json):
         super().__init__(check)
         self.check, self.numbers = check, numbers
+
+
+@dataclass(frozen=True)
+class Decision:
+    """A routing decision on one input: its difficulty score, or why there is none."""
+    score: float | None = None
+    error: str | None = None  # decision_timeout | error
+
+
+@dataclass
+class DrawnSpan:
+    """One sampled leaf LLM span, with the routing input read from it."""
+    model: str
+    project: str
+    cell: str  # start of the (project, time bucket) cell it was drawn from
+    trace_id: str
+    span_id: str
+    weight: float  # leaf LLM spans in its trace: the draw stands for that many calls
+    span: Json  # `traces get-span`
+    input: str | None = None
+    source: str = "empty_input"  # see routing_input
+
+    @property
+    def summary(self) -> Json:
+        return self.span.get("summary") or {}
+
+    @property
+    def attrs(self) -> Json:
+        return self.span.get("attributes") or {}
+
+
+@dataclass(kw_only=True)
+class SampleRow:
+    """One drawn span priced under every scenario. Scenario keys: `router|<scope>|<profile>` and `switch|<scope>`;
+    `picks`, `savings` and `pool` are the headline scope's router, kept flat for the tables."""
+    trace_id: str
+    span_id: str
+    model: str
+    project: str
+    weight: float
+    cur_price: float  # this span re-priced from the catalog, on the model it used
+    billed: float  # what orq billed for it, web search excluded
+    source: str
+    ask_chars: int
+    prompt_tokens: int
+    flags: list[str] = field(default_factory=list)
+    picks: dict[str, str] = field(default_factory=dict)  # per profile
+    savings: dict[str, float] = field(default_factory=lambda: {p: 0.0 for p in PROFILES})
+    tier: dict[str, str] = field(default_factory=dict)  # per profile; empty when the span was not scored
+    fallback: str | None = None  # why it was not scored: already_routed, a routing_input source or a decision error
+    scenario_savings: dict[str, float] = field(default_factory=dict)
+    unpriced: list[str] = field(default_factory=list)  # scenario keys where a target has no price for its tier
+    score: float | None = None
+    pool: list[str] | None = None
+    pool_reason: str = ""
+    # not written to report.json
+    ask_preview: str = ""
+    tokens: Tokens
+    env: Json
+
+    def to_json(self) -> Json:
+        out = {k: getattr(self, k) for k in ("trace_id", "span_id", "model", "project", "weight", "cur_price",
+                                             "billed", "source", "ask_chars", "prompt_tokens", "flags", "picks",
+                                             "savings", "tier", "fallback", "scenario_savings", "unpriced")}
+        if self.score is not None:
+            out["score"] = self.score
+        return out | {"pool": self.pool, "pool_reason": self.pool_reason}
+
+
+@dataclass
+class PoolInfo:
+    """What one model in use gets in one scope: a router pool (strongest first) and a change-model target."""
+    pool: list[PoolModel] | None
+    reason: str  # why there is no pool, or why it has two seats; "" otherwise
+    switch: str | None
+    enable: list[str]  # pool members and switch target that are not enabled
+    relaxed: bool
+
+    def to_json(self) -> Json:
+        return {"pool": [p.id for p in self.pool] if self.pool else None, "reason": self.reason,
+                "switch": self.switch, "enable": self.enable, "relaxed": self.relaxed}
+
+
+@dataclass
+class CacheCandidate:
+    """One (thread, model) of the caching scan; `rows` in report.json, field order as written."""
+    thread: str
+    project: str
+    model: str
+    turns: int
+    candidate: bool
+    reason: str
+    savings: float
+    upper_bound: bool
+    action: str
+    thread_spend: float
+    prompt_tokens: int
+    cached_tokens: int
+    cache_saved: float  # what the cache reads already saved against the input price
+    agent: str | None
+    product: str | None
 
 
 class Analyzer:
@@ -794,15 +920,27 @@ class Analyzer:
                                        "params": {"sample": args.sample, "profile": "balanced", "policy": POLICY,
                                                   "seed": args.seed, "counterfactual_test": args.counterfactual_test},
                                        "checks": {"stopping": [], "caveats": []}}
-        self.decisions: dict[str, dict] = {}
+        self.decisions: dict[str, Decision] = {}  # by sha256 of the routing input
+        self.frm = self.to = ""  # the window, ISO
+        self.days = 0
+        self.cat: dict[str, Json] = {}  # model catalog by id
+        self.cards: dict[str, Json] = {}  # workspace model cards by provider/model
+        self.garden: dict[str, mf.ScoredModel] = {}
+        self.samples: list[SampleRow] = []
+        self.pools: dict[str, dict[str, PoolInfo]] = {}  # model in use -> scope -> pool
+        self._traffic: dict[str, list[tuple[float, Json, Json, Tokens]]] = {}  # model -> (weight, summary, attrs, tokens)
+        self._poolable: list[str] | None = None
 
     def log(self, msg: str) -> None:
         print(msg, file=sys.stderr, flush=True)
 
+    def caveat(self, check: str, detail: str) -> None:
+        self.report["checks"]["caveats"].append({"check": check, "detail": detail})
+
     # ---- telemetry
 
-    def tq(self, compute: list, group_by: list[str], filters: list | None = None, mode: str = "scalar",
-           grain: str | None = None, strict: bool = False) -> list[dict]:
+    def tq(self, compute: list[Json], group_by: list[str], filters: list[Json] | None = None, mode: str = "scalar",
+           grain: str | None = None, strict: bool = False) -> list[Json]:
         a = ["telemetry", "query", "--source", "TELEMETRY_SOURCE_TRACES", "--mode", mode, "--from", self.frm,
              "--to", self.to, "--compute", json.dumps(compute), "--limit", "5000"]
         for g in group_by:
@@ -815,7 +953,7 @@ class Analyzer:
         if r.get("has_more"):
             if strict:
                 raise Truncated(r.get("data") or [])
-            self.report["checks"]["caveats"].append({"check": "telemetry truncated", "detail": " ".join(group_by)})
+            self.caveat("telemetry truncated", " ".join(group_by))
         return r.get("data") or []
 
     def previous_window(self) -> dict | None:
@@ -875,15 +1013,21 @@ class Analyzer:
         self.cards = {model_key(c.get("provider", ""), c.get("model_id", "")): c for c in cards}
         self.garden = mf.garden_from_cards([c for c in cards if isinstance(c, dict)])
         if mf.catalog_scope(cards) == "project":
-            self.report["checks"]["caveats"].append(
-                {"check": "garden is project-scoped", "detail": "models list has no disabled models, so the "
-                 "all-available scopes equal the enabled ones; use a workspace-scoped login"})
-        dec = self.cards.get(DECISION_MODEL)
-        if not dec or not dec.get("enabled"):
+            self.caveat("garden is project-scoped", "models list has no disabled models, so the all-available "
+                        "scopes equal the enabled ones; use a workspace-scoped login")
+        if not self.enabled(DECISION_MODEL):
             raise Stop("decision model enabled", {"model": DECISION_MODEL,
                                                   "detail": "enable it in the workspace's model garden"})
 
-    def v2(self, m: str) -> dict:
+    def enabled(self, m: str) -> bool:
+        return bool((self.cards.get(m) or {}).get("enabled"))
+
+    def price_on(self, m: str, env: Json) -> PriceChoice:
+        """The catalog price of `m` for a span with this environment (see span_env)."""
+        return choose_price((self.cat.get(m) or {}).get("pricing") or {}, env)
+
+    def v2(self, m: str) -> Json:
+        """The model's Smart Router score card: intelligence_index and price."""
         c = self.cards.get(m) or {}
         return (((c.get("metadata") or {}).get("autorouter") or {}).get("v2")) or {}
 
@@ -910,9 +1054,9 @@ class Analyzer:
         units = [(_unit(mine.get(k)), _unit(theirs.get(k))) for k in ("input", "output")]
         return any(a is not None and b is not None and a < b for a, b in units)
 
-    def traffic_cost(self, m: str) -> Callable[[str], float | None] | None:
+    def traffic_cost(self, m: str) -> Cost | None:
         """The sampled spans of `m` re-priced on a model, same tokens; None when a span hits a missing tier price."""
-        spans = self._traffic.get(m) if hasattr(self, "_traffic") else None
+        spans = self._traffic.get(m)
         if not spans:
             return None
         memo: dict[str, float | None] = {}
@@ -921,7 +1065,7 @@ class Analyzer:
             if x not in memo:
                 total = 0.0
                 for w, summ, attrs, toks in spans:
-                    pp = choose_price((self.cat.get(x) or {}).get("pricing") or {}, span_env(summ, attrs, x))
+                    pp = self.price_on(x, span_env(summ, attrs, x))
                     if pp.flag:
                         memo[x] = None
                         break
@@ -933,7 +1077,7 @@ class Analyzer:
 
     def in_scope(self, x: str, m: str, scope: str) -> bool:
         prov, avail = scope.split(":")
-        if avail == "enabled" and not (self.cards.get(x) or {}).get("enabled"):
+        if avail == "enabled" and not self.enabled(x):
             return False
         if region_of(x) != region_of(m):
             return False
@@ -943,12 +1087,11 @@ class Analyzer:
         return prov == "any_provider" or self.host(x) == self.host(m)
 
     def candidates(self, m: str, scope: str) -> list[mf.ScoredModel]:
-        if not hasattr(self, "_poolable"):
+        if self._poolable is None:
             self._poolable = [x for x in self.garden if self.poolable(x)]
             skipped = sorted(x for x, g in self.garden.items() if g.ranked_on_headline and self.poolable(x, False))
             if skipped:
-                self.report["checks"]["caveats"].append(
-                    {"check": "no score at default effort", "detail": f"excluded as targets: {', '.join(skipped)}"})
+                self.caveat("no score at default effort", f"excluded as targets: {', '.join(skipped)}")
         best: dict[str, mf.ScoredModel] = {}  # one candidate per underlying model: the cheapest route, enabled first
         for x in self._poolable:
             if not self.in_scope(x, m, scope):
@@ -959,8 +1102,8 @@ class Analyzer:
                 best[ident] = g
         return [best[i] for i in best]
 
-    def _route_rank(self, g: mf.ScoredModel) -> tuple:
-        return (g.price, not (self.cards.get(g.router_id) or {}).get("enabled"), g.router_id)
+    def _route_rank(self, g: mf.ScoredModel) -> tuple[float, bool, str]:
+        return (g.price, not self.enabled(g.router_id), g.router_id)
 
     def canonical(self, m: str) -> str:
         e = self.cat.get(m) or {}
@@ -972,11 +1115,10 @@ class Analyzer:
         host = (prov.get("id") if isinstance(prov, dict) else prov) or split_model(m)[0]
         return PROVIDER_FAMILY.get(host, host)
 
-    def pool_for(self, m: str, scope: str) -> dict:
+    def pool_for(self, m: str, scope: str) -> PoolInfo:
         inc = self.garden.get(m)
         if inc is None or inc.free or not self.v2(m).get("intelligence_index") or self.v2(m).get("price") is None:
-            return {"pool": None, "reason": "no intelligence index or price", "switch": None, "enable": [],
-                    "relaxed": False}
+            return PoolInfo(None, "no intelligence index or price", None, [], False)
         cands = self.candidates(m, scope)
         cost = self.traffic_cost(m)
         sw = switch_target(inc, cands, cost)
@@ -984,12 +1126,12 @@ class Analyzer:
         assert not has_dominated(members, cost), [x.router_id for x in members]
         ids = [x.router_id for x in members]
         assert all(self.v2(x) for x in ids), ids  # Smart Router rejects a pool model without a score
-        enable = [x for x in ids + ([sw.router_id] if sw else []) if not (self.cards.get(x) or {}).get("enabled")]
-        info = {"switch": sw.router_id if sw else None, "enable": sorted(set(enable)), "relaxed": relaxed}
+        switch = sw.router_id if sw else None
+        enable = sorted({x for x in ids + ([switch] if switch else []) if not self.enabled(x)})
         if len(members) < 2:
-            return {"pool": None, "reason": "no frontier model 2x cheaper in scope", **info}
+            return PoolInfo(None, "no frontier model 2x cheaper in scope", switch, enable, relaxed)
         pool = [PoolModel(x, float(self.v2(x)["intelligence_index"]), float(self.v2(x)["price"])) for x in ids]
-        return {"pool": pool, "reason": "two-model pool: no third tier 2x cheaper" if relaxed else "", **info}
+        return PoolInfo(pool, "two-model pool: no third tier 2x cheaper" if relaxed else "", switch, enable, relaxed)
 
     def next_stronger(self, m: str) -> str | None:
         """The weakest model above this one's index, same host and region, enabled or not."""
@@ -1000,12 +1142,12 @@ class Analyzer:
 
     # ---- sampling
 
-    def spend_by(self, dim: str) -> list[dict]:
+    def spend_by(self, dim: str) -> list[Json]:
         rows = self.tq([{"metric": "genai.cost", "op": "sum"}], [dim])
         return sorted([{"key": r["group"].get(dim) or "(not set)", "spend": r["metrics"].get("genai.cost:sum") or 0.0}
                        for r in rows], key=lambda r: -r["spend"])
 
-    def cells(self, model: str) -> list[tuple[str, str, float, int]]:
+    def cells(self, model: str) -> list[Cell]:
         """Request counts per (project, time bucket). Hourly first; a model in many projects can exceed the
         time-series budget (5000 rows over the window), which truncates or fails the query, so it falls back to
         6-hour and then daily buckets, and records the grain used in `params.cell_grain`."""
@@ -1013,7 +1155,7 @@ class Analyzer:
         filters = [{"field": "model", "op": "eq", "values": [bare]}]
         if prov:
             filters.append({"field": "provider", "op": "eq", "values": [prov]})
-        got: tuple | None = None  # (rows, grain label, bucket minutes, complete)
+        got: tuple[list[Json], str, int, bool] | None = None  # (rows, grain label, bucket minutes, complete)
         err: OrqError | None = None
         for label, grain, minutes in CELL_GRAINS:
             try:
@@ -1025,16 +1167,16 @@ class Analyzer:
             except OrqError as e:  # the budget can fail the query instead of truncating it
                 err = e
         if got is None:
-            raise err  # type: ignore[misc]
+            assert err is not None  # every grain failed
+            raise err
         rows, label, minutes, complete = got
         self.report["params"].setdefault("cell_grain", {})[model] = label
         if not complete:
-            self.report["checks"]["caveats"].append(
-                {"check": "telemetry truncated", "detail": f"{model}: request counts per project and {label}"})
-        return [(r["group"].get("project") or "", r["timestamp"], float(r["metrics"].get("genai.requests:count") or 0),
-                 minutes) for r in rows if r.get("timestamp") and (r["metrics"].get("genai.requests:count") or 0) > 0]
+            self.caveat("telemetry truncated", f"{model}: request counts per project and {label}")
+        return [Cell(r["group"].get("project") or "", r["timestamp"], float(n), minutes) for r in rows
+                if r.get("timestamp") and (n := r["metrics"].get("genai.requests:count") or 0) > 0]
 
-    def search(self, project: str, frm: datetime, to: datetime, filters: list) -> list[dict]:
+    def search(self, project: str, frm: datetime, to: datetime, filters: list[Json]) -> list[Json]:
         a = ["traces", "search", "--from", iso(frm), "--to", iso(to), "--limit", "100", "--filters",
              json.dumps(filters)]
         if project:
@@ -1063,19 +1205,19 @@ class Analyzer:
         return [s for s in spans if s.get("type") in LLM_SPAN_TYPES and not s.get("has_children")
                 and (model is None or model_key(s.get("provider", ""), s.get("model", "")) == model)]
 
-    def draw_one(self, model: str, cells: list[tuple[str, str, float, int]], seed: int) -> dict | None:
+    def draw_one(self, model: str, cells: list[Cell], seed: int) -> DrawnSpan | None:
         rng = random.Random(seed)
-        total = sum(c[2] for c in cells)
+        total = sum(c.requests for c in cells)
         for _attempt in range(6):
             x, acc, cell = rng.random() * total, 0.0, cells[-1]
             for c in cells:
-                acc += c[2]
+                acc += c.requests
                 if acc >= x:
                     cell = c
                     break
             project, ts, _, minutes = cell
             begin = parse_ts(ts)
-            traces: list[dict] = []
+            traces: list[Json] = []
             for width in dict.fromkeys((1, 5, 15, 60, minutes)):
                 start = begin + timedelta(minutes=rng.randrange(0, minutes + 1 - width))
                 traces = self.search(project, start, start + timedelta(minutes=width),
@@ -1092,13 +1234,12 @@ class Analyzer:
                 continue
             s = leaves[rng.randrange(len(leaves))]
             full = self.get_span(tid, s["span_id"], project)
-            return {"model": model, "project": project, "cell": ts, "trace_id": tid, "span_id": s["span_id"],
-                    "weight": float(len(leaves)), "span": full, "trace_spans": spans}
+            return DrawnSpan(model, project, ts, tid, s["span_id"], float(len(leaves)), full)
         return None
 
     # ---- decisions
 
-    def decide(self, text: str) -> dict:
+    def decide(self, text: str) -> Decision:
         key = hashlib.sha256(text.encode()).hexdigest()
         if key in self.decisions:
             return self.decisions[key]
@@ -1107,13 +1248,13 @@ class Analyzer:
         try:
             r = self.orq("decisions", "create", body=body)
             probs = (((r or {}).get("answers") or {}).get("difficulty") or {}).get("probabilities")
-            res = {"ok": True, "probs": probs, "score": score(probs)} if probs else {"ok": False, "error": "error"}
+            res = Decision(score=score(probs)) if probs else Decision(error="error")
         except OrqError as e:
             kind = "decision_timeout" if re.search(r"timeout|timed out|deadline|HTTP 408|HTTP 504", e.stderr,
                                                    re.I) else "error"
             if re.search(r"HTTP 40[13]", e.stderr):
                 raise Stop("decision calls allowed", {"detail": e.stderr.strip()[:300]}) from e
-            res = {"ok": False, "error": kind}
+            res = Decision(error=kind)
         self.decisions[key] = res
         return res
 
@@ -1162,23 +1303,23 @@ class Analyzer:
         for m, n in alloc.items():
             cells = self.cells(m)
             if not cells:
-                self.report["checks"]["caveats"].append({"check": "no cells", "detail": m})
+                self.caveat("no cells", m)
                 continue
             jobs += [(m, cells, self.rng.randrange(2**31)) for _ in range(n)]
         est_s = len(jobs) * 12 / WORKERS
         self.log(f"sampling {len(jobs)} spans, about {est_s / 60:.1f} min")
         with ThreadPoolExecutor(WORKERS) as ex:
             drawn = [d for d in ex.map(lambda j: self._safe(lambda: self.draw_one(*j)), jobs) if d]
-        empty = {m for m in alloc if not any(d["model"] == m for d in drawn)}
+        empty = {m for m in alloc if not any(d.model == m for d in drawn)}
         for m in empty:
-            self.report["checks"]["caveats"].append({"check": "stratum search empty", "detail": m})
+            self.caveat("stratum search empty", m)
 
         # routing inputs
         for d in drawn:
-            d["input"], d["source"] = routing_input(d["span"].get("attributes") or {})
+            d.input, d.source = routing_input(d.attrs)
         if not drawn:
             raise Stop("sample not empty", {"drawn": 0})
-        texts = {d["input"] for d in drawn if d["input"]}
+        texts = {d.input for d in drawn if d.input}
         tokens = sum(len(t) / 4 + DECISION_OVERHEAD_TOKENS for t in texts)
         cost = tokens * DECISION_PRICE_PER_M / 1e6
         self.report["routing_decision_cost"] = {"calls": len(texts), "estimated_usd": cost}
@@ -1197,9 +1338,9 @@ class Analyzer:
         self.score_samples(drawn)
         self.pilot_checks(drawn)
         if a.counterfactual_test:
-            self.counterfactual(drawn)
+            self.counterfactual()
             return
-        self.estimate(drawn, dict(chat), total)
+        self.estimate(dict(chat), total)
         self.report["caching"] = self._safe(self.caching) or {"error": "caching scan failed"}
         self.report["harness"] = self._safe(self.harness) or {"error": "harness query failed"}
 
@@ -1209,105 +1350,95 @@ class Analyzer:
         except Stop:
             raise
         except Exception as e:  # noqa: BLE001 - one failed read must not end the run
-            self.report["checks"]["caveats"].append({"check": "read failed", "detail": str(e)[:300]})
+            self.caveat("read failed", str(e)[:300])
             return None
 
-    def score_samples(self, drawn: list[dict]) -> None:
-        """Price every sample under each scenario. Keys: `router|<scope>|<profile>` and `switch|<scope>`.
-
-        `picks`/`savings` per profile are the headline scope's router, kept flat for the tables."""
-        pools: dict[str, dict[str, dict]] = {}
-        self.samples = []
-        self._traffic: dict[str, list] = {}
+    def score_samples(self, drawn: list[DrawnSpan]) -> None:
+        """Price every sample under each scenario (see SampleRow)."""
+        self.samples, self.pools, self._traffic = [], {}, {}
         for d in drawn:
-            summ, attrs = d["span"].get("summary") or {}, d["span"].get("attributes") or {}
-            self._traffic.setdefault(d["model"], []).append((d["weight"], summ, attrs, span_tokens(summ, attrs)))
+            self._traffic.setdefault(d.model, []).append((d.weight, d.summary, d.attrs, span_tokens(d.summary, d.attrs)))
         for d in drawn:
-            m = d["model"]
-            if m not in pools:
-                pools[m] = {sc: self.pool_for(m, sc) for sc in SCOPES}
-            summ, attrs = d["span"].get("summary") or {}, d["span"].get("attributes") or {}
+            m = d.model
+            if m not in self.pools:
+                self.pools[m] = {sc: self.pool_for(m, sc) for sc in SCOPES}
+            pools = self.pools[m]
+            summ, attrs = d.summary, d.attrs
             env = span_env(summ, attrs, m)
             toks = span_tokens(summ, attrs)
-            cur = choose_price((self.cat.get(m) or {}).get("pricing") or {}, env)
-            cur_price = price_tokens(toks, cur.prices)
-            billed = float(((summ.get("cost") or {}).get("total") or 0)) - float(
-                ((summ.get("cost") or {}).get("web_search") or 0))
-            row = {"trace_id": d["trace_id"], "span_id": d["span_id"], "model": m, "project": d["project"],
-                   "weight": d["weight"], "cur_price": cur_price, "billed": billed, "source": d["source"],
-                   "ask_chars": len(d["input"] or ""), "prompt_tokens": toks.prompt, "flags": [],
-                   "picks": {}, "savings": {p: 0.0 for p in PROFILES}, "tier": {}, "fallback": None,
-                   "ask_preview": (d["input"] or "")[:200],
-                   "scenario_savings": {}, "unpriced": [], "_tokens": toks, "_env": env}
+            cur = self.price_on(m, env)
+            cost = summ.get("cost") or {}
+            row = SampleRow(trace_id=d.trace_id, span_id=d.span_id, model=m, project=d.project, weight=d.weight,
+                            cur_price=price_tokens(toks, cur.prices),
+                            billed=float(cost.get("total") or 0) - float(cost.get("web_search") or 0),
+                            source=d.source, ask_chars=len(d.input or ""), prompt_tokens=toks.prompt,
+                            ask_preview=(d.input or "")[:200], tokens=toks, env=env)
             if cur.flag:
-                row["flags"].append(cur.flag)
+                row.flags.append(cur.flag)
+            ss = row.scenario_savings
 
-            ctx = (row, summ, attrs, toks, cur_price)
             for sc in SCOPES:
-                sw = pools[m][sc]["switch"]
-                key = f"switch|{sc}"
-                row["scenario_savings"][key] = self._reprice(ctx, sw, key) if sw else 0.0
+                sw = pools[sc].switch
+                ss[f"switch|{sc}"] = self._reprice(row, d, sw, f"switch|{sc}") if sw else 0.0
             if has_auto_router(attrs):
-                row["fallback"] = "already_routed"
-            elif d["input"] is None:
-                row["fallback"] = d["source"]
+                row.fallback = "already_routed"
+            elif d.input is None:
+                row.fallback = d.source
             else:
-                dec = self.decide(d["input"])
-                if not dec["ok"]:
-                    row["fallback"] = dec["error"]
+                dec = self.decide(d.input)
+                if dec.score is None:
+                    row.fallback = dec.error
                 else:
-                    row["score"] = dec["score"]
-                    row["tier"] = {p: tier_of(dec["score"], p) for p in PROFILES}
+                    row.score = dec.score
+                    row.tier = {p: tier_of(dec.score, p) for p in PROFILES}
             for sc in SCOPES:
-                pool = pools[m][sc]["pool"]
+                pool = pools[sc].pool
                 for p in PROFILES:
                     key = f"router|{sc}|{p}"
-                    if row["fallback"] == "already_routed":
-                        row["scenario_savings"][key] = 0.0
+                    if row.fallback == "already_routed":
+                        ss[key] = 0.0
                         continue
                     if not pool:  # no pool to route over: the router serves the top seat, which is the switch
-                        row["scenario_savings"][key] = row["scenario_savings"][f"switch|{sc}"]
-                        if f"switch|{sc}" in row["unpriced"] and key not in row["unpriced"]:
-                            row["unpriced"].append(key)
+                        ss[key] = ss[f"switch|{sc}"]
+                        if f"switch|{sc}" in row.unpriced and key not in row.unpriced:
+                            row.unpriced.append(key)
                         if sc == HEADLINE_SCOPE:
-                            row["picks"][p] = pools[m][sc]["switch"] or m
+                            row.picks[p] = pools[sc].switch or m
                         continue
                     # an unscored turn goes to the router's default model, the top seat
-                    choice = pool[0].id if row["fallback"] is not None else pick(pool, row["tier"][p], p).id
-                    row["scenario_savings"][key] = 0.0
+                    choice = pool[0].id if row.fallback is not None else pick(pool, row.tier[p], p).id
+                    ss[key] = 0.0
                     if sc == HEADLINE_SCOPE:
-                        row["picks"][p] = choice
+                        row.picks[p] = choice
                     if choice != m:
-                        row["scenario_savings"][key] = self._reprice(ctx, choice, key)
-            row["savings"] = {p: row["scenario_savings"][f"router|{HEADLINE_SCOPE}|{p}"] for p in PROFILES}
-            head = pools[m][HEADLINE_SCOPE]
-            row["pool"] = [x.id for x in head["pool"]] if head["pool"] else None
-            row["pool_reason"] = head["reason"]
-            row["flags"] = sorted(set(row["flags"]))
+                        ss[key] = self._reprice(row, d, choice, key)
+            row.savings = {p: ss[f"router|{HEADLINE_SCOPE}|{p}"] for p in PROFILES}
+            head = pools[HEADLINE_SCOPE]
+            row.pool = [x.id for x in head.pool] if head.pool else None
+            row.pool_reason = head.reason
+            row.flags = sorted(set(row.flags))
             self.samples.append(row)
-        self.pools = pools
 
-    def _reprice(self, ctx: tuple, target: str, key: str) -> float:
+    def _reprice(self, row: SampleRow, d: DrawnSpan, target: str, key: str) -> float:
         """Saving from serving this span on `target` with the same input, cached and output tokens; a missing tier
         price marks the scenario unpriced."""
-        row, summ, attrs, toks, cur_price = ctx
-        pp = choose_price((self.cat.get(target) or {}).get("pricing") or {}, span_env(summ, attrs, target))
+        pp = self.price_on(target, span_env(d.summary, d.attrs, target))
         if pp.flag:
-            row["flags"].append(f"{target}: {pp.flag}")
-            row["unpriced"].append(key)
-        return cur_price - price_tokens(toks, pp.prices)
+            row.flags.append(f"{target}: {pp.flag}")
+            row.unpriced.append(key)
+        return row.cur_price - price_tokens(row.tokens, pp.prices)
 
-    def pilot_checks(self, drawn: list[dict]) -> None:
+    def pilot_checks(self, drawn: list[DrawnSpan]) -> None:
         rows = self.samples
         n = len(rows)
         if n == 0:
             raise Stop("sample not empty", {"drawn": 0})
-        scored = [r for r in rows if r["tier"]]
-        fb = sum(1 for r in rows if r["fallback"] in ("decision_timeout", "error", "empty_input", "prompt_limit"))
-        err = sum(1 for r in rows if r["fallback"] == "error")
-        sysfb = sum(1 for r in rows if r["source"] in ("system", "instructions"))
-        leaked = sum(1 for d in drawn if d["input"] and "<system-reminder>" in d["input"])
-        tiers = {r["tier"]["balanced"] for r in scored}
+        scored = [r for r in rows if r.tier]
+        fb = sum(1 for r in rows if r.fallback in ("decision_timeout", "error", "empty_input", "prompt_limit"))
+        err = sum(1 for r in rows if r.fallback == "error")
+        sysfb = sum(1 for r in rows if r.source in ("system", "instructions"))
+        leaked = sum(1 for d in drawn if d.input and "<system-reminder>" in d.input)
+        tiers = {r.tier["balanced"] for r in scored}
         checks = [
             ("tier mix is not a single tier", len(tiers) > 1 or len(scored) < 2, {"tiers": sorted(tiers)}),
             ("fallbacks below 10%", fb / n < 0.10, {"fallbacks": fb, "n": n}),
@@ -1317,65 +1448,66 @@ class Analyzer:
         ]
         for name, ok, nums in checks:
             self.report["checks"]["stopping"].append({"check": name, "pass": ok, "numbers": nums})
-        self.report["samples"] = [{k: v for k, v in r.items() if k != "ask_preview" and not k.startswith("_")}
-                                  for r in rows]
+        self.report["samples"] = [r.to_json() for r in rows]
         failed = [c for c in self.report["checks"]["stopping"] if not c["pass"]]
         if failed and not self.args.counterfactual_test:
             raise Stop(failed[0]["check"], failed[0]["numbers"])
 
-    def counterfactual(self, drawn: list[dict]) -> None:
-        per: dict[str, dict] = defaultdict(lambda: {"n": 0, "differs": 0, "cheaper": 0, "pricier": 0})
+    def counterfactual(self) -> None:
+        per: dict[str, dict[str, int]] = defaultdict(lambda: {"n": 0, "differs": 0, "cheaper": 0, "pricier": 0})
         asks = []
         for r in self.samples:
-            rec = r["picks"].get("balanced") or r["model"]
-            differs = rec != r["model"]
-            s = per[r["model"]]
+            rec = r.picks.get("balanced") or r.model
+            differs = rec != r.model
+            s = per[r.model]
             s["n"] += 1
             if differs:
                 s["differs"] += 1
-                cheaper = (self.v2(rec).get("price") or 0) < (self.v2(r["model"]).get("price") or 0)
+                cheaper = (self.v2(rec).get("price") or 0) < (self.v2(r.model).get("price") or 0)
                 s["cheaper" if cheaper else "pricier"] += 1
-            asks.append({"span_id": r["span_id"], "used": r["model"], "recommended": rec, "differs": differs,
-                         "tier": r["tier"].get("balanced"), "fallback": r["fallback"], "pool_reason": r["pool_reason"]})
+            asks.append({"span_id": r.span_id, "used": r.model, "recommended": rec, "differs": differs,
+                         "tier": r.tier.get("balanced"), "fallback": r.fallback, "pool_reason": r.pool_reason})
         self.report["counterfactual_test"] = {"asks": asks, "per_model": dict(per)}
 
-    def estimate(self, drawn: list[dict], spend: dict[str, float], total: float) -> None:
+    def estimate(self, spend: dict[str, float], total: float) -> None:
         by: dict[str, list[Draw]] = defaultdict(list)
         own: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
         for r in self.samples:
-            by[r["model"]].append(Draw(r["model"], r["weight"], r["cur_price"], dict(r["scenario_savings"])))
-            own[r["model"]][0] += r["cur_price"]
-            own[r["model"]][1] += r["billed"]
-        strata, priced_ok, not_covered = [], {}, []
+            by[r.model].append(Draw(r.model, r.weight, r.cur_price, dict(r.scenario_savings)))
+            own[r.model][0] += r.cur_price
+            own[r.model][1] += r.billed
+        strata: list[Json] = []
+        priced_ok: dict[str, list[Draw]] = {}
+        not_covered: list[Json] = []
         for m, ds in by.items():
             priced, billed = own[m]
             gap = abs(priced - billed) / billed if billed else None
             reason = ""
             if gap is None or gap > PRICING_GAP:
                 reason = f"pricing check off by {gap:.1%}" if gap is not None else "no billed cost"
-                self.report["checks"]["caveats"].append({"check": "pricing check", "detail": f"{m}: {reason}"})
+                self.caveat("pricing check", f"{m}: {reason}")
                 not_covered.append({"model": m, "spend": spend.get(m, 0.0), "reason": reason})
             else:
                 priced_ok[m] = ds
-            head = self.pools.get(m, {}).get(HEADLINE_SCOPE) or {}
+            head = self.pools[m][HEADLINE_SCOPE].to_json()
             strata.append({"model": m, "spend": spend.get(m, 0.0), "n": len(ds), "clusters": len(ds),
-                           "pool": [p.id for p in head.get("pool") or []] or None,
-                           "pool_reason": head.get("reason", ""), "pricing_gap": gap, "covered": not reason})
+                           "pool": head["pool"], "pool_reason": head["reason"], "pricing_gap": gap,
+                           "covered": not reason})
         for row in self.report["spend"]["by_model"]:
             if row["key"] not in by:
                 why = "not sampled" if row["key"] in spend else "not a chat model (decision, embedding or media)"
                 not_covered.append({"model": row["key"], "spend": row["spend"], "reason": why})
         k = 30 / self.days
 
-        def scenario(key: str) -> dict:
-            unpriced = {r["model"] for r in self.samples if key in r["unpriced"]}
+        def scenario(key: str) -> Json:
+            unpriced = {r.model for r in self.samples if key in r.unpriced}
             cov = {m: ds for m, ds in priced_ok.items() if m not in unpriced}
             cov_spend = {m: spend.get(m, 0.0) for m in cov}
             e = estimate(cov, cov_spend, key, random.Random(self.args.seed))
-            return {"savings": e["savings"], "ci90": e["ci90"], "per_month": e["savings"] * k,
-                    "ci90_per_month": [x * k for x in e["ci90"]], "without_top3": without_top(cov, cov_spend, key),
+            return {"savings": e.savings, "ci90": e.ci90, "per_month": e.savings * k,
+                    "ci90_per_month": [x * k for x in e.ci90], "without_top3": without_top(cov, cov_spend, key),
                     "coverage": (sum(cov_spend.values()) / total) if total else 0.0,
-                    "per_stratum": e["per_stratum"], "unpriced_models": sorted(unpriced)}
+                    "per_stratum": e.per_stratum, "unpriced_models": sorted(unpriced)}
 
         scen = {key: scenario(key) for key in
                 [f"router|{sc}|{p}" for sc in SCOPES for p in PROFILES] + [f"switch|{sc}" for sc in SCOPES]}
@@ -1393,8 +1525,7 @@ class Analyzer:
              "headline": sc == HEADLINE_SCOPE,
              "router": {p: dict(scen[f"router|{sc}|{p}"]) for p in PROFILES},
              "switch": dict(scen[f"switch|{sc}"]),
-             "models": [{"model": m, **{kk: (([x.id for x in v] if v else None) if kk == "pool" else v)
-                                        for kk, v in self.pools[m][sc].items()}} for m in by]}
+             "models": [{"model": m, **self.pools[m][sc].to_json()} for m in by]}
             for sc in SCOPES]
         self.report["routing"] = {
             "headline": {kk: head[kk] for kk in ("savings", "ci90", "without_top3", "coverage", "per_month",
@@ -1403,71 +1534,67 @@ class Analyzer:
             "profiles": {p: {"savings": scen[f"router|{HEADLINE_SCOPE}|{p}"]["savings"],
                              "ci90": scen[f"router|{HEADLINE_SCOPE}|{p}"]["ci90"]} for p in PROFILES},
             "strata": strata, "not_covered": sorted(not_covered, key=lambda r: -r["spend"]),
-            "buckets": self.buckets(), "fallbacks": self._count("fallback"),
+            "buckets": self.buckets(), "fallbacks": self.fallbacks(),
             "moves": self.moves(),
             "underpowered": self.underpowered(), "pareto": self.pareto([s["model"] for s in strata]),
         }
 
-    def moves(self) -> list[dict]:
+    def moves(self) -> list[Json]:
         """Per (used model, balanced pick): spans, how many cost more, weighted savings."""
-        out: dict[tuple, dict] = {}
+        out: dict[tuple[str, str], Json] = {}
         for r in self.samples:
-            pick = r["picks"].get("balanced") or r["model"]
-            row = out.setdefault((r["model"], pick), {"used": r["model"], "pick": pick, "tier": set(), "n": 0,
-                                                      "fallback": 0, "costs_more": 0, "weight": 0.0,
-                                                      "weighted_savings": 0.0})
+            pick = r.picks.get("balanced") or r.model
+            row = out.setdefault((r.model, pick), {"used": r.model, "pick": pick, "tier": set(), "n": 0,
+                                                   "fallback": 0, "costs_more": 0, "weight": 0.0,
+                                                   "weighted_savings": 0.0})
             row["n"] += 1
-            row["weight"] += r["weight"]
-            row["fallback"] += r["fallback"] is not None
-            row["costs_more"] += r["savings"]["balanced"] < 0
-            row["weighted_savings"] += r["weight"] * r["savings"]["balanced"]
-            row["tier"].add(r["tier"].get("balanced") or f"fallback: {r['fallback']}")
+            row["weight"] += r.weight
+            row["fallback"] += r.fallback is not None
+            row["costs_more"] += r.savings["balanced"] < 0
+            row["weighted_savings"] += r.weight * r.savings["balanced"]
+            row["tier"].add(r.tier.get("balanced") or f"fallback: {r.fallback}")
         rows = [dict(v, tier=", ".join(sorted(v["tier"]))) for v in out.values()]
         return sorted(rows, key=lambda v: (v["used"], -v["n"]))
 
-    def _count(self, key: str) -> dict:
-        out: dict[str, int] = defaultdict(int)
-        for r in self.samples:
-            out[str(r[key])] += 1
-        return dict(out)
+    def fallbacks(self) -> dict[str, int]:
+        return dict(Counter(str(r.fallback) for r in self.samples))
 
-    def buckets(self) -> dict:
-        out: dict[str, dict] = {"ask_tokens": defaultdict(lambda: {"n": 0, "weighted_savings": 0.0}),
-                                "prompt_tokens": defaultdict(lambda: {"n": 0, "weighted_savings": 0.0})}
+    def buckets(self) -> dict[str, dict[str, Json]]:
+        out: dict[str, dict[str, Json]] = {"ask_tokens": defaultdict(lambda: {"n": 0, "weighted_savings": 0.0}),
+                                           "prompt_tokens": defaultdict(lambda: {"n": 0, "weighted_savings": 0.0})}
         for r in self.samples:
-            for name, val, edges in (("ask_tokens", r["ask_chars"] / 4, ASK_BUCKETS),
-                                     ("prompt_tokens", r["prompt_tokens"], PROMPT_BUCKETS)):
+            for name, val, edges in (("ask_tokens", r.ask_chars / 4, ASK_BUCKETS),
+                                     ("prompt_tokens", r.prompt_tokens, PROMPT_BUCKETS)):
                 b = out[name][bucket(val, edges)]
                 b["n"] += 1
-                b["weighted_savings"] += r["weight"] * r["savings"]["balanced"]
+                b["weighted_savings"] += r.weight * r.savings["balanced"]
         return {k: dict(v) for k, v in out.items()}
 
-    def underpowered(self) -> list[dict]:
+    def underpowered(self) -> list[Json]:
         """Models where at least half the scored asks are hard: what moving those asks one model up would cost."""
         out = []
         for m in self.pools:
-            every = [r for r in self.samples if r["model"] == m]
-            rows = [r for r in every if r["tier"]]
-            hard = [r for r in rows if r["tier"]["balanced"] == "hard"]
+            every = [r for r in self.samples if r.model == m]
+            rows = [r for r in every if r.tier]
+            hard = [r for r in rows if r.tier["balanced"] == "hard"]
             if not rows or len(hard) / len(rows) < 0.5:
                 continue
             nxt = self.next_stronger(m)
             extra = None
-            den = sum(r["weight"] * r["cur_price"] for r in rows)
+            den = sum(r.weight * r.cur_price for r in rows)
             if nxt and hard and den:
-                pr = (self.cat.get(nxt) or {}).get("pricing") or {}
-                num = sum(r["weight"] * (price_tokens(r["_tokens"], choose_price(pr, r["_env"]).prices)
-                                         - r["cur_price"]) for r in hard)
+                num = sum(r.weight * (price_tokens(r.tokens, self.price_on(nxt, r.env).prices) - r.cur_price)
+                          for r in hard)
                 extra = num / den
-            ex = [] if self.args.redact else [r["ask_preview"] for r in hard[:3]]
-            out.append({"model": m, "n": len(every), "n_scored": len(rows), "share_hard": len(hard) / len(rows), "next_model": nxt,
-                        "next_enabled": bool((self.cards.get(nxt) or {}).get("enabled")) if nxt else None,
+            ex = [] if self.args.redact else [r.ask_preview for r in hard[:3]]
+            out.append({"model": m, "n": len(every), "n_scored": len(rows), "share_hard": len(hard) / len(rows),
+                        "next_model": nxt, "next_enabled": self.enabled(nxt) if nxt else None,
                         "extra_cost_rate": extra, "examples": ex})
         return out
 
-    def pareto(self, models: list[str]) -> list[dict]:
+    def pareto(self, models: list[str]) -> list[Json]:
         """Per used model: which models dominate it, enabled first, from any provider in the same region."""
-        out = []
+        out: list[Json] = []
         for m in models:
             inc = self.garden.get(m)
             if inc is None or inc.free:
@@ -1475,22 +1602,21 @@ class Analyzer:
                 continue
             cost = self.traffic_cost(m)
             own = cost(m) if cost else None
-            if own is None:
+            if cost is None or own is None:
                 dom = [x for x in self.candidates(m, "any_provider:all") if x.router_id != m and x.dominates(inc)]
             else:  # on this model's sampled traffic, cache prices included
                 dom = [x for x in self.candidates(m, "any_provider:all") if x.router_id != m
                        and (c := cost(x.router_id)) is not None and x.default_index >= inc.default_index
                        and c <= own and (x.default_index > inc.default_index or c < own)]
-            dom.sort(key=lambda x: (not (self.cards.get(x.router_id) or {}).get("enabled"), -x.default_index))
+            dom.sort(key=lambda x: (not self.enabled(x.router_id), -x.default_index))
             out.append({"model": m, "index": inc.default_index, "blend_price": inc.price,
                         "dominated_by": [{"model": x.router_id, "index": x.default_index, "blend_price": x.price,
-                                          "enabled": bool((self.cards.get(x.router_id) or {}).get("enabled"))}
-                                         for x in dom[:5]], "note": ""})
+                                          "enabled": self.enabled(x.router_id)} for x in dom[:5]], "note": ""})
         return out
 
     # ---- caching
 
-    def caching(self) -> dict:
+    def caching(self) -> Json:
         cost_rows = self.tq([{"metric": "genai.cost", "op": "sum"}], ["thread", "project"])
         req_rows = self.tq([{"metric": "genai.requests", "op": "count"}], ["thread", "project"])
         reqs = {(r["group"].get("thread"), r["group"].get("project")): r["metrics"].get("genai.requests:count") or 0
@@ -1504,53 +1630,51 @@ class Analyzer:
         with ThreadPoolExecutor(WORKERS) as ex:
             results = list(ex.map(lambda t: self._safe(lambda: self.scan_thread(*t)), threads))
         cands = [c for res in results if res for c in res]
-        found = sum(c["savings"] for c in cands if c["candidate"])
-        prompt = sum(c.get("prompt_tokens", 0) for c in cands)
+        prompt = sum(c.prompt_tokens for c in cands)
         return {"threads_scanned": len(threads), "label": "found in scanned threads, not scaled to the window",
-                "savings_found": found,
-                "cached_share": sum(c.get("cached_tokens", 0) for c in cands) / prompt if prompt else None,
-                "saved_by_cache": sum(c.get("cache_saved", 0.0) for c in cands),
-                "threads_caching": len({c["thread"] for c in cands if c["cached_tokens"] >= 0.2 * c["prompt_tokens"] > 0}),
-                "savings_orq": sum(c["savings"] for c in cands if c["candidate"] and c["product"] in
-                                   ("agents", "deployments")),
-                "rows": sorted(cands, key=lambda c: -c["savings"])[:50]}
+                "savings_found": sum(c.savings for c in cands if c.candidate),
+                "cached_share": sum(c.cached_tokens for c in cands) / prompt if prompt else None,
+                "saved_by_cache": sum(c.cache_saved for c in cands),
+                "threads_caching": len({c.thread for c in cands if c.cached_tokens >= 0.2 * c.prompt_tokens > 0}),
+                "savings_orq": sum(c.savings for c in cands if c.candidate and c.product in ("agents", "deployments")),
+                "rows": [asdict(c) for c in sorted(cands, key=lambda c: -c.savings)[:50]]}
 
-    def scan_thread(self, thread: str, project: str, spend: float) -> list[dict]:
+    def scan_thread(self, thread: str, project: str, spend: float) -> list[CacheCandidate]:
         traces = self.search(project, parse_ts(self.frm), parse_ts(self.to),
                              [{"field": "thread_id", "op": "eq", "values": [thread]}])[:30]
-        by_model: dict[str, list[dict]] = defaultdict(list)
-        meta: dict[str, Any] = {"agent": None, "product": None}
+        by_model: dict[str, list[Turn]] = defaultdict(list)
+        agent = product = None
         for t in traces:
             tid = t.get("trace_id") or t.get("id")
             ag = t.get("agent")
-            meta["agent"] = meta["agent"] or (ag.get("key") or ag.get("id") if isinstance(ag, dict) else ag)
-            meta["product"] = meta["product"] or (((t.get("attributes") or {}).get("orq") or {}).get("product"))
+            agent = agent or (ag.get("key") or ag.get("id") if isinstance(ag, dict) else ag)
+            product = product or (((t.get("attributes") or {}).get("orq") or {}).get("product"))
             for s in self.leaf_llm(self.list_spans(tid, project)):
                 u = s.get("usage") or {}
-                by_model[model_key(s.get("provider", ""), s.get("model", ""))].append(
-                    {"t": parse_ts(s["started_at"]).timestamp(), "prompt": int(u.get("prompt_tokens") or 0),
-                     "cached": int(u.get("prompt_cached_tokens") or 0),
-                     "written": int(u.get("prompt_cache_creation_tokens") or 0)})
+                by_model[model_key(s.get("provider", ""), s.get("model", ""))].append(Turn(
+                    parse_ts(s["started_at"]).timestamp(), int(u.get("prompt_tokens") or 0),
+                    int(u.get("prompt_cached_tokens") or 0), int(u.get("prompt_cache_creation_tokens") or 0)))
         out = []
         for m, turns in by_model.items():
-            turns.sort(key=lambda x: x["t"])
-            prices = choose_price((self.cat.get(m) or {}).get("pricing") or {}, {}).prices
+            turns.sort(key=lambda x: x.t)
+            prices = self.price_on(m, {}).prices
             ok, why = caching_candidate(turns, prices)
             ttl = min([_ttl_seconds(k.removeprefix("cache_write_")) for k in prices if k.startswith("cache_write_")]
                       or [300.0])
-            res = caching_savings(turns, prices, ttl) if ok else {"savings": 0.0}
-            if ok and res["savings"] <= 0:
+            saving = caching_savings(turns, prices, ttl) if ok else 0.0
+            if ok and saving <= 0:
                 ok, why = False, "cache expires between turns or the write premium outweighs reads"
             read = prices.get("cache_read")
-            cached = sum(t["cached"] for t in turns)
+            cached = sum(t.cached for t in turns)
             prov = developer_of(self.canonical(m))
             action = {"anthropic": "set cache_control breakpoints", "openai": "keep the prompt prefix stable",
                       "google": "reads-only reporting; no figure"}.get(prov, "check provider caching")
-            out.append({"thread": thread, "project": project, "model": m, "turns": len(turns), "candidate": ok,
-                        "reason": why, "savings": res["savings"] if ok and prov != "google" else 0.0,
-                        "upper_bound": prov == "openai", "action": action, "thread_spend": spend,
-                        "prompt_tokens": sum(t["prompt"] for t in turns), "cached_tokens": cached,
-                        "cache_saved": cached * (prices.get("input", 0.0) - read) if read is not None else 0.0, **meta})
+            out.append(CacheCandidate(
+                thread=thread, project=project, model=m, turns=len(turns), candidate=ok, reason=why,
+                savings=saving if ok and prov != "google" else 0.0, upper_bound=prov == "openai", action=action,
+                thread_spend=spend, prompt_tokens=sum(t.prompt for t in turns), cached_tokens=cached,
+                cache_saved=cached * (prices.get("input", 0.0) - read) if read is not None else 0.0,
+                agent=agent, product=product))
         return out
 
     def harness(self) -> dict:
@@ -1566,9 +1690,8 @@ class Analyzer:
             r["coding_harness"] = r["framework"] in CODING_HARNESSES
         gap = self.report["spend"]["total"] - tot
         if gap < 0:  # the metrics can disagree upward; a negative difference means nothing
-            self.report["checks"]["caveats"].append(
-                {"check": "harness metric exceeds spend", "detail": f"orq.gen_ai.cost {tot:.2f} > genai.cost "
-                                                                    f"{self.report['spend']['total']:.2f}; shares only"})
+            self.caveat("harness metric exceeds spend", f"orq.gen_ai.cost {tot:.2f} > genai.cost "
+                        f"{self.report['spend']['total']:.2f}; shares only")
         return {"metric": "orq.gen_ai.cost", "rows": sorted(rows, key=lambda r: -r["spend"]),
                 "unattributed": gap if gap >= 0 else None}
 

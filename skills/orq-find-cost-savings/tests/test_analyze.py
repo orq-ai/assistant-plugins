@@ -291,7 +291,7 @@ def test_sample_cap():
 
 
 def test_unscored_turn_goes_to_the_top_seat(tmp_path, monkeypatch):
-    monkeypatch.setattr(c.Analyzer, "decide", lambda self, text: {"ok": False, "error": "decision_timeout"})
+    monkeypatch.setattr(c.Analyzer, "decide", lambda self, text: c.Decision(error="decision_timeout"))
     _, rep = run(tmp_path)
     for r in rep["samples"]:
         assert r["fallback"] == "decision_timeout" and r["picks"]["balanced"] == SOL61
@@ -362,7 +362,7 @@ def test_a_model_without_a_smart_router_score_is_never_a_target(tmp_path):
     ids = [x.router_id for x in an.candidates("openai/gpt-6-sol", "any_provider:all")]
     assert "openai/gpt-x-unscored" not in ids and "openai/gpt-x-scored" in ids
     res = an.pool_for("openai/gpt-6-sol", "same_provider:all")
-    assert "openai/gpt-x-unscored" not in [p.id for p in res["pool"] or []] + [res["switch"]] + res["enable"]
+    assert "openai/gpt-x-unscored" not in [p.id for p in res.pool or []] + [res.switch] + res.enable
 
 
 def test_report_has_no_quality_profile_and_a_minor_schema_version(tmp_path):
@@ -375,8 +375,8 @@ def test_report_has_no_quality_profile_and_a_minor_schema_version(tmp_path):
 def test_underpowered_and_moves_count_fallback_samples(tmp_path):
     an, _ = run(tmp_path)
     an.samples = an.samples[:2]
-    an.samples[0]["fallback"], an.samples[0]["tier"] = "prompt_limit", {}
-    an.samples[1]["tier"] = {"balanced": "hard", "cost": "hard"}
+    an.samples[0].fallback, an.samples[0].tier = "prompt_limit", {}
+    an.samples[1].tier = {"balanced": "hard", "cost": "hard"}
     an.pools = {SOL: an.pools[SOL]}
     up = an.underpowered()[0]
     assert up["n"] == len(an.samples) == 2 and up["n_scored"] == 1  # the fallback counts in n, not in the shares

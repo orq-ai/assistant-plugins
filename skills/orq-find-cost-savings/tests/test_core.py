@@ -341,14 +341,14 @@ def test_weighted_ratio_by_hand():
     # (2*0.5 + 1*1.0) / (2*1 + 1*4) = 2/6
     assert c.stratum_rate(ds, "balanced") == pytest.approx(1 / 3)
     est = c.estimate({"s": ds}, {"s": 60.0}, "balanced", random.Random(0), boots=200)
-    assert est["savings"] == pytest.approx(20.0)
-    lo, hi = est["ci90"]
-    assert lo <= est["savings"] <= hi
+    assert est.savings == pytest.approx(20.0)
+    lo, hi = est.ci90
+    assert lo <= est.savings <= hi
 
 
 def test_without_top3_drops_largest_contributions():
     ds = [c.Draw("s", 1, 1.0, {"balanced": x}) for x in (10, 9, 8, 0.1, 0.1)]
-    full = c.estimate({"s": ds}, {"s": 5.0}, "balanced", random.Random(0), boots=10)["savings"]
+    full = c.estimate({"s": ds}, {"s": 5.0}, "balanced", random.Random(0), boots=10).savings
     assert c.without_top({"s": ds}, {"s": 5.0}, "balanced") < full
 
 
@@ -364,7 +364,7 @@ def test_without_top3_ranks_by_contribution_to_the_estimate():
 
 
 def turn(t, prompt, cached=0, written=0):
-    return {"t": t, "prompt": prompt, "cached": cached, "written": written}
+    return c.Turn(t, prompt, cached, written)
 
 
 PRICES = {"input": 1.0, "cache_read": 0.1, "cache_write_5m": 1.25}
@@ -372,21 +372,20 @@ PRICES = {"input": 1.0, "cache_read": 0.1, "cache_write_5m": 1.25}
 
 def test_caching_read_and_write_per_turn():
     turns = [turn(0, 2000), turn(10, 3000), turn(20, 4000)]
-    r = c.caching_savings(turns, PRICES, 300)
+    saving = c.caching_savings(turns, PRICES, 300)
     # reads: 2000 + 3000 at (1 - 0.1); writes: the first prompt 2000, then 1000 + 1000, at (1.25 - 1)
-    assert r["savings"] == pytest.approx(5000 * 0.9 - 4000 * 0.25)
+    assert saving == pytest.approx(5000 * 0.9 - 4000 * 0.25)
 
 
 def test_caching_ttl_expiry_rewrites_whole_prompt():
     turns = [turn(0, 2000), turn(1000, 3000)]
-    r = c.caching_savings(turns, PRICES, 300)
-    assert r["savings"] == pytest.approx(-5000 * 0.25)
+    assert c.caching_savings(turns, PRICES, 300) == pytest.approx(-5000 * 0.25)
 
 
 def test_caching_nets_out_existing_reads_and_writes():
     turns = [turn(0, 2000), turn(10, 3000, cached=2000, written=1000)]
     # the first turn still pays the write premium on its 2000 tokens
-    assert c.caching_savings(turns, PRICES, 300)["savings"] == pytest.approx(-2000 * 0.25)
+    assert c.caching_savings(turns, PRICES, 300) == pytest.approx(-2000 * 0.25)
 
 
 def test_caching_candidate_rules():
@@ -398,7 +397,7 @@ def test_caching_candidate_rules():
     cached = [turn(0, 2000), turn(1, 3000, cached=2000), turn(2, 4000, cached=3000)]
     assert c.caching_candidate(cached, PRICES)[0]  # already caching still counts: it can miss turns
     missed = [turn(0, 2000), turn(1, 3000, cached=2000), turn(2, 4000)]  # the last turn missed the cache
-    gap = c.caching_savings(missed, PRICES, 300)["savings"] - c.caching_savings(cached, PRICES, 300)["savings"]
+    gap = c.caching_savings(missed, PRICES, 300) - c.caching_savings(cached, PRICES, 300)
     assert gap == pytest.approx(3000 * (PRICES["input"] - PRICES["cache_read"]))  # only the missed read counts
 
 
