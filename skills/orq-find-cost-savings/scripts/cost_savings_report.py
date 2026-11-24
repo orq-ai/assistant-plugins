@@ -1507,8 +1507,12 @@ class Analyzer:
             results = list(ex.map(lambda t: self._safe(lambda: self.scan_thread(*t)), threads))
         cands = [c for res in results if res for c in res]
         found = sum(c["savings"] for c in cands if c["candidate"])
+        prompt = sum(c.get("prompt_tokens", 0) for c in cands)
         return {"threads_scanned": len(threads), "label": "found in scanned threads, not scaled to the window",
                 "savings_found": found,
+                "cached_share": sum(c.get("cached_tokens", 0) for c in cands) / prompt if prompt else None,
+                "saved_by_cache": sum(c.get("cache_saved", 0.0) for c in cands),
+                "threads_caching": len({c["thread"] for c in cands if c.get("reason", "").startswith("already")}),
                 "savings_orq": sum(c["savings"] for c in cands if c["candidate"] and c["product"] in
                                    ("agents", "deployments")),
                 "rows": sorted(cands, key=lambda c: -c["savings"])[:50]}
@@ -1539,12 +1543,16 @@ class Analyzer:
             res = caching_savings(turns, prices, ttl) if ok else {"savings": 0.0}
             if ok and res["savings"] <= 0:
                 ok, why = False, "cache expires between turns or the write premium outweighs reads"
+            read = prices.get("cache_read")
+            cached = sum(t["cached"] for t in turns)
             prov = developer_of(self.canonical(m))
             action = {"anthropic": "set cache_control breakpoints", "openai": "keep the prompt prefix stable",
                       "google": "reads-only reporting; no figure"}.get(prov, "check provider caching")
             out.append({"thread": thread, "project": project, "model": m, "turns": len(turns), "candidate": ok,
                         "reason": why, "savings": res["savings"] if ok and prov != "google" else 0.0,
-                        "upper_bound": prov == "openai", "action": action, "thread_spend": spend, **meta})
+                        "upper_bound": prov == "openai", "action": action, "thread_spend": spend,
+                        "prompt_tokens": sum(t["prompt"] for t in turns), "cached_tokens": cached,
+                        "cache_saved": cached * (prices.get("input", 0.0) - read) if read is not None else 0.0, **meta})
         return out
 
     def harness(self) -> dict:
@@ -1815,6 +1823,7 @@ background:var(--strip);color:var(--muted);cursor:pointer;transition:color .15s 
 .card{background:var(--strip);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow);margin:12px 0;overflow:hidden}
 .card>.cb{background:var(--card);border:1px solid var(--line);border-radius:4px;box-shadow:0 -1px 1px 0 #14131908;
 margin:0 2px 2px;padding:var(--pad);min-width:0;--pad:16px}
+.okline{display:flex;gap:10px;align-items:flex-start}.okline .ok{flex:none;width:20px;height:20px;color:var(--s1);margin-top:2px}
 .card>.cb>:first-child{margin-top:0}.card>.cb>:last-child{margin-bottom:0}
 .hero{margin:24px 0 0}
 .hero .verdict{margin:0 0 12px;font-size:17px;font-weight:500;color:var(--fg);max-width:60ch}
@@ -2317,7 +2326,8 @@ def summary(report: dict) -> dict:
             "scopes": _scopes(report, spend_pm), "not_analysed": _not_analysed(report, per_month),
             "sampled_moves": [{k: mv.get(k) for k in MOVE_FIELDS} for mv in (report.get("routing") or {}).get("moves") or []],
             "caching": {"threads_scanned": ca.get("threads_scanned"), "savings_found": ca.get("savings_found"),
-                        "error": ca.get("error"),
+                        "cached_share": ca.get("cached_share"), "saved_by_cache": ca.get("saved_by_cache"),
+                        "threads_caching": ca.get("threads_caching"), "error": ca.get("error"),
                         "rows": [{k: r.get(k) for k in CACHE_FIELDS} for r in ca.get("rows") or [] if r.get("candidate")][:20]}}
 
 
@@ -2510,6 +2520,27 @@ def _pool_tables(scopes: list[dict]) -> str:
                                          ("Enable first", "enable", lambda e: ", ".join(e or []) or "nothing")],
                             cap))
     return "".join(out)
+
+
+CHECK = ("<svg class=ok viewBox='0 0 20 20' aria-hidden=true><circle cx=10 cy=10 r=10 fill=currentColor />"
+         "<path d='M5.5 10.5l3 3 6-7' fill=none stroke='var(--card)' stroke-width=2.2 stroke-linecap=round "
+         "stroke-linejoin=round /></svg>")
+
+
+def _caching_body(cs: dict) -> str:
+    """Current caching first, then what turning it on where it is missing would add."""
+    n, found, share = cs["threads_scanned"], cs["savings_found"] or 0, cs.get("cached_share")
+    scope = f"the {n} costliest multi-turn threads"
+    now = (f"{_pct(share)} of input tokens in {scope} were read from cache, saving "
+           f"{_usd(cs.get('saved_by_cache') or 0)} in those threads." if share else
+           f"No input tokens in {scope} were read from cache.")
+    if found >= 1:
+        return (f"<p>{now}</p><p><b>Turning caching on where it is missing:</b> {_usd(found)} more in those threads, "
+                "not scaled to the window.</p>")
+    head = "Caching already works here." if share else "No caching change needed."
+    tail = (f"Turning it on where it is missing would add {_usd(found)}." if share else
+            f"Caching would save {_usd(found)}: the turns are too short or too far apart for the cache to pay off.")
+    return f"<p class=okline>{CHECK}<span><b>{head}</b> {now} {tail}</span></p>"
 
 
 def _card(title: str, body: str, ident: str = "") -> str:
@@ -2855,10 +2886,9 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
              setup,
              _card("Other model choices", "<p class=m>Share of monthly spend saved, by which models are allowed.</p>"
                    + _scope_grid(S["scopes"]) + f"<p class=m>{html.escape(TOKENIZER_NOTE)}</p>", "scopes")]
-    if not caching_small and not caching_error:
-        parts.append(_card("Caching", (f"<p><b>Caching:</b> {_usd(cs['savings_found'])} in the "
-                                       f"{cs['threads_scanned']} costliest threads scanned, not scaled to the "
-                                       "window.</p>") + _md(narrative["caching"]), "caching"))
+    if not caching_error:
+        parts.append(_card("Caching", _caching_body(cs) + ("" if caching_small else _md(narrative["caching"])),
+                           "caching"))
     gen = html.escape(_day(report["generated_at"]) if report.get("generated_at") else to_day)
     unc = _uncertainty_rows(S["scopes"])
     dets = [_details("Estimates with uncertainty", "90% CI per scope and lever",
@@ -2889,7 +2919,7 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
                                      ("Agent", "agent", lambda a: a or "no agent"), ("Model", "model", str),
                                      ("Turns", "turns", str), ("Saving", "savings", _usd), ("Action", "action", str)],
                                     "Caching candidates")))
-    intro = "<p><b>Caching:</b> nothing worth changing.</p>" if caching_small else ""
+    intro = ""
     if caching_error:
         intro = f"<p><b>Caching:</b> not checked ({html.escape(str(caching_error))}).</p>"
     intro += (f"<p class=m>{_usd(total)} spent over the {win['days']}-day window. Covers {_pct(cov)} of spend; "

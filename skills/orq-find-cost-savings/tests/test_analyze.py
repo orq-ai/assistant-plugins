@@ -574,3 +574,19 @@ def test_render_reads_only_the_summary(tmp_path):
     only = {k: rep[k] for k in ("summary", "workspace", "generated_at")}
     assert c.render(only, n, redact=False) == page  # nothing outside summary and the run header is read
     assert "thread-kept-1" in page and "thread-dropped-2" not in page and "(hidden)" in c.render(only, n, redact=True)
+
+
+def test_caching_card_shows_current_caching_with_a_check(tmp_path):
+    _, rep = run(tmp_path)
+    rep["caching"] = {"threads_scanned": 200, "savings_found": 0.01, "cached_share": 0.786, "saved_by_cache": 46.67,
+                      "threads_caching": 41, "rows": []}
+    rep["summary"] = c.summary(rep)
+    jsonschema.validate(rep, SCHEMA)
+    n = {"summary": "S.", "routing": "R.", "caveats": "V."}  # no caching slot needed below $1
+    page = c.render(rep, n, redact=False)
+    assert "class=okline" in page and "Caching already works here." in page
+    assert "79% of input tokens in the 200 costliest multi-turn threads were read from cache, saving $46.67" in page
+    assert "nothing worth changing" not in page
+    rep["caching"]["cached_share"] = 0.0  # nothing cached and nothing to gain: still a check, different words
+    rep["summary"] = c.summary(rep)
+    assert "No caching change needed." in c.render(rep, n, redact=False)

@@ -29,7 +29,8 @@
         "sampled_calls": {"type": ["integer", "null"]},
         "caveats": {"type": "array"},
         "window": {"type": "object", "required": ["from", "to", "days", "requested", "retention"], "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "days": {"type": "integer"}, "requested": {"type": ["integer", "null"]}, "retention": {"type": ["integer", "null"]}}},
-        "caching": {"type": "object", "required": ["threads_scanned", "savings_found", "error", "rows"], "properties": {"threads_scanned": {"type": ["integer", "null"]}, "savings_found": {"type": ["number", "null"]}, "error": {"type": ["string", "null"]},
+        "caching": {"type": "object", "required": ["threads_scanned", "savings_found", "cached_share", "saved_by_cache", "threads_caching", "error", "rows"], "properties": {"threads_scanned": {"type": ["integer", "null"]}, "savings_found": {"type": ["number", "null"]}, "error": {"type": ["string", "null"]},
+                    "cached_share": {"type": ["number", "null"], "description": "Share of input tokens in the scanned threads already read from cache."}, "saved_by_cache": {"type": ["number", "null"], "description": "What those cache reads saved against the input price, in the scanned threads."}, "threads_caching": {"type": ["integer", "null"], "description": "Scanned threads with a model already reading 20% or more of its input from cache."},
                     "rows": {"description": "Up to 20 candidate threads, largest saving first.", "type": "array", "items": {"type": "object", "required": ["thread", "agent", "model", "turns", "savings", "action"]}}}},
         "sampled_moves": {"description": "Per (model in use, balanced pick) in the headline scope: sampled calls, fallbacks among them, and their saving.", "type": "array", "items": {"type": "object", "required": ["used", "pick", "tier", "n", "fallback", "costs_more", "weighted_savings"]}},
         "router": {
@@ -326,6 +327,9 @@
         "label": {"type": "string"},
         "savings_found": {"type": "number"},
         "savings_orq": {"type": "number"},
+        "cached_share": {"type": ["number", "null"]},
+        "saved_by_cache": {"type": "number"},
+        "threads_caching": {"type": "integer"},
         "rows": {"type": "array"},
         "error": {"type": "string"}
       }

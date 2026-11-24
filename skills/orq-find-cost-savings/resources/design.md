@@ -299,6 +299,8 @@ Per turn k from 2 to n:
 
 Savings = sum_k max(0, read_k - cached_k) x (input - cache read) - sum_k max(0, write_k - actual_write_k) x (cache write - input), with prices from the pricing function at the current model. No cache-write price makes the second term 0.
 
+Current caching is reported beside it, over every scanned (thread, model): the share of input tokens read from cache (`cached_share`), what those reads saved against the input price (`saved_by_cache`), and the threads already reading 20% or more from cache (`threads_caching`). Below $1 of savings the page shows these with a check mark instead of a caching narrative.
+
 The rule assumes conversations append. For providers with automatic prefix caching (OpenAI), a low read ratio often means the prefix is not stable, so the OpenAI figure is an upper bound and labelled so.
 
 Action by provider:
