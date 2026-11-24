@@ -6,7 +6,7 @@ mcp_tool_exists,create_datapoints,,create_datapoints listed on MCP server
 mcp_tool_exists,create_llm_eval,,create_llm_eval listed on MCP server
 mcp_tool_param,search_entities,type,search_entities takes type
 mcp_tool_args,search_entities,"{""type"": ""evaluator""}",search_entities(type=evaluator) matches the schema
-cli_subcommand,request,,orq request exists
 doc_url,https://docs.orq.ai/reference/experiments/create-an-experiment,,Experiments API create page reachable
 doc_url,https://docs.orq.ai/reference/experiments/add-a-task-column,,Experiments API task column page reachable
 doc_url,https://docs.orq.ai/reference/experiments/query-run-cells,,Experiments API query page reachable
+cli_subcommand,experiments,,orq experiments exists

@@ -30,4 +30,4 @@ pypi_extra,evaluatorq,redteam,evaluatorq has extra [redteam]
 npm_package,@orq-ai/evaluatorq,,@orq-ai/evaluatorq on npm
 mcp_tool_args,search_entities,"{""type"": ""agent""}",search_entities(type=agent) matches the schema
 doc_url,https://docs.orq.ai/reference/experiments/create-an-experiment,,Experiments API create page reachable
-cli_subcommand,request,,orq request exists
+cli_subcommand,experiments,,orq experiments exists

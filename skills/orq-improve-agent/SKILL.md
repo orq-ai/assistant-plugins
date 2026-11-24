@@ -258,7 +258,7 @@ orq datasets create  →  create-datapoint (batched, ≤100 per call)
                      →  create_experiment with task.type: agent + agent_key + evaluators[]
 ```
 
-For a regression check that will be re-run after each fix, the Experiments API in [experiments-api.md](../orq-shared/resources/experiments-api.md) does the last step instead: an agent task column takes only an `agent_key`, so before applying the fix, create a copy of the current agent config under its own key (for example `<agent-key>-before`, via `orq agents create`). Then add the copy and the fixed agent as two agent task columns in one run, since `baseline_run_id` deltas do not work across runs for agent columns.
+For a regression check that will be re-run after each fix, the Experiments API in [experiments-api.md](../orq-shared/resources/experiments-api.md) does the last step instead, with no copy of the agent: every applied change publishes a new version (Phase 4 step 3), and an agent task column can pin one with `agent_tag`. Take the version `orq agents retrieve` reported before the write and the new version from step 4, and add two agent task columns with the same `agent_key`, one per version (for example `"agent_tag": "1.0.0"` and `"agent_tag": "1.0.1"`), in one run, since `baseline_run_id` deltas do not work across runs for agent columns.
 
 `orq-run-experiment` owns dataset selection and materialises this; this skill supplies the ids and does not build datasets.
 

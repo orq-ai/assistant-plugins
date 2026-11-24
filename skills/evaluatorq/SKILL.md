@@ -56,7 +56,7 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 ## When NOT to use
 
 - **Comparing multiple agents?** → `orq-compare-agents`
-- **Prompts or orq.ai agents scored by platform evaluators, no custom scorer?** → `orq-run-experiment` (Experiments API via `orq request`)
+- **Prompts or orq.ai agents scored by platform evaluators, no custom scorer?** → `orq-run-experiment` (Experiments API via `orq experiments`)
 - **No dataset yet?** → `orq-generate-synthetic-dataset` first
 - **Need to diagnose what's failing in production?** → `orq-analyze-traces`
 - **Designing the judge criteria itself, or need it as a platform evaluator?** → `orq-build-evaluator`

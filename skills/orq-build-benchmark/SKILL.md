@@ -282,20 +282,20 @@ Check the marketplace first, then fill the gaps.
 
 ### 4. Run the candidates as an orq experiment
 
-Use the Experiments API through `orq request`, following [experiments-api.md](../orq-shared/resources/experiments-api.md). Steps 1 to 3 do not change.
+Use the Experiments API through `orq experiments`, following [experiments-api.md](../orq-shared/resources/experiments-api.md). Steps 1 to 3 do not change.
 
 - Create one experiment on the step 2 dataset, and in its first run add one `prompt` task column per candidate model. Every column gets the same messages, for example a user message of `{{text}}` (the input column from step 2), so the model is the only difference. Resolve each candidate's `refId` from `orq models list` per [model-slugs.md](../orq-shared/resources/model-slugs.md) and use it as `prompt_config.model` and as the column's `display_name`; do not invent model ids.
 - Add the step 3 evaluators once, by ID. Each one scores every candidate column. The rubric judge must be an orq evaluator here (`create_llm_eval`), numeric, and its model must not be one of the candidates: a model scoring its own answer self-prefers and inflates its grade.
 - Execute with `EXECUTE_SCOPE_FULL`, poll until terminal, and check `cell_status_counts.failed`. A failed candidate cell carries the reason in `error_message` (a deprecated model fails every cell in its column).
 - Keep every candidate in this one run. Adding a candidate later means a new column and `EXECUTE_SCOPE_PARTIAL`, which runs only the new and failed cells.
 
-Use evaluatorq instead when a candidate is not a plain prompt call: an orq.ai agent or external agent, a task that needs custom code to load files or produce an `agentic` artifact, or a judge only `llm_jury` can express. The template for that path is in [resources/evaluatorq-path.md](resources/evaluatorq-path.md).
+An orq.ai agent candidate fits the same run as an `agent` task column, as in `orq-compare-agents` path A. Use evaluatorq instead when a candidate is neither a prompt nor an orq.ai agent: an external agent, a task that needs custom code to load files or produce an `agentic` artifact, or a judge only `llm_jury` can express. The template for that path is in [resources/evaluatorq-path.md](resources/evaluatorq-path.md).
 
 ### 5. Read the results
 
 A run can complete while every rubric cell failed, so read counts before scores.
 
-Per candidate, `GET .../runs/{run_id}/metrics` gives the rubric average at `{task_column_id}_{evaluator_id}` (`.number.avg`, with `.number.count` for how many scored), and cost and latency at `{task_column_id}_orq_cost` and `_orq_latency`. Do not rank on those averages: when counts differ they are not comparable.
+Per candidate, `orq experiments get-run-metrics` gives the rubric average at `{task_column_id}_{evaluator_id}` (`.number.avg`, with `.number.count` for how many scored), and cost and latency at `{task_column_id}_orq_cost` and `_orq_latency`. Do not rank on those averages: when counts differ they are not comparable.
 
 Compare two candidates on the rows both scored. Fetch per-row rubric scores for each candidate column with the evaluator query in experiments-api.md step 5 (page until `has_more` is false), save them as `{row_id: score}`, and use these helpers. They take those flat dicts; the evaluatorq path has its own `paired_gap` for evaluatorq tables.
 

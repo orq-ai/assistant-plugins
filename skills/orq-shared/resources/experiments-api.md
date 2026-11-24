@@ -2,17 +2,17 @@
 
 Shared reference for `orq-run-experiment`, `orq-compare-agents` and `orq-build-benchmark`. Reference pages live under [reference/experiments](https://docs.orq.ai/reference/experiments/create-an-experiment).
 
-The CLI has no `experiments` group, so every call goes through `orq request <METHOD> <PATH>`, which signs the request with the active profile (or `ORQ_API_KEY`, `--profile`, `--server`). Resolve the key first per [run-key-preflight.md](run-key-preflight.md).
+Every call goes through the CLI's `experiments` group (`orq experiments --help` lists it under Optimization), which signs the request with the active profile (or `ORQ_API_KEY`, `--profile`, `--server`). Resolve the key first per [run-key-preflight.md](run-key-preflight.md). If `orq experiments` is an unknown command, the CLI is too old: upgrade it per [orq-cli](../../orq-cli/SKILL.md) rather than calling the API by hand.
 
-How `orq request` behaves:
+How the commands behave:
 
-- Send JSON bodies on stdin (`echo '<json>' | orq request POST ...` or a heredoc). A JSON string as a positional argument fails to parse.
-- The response is wrapped as `{ok, status, headers, body_text, body}`, so projections read `body.*`.
-- A 4xx still exits 0 with `ok: false` and the reason in `body.message`. Project `ok` and `status` on every write and stop when `ok` is false.
+- Path parameters are positional: `orq experiments create-task <experiment-id> <run-id>`.
+- Body fields are flags. Nested objects (`--prompt`, `--agent`, `--constraints`, `--targets`) take a JSON string; `--from-file body.json` sends a whole body instead. `<command> --example` prints a sample body without sending anything.
+- Responses are the bare API body, so projections start at the top level (`-j experiment_id`). A 4xx exits non-zero with the reason on stderr.
 - `-o json --raw -j '<path>'` prints one bare value, for capturing IDs into a shell variable.
 - `-j` takes JMESPath. String literals go in single quotes (`'Run 2'`); backticks hold JSON, so a bare string in backticks fails.
-- GET calls need `</dev/null` when run from a script, or the CLI waits for stdin.
-- DELETE needs `--force` outside an interactive terminal.
+- Commands with no body need `</dev/null` when run from a script, or the CLI waits for stdin.
+- `orq experiments delete` needs `--force` outside an interactive terminal.
 
 ## When to use it instead of the MCP tools
 
@@ -32,32 +32,21 @@ An experiment holds runs. A run is a grid: one row per dataset datapoint (at mos
 Its first run is a draft named "Run 1".
 
 ```bash
-read -r EXP RUN < <(echo '{"display_name":"support-replies-v2","dataset_id":"<DATASET_ID>"}' \
-  | orq request POST /v3/experiments -o json --raw -j "join(' ', [body.experiment_id, body.selected_run_id])")
+read -r EXP RUN < <(orq experiments create --display-name support-replies-v2 --dataset-id <DATASET_ID> \
+  -o json --raw -j "join(' ', [experiment_id, selected_run_id])" </dev/null)
 ```
 
-If either value is empty, rerun without `--raw` and project `{ok: ok, status: status, message: body.message}` to see why. `project_id` defaults to the key's project and is required for keys that span several projects.
+`--project-id` defaults to the key's project and is required for keys that span several projects.
 
 ## 2. Add task columns
 
 Prompt task. Resolve the model's `refId` from `orq models list` per [model-slugs.md](model-slugs.md); do not type a slug from memory.
 
 ```bash
-orq request POST /v3/experiments/$EXP/runs/$RUN/tasks -o json \
-  -j '{ok: ok, status: status, column_id: body.column_id}' <<'JSON'
-{
-  "display_name": "baseline prompt",
-  "prompt": {
-    "prompt_config": {
-      "model": "<MODEL_REF_ID>",
-      "messages": [
-        {"role": "system", "content": "You answer customer questions in two sentences."},
-        {"role": "user", "content": "{{user_message}}"}
-      ]
-    }
-  }
-}
-JSON
+orq experiments create-task $EXP $RUN --display-name "baseline prompt" -o json --raw -j column_id </dev/null \
+  --prompt '{"prompt_config":{"model":"<MODEL_REF_ID>","messages":[
+    {"role":"system","content":"You answer customer questions in two sentences."},
+    {"role":"user","content":"{{user_message}}"}]}}'
 ```
 
 `messages_source`: `MESSAGES_SOURCE_PROMPT_CONFIG` (default, the prompt's messages only), `MESSAGES_SOURCE_MESSAGES_COLUMN` (the row's dataset messages) or `MESSAGES_SOURCE_COMBINED` (prompt messages, then the row's). `engine`: `text` (default), `jinja` or `mustache`.
@@ -65,50 +54,42 @@ JSON
 Agent task, by agent key. System messages are dropped because the agent's instructions provide them.
 
 ```bash
-orq request POST /v3/experiments/$EXP/runs/$RUN/tasks -o json \
-  -j '{ok: ok, status: status, column_id: body.column_id}' <<'JSON'
-{
-  "display_name": "support agent",
-  "agent": {
-    "agent_key": "<AGENT_KEY>",
-    "messages_source": "MESSAGES_SOURCE_PROMPT_CONFIG",
-    "messages": [{"role": "user", "content": "{{user_message}}"}]
-  }
-}
-JSON
+orq experiments create-task $EXP $RUN --display-name "support agent" -o json --raw -j column_id </dev/null \
+  --agent '{"agent_key":"<AGENT_KEY>","messages":[{"role":"user","content":"{{user_message}}"}]}'
 ```
 
 Use `"messages_source": "MESSAGES_SOURCE_MESSAGES_COLUMN"` with no `messages` to send the dataset's conversation instead.
+
+`agent_tag` pins a published version of the agent (for example `"agent_tag":"1.0.0"`, the version `orq agents retrieve` reports); without it the column runs the current version. Two columns with the same `agent_key` and different `agent_tag` compare two versions of one agent in one run, with no copy of the agent.
 
 ## 3. Add evaluator columns
 
 Existing evaluators, by ID. The evaluator's config lives on the evaluator; change it there.
 
 ```bash
-echo '{"evaluator_id":"<EVALUATOR_ID>"}' \
-  | orq request POST /v3/experiments/$EXP/runs/$RUN/evaluators -o json -j '{ok: ok, status: status, column_id: body.column_id}'
+orq experiments create-eval $EXP $RUN --evaluator-id <EVALUATOR_ID> -o json --raw -j column_id </dev/null
 ```
 
 ## 4. Execute and poll
 
 ```bash
-echo '{"scope":"EXECUTE_SCOPE_FULL","constraints":{"llm":{"concurrency":5}}}' \
-  | orq request POST /v3/experiments/$EXP/runs/$RUN/execute -o json -j '{ok: ok, status: status, run_status: body.status}'
+orq experiments execute-run $EXP $RUN --scope EXECUTE_SCOPE_FULL --constraints '{"llm":{"concurrency":5}}' \
+  -o json -j status </dev/null
 
 for i in $(seq 90); do
-  s=$(orq request GET /v3/experiments/$EXP/runs/$RUN -o json --raw -j 'body.status' </dev/null)
+  s=$(orq experiments get-run $EXP $RUN -o json --raw -j status </dev/null)
   [[ $s =~ ^RUN_STATUS_(COMPLETED|FAILED|CANCELED)$ ]] && break; sleep 10
 done; echo "$s"
 
-orq request GET /v3/experiments/$EXP/runs/$RUN -o json -j 'body.cell_status_counts' </dev/null
+orq experiments get-run $EXP $RUN -o json -j cell_status_counts </dev/null
 ```
 
 The loop gives up after 15 minutes so an empty `$RUN` or a stuck run cannot hang the shell; if `$s` is not terminal, check the run before polling again. Run statuses: `RUN_STATUS_DRAFT`, `RUN_STATUS_QUEUED`, `RUN_STATUS_RUNNING`, then one of `RUN_STATUS_COMPLETED`, `RUN_STATUS_FAILED`, `RUN_STATUS_CANCELED`. A completed run can still hold failed cells: check `cell_status_counts.failed` before reading scores. `not_run` cells on other columns after a clean run are normal.
 
-Scopes: `EXECUTE_SCOPE_FULL` (every cell), `EXECUTE_SCOPE_PARTIAL` (cells that are not completed or running, so new columns and failed cells), and `EXECUTE_SCOPE_ROW`, `EXECUTE_SCOPE_COLUMN`, `EXECUTE_SCOPE_CELL` with `targets`. A queued or running run rejects a new execute until it finishes or you cancel it:
+Scopes: `EXECUTE_SCOPE_FULL` (every cell), `EXECUTE_SCOPE_PARTIAL` (cells that are not completed or running, so new columns and failed cells), and `EXECUTE_SCOPE_ROW`, `EXECUTE_SCOPE_COLUMN`, `EXECUTE_SCOPE_CELL` with `--targets`. A queued or running run rejects a new execute until it finishes or you cancel it:
 
 ```bash
-echo '{}' | orq request POST /v3/experiments/$EXP/runs/$RUN/cancel -o json -j '{ok: ok, status: status}'
+orq experiments cancel-run $EXP $RUN -o json -j status </dev/null
 ```
 
 `constraints.llm.timeout` (for example `"600s"`) is optional. If set, it must be at least the timeout of every agent in the run, or execute is rejected with `OPTIMIZATION_EXPERIMENTS_RUN_TIMEOUT_BELOW_AGENT_TIMEOUT`. Leave it out unless you need it.
@@ -118,7 +99,7 @@ echo '{}' | orq request POST /v3/experiments/$EXP/runs/$RUN/cancel -o json -j '{
 Aggregates per task column:
 
 ```bash
-orq request GET /v3/experiments/$EXP/runs/$RUN/metrics -o json -j 'body.metrics' </dev/null
+orq experiments get-run-metrics $EXP $RUN -o json -j metrics </dev/null
 ```
 
 Metric keys are `{task_column_id}_{evaluator_id}` for evaluators and `{task_column_id}_orq_cost`, `{task_column_id}_orq_latency`, `{task_column_id}_orq_input_tokens` and so on for usage. Each value holds one of:
@@ -127,40 +108,40 @@ Metric keys are `{task_column_id}_{evaluator_id}` for evaluators and `{task_colu
 - `number`: `min`, `max`, `avg`, `sum` (the total, for example total cost), `median`, `std_dev`, `range`, `count`
 - `categorical`: label counts, with no `baseline`
 
-Per-row cells for chosen columns, by display name. Each row comes back with the cells of those columns plus the metric and evaluator cells attached to them, so select cells by field: the task output has `column_id` equal to the task column ID, and an evaluator cell has `type` `CELL_TYPE_EVALUATOR` and `task_column_id` equal to the task column it scored. `<TASK_COLUMN_ID>` is the `column_id` returned in step 2.
+Per-row evaluator scores come from `query-run`. Each row comes back with the cells of the chosen columns plus the metric and evaluator cells attached to them, so select cells by field: an evaluator cell has `type` `CELL_TYPE_EVALUATOR` and `task_column_id` equal to the task column it scored. `<TASK_COLUMN_ID>` is the `column_id` returned in step 2.
 
 ```bash
-echo '{"columns":["baseline prompt"],"limit":50}' \
-  | orq request POST /v3/experiments/$EXP/runs/$RUN/query -o json \
-    -j "{has_more: body.has_more, rows: body.rows[].{row_id: row_id, out: cells[?column_id=='<TASK_COLUMN_ID>'] | [0].{status: status, error: error_message, text: value.last_message.content[0].text, trace_id: value.trace_id}}}"
-
 # Per-row evaluator scores for one task column (query the evaluator column by its display name)
-echo '{"columns":["<EVALUATOR_DISPLAY_NAME>"],"limit":50}' \
-  | orq request POST /v3/experiments/$EXP/runs/$RUN/query -o json \
-    -j "body.rows[].{row_id: row_id, score: cells[?type=='CELL_TYPE_EVALUATOR' && task_column_id=='<TASK_COLUMN_ID>'] | [0].value.value}"
+orq experiments query-run $EXP $RUN --body-columns "<EVALUATOR_DISPLAY_NAME>" --limit 50 -o json </dev/null \
+  -j "rows[].{row_id: row_id, score: cells[?type=='CELL_TYPE_EVALUATOR' && task_column_id=='<TASK_COLUMN_ID>'] | [0].value.value}"
 ```
 
-An evaluator cell's `value` holds `type` (`boolean` or `number`), `value` and, for booleans, `passed`. A failed cell has `status` `CELL_STATUS_FAILED` and the reason in `error_message` (for example a deprecated model). `row_id` is the same across columns, so rows pair up between task columns. When `body.has_more` is true, send the same body with `"starting_after": "<last row_id>"` for the next page. Turn a `trace_id` into a link with [orq-trace-format](../../orq-trace-format/SKILL.md).
+`--body-columns` is the body's `columns` field, renamed because `--columns` is the CLI's table-output flag; repeat it for several columns. Evaluator cells and their metrics can land a few seconds after the run reports `RUN_STATUS_COMPLETED`; if a score is missing, read again before treating it as failed. An evaluator cell's `value` holds `type` (`boolean` or `number`), `value` and, for booleans, `passed`. A failed cell has `status` `CELL_STATUS_FAILED` and the reason in `error_message` (for example a deprecated model). `row_id` is the same across columns, so rows pair up between task columns. When `has_more` is true, repeat the call with `--starting-after <last row_id>` for the next page. An evaluator cell carries the judge's `trace_id`; turn it into a link with [orq-trace-format](../../orq-trace-format/SKILL.md).
+
+Task outputs come from the export. On 2026-11-24 `query-run` returned `value: null` for every task cell (`CELL_TYPE_RESPONSE` and `CELL_TYPE_AGENT_RESPONSE`, through the CLI and the raw API alike) while evaluator and metric cells were filled. Each export record is one row and task column, with `model` (the column's display name), `input`, `llm_response` and one field per evaluator, named by the evaluator key.
+
+```bash
+orq experiments export-run $EXP $RUN --format json -o json \
+  -j '[].{column: model, input: input, answer: llm_response}' </dev/null
+```
+
+Use `--format json`: with `jsonl` the CLI fails to parse the response (`invalid character '{' after top-level value`).
 
 ## 6. Iterate: new run, change one thing, compare to baseline
 
 ```bash
-RUN2=$(echo '{"key":"Run 2 - shorter system prompt"}' \
-  | orq request POST /v3/experiments/$EXP/runs -o json --raw -j 'body.run_id')
+RUN2=$(orq experiments create-run $EXP --key "Run 2 - shorter system prompt" -o json --raw -j run_id </dev/null)
 
-orq request GET /v3/experiments/$EXP/runs/$RUN2/tasks -o json \
-  -j 'body.data[].{column_id: column_id, display_name: display_name}' </dev/null
+orq experiments list-tasks $EXP $RUN2 -o json -j 'data[].{column_id: column_id, display_name: display_name}' </dev/null
 
-orq request PATCH /v3/experiments/$EXP/runs/$RUN2/tasks/<TASK_COLUMN_ID> -o json -j '{ok: ok, status: status}' <<'JSON'
-{"prompt": {"prompt_config": {"model": "<MODEL_REF_ID>", "messages": [{"role": "user", "content": "{{user_message}}"}]}}}
-JSON
+orq experiments update-task $EXP $RUN2 <TASK_COLUMN_ID> -o json -j column_id </dev/null \
+  --prompt '{"prompt_config":{"model":"<MODEL_REF_ID>","messages":[{"role":"user","content":"{{user_message}}"}]}}'
 ```
 
 Execute `RUN2` as in step 4, then compare against the first run:
 
 ```bash
-orq request GET "/v3/experiments/$EXP/runs/$RUN2/metrics?baseline_run_id=$RUN" -o json \
-  -j 'body.metrics' </dev/null
+orq experiments get-run-metrics $EXP $RUN2 --baseline-run-id $RUN -o json -j metrics </dev/null
 ```
 
 Each metric gains `baseline: {avg, delta, pct_change, direction}` with `direction` one of `up`, `down`, `same`.
@@ -168,16 +149,15 @@ Each metric gains `baseline: {avg, delta, pct_change, direction}` with `directio
 Rules for runs:
 
 - A new run copies the selected run's columns with empty cells, so any execute on it, `EXECUTE_SCOPE_PARTIAL` included, runs and bills every cell.
-- PATCH replaces the whole task config. Resend `messages_source`, `engine` and `tools` if the column used non-default values.
-- Prompt columns keep their `column_id` in a new run. Agent columns get a new one (and the copied `agent_key` gains a suffix), so their metric keys change and `baseline` is null for them. Compare agents as columns in one run; use the baseline flow for prompt columns.
+- `update-task` replaces the whole task config. Resend `messages_source`, `engine` and `tools` if the column used non-default values.
+- Prompt columns keep their `column_id` in a new run. Agent columns get a new one (and the copied `agent_key` gains a suffix), so their metric keys change and `baseline` is null for them. Compare agents, or agent versions by `agent_tag`, as columns in one run; use the baseline flow for prompt columns.
 
-## Other endpoints
+## Other commands
 
 ```bash
-orq request GET /v3/experiments -o json -j 'body' </dev/null                      # list experiments
-orq request GET /v3/experiments/$EXP/runs -o json -j 'body' </dev/null            # list runs, newest first
-orq request GET /v3/experiments/$EXP/runs/$RUN/export -o json -j 'body' </dev/null  # export a run
-orq request DELETE /v3/experiments/$EXP -o json -j '{ok: ok, status: status}' --force </dev/null
+orq experiments list -o json -j 'data[].{id: experiment_id, name: display_name}' </dev/null
+orq experiments list-runs $EXP -o json -j 'data[].{run_id: run_id, key: key}' </dev/null   # newest first
+orq experiments delete $EXP --force </dev/null
 ```
 
 The experiment's UI link has the shape shown in [orq-trace-format](../../orq-trace-format/SKILL.md).

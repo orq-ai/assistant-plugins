@@ -45,4 +45,4 @@ doc_url,https://docs.orq.ai/reference/experiments/execute-a-run,,Experiments API
 doc_url,https://docs.orq.ai/reference/experiments/get-run-metrics,,Experiments API metrics page reachable
 doc_url,https://docs.orq.ai/reference/experiments/query-run-cells,,Experiments API query page reachable
 doc_url,https://docs.orq.ai/reference/experiments/create-a-run,,Experiments API create run page reachable
-cli_subcommand,request,,orq request exists
+cli_subcommand,experiments,,orq experiments exists

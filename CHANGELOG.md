@@ -9,16 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `orq-shared/resources/experiments-api.md`: one reference for the orq.ai Experiments API (`/v3/experiments`) through `orq request`, verified live: create, prompt and agent task columns, evaluator columns, execute and poll, metrics, per-row outputs and evaluator scores with paging, a new run compared to a baseline, cancel, export and delete, plus the API's gotchas (agent timeout, no baseline for agent columns, PARTIAL on new runs).
+- `orq-shared/resources/experiments-api.md`: one reference for the orq.ai Experiments API (`/v3/experiments`) through the CLI's `orq experiments` group, verified live with orq-cli 12.13.0: create, prompt and agent task columns (`agent_tag` pins an agent version), evaluator columns, execute and poll, metrics, per-row evaluator scores with paging, task outputs from the export, a new run compared to a baseline, cancel, export and delete, plus the API's gotchas (agent timeout, no baseline for agent columns, PARTIAL on new runs).
 - `orq-compare-agents`: Phase 4 path A compares orq.ai agents as one agent task column each in a single run, with no evaluatorq script. External agents still use evaluatorq (path B).
 - `orq-build-benchmark`: step 4 runs the candidates as a native orq experiment, one prompt task column per model in one run, and step 5 computes the paired gap from per-row scores. The evaluatorq template moved to `resources/evaluatorq-path.md` for candidates that are not plain prompts.
-- Factual rows for the Experiments API reference pages and `orq request` flags.
+- Factual rows for the Experiments API reference pages and the `orq experiments` commands and flags.
 
 ### Changed
 
-- `orq-run-experiment`: the Experiments API is the default in steps 8, 9 and 18, with `baseline_run_id` comparison on re-runs; the `create_experiment` MCP tool stays for quick one-offs from chat. `allowed-tools` pre-approves `orq request GET /v3/experiments*` only, since writes still prompt; `orq-compare-agents` gets the same grant.
-- `orq-cli`, `evaluatorq`: no longer say experiments are MCP or evaluatorq only; they route to the Experiments API via `orq request`.
-- `orq-improve-agent`: the hand-off to `orq-run-experiment` names the Experiments API for regression checks that re-run after each fix.
+- `orq-run-experiment`: the Experiments API is the default in steps 8, 9 and 18, with `baseline_run_id` comparison on re-runs; the `create_experiment` MCP tool stays for quick one-offs from chat. `allowed-tools` pre-approves the read-only `orq experiments` commands (`list`, `get*`, `list-*`, `query-run`, `export-run`) only, since writes still prompt; `orq-compare-agents` gets the same grant.
+- `orq-cli`, `evaluatorq`: no longer say experiments are MCP or evaluatorq only; they route to the Experiments API via `orq experiments`. The orq-cli routing table and command map no longer say the CLI has no `experiments` group.
+- `orq-improve-agent`: the hand-off to `orq-run-experiment` names the Experiments API for regression checks that re-run after each fix: two agent task columns pin the version before and after the fix with `agent_tag`, so no copy of the agent is created.
 - `orq-shared`: `model-slugs.md` and `doc-resolution.md` list the skills that use the new reference.
 
 ## [5.2.0] - 2026-11-19

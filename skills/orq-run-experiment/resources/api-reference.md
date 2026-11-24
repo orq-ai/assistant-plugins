@@ -32,7 +32,7 @@ Use the orq MCP server (`https://my.orq.ai/v2/mcp`) as the primary interface. Fo
 
 ## Experiments API (v3)
 
-Create, run, re-run and compare experiments with `orq request`: see [experiments-api.md](../../orq-shared/resources/experiments-api.md).
+Create, run, re-run and compare experiments with `orq experiments`: see [experiments-api.md](../../orq-shared/resources/experiments-api.md).
 
 ## HTTP API Fallback
 
