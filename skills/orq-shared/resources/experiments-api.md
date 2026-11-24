@@ -127,7 +127,7 @@ orq experiments export-run $EXP $RUN --format json -o json \
   -j '[].{column: model, input: input, answer: llm_response}' </dev/null
 ```
 
-Use `--format json` until the CLI can read the `jsonl` export: with `jsonl` it fails to parse the response (`invalid character '{' after top-level value`).
+Use `--format json` until [orq-cli#179](https://github.com/orq-ai/orq-cli/issues/179) is fixed: with `jsonl` or `csv` the CLI fails to parse the response (`invalid character '{' after top-level value`, `Not sure how to unmarshal text/csv`).
 
 ## 6. Iterate: new run, change one thing, compare to baseline
 

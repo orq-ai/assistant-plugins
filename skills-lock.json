@@ -99,7 +99,7 @@
     "orq-shared": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "86c3e0612b89e5556b2bfd9c3aef003902aefd78fa5f4e58cc4d64e86a1ea241"
+      "computedHash": "3ae7a16af59f5c6c3817f5006220a13eae63d1c1fa290e3d79cd0a2796782a70"
     },
     "orq-simulate-agent": {
       "source": "orq-ai/assistant-plugins",
