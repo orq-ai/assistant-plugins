@@ -3,9 +3,10 @@ name: orq-run-experiment
 description: >
   Create and run orq.ai experiments — compare configurations against datasets
   using evaluators, analyze results, and generate prioritized action plans.
-  Use when evaluating LLM agents, deployments, conversations, or RAG pipelines
-  end-to-end. Do NOT use without a dataset and evaluators. Do NOT use for
-  cross-framework comparisons with external agents (use orq-compare-agents).
+  Use when evaluating an LLM agent, deployment, conversation, or RAG pipeline
+  end-to-end, or comparing prompt and model configurations. Do NOT use without
+  a dataset and evaluators. Do NOT use to compare agents head-to-head, even
+  when every agent is an orq.ai agent (use orq-compare-agents).
 allowed-tools: Read, Write, Edit, Grep, Glob, Bash(orq experiments list:*), Bash(orq experiments get:*), Bash(orq experiments get-run:*), Bash(orq experiments get-run-metrics:*), Bash(orq experiments list-runs:*), Bash(orq experiments list-tasks:*), Bash(orq experiments list-evals:*), Bash(orq experiments query-run:*), Bash(orq experiments export-run:*), Task, AskUserQuestion, mcp__orq-workspace__list_experiment_runs, mcp__orq-workspace__get_experiment_run, mcp__orq-workspace__search_entities, mcp__orq-workspace__list_datapoints, mcp__orq-workspace__search_docs
 ---
 
@@ -184,7 +185,7 @@ Consult these docs as needed:
    - On the API, confirm `cell_status_counts.failed` is 0 before reading scores, and retry failed cells with `EXECUTE_SCOPE_PARTIAL`. On MCP, check the run for errored datapoints in `get_experiment_run` and rerun the experiment.
 
 9. **Collect results.**
-   - API: `GET .../runs/{run_id}/metrics` for pass rates (0 to 100), averages, cost and latency per task column, `query-run` for per-row evaluator scores, and `export-run` for the task outputs (see experiments-api.md step 5).
+   - API: `orq experiments get-run-metrics` for pass rates (0 to 100), averages, cost and latency per task column, `query-run` for per-row evaluator scores, and `export-run` for the task outputs (see experiments-api.md step 5).
    - MCP: use `list_experiment_runs` to find the latest run, then `get_experiment_run` for detailed per-datapoint scores.
    - Extract per-datapoint scores and overall metrics, and note the run cost for budget tracking.
    - On a re-run (step 18), create a new run in the same experiment and read its metrics with `baseline_run_id` set to the previous run, so the deltas come from the API instead of hand comparison. This works for prompt columns only: agent columns get a new column ID in each run, so their `baseline` is null. Compare agent variants as two columns in one run.

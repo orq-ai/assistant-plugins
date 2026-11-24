@@ -4,9 +4,8 @@ description: >
   Run cross-framework agent comparisons using evaluatorq from orqkit — compares
   any combination of agents (orq.ai, LangGraph, CrewAI, OpenAI Agents SDK,
   Vercel AI SDK) head-to-head on the same dataset with LLM-as-a-judge scoring.
-  When every agent is an orq.ai agent, runs the comparison through the orq.ai
-  Experiments API instead (one agent column per agent, no script).
-  Use when comparing agents, benchmarking, or wanting side-by-side evaluation.
+  Use when comparing agents, benchmarking, or wanting side-by-side evaluation,
+  including when every agent is an orq.ai agent.
   Do NOT use when comparing only orq.ai prompt or model configurations with no
   agents (use orq-run-experiment instead).
 allowed-tools: Read, Write, Edit, Grep, Glob, Bash(orq experiments list:*), Bash(orq experiments get:*), Bash(orq experiments get-run:*), Bash(orq experiments get-run-metrics:*), Bash(orq experiments list-runs:*), Bash(orq experiments list-tasks:*), Bash(orq experiments list-evals:*), Bash(orq experiments query-run:*), Bash(orq experiments export-run:*), WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities, mcp__orq-workspace__create_dataset, mcp__orq-workspace__create_datapoints, mcp__orq-workspace__create_llm_eval
@@ -163,7 +162,7 @@ Run the flow in [experiments-api.md](../orq-shared/resources/experiments-api.md)
 7a. **One run, one agent task column per agent.** Create the experiment on the Phase 2 dataset, then add each agent as an `agent` task column in the same run (`agent_key` from Phase 1). Keep every agent in this one run: agent columns get a new column ID in each new run, so `baseline_run_id` deltas are null for them. To add an agent later, add its column to this run and execute with `EXECUTE_SCOPE_PARTIAL`, which runs only the new and failed cells.
 7b. **Add the Phase 3 evaluator(s) once.** Every evaluator scores every agent column, so scoring is identical across agents.
 7c. **Execute and poll** until the run is terminal. Read scores only after `RUN_STATUS_COMPLETED` with `cell_status_counts.failed` at 0; otherwise fix the cause and retry with `EXECUTE_SCOPE_PARTIAL`.
-7d. **Compare from `/metrics`.** Per agent, report the pass rate from `{task_column_id}_{evaluator_id}` (`.boolean.passed_rate`, already a percentage from 0 to 100, or `.number.avg` for a numeric judge), total cost from `{task_column_id}_orq_cost` (`.number.sum`) and median latency from `{task_column_id}_orq_latency` (`.number.median`). Then read per-row scores with `query-run` and the answers behind the losing rows with `export-run` (experiments-api.md step 5).
+7d. **Compare from `get-run-metrics`.** Per agent, report the pass rate from `{task_column_id}_{evaluator_id}` (`.boolean.passed_rate`, already a percentage from 0 to 100, or `.number.avg` for a numeric judge), total cost from `{task_column_id}_orq_cost` (`.number.sum`) and median latency from `{task_column_id}_orq_latency` (`.number.median`). Then read per-row scores with `query-run` and the answers behind the losing rows with `export-run` (experiments-api.md step 5).
 7e. Continue at step 12 to open the experiment, and step 14 to iterate.
 
 #### Path B: any agent is external (evaluatorq script)

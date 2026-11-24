@@ -365,6 +365,7 @@ The Node field names (`previousResponseId`, `output[].content[].text`) follow th
 
 ```typescript
 import { Orq } from "@orq-ai/node";
+import type { OutputText, ResponseOutputMessage } from "@orq-ai/node/models/components/index.js";
 
 const orq = new Orq({ apiKey: process.env.ORQ_API_KEY, serverURL: "https://my.orq.ai" });
 const response = await orq.responses.create({ model: "agent/<agent-key>", input: "Hello!", stream: false });
@@ -372,9 +373,9 @@ if (!("output" in response) || response.status !== "completed") {
   throw new Error("Expected a completed non-streaming response");
 }
 const text = (response.output ?? [])
-  .filter(item => item.type === "message")
+  .filter((item): item is ResponseOutputMessage => item.type === "message")
   .flatMap(item => item.content ?? [])
-  .filter(part => part.type === "output_text")
+  .filter((part): part is OutputText => part.type === "output_text")
   .map(part => part.text).join("");
 if (!text) throw new Error(`Agent response ${response.id} has no output_text block`);
 console.log(text);

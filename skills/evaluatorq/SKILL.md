@@ -39,8 +39,8 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 - `orq-generate-synthetic-dataset` — create a dataset when none exists
 - `orq-build-evaluator` — design an LLM-as-a-judge evaluator prompt, when the judge should be a reusable platform entity rather than an `llm_jury()` in the script
 - `orq-evaluator-alignment` — validate a judge against human labels before trusting its verdicts
-- `orq-compare-agents` — run the same evaluatorq evaluation across multiple agents
-- `orq-run-experiment`: run orq.ai-native experiments on prompts or orq.ai agents through the Experiments API, no custom scorer code
+- `orq-compare-agents`: compare several agents head-to-head, orq.ai agents through the Experiments API and external agents through evaluatorq
+- `orq-run-experiment`: run orq.ai-native experiments on prompts or one orq.ai agent through the Experiments API, no custom scorer code
 - `orq-analyze-traces` — diagnose agent failures from production traces
 - `orq-red-team` — full `eq redteam` walkthrough: modes, categories, output, dashboard
 - `orq-simulate-agent` — full `eq sim` walkthrough: personas, scenarios, goal scoring

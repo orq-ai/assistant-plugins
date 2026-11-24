@@ -58,6 +58,7 @@ async def orq_agent_job(data: DataPoint, row: int):
 
 ```typescript
 import { Orq } from "@orq-ai/node";
+import type { OutputText, ResponseOutputMessage } from "@orq-ai/node/models/components/index.js";
 
 const orqAgentJob = job("OrqAgent", async (data) => {
   const query = data.inputs.query;
@@ -71,9 +72,9 @@ const orqAgentJob = job("OrqAgent", async (data) => {
     throw new Error("Expected a completed non-streaming response");
   }
   const text = (response.output ?? [])
-    .filter(item => item.type === "message")
+    .filter((item): item is ResponseOutputMessage => item.type === "message")
     .flatMap(item => item.content ?? [])
-    .filter(part => part.type === "output_text")
+    .filter((part): part is OutputText => part.type === "output_text")
     .map(part => part.text).join("");
   if (!text) throw new Error(`Agent response ${response.id} has no output_text block`);
   return { agent: "OrqAgent", query, response: text };

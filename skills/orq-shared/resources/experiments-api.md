@@ -60,7 +60,9 @@ orq experiments create-task $EXP $RUN --display-name "support agent" -o json --r
 
 Use `"messages_source": "MESSAGES_SOURCE_MESSAGES_COLUMN"` with no `messages` to send the dataset's conversation instead.
 
-`agent_tag` pins a published version of the agent (for example `"agent_tag":"1.0.0"`, the version `orq agents retrieve` reports); without it the column runs the current version. Two columns with the same `agent_key` and different `agent_tag` compare two versions of one agent in one run, with no copy of the agent.
+`agent_tag` pins a published version of the agent. Its value is the `version` string that `orq agents retrieve` reports and that `--version-increment` creates (for example `"agent_tag":"1.0.0"`); without it the column runs the current version. Two columns with the same `agent_key` and different `agent_tag` compare two versions of one agent in one run, with no copy of the agent.
+
+A tagged column only works in the run it was created in. `create-run` copies agent columns to a new agent with a suffixed key (`<AGENT_KEY>_<id>`) that has no published versions, so a tagged column fails there with `agent version not found`. To reuse a tagged column in a new run, point it back with `update-task` (the original `agent_key` plus `agent_tag`) and execute with `EXECUTE_SCOPE_PARTIAL`. The copied agent stays in the workspace after the experiment is deleted; remove it with `orq agents delete`.
 
 ## 3. Add evaluator columns
 
@@ -118,14 +120,14 @@ orq experiments query-run $EXP $RUN --body-columns "<EVALUATOR_DISPLAY_NAME>" --
 
 `--body-columns` is the body's `columns` field, renamed because `--columns` is the CLI's table-output flag; repeat it for several columns. Evaluator cells and their metrics can land a few seconds after the run reports `RUN_STATUS_COMPLETED`; if a score is missing, read again before treating it as failed. An evaluator cell's `value` holds `type` (`boolean` or `number`), `value` and, for booleans, `passed`. A failed cell has `status` `CELL_STATUS_FAILED` and the reason in `error_message` (for example a deprecated model). `row_id` is the same across columns, so rows pair up between task columns. When `has_more` is true, repeat the call with `--starting-after <last row_id>` for the next page. An evaluator cell carries the judge's `trace_id`; turn it into a link with [orq-trace-format](../../orq-trace-format/SKILL.md).
 
-Task outputs come from the export. On 2026-11-24 `query-run` returned `value: null` for every task cell (`CELL_TYPE_RESPONSE` and `CELL_TYPE_AGENT_RESPONSE`, through the CLI and the raw API alike) while evaluator and metric cells were filled. Each export record is one row and task column, with `model` (the column's display name), `input`, `llm_response` and one field per evaluator, named by the evaluator key.
+Task outputs come from the export until optimization-api v4.19.0 reaches production: until then `query-run` returns `value: null` for task cells (`CELL_TYPE_RESPONSE` and `CELL_TYPE_AGENT_RESPONSE`) while evaluator and metric cells are filled. Each export record is one row and task column, with `model` (the column's display name), `input`, `llm_response` and one field per evaluator, named by the evaluator key.
 
 ```bash
 orq experiments export-run $EXP $RUN --format json -o json \
   -j '[].{column: model, input: input, answer: llm_response}' </dev/null
 ```
 
-Use `--format json`: with `jsonl` the CLI fails to parse the response (`invalid character '{' after top-level value`).
+Use `--format json` until the CLI can read the `jsonl` export: with `jsonl` it fails to parse the response (`invalid character '{' after top-level value`).
 
 ## 6. Iterate: new run, change one thing, compare to baseline
 
@@ -150,7 +152,7 @@ Rules for runs:
 
 - A new run copies the selected run's columns with empty cells, so any execute on it, `EXECUTE_SCOPE_PARTIAL` included, runs and bills every cell.
 - `update-task` replaces the whole task config. Resend `messages_source`, `engine` and `tools` if the column used non-default values.
-- Prompt columns keep their `column_id` in a new run. Agent columns get a new one (and the copied `agent_key` gains a suffix), so their metric keys change and `baseline` is null for them. Compare agents, or agent versions by `agent_tag`, as columns in one run; use the baseline flow for prompt columns.
+- Prompt columns keep their `column_id` in a new run. Agent columns get a new one (and the copied `agent_key` gains a suffix), so their metric keys change and `baseline` is null for them. Compare agents, or agent versions by `agent_tag`, as columns in one run; use the baseline flow for prompt columns. A tagged agent column breaks in a new run until it is pointed back at the original agent (step 2).
 
 ## Other commands
 

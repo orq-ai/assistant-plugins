@@ -1,6 +1,6 @@
 ---
 name: orq-build-benchmark
-description: Turn a team's own work into a custom orq benchmark. Interview the user, stage real task instances, then build an orq dataset, orq evaluators, and run candidate models as one native orq experiment (evaluatorq for candidates that are not plain prompts), graded against known answers. Use when the user says "make an eval", "build a benchmark from my codebase / docs / tickets / this chat", "which model is best at [our task]", or "turn our work into a benchmark".
+description: Turn a team's own work into a custom orq benchmark. Interview the user, stage real task instances, then build an orq dataset, orq evaluators, and run candidate models graded against known answers. Use when the user says "make an eval", "build a benchmark from my codebase / docs / tickets / this chat", "which model is best at [our task]", or "turn our work into a benchmark".
 ---
 
 # orq build benchmark
@@ -9,8 +9,8 @@ Use when a user wants to know which model or agent is best at *their* task,
 measured on *their* work. You interview them, stage real task instances with
 established answers, and then build the benchmark on orq directly: an orq
 dataset, orq evaluators, and one native orq experiment with a column per
-candidate model (evaluatorq when a candidate is not a plain prompt). There is no third-party upload; everything lands in the user's
-own orq workspace.
+candidate model or orq.ai agent (evaluatorq for external agents). There is
+no third-party upload; everything lands in the user's own orq workspace.
 
 ## At a glance
 
@@ -323,7 +323,7 @@ def tied(gap):
 
 Open the experiment in orq (link shape in [orq-trace-format](../orq-trace-format/SKILL.md)) and compare candidates per category, not just overall. Next to each score, report that candidate's scored and failed counts.
 
-Report the winner with its margin and where it is weak, with two exceptions:
+Report the winner with its margin and where it is weak, following two rules:
 
 - Compare two candidates with `paired_row_gap`, never by their overall means. One failed cell in fifty does not block a winner.
 - If `tied(paired_row_gap(a, b))` is true, report those candidates as tied: the absolute gap is at most twice its standard error, or fewer than `MIN_SHARED` rows were shared. Report the shared count next to the gap.
