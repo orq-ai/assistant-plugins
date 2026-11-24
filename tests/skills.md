@@ -717,6 +717,25 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ---
 
+## `orq-link`
+
+### Scenario 1: Dataset link by name
+
+- Ask: "Give me the link to the pizza-faq-eval-dataset dataset"
+- Verify: reads `orq-shared/resources/studio-routes.md`, resolves host and workspace key as `orq-trace-format` step 2 does, runs `orq datasets list` and matches `display_name`
+- Verify: the link is `<host>/<workspace-key>/datasets/<_id>`, never the name, and says the route is unverified
+
+### Scenario 2: Ambiguous name
+
+- Provide: two datasets whose names both contain "golden set"
+- Ask: "Link me the golden set dataset"
+- Verify: lists both matches and asks which, does not pick one
+
+### Scenario 3: Traces go to trace-format
+
+- Ask: "Link to trace 016de4cd7a2b4c21c707f00ad3185eb8"
+- Verify: `orq-trace-format` fires and builds the `traces/(trace:...)` link
+
 ## `orq-trace-format`
 
 ### Scenario 1: Traces in a reply
@@ -813,6 +832,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-create-skill/SKILL.md`
 - `skills/orq-quickstart/SKILL.md`
 - `skills/orq-trace-format/SKILL.md`
+- `skills/orq-link/SKILL.md`
 - `commands/traces.md`
 - `skills/orq-create-skill/resources/template.md`
 - `skills/orq-create-skill/resources/writing-guide.md`

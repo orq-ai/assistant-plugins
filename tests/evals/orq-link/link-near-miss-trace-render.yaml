@@ -1,0 +1,9 @@
+id: link-near-miss-trace-render
+skill: orq-link
+kind: invocation
+# Showing trace rows to a person is orq-trace-format, even without the word link.
+prompt: 'Render these traces for me: {"trace_id": "caa9b6028832114d7e017ea4c16c2606", "name": "pizza-faq-agent", "status": "ok"}'
+expect_skill: orq-trace-format
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 4

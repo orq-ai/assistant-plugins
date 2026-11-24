@@ -1,0 +1,9 @@
+id: link-near-miss-trace-link
+skill: orq-link
+kind: invocation
+# A trace link belongs to orq-trace-format, not orq-link.
+prompt: Send me the link to trace 016de4cd7a2b4c21c707f00ad3185eb8.
+expect_skill: orq-trace-format
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 4

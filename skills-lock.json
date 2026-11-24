@@ -66,6 +66,11 @@
       "sourceType": "github",
       "computedHash": "facf6effdc2e242cd7852284ba6d0e897a103b916eac334121401fe5bb24a6b5"
     },
+    "orq-link": {
+      "source": "orq-ai/assistant-plugins",
+      "sourceType": "github",
+      "computedHash": "39eb9bf54e5cabf52d79019987de0020dbe5a5394f060f12c895b9fe8796d70c"
+    },
     "orq-manage-skills": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
@@ -104,7 +109,7 @@
     "orq-shared": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "e27b3b3b6825b008c7e6291e1bd9678c0075ee37840e00f5d72b3b1acfa4c061"
+      "computedHash": "328d2dd03a64e1666a10c3a3315cb462ab8595422c955f16cc2a84aa3d24a473"
     },
     "orq-simulate-agent": {
       "source": "orq-ai/assistant-plugins",

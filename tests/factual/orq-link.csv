@@ -1,0 +1,14 @@
+test_type,target,assertion,description
+cli_subcommand,auth whoami,,orq auth whoami exists
+cli_flag,auth whoami,-j,orq auth whoami accepts -j
+cli_subcommand,datasets list,,orq datasets list exists
+cli_flag,datasets list,--limit,orq datasets list accepts --limit
+cli_flag,datasets list,--starting-after,orq datasets list accepts --starting-after
+cli_flag,datasets list,-o,orq datasets list accepts -o
+cli_flag,datasets list,-j,orq datasets list accepts -j
+cli_subcommand,evals all,,orq evals all exists
+cli_subcommand,agents list,,orq agents list exists
+cli_subcommand,experiments list,,orq experiments list exists
+cli_subcommand,deployments list,,orq deployments list exists
+cli_subcommand,projects list,,orq projects list exists
+cli_subcommand,models list,,orq models list exists

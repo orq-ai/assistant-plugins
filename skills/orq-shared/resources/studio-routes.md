@@ -16,28 +16,28 @@ Host and workspace key are resolved as in [`orq-trace-format`](../../orq-trace-f
 
 ## Entity pages
 
-Each route takes the entity's **id**, not its key. The CLI column names the field that holds it in `orq <group> list -o json`.
+Each route takes the entity's **id**, not its key. The CLI field column names the field that holds the id in `orq <group> list -o json`; the name field is what to match a name the user gives against.
 
-| Entity | Route | CLI field | Status |
-|---|---|---|---|
-| Agent | `agents/<id>` | `_id` | unverified |
-| Dataset | `datasets/<id>` | `_id` | unverified |
-| Deployment | `deployments/<id>` | `id` | unverified |
-| Experiment | `experiments/<id>` | `experiment_id` | unverified |
-| Prompt | `prompts/<id>` | not checked | unverified, none in the research workspace |
-| Evaluator | `resources/evaluators/<id>` | `_id` (`orq evals all`) | unverified |
-| Guardrail evaluator (AI Gateway) | `gateway/guardrails/<id>` | `_id` (`orq evals all`) | unverified |
-| Knowledge base | `knowledge/<id>` | not checked | unverified, none in the research workspace |
-| Memory store | `memory-store/<id>` | not checked | unverified, none in the research workspace |
-| Tool | `tools/<id>` | `_id` | unverified |
-| Skill | `skills/<id>` | `skill_id` | unverified |
-| Annotation queue | `annotation-queues/<id>` | `_id` | unverified |
-| Project | `projects/<id>` | `project_id` | unverified |
-| MCP server | `mcps/<id>` | `_id` | unverified |
-| MCP gateway | `mcp-portal/gateways/<id>` | `_id` | unverified |
-| File system | `file-systems/<id>` | not checked | unverified, `file-systems list` is 403 in the research workspace |
-| Monitor | `traces/monitors/<id>` | not checked | unverified, none in the research workspace |
-| Alert | `traces/alerts/<id>` | not checked | unverified, none in the research workspace |
+| Entity | Route | CLI field | Name field | Status |
+|---|---|---|---|---|
+| Agent | `agents/<id>` | `_id` | `key`, `display_name` | unverified |
+| Dataset | `datasets/<id>` | `_id` | `display_name` | unverified |
+| Deployment | `deployments/<id>` | `id` | `key` | unverified |
+| Experiment | `experiments/<id>` | `experiment_id` | `display_name` | unverified |
+| Prompt | `prompts/<id>` | not checked | not checked | unverified, none in the research workspace |
+| Evaluator | `resources/evaluators/<id>` | `_id` (`orq evals all`) | `key` | unverified |
+| Guardrail evaluator (AI Gateway) | `gateway/guardrails/<id>` | `_id` (`orq evals all`) | `key` | unverified |
+| Knowledge base | `knowledge/<id>` | not checked | not checked | unverified, none in the research workspace |
+| Memory store | `memory-store/<id>` | not checked | not checked | unverified, none in the research workspace |
+| Tool | `tools/<id>` | `_id` | `key`, `display_name` | unverified |
+| Skill | `skills/<id>` | `skill_id` | `display_name`, `path` | unverified |
+| Annotation queue | `annotation-queues/<id>` | `_id` | `display_name` | unverified |
+| Project | `projects/<id>` | `project_id` | `key`, `name` | unverified |
+| MCP server | `mcps/<id>` | `_id` | `key`, `display_name` | unverified |
+| MCP gateway | `mcp-portal/gateways/<id>` | `_id` | `key`, `display_name` | unverified |
+| File system | `file-systems/<id>` | not checked | not checked | unverified, `file-systems list` is 403 in the research workspace |
+| Monitor | `traces/monitors/<id>` | not checked | not checked | unverified, none in the research workspace |
+| Alert | `traces/alerts/<id>` | not checked | not checked | unverified, none in the research workspace |
 
 The same source file also lists `gateway/rules`, `gateway/guardrail-rules`, `gateway/smart-router` and `gateway/mcp-portal/gateways` as list pages, so some of the routes above may have moved under `gateway/`. The browser check settles which one opens.
 

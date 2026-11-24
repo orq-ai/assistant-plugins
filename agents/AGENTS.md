@@ -31,6 +31,7 @@ These skills are:
  - orq-shared -> "skills/orq-shared/SKILL.md"
  - orq-simulate-agent -> "skills/orq-simulate-agent/SKILL.md"
  - orq-trace-format -> "skills/orq-trace-format/SKILL.md"
+ - orq-link -> "skills/orq-link/SKILL.md"
 
 IMPORTANT: You MUST read the SKILL.md file whenever the description of the skills matches the user intent, or may help accomplish their task.
 
@@ -81,6 +82,8 @@ orq-shared: `Reference bundle shared by the other orq skills — the verified or
 orq-quickstart: `Onboarding for orq.ai in any coding agent — get an API key, register the orq.ai MCP server for the harness you are running in, prove the connection with a real workspace read, show a workspace snapshot, list the installed orq skills, and route the user to a first task. Use when the user is new to orq.ai, asks to set up or verify orq.ai, or another orq skill fails because the MCP server is missing or the credentials are rejected. Do NOT use to drive the orq CLI (use orq-cli) or to instrument an application with tracing (use orq-setup-observability).`
 
 orq-trace-format: `Show orq.ai traces and spans to a person as clickable Studio links instead of raw trace ids. Use whenever a reply, report, table, PR or ticket mentions an orq trace, span, trace_id, span_id, run, failing conversation or invocation the reader may want to open: "show me the trace", "link the failing runs", "which trace was that", results from `orq traces search`, `list_traces`, a router or deployment response's `x-orq-trace-id` / `telemetry.trace_id`, an evaluator run, or an experiment. Covers the URL shape, the workspace key and host, and the "opens empty" fix. Do NOT use to query or analyze traces (use orq-analyze-traces or orq-cli), or to set up tracing (use orq-setup-observability).`
+
+orq-link: `Use when a reply should give the orq.ai Studio link to a workspace entity: an agent, dataset, deployment, experiment, prompt, evaluator, knowledge base, memory store, tool, skill, annotation queue, project, MCP server or gateway, monitor or alert, or a list page such as API keys, integrations, budgets or a provider's settings. Triggers on "link to that dataset", "where do I open this agent in orq", "send me the URL of experiment X". Builds `<host>/<workspace-key>/<route>` from the CLI ids. Do NOT use for traces or spans (use orq-trace-format), or for orq documentation pages.`
 
 </available_skills>
 
