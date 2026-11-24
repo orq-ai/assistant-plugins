@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 SPEC = importlib.util.spec_from_file_location(
     "cost_savings_report", Path(__file__).parents[1] / "scripts" / "cost_savings_report.py"
@@ -497,7 +498,10 @@ def _plan_report() -> dict:
 
 def _rows(report: dict, lever: str = "router") -> dict:
     """Rows as the page draws them: analysed and stored by analyze, then viewed by render."""
-    return {x["model"]: c._row_view(x) for x in c._rec_rows(report, 1.0, lever, {})}
+    return {x.model: {"saved": x.saved_per_month, "today": x.saved_today_per_month,
+                      "after": x.saved_after_enabling_per_month, "hard": x.share_hard, "enable": x.enable,
+                      "lines": c._rec_lines(x), "note": c._rec_note(x)}
+            for x in c._rec_rows(report, 1.0, lever, {})}
 
 
 def _chart(report: dict, lever: str = "router") -> str:
@@ -596,12 +600,13 @@ def test_flow_router_fork_shares_tiers_and_enable():
     moves = [{"used": "openai/s", "pick": "openai/s", "tier": "hard, medium", "n": 3},
              {"used": "openai/s", "pick": "openai/h", "tier": "easy", "n": 1},
              {"used": "openai/x", "pick": "openai/h", "tier": "easy", "n": 9}]
-    f = c._flow("openai/s", head, today, moves, 12.0, 48.0)
-    assert f["lever"] == "router"
-    assert [(b["model"], b["share"], b["tiers"], b["enable"], b["stays"]) for b in f["branches"]] == [
+    f = c._flow("openai/s", head, moves)
+    assert f.lever == "router"
+    assert [(b.model, b.share_of_calls, b.tiers, b.enable, b.stays) for b in f.targets] == [
         ("openai/s", 0.75, ["medium", "hard"], False, True), ("openai/h", 0.25, ["easy"], True, False)]
-    assert f["note"] == "Before enabling: change to m now, 25% saved ($12/mo)."
-    out = c._flow_html({"model": "openai/s", "lines": ["x"], **f})
+    assert c._before_enabling_note(f.enable, today, head, 12.0, 48.0) == \
+        "Before enabling: change to m now, 25% saved ($12/mo)."
+    out = c._flow_html("openai/s", f.lever, f.targets, ["x"])
     assert "class='to fork'" in out and "75% \u00b7 Medium, Hard" in out and "<em>enable</em>" in out
     assert "<em>stays</em>" in out and "class=share" not in out  # one line per target, no mini bar
     assert "asks" not in out and out.count("<em>enable</em>") == 1
@@ -611,8 +616,9 @@ def test_flow_note_only_when_today_saves_money():
     head = {"model": "openai/s", "pool": ["openai/s", "openai/h"], "switch": None, "enable": ["openai/h"]}
     today = {"model": "openai/s", "pool": None, "switch": "openai/m", "enable": []}
     moves = [{"used": "openai/s", "pick": "openai/h", "n": 1}]
-    assert c._flow("openai/s", head, today, moves, 0.0, 48.0)["note"] == ""
-    assert c._flow("openai/s", head, today, moves)["note"] == ""
+    enable = c._flow("openai/s", head, moves).enable
+    assert enable and c._before_enabling_note(enable, today, head, 0.0, 48.0) == ""
+    assert c._before_enabling_note(enable, today, head, None, 48.0) == ""
 
 
 def test_flow_shares_weight_drawn_targets_only_and_fallbacks_get_no_tier():
@@ -622,16 +628,16 @@ def test_flow_shares_weight_drawn_targets_only_and_fallbacks_get_no_tier():
              {"used": "openai/s", "pick": "openai/h", "tier": "fallback: error, hard", "n": 5, "weight": 30.0,
               "fallback": 2},
              {"used": "openai/s", "pick": "openai/q", "tier": "hard", "n": 9, "weight": 99.0, "fallback": 0}]
-    f = c._flow("openai/s", head, None, moves)
-    got = {b["model"]: b for b in f["branches"]}
+    f = c._flow("openai/s", head, moves)
+    got = {b.model: b for b in f.targets}
     assert set(got) == {"openai/s", "openai/h"}  # z was never drawn; q is not a target
-    assert got["openai/h"]["share"] == 0.75 and got["openai/s"]["share"] == 0.25  # weight, not n
-    assert got["openai/h"]["tiers"] == ["hard"] and got["openai/h"]["unscored"] == 2
-    assert f["enable"] == ["openai/h"] and not got["openai/s"]["enable"]  # enable only on drawn targets, never itself
-    out = c._flow_html({"model": "openai/s", "lines": ["x"], **f})
+    assert got["openai/h"].share_of_calls == 0.75 and got["openai/s"].share_of_calls == 0.25  # weight, not n
+    assert got["openai/h"].tiers == ["hard"] and got["openai/h"].unscored_calls == 2
+    assert f.enable == ["openai/h"] and not got["openai/s"].enable  # enable only on drawn targets, never itself
+    out = c._flow_html("openai/s", f.lever, f.targets, ["x"])
     assert "2 ungraded calls'" in out and "ungraded</small>" not in out  # in the chip's tooltip
     moves[1].pop("weight"), moves[0].pop("weight")
-    assert {b["model"]: b["share"] for b in c._flow("openai/s", head, None, moves)["branches"]} == {
+    assert {b.model: b.share_of_calls for b in c._flow("openai/s", head, moves).targets} == {
         "openai/h": 0.5, "openai/s": 0.5}  # falls back to n
 
 
@@ -669,9 +675,9 @@ def test_legend_chart_caption_and_kept_sliver():
 
 def test_flow_change_model_is_one_arrow_without_shares():
     head = {"model": "openai/a", "pool": None, "switch": "openai/b", "enable": []}
-    f = c._flow("openai/a", head, None, [{"used": "openai/a", "pick": "openai/b", "tier": "easy, hard, medium", "n": 4}])
-    out = c._flow_html({"model": "openai/a", "lines": ["Change to b"], **f})
-    assert f["lever"] == "switch" and f["note"] == "" and f["branches"][0]["tiers"] == []
+    f = c._flow("openai/a", head, [{"used": "openai/a", "pick": "openai/b", "tier": "easy, hard, medium", "n": 4}])
+    out = c._flow_html("openai/a", f.lever, f.targets, ["Change to b"])
+    assert f.lever == "switch" and f.targets[0].tiers == []
     assert "class='flow switch'" in out and "class='to one'" in out and "<small>" not in out
 
 
@@ -693,7 +699,8 @@ def test_flow_tiny_share_reads_below_one_percent():
     head = {"model": "openai/s", "pool": ["openai/a", "openai/b"], "switch": None, "enable": []}
     moves = [{"used": "openai/s", "pick": "openai/a", "tier": "hard", "n": 999},
              {"used": "openai/s", "pick": "openai/b", "tier": "easy", "n": 1}]
-    out = c._flow_html({"model": "openai/s", "lines": ["x"], **c._flow("openai/s", head, None, moves)})
+    f = c._flow("openai/s", head, moves)
+    out = c._flow_html("openai/s", f.lever, f.targets, ["x"])
     assert "&lt;1% \u00b7" in out and not re.search(r"[^0-9]0% \u00b7", out)
 
 
@@ -702,12 +709,12 @@ def test_plan_rows_follow_change_model_when_it_is_the_recommended_lever():
     head, enabled = report["scenarios"]
     head["switch"] = {"per_month": 90.0, "per_stratum": {"openai/a": 10.0, "openai/b": 45.0, "openai/c": 35.0}}
     enabled["switch"] = {"per_month": 25.0, "per_stratum": {"openai/a": 10.0, "openai/b": 15.0}}
-    rows = {r["model"]: r for r in c._plan_rows(report, 1.0, "switch")}
-    assert sum(r["saved"] for r in rows.values()) == pytest.approx(90)  # the change-model figure, not the router's
-    assert sum(r["today"] for r in rows.values()) == pytest.approx(25)
+    rows = {r.model: r for r in c._rec_rows(report, 1.0, "switch", {})}
+    assert sum(r.saved_per_month for r in rows.values()) == pytest.approx(90)  # the change-model figure, not the router's
+    assert sum(r.saved_today_per_month for r in rows.values()) == pytest.approx(25)
     b = rows["openai/b"]
-    assert b["lever"] == "switch" and [x["model"] for x in b["branches"]] == ["openai/y"]  # no fork
-    assert b["enable"] == ["openai/y"] and b["today"] == pytest.approx(15)
+    assert b.action == "switch" and [x.model for x in b.targets] == ["openai/y"]  # no fork
+    assert b.enable == ["openai/y"] and b.saved_today_per_month == pytest.approx(15)
     assert "Recommended plan (change model)" in c._plan_caption("switch", 0.9, 90.0)
     assert "Recommended plan (Smart Router)" in c._plan_caption("router", 1.0, 100.0)
 
@@ -893,9 +900,11 @@ def test_router_key_keeps_the_provider_so_two_providers_do_not_collide():
 
 def test_range_axis_is_not_floored_at_zero_and_negatives_print_with_a_sign():
     assert c._usd0(-40) == "-$40" and c._usd0(65) == "$65"
-    scopes = [{"scope": "same_all", "headline": True,
-               "router": {"per_month": 5, "pct_of_spend": 0.1, "ci90_per_month": [-40, 60]},
-               "switch": {"per_month": 3, "pct_of_spend": 0.1, "ci90_per_month": [1, 10]}}]
+    lever = {"coverage": 1.0, "enable": []}
+    scopes = [c.SummaryScope.model_validate({
+        "scope": "same_all", "headline": True, "models": [],
+        "router": {"per_month": 5, "pct_of_spend": 0.1, "ci90_per_month": [-40, 60], **lever},
+        "switch": {"per_month": 3, "pct_of_spend": 0.1, "ci90_per_month": [1, 10], **lever}})]
     rows = c._uncertainty_rows(scopes)
     assert rows[0]["range"][4] < -40
 
@@ -915,7 +924,7 @@ def test_render_needs_caching_slot_only_when_the_card_is_shown():
     n = {"summary": "S.", "routing": "R.", "caching": "", "caveats": "C."}
     try:  # past the slot check: the caching slot was not demanded (the stub report fails later, elsewhere)
         c.render(rep, n, redact=False)
-    except KeyError:
+    except ValidationError:
         pass
     rep["summary"]["caching"]["savings_found"] = 50
     with pytest.raises(SystemExit, match="caching"):
@@ -946,12 +955,12 @@ def test_now_and_after_enabling_labels_replace_saved_today():
 def test_a_model_the_lever_does_not_cover_is_not_analysed_not_kept():
     report = _plan_report()
     report["routing"]["strata"][3]["savings"] = None  # d: pricing check failed, no figure
-    recs = {x["model"]: x for x in c._rec_rows(report, 1.0, "router", {})}
-    assert recs["openai/d"]["action"] == "not_analysed" and recs["openai/a"]["action"] == "switch"
+    recs = {x.model: x for x in c._rec_rows(report, 1.0, "router", {})}
+    assert recs["openai/d"].action == "not_analysed" and recs["openai/a"].action == "switch"
     chart = _chart(report)
     assert "d: not analysed, its sampled calls could not be priced reliably." in chart and "d: keep" not in chart
     report["scenarios"][0]["switch"] = {"per_month": 50.0, "per_stratum": {"openai/a": 10.0, "openai/b": 0.0}}
-    sw = {x["model"]: x["action"] for x in c._rec_rows(report, 1.0, "switch", {})}
+    sw = {x.model: x.action for x in c._rec_rows(report, 1.0, "switch", {})}
     assert sw == {"openai/a": "switch", "openai/b": "keep", "openai/c": "not_analysed", "openai/d": "not_analysed"}
 
 
@@ -962,10 +971,10 @@ def test_scopes_keep_enable_and_coverage_per_lever():
     for sc in report["scenarios"]:
         sc["router"]["balanced"]["coverage"], sc["switch"] = 0.9, {"per_month": 20.0, "coverage": 0.9}
     head = c._scopes(report, 100.0)[0]
-    assert "enable" not in head and "coverage" not in head
-    assert head["router"]["enable"] == ["openai/y", "openai/w", "openai/z"]  # pool members and switch targets
-    assert head["switch"]["enable"] == ["openai/y", "openai/z"]  # switch targets only
-    assert head["router"]["coverage"] == head["switch"]["coverage"] == 0.9
+    assert "enable" not in head.model_dump() and "coverage" not in head.model_dump()
+    assert head.router.enable == ["openai/y", "openai/w", "openai/z"]  # pool members and switch targets
+    assert head.switch.enable == ["openai/y", "openai/z"]  # switch targets only
+    assert head.router.coverage == head.switch.coverage == 0.9
     grid = c._scope_grid(c._scopes(report, 100.0))
     assert "title='openai/y, openai/w, openai/z'>enable 3 models" in grid and "title='openai/y, openai/z'>enable 2 models" in grid
     assert "of spend covered" not in grid  # one coverage everywhere: no note

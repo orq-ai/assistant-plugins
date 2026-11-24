@@ -2102,36 +2102,60 @@ PROVIDER_NAME = {"openai": "OpenAI", "anthropic": "Anthropic", "google-ai": "Goo
                  "aws": "AWS", "azure": "Azure", "mistral": "Mistral"}
 
 
-def _lever(info: dict) -> str:
-    """'router' when the headline scope routes this model over a pool, 'switch' (change model) when it moves it
-    whole, else ''."""
-    if len(info.get("pool") or []) > 1:
-        return "router"
-    return "switch" if info.get("switch") else ""
+def _pool_switch(m: Move | Json) -> tuple[list[str], str | None]:
+    """A move's pool and change-model target; `m` is a Move or a scenario `models` entry."""
+    return (m.pool or [], m.switch) if isinstance(m, Move) else (m.get("pool") or [], m.get("switch"))
 
 
-def _phrase(info: dict) -> str:
+def _lever(m: Move | Json) -> str:
+    """'router' when the move routes the model over a pool, 'switch' (change model) when it moves it whole, else ''."""
+    pool, switch = _pool_switch(m)
+    return "router" if len(pool) > 1 else "switch" if switch else ""
+
+
+def _phrase(m: Move | Json) -> str:
     """The move of one model in one scope, lower case: 'route over A and B', 'change to A' or 'route'."""
-    pool, switch = info.get("pool") or [], info.get("switch")
+    pool, switch = _pool_switch(m)
     if len(pool) > 1:
         return "route over " + " and ".join(_short(p) for p in pool)
     return f"change to {_short(switch)}" if switch else "route"
 
 
-def _action_lines(model: str, head: dict, today: dict | None, saved: float, enable: list[str] | None = None) -> list[str]:
+def _same_move(a: Move | Json, b: Move | Json) -> bool:
+    return _pool_switch(a) == _pool_switch(b)
+
+
+def _differs_today(today: Move | Json | None, head: Move | Json) -> bool:
+    """Whether the enabled-only scope moves the model differently from the headline, which then needs enabling."""
+    return today is not None and bool(_lever(today)) and not _same_move(today, head)
+
+
+def _rec_lines(rec: Recommendation) -> list[str]:
     """Plain row text: what to do with this model, now and after enabling models, as short sentences."""
-    if saved <= 0:
-        prov = PROVIDER_NAME.get(model.split("/")[0], model.split("/")[0])
-        return [f"Keep it: no cheaper {prov} model is as strong"]
-    enable = head.get("enable") or [] if enable is None else enable
-    if not enable:
+    if rec.saved_per_month <= 0:
+        prov = rec.model.split("/")[0]
+        return [f"Keep it: no cheaper {PROVIDER_NAME.get(prov, prov)} model is as strong"]
+    head, today = rec.move or {}, rec.today_move
+    if not rec.enable:
         p = _phrase(head)
         return [p[0].upper() + p[1:]]
-    names = " and ".join(_short(e) for e in enable)
-    later = f"After enabling {names}: {_phrase(head)}."
-    if today and _lever(today) and not _same_move(today, head):
+    later = f"After enabling {' and '.join(_short(e) for e in rec.enable)}: {_phrase(head)}."
+    if today is not None and _differs_today(today, head):
         return [f"Now: {_phrase(today)}.", later]
     return [later]
+
+
+def _before_enabling_note(enable: list[str], today: Move | Json | None, head: Move | Json, now: float | None,
+                          spend: float) -> str:
+    """What to do before enabling models, when the enabled-only move already saves money."""
+    if not (enable and today is not None and _differs_today(today, head) and (now or 0) > 0):
+        return ""
+    return f"Before enabling: {_phrase(today)} now, {_pc(_of(now, spend))} saved ({_usd0(now)}/mo)."
+
+
+def _rec_note(rec: Recommendation) -> str:
+    return _before_enabling_note(rec.enable, rec.today_move, rec.move or {}, rec.saved_today_per_month,
+                                 rec.spend_per_month)
 
 
 def _headline(report: dict) -> dict:
@@ -2144,10 +2168,6 @@ def _enabled_scope(report: dict, head: dict) -> dict | None:
         return head
     want = f"{head.get('provider', 'same_provider')}:enabled"
     return next((sc for sc in report.get("scenarios") or [] if sc.get("scope") == want), None)
-
-
-def _same_move(a: dict, b: dict) -> bool:
-    return (a.get("pool") or None) == (b.get("pool") or None) and a.get("switch") == b.get("switch")
 
 
 def _as_switch(info: dict) -> dict:
@@ -2227,44 +2247,22 @@ def _hard_models(ro: dict) -> dict[str, float]:
     return {u["model"]: u["share_hard"] for u in ro.get("underpowered") or [] if (u.get("share_hard") or 0) >= 0.5}
 
 
-def _plan_rows(report: dict, per_month: float, lever: str = "router") -> list[dict]:
-    """One row per sampled model: monthly saving split into today (enabled models) and after enabling.
-
-    `hard` is the share of hard asks on the one flagged row with the largest saving, else None.
-    """
-    ro = report.get("routing") or {}
-    f = _plan_figures(report, per_month, lever)
-    today = _today_amounts(f)
-    hard = _hard_models(ro)
-    rows = []
-    for st in sorted(ro.get("strata") or [], key=lambda x: -f["strata"].get(x["model"], 0)):
-        m = st["model"]
-        saved = max(0.0, f["strata"].get(m, 0))
-        now = min(saved, max(0.0, today.get(m, 0.0)))
-        n_calls = sum(mv.get("n") or 0 for mv in ro.get("moves") or [] if mv.get("used") == m)
-        spend = (st.get("spend") or 0) * per_month
-        fl = _flow(m, f["h_info"].get(m, {}), f["e_info"].get(m), ro.get("moves") or [], now, spend)
-        rows.append({"model": m, "n": n_calls, "spend": spend, "saved": saved, "today": now,
-                     "analysed": m in f["analysed"],
-                     "after": saved - now, "rate": st.get("rate"), "hard": None,
-                     "move": f["h_info"].get(m, {}), "today_move": f["e_info"].get(m), **fl})
-    flagged = [r for r in rows if r["model"] in hard and r["saved"] > 0]
-    if flagged:
-        top = max(flagged, key=lambda r: r["saved"])
-        top["hard"] = hard[top["model"]]
-    return rows
+@dataclass
+class Flow:
+    """Where one model's calls go in the headline scope."""
+    lever: str  # see _lever
+    targets: list[Target]
+    enable: list[str]  # drawn targets that are not enabled, never the model itself
 
 
-def _flow(model: str, head: dict, today: dict | None, moves: list[dict], today_saved: float | None = None,
-          spend: float | None = None) -> dict:
-    """Where this model's calls go in the headline scope: lever, targets with their share of sampled calls (by
-    sample weight, over the drawn targets only), the tiers of their scored calls, unscored calls, models to
-    enable (only drawn targets, never the model itself), and what to do before enabling when that saves money."""
+def _flow(model: str, head: Json, moves: list[Json]) -> Flow:
+    """Targets with their share of sampled calls (by sample weight, over the drawn targets only), the tiers of their
+    scored calls, unscored calls, and the models to enable."""
     lever = _lever(head)
     targets = (head.get("pool") or []) if lever == "router" else [head["switch"]] if lever == "switch" else []
     counts: dict[str, float] = {}
     unscored: dict[str, int] = {}
-    tiers: dict[str, set] = {}
+    tiers: dict[str, set[str]] = {}
     for mv in moves:
         if mv.get("used") == model:
             w = mv.get("weight")
@@ -2274,38 +2272,35 @@ def _flow(model: str, head: dict, today: dict | None, moves: list[dict], today_s
     drawn = [t for t in targets if counts.get(t)] or targets
     total = sum(counts.get(t, 0) for t in drawn)
     enable = [e for e in head.get("enable") or [] if e in drawn and e != model]
-    branches = []
+    out = []
     for t in sorted(drawn, key=lambda t: -counts.get(t, 0)):
         tt = [x for x in TIERS if x in tiers.get(t, set())]
-        branches.append({"model": t, "share": counts[t] / total if total and t in counts else None,
-                         "tiers": tt if 0 < len(tt) < len(TIERS) else [], "unscored": unscored.get(t, 0),
-                         "enable": t in enable, "stays": t == model})
-    note = ""
-    if enable and today and _lever(today) and not _same_move(today, head) and (today_saved or 0) > 0:
-        note = f"Before enabling: {_phrase(today)} now, {_pc(_of(today_saved, spend))} saved ({_usd0(today_saved)}/mo)."
-    return {"lever": lever, "branches": branches, "note": note, "enable": enable}
+        out.append(Target(model=t, share_of_calls=counts[t] / total if total and t in counts else None,
+                          tiers=tt if 0 < len(tt) < len(TIERS) else [], unscored_calls=unscored.get(t, 0),
+                          enable=t in enable, stays=t == model))
+    return Flow(lever, out, enable)
 
 
-def _flow_html(r: dict) -> str:
+def _flow_html(model: str, lever: str, targets: list[Target], lines: list[str]) -> str:
     """Source model chip, an arrow, and one chip per target: a fork for the router, a single arrow for a change."""
-    src = f"<span class='chip src' title='{html.escape(r['model'])}'>{html.escape(_short(r['model']))}</span>"
+    src = f"<span class='chip src' title='{html.escape(model)}'>{html.escape(_short(model))}</span>"
     items = []
-    for b in r["branches"]:
-        cls = "chip" + (" new" if b["enable"] else "") + (" same" if b["stays"] else "")
-        meta, title = [], b["model"]
-        if len(r["branches"]) > 1:
-            if b["share"] is not None:
-                meta.append("<1%" if 0 < b["share"] < 0.005 else f"{b['share']:.0%}")
-            if b["tiers"]:
-                meta.append(", ".join(t.capitalize() for t in b["tiers"]))
-            if b["unscored"]:
-                title += f" \u00b7 {b['unscored']} ungraded call{'s' if b['unscored'] != 1 else ''}"
-        tag = "<em>enable</em>" if b["enable"] else "<em>stays</em>" if b["stays"] else ""
+    for b in targets:
+        cls = "chip" + (" new" if b.enable else "") + (" same" if b.stays else "")
+        meta, title = [], b.model
+        if len(targets) > 1:
+            if b.share_of_calls is not None:
+                meta.append("<1%" if 0 < b.share_of_calls < 0.005 else f"{b.share_of_calls:.0%}")
+            if b.tiers:
+                meta.append(", ".join(t.capitalize() for t in b.tiers))
+            if b.unscored_calls:
+                title += f" \u00b7 {b.unscored_calls} ungraded call{'s' if b.unscored_calls != 1 else ''}"
+        tag = "<em>enable</em>" if b.enable else "<em>stays</em>" if b.stays else ""
         small = f"<small>{html.escape(' · '.join(meta))}</small>" if meta else ""
         items.append(f"<li><span class='{cls}' title='{html.escape(title)}'>"
-                     f"{html.escape(_short(b['model']))}{tag}</span>{small}</li>")
+                     f"{html.escape(_short(b.model))}{tag}</span>{small}</li>")
     kind = "fork" if len(items) > 1 else "one"
-    return (f"<div class='flow {r['lever']}' role=img aria-label='{html.escape(' '.join(r['lines']))}'>{src}"
+    return (f"<div class='flow {lever}' role=img aria-label='{html.escape(' '.join(lines))}'>{src}"
             f"<span class=link></span><ul class='to {kind}'>{''.join(items)}</ul></div>")
 
 
@@ -2331,47 +2326,64 @@ def _waterfall(spend: float, now_v: float, more_v: float, left_v: float, how: st
     return f"<div class=wf role=img aria-label='{html.escape(aria)}'>{''.join(cols)}</div>"
 
 
-def _move(info: dict | None) -> dict | None:
-    return None if info is None else {"pool": info.get("pool"), "switch": info.get("switch")}
+def _move(info: Json | None) -> Move | None:
+    return None if info is None else Move(pool=info.get("pool"), switch=info.get("switch"))
 
 
-def _rec_rows(report: dict, per_month: float, lever: str, keys: dict[str, str]) -> list[dict]:
-    """One recommendation per sampled model under one lever, with everything the page draws for it."""
+def _rec_rows(report: Json, per_month: float, lever: str, keys: dict[str, str]) -> list[Recommendation]:
+    """One recommendation per sampled model under one lever: its monthly saving split into today (enabled models)
+    and after enabling. `share_hard` is set on the flagged row with the largest saving only."""
+    ro = report.get("routing") or {}
+    f = _plan_figures(report, per_month, lever)
+    today = _today_amounts(f)
+    hard = _hard_models(ro)
+    moves = ro.get("moves") or []
     out = []
-    for x in _plan_rows(report, per_month, lever):
-        act = ("not_analysed" if not x["analysed"] else
-               x["lever"] if x["saved"] > 0 and x["lever"] in ("router", "switch") else "keep")
-        out.append({"model": x["model"], "action": act, "router_key": keys.get(x["model"]) if act == "router" else None,
-                    "move": _move(x["move"]), "today_move": _move(x["today_move"]),
-                    "targets": [{"model": b["model"], "share_of_calls": b["share"], "tiers": b["tiers"],
-                                 "unscored_calls": b["unscored"], "enable": b["enable"], "stays": b["stays"]}
-                                for b in x["branches"]],
-                    "enable": x["enable"], "spend_per_month": x["spend"], "saved_per_month": x["saved"],
-                    "pct_of_model_spend": _of(x["saved"], x["spend"]),
-                    "saved_today_per_month": x["today"], "saved_after_enabling_per_month": x["after"],
-                    "sampled_calls": x["n"], "small_sample": x["n"] < MIN_SAMPLE, "share_hard": x["hard"]})
+    for st in sorted(ro.get("strata") or [], key=lambda x: -f["strata"].get(x["model"], 0)):
+        m = st["model"]
+        saved = max(0.0, f["strata"].get(m, 0))
+        now = min(saved, max(0.0, today.get(m, 0.0)))
+        n = sum(mv.get("n") or 0 for mv in moves if mv.get("used") == m)
+        spend = (st.get("spend") or 0) * per_month
+        head, today_move = f["h_info"].get(m, {}), f["e_info"].get(m)
+        fl = _flow(m, head, moves)
+        act = "not_analysed" if m not in f["analysed"] else fl.lever if saved > 0 and fl.lever else "keep"
+        out.append(Recommendation(
+            model=m, action=act, router_key=keys.get(m) if act == "router" else None, move=_move(head),
+            today_move=_move(today_move), targets=fl.targets, enable=fl.enable, spend_per_month=spend,
+            saved_per_month=saved, pct_of_model_spend=_of(saved, spend), saved_today_per_month=now,
+            saved_after_enabling_per_month=saved - now, sampled_calls=n, small_sample=n < MIN_SAMPLE,
+            share_hard=None))
+    flagged = [r for r in out if r.model in hard and r.saved_per_month > 0]
+    if flagged:
+        top = max(flagged, key=lambda r: r.saved_per_month)
+        top.share_hard = hard[top.model]
     return out
 
 
-def _scopes(report: dict, spend_pm: float | None) -> list[dict]:
+def _scopes(report: Json, spend_pm: float | None) -> list[SummaryScope]:
     """Both levers in every scope, headline first."""
     out = []
     for sc in sorted(report.get("scenarios") or [], key=lambda x: not x.get("headline")):
-        r, w = sc["router"]["balanced"], sc["switch"]
         models = sc.get("models") or []
         enable = {"router": [e for m in models for e in m.get("enable") or []],
                   "switch": [e for m in models for e in _as_switch(m)["enable"]]}
-        out.append({"scope": sc["scope"], "headline": bool(sc.get("headline")),
-                    **{k: {"pct_of_spend": _of(f.get("per_month"), spend_pm), "per_month": f.get("per_month"),
-                           "ci90_per_month": f.get("ci90_per_month"), "coverage": f.get("coverage"),
-                           "enable": list(dict.fromkeys(enable[k]))} for k, f in (("router", r), ("switch", w))},
-                    "models": [{k: m.get(k) for k in ("model", "pool", "switch", "enable")} for m in sc.get("models") or []]})
+
+        def lever(name: str, f: Json) -> ScopeLever:
+            return ScopeLever(pct_of_spend=_of(f.get("per_month"), spend_pm), per_month=f.get("per_month"),
+                              ci90_per_month=f.get("ci90_per_month"), coverage=f.get("coverage"),
+                              enable=list(dict.fromkeys(enable[name])))
+
+        out.append(SummaryScope(scope=sc["scope"], headline=bool(sc.get("headline")),
+                                router=lever("router", sc["router"]["balanced"]), switch=lever("switch", sc["switch"]),
+                                models=[ScopeModel(**{k: m.get(k) for k in ("model", "pool", "switch", "enable")})
+                                        for m in models]))
     return out
 
 
-def _not_analysed(report: dict, per_month: float) -> dict:
+def _not_analysed(report: Json, per_month: float) -> NotAnalysed:
     nc = (report.get("routing") or {}).get("not_covered") or []
-    return {"per_month": sum(x.get("spend") or 0 for x in nc) * per_month, "model_count": len(nc)}
+    return NotAnalysed(per_month=sum(x.get("spend") or 0 for x in nc) * per_month, model_count=len(nc))
 
 
 def summary(report: dict) -> dict:
@@ -2401,7 +2413,7 @@ def summary(report: dict) -> dict:
     def lever(name: str, pm: Any, fig: dict, plan: dict, moves: list[dict]) -> dict:
         t = today[name]
         if t is not None and recs[name]:  # the split the per-model rows show, so page and rows agree
-            t = sum(x["saved_today_per_month"] or 0.0 for x in recs[name])
+            t = sum(x.saved_today_per_month or 0.0 for x in recs[name])
         if t is not None and pm is not None:
             t = min(max(t, 0.0), max(pm, 0.0))
         return {"pct_of_spend": _of(pm, spend_pm), "per_month": pm, "ci90_per_month": fig.get("ci90_per_month"),
@@ -2419,8 +2431,9 @@ def summary(report: dict) -> dict:
                        "without_top3_per_month": (h["without_top3"] * per_month) if h.get("without_top3") is not None
                        else None},
             "switch": lever("switch", w_pm, w, wp, [{k: m[k] for k in ("model", "to")} for m in wp["moves"]]),
-            "recommendations": recs,
-            "scopes": _scopes(report, spend_pm), "not_analysed": _not_analysed(report, per_month),
+            "recommendations": {k: [x.model_dump() for x in v] for k, v in recs.items()},
+            "scopes": [x.model_dump() for x in _scopes(report, spend_pm)],
+            "not_analysed": _not_analysed(report, per_month).model_dump(),
             "sampled_moves": [{k: mv.get(k) for k in MOVE_FIELDS} for mv in (report.get("routing") or {}).get("moves") or []],
             "caching": {"threads_scanned": ca.get("threads_scanned"), "savings_found": ca.get("savings_found"),
                         "cached_share": ca.get("cached_share"), "saved_by_cache": ca.get("saved_by_cache"),
@@ -2451,116 +2464,100 @@ def _tip(what: str, v: float, spend: float | None, of: str = "this model's spend
     return f"{what}: {_usd0(v)}/mo{share}"
 
 
-def _row_view(x: dict) -> dict:
-    """A stored recommendation in the shape the chart draws, plus its plain-language lines."""
-    move, today, spend, now = x["move"] or {}, x["today_move"], x["spend_per_month"], x["saved_today_per_month"]
-    note = ""
-    if x["enable"] and today and _lever(today) and not _same_move(today, move) and (now or 0) > 0:
-        note = f"Before enabling: {_phrase(today)} now, {_pc(_of(now, spend))} saved ({_usd0(now)}/mo)."
-    return {"model": x["model"], "spend": spend, "saved": x["saved_per_month"], "today": now,
-            "after": x["saved_after_enabling_per_month"], "lever": _lever(move), "enable": x["enable"],
-            "action": x["action"],
-            "n": x["sampled_calls"], "hard": x["share_hard"], "note": note,
-            "branches": [{"model": b["model"], "share": b["share_of_calls"], "tiers": b["tiers"],
-                          "unscored": b["unscored_calls"], "enable": b["enable"], "stays": b["stays"]}
-                         for b in x["targets"]],
-            "lines": _action_lines(x["model"], move, today, x["saved_per_month"], x["enable"])}
-
-
-def _actions_chart(recs: list[dict], not_analysed: dict) -> str:
-    rows_in = [_row_view(x) for x in recs]
-    drawn = [r for r in rows_in if r["saved"] > 0]
-    kept = [r for r in rows_in if r["saved"] <= 0]
+def _actions_chart(recs: list[Recommendation], not_analysed: NotAnalysed) -> str:
+    drawn = [r for r in recs if r.saved_per_month > 0]
+    kept = [r for r in recs if r.saved_per_month <= 0]
+    levers = {_lever(r.move or {}) for r in drawn}
     rows = []
     for r in drawn:
-        seg = [("sr", r["today"]), ("sr2", r["after"]), ("kept", max(0.0, r["spend"] - r["saved"]))]
-        how = "Smart Router" if r.get("lever") == "router" else "Change model"
-        on = ", ".join(_short(x) for x in r.get("enable") or [])
+        spend, saved = r.spend_per_month, r.saved_per_month
+        now, after = r.saved_today_per_month or 0.0, r.saved_after_enabling_per_month or 0.0
+        lever = _lever(r.move or {})
+        seg = [("sr", now), ("sr2", after), ("kept", max(0.0, spend - saved))]
+        how = "Smart Router" if lever == "router" else "Change model"
+        on = ", ".join(_short(x) for x in r.enable)
         what = {"sr": f"Possible now with {how}", "sr2": f"Possible with {how} after enabling {on or 'models'}",
                 "kept": "Still spent"}
-        sp = r["spend"] or 1e-9
+        sp = spend or 1e-9
         bars = "".join(f"<i class={c} style='flex:{v / sp:.4f} 1 0' tabindex=0 "
-                       f"data-tip='{html.escape(_tip(what[c], v, r['spend']))}'></i>" for c, v in seg
+                       f"data-tip='{html.escape(_tip(what[c], v, spend))}'></i>" for c, v in seg
                        if v / sp > (0.02 if c == "kept" else 0))
-        split = [("sr", f"{_pc(_of(r['today'], sp))} now", r["today"]),
-                 ("sr2", f"+{_pc(_of(r['after'], sp))} after enabling", r["after"])]
+        split = [("sr", f"{_pc(_of(now, sp))} now", now), ("sr2", f"+{_pc(_of(after, sp))} after enabling", after)]
         split_html = "".join(f"<li><span class='sw {c}'></span>{t} \u00b7 {_usd0(v)}</li>" for c, t, v in split
                              if v > 0)
-        pct = _of(r["saved"], r["spend"])
-        tip = (f"{_short(r['model'])}: {_pc(_of(r['today'], r['spend']))} possible now, "
-               f"{_pc(_of(r['after'], r['spend']))} more after enabling, of {_usd0(r['spend'])} a month")
-        notes = f"<span>{html.escape(r['note'])}</span>" if r["note"] else ""
-        if r["n"] < MIN_SAMPLE:
-            notes += f"<span>Small sample: {r['n']} call{'s' if r['n'] != 1 else ''}.</span>"
-        if r["hard"] is not None:
+        tip = (f"{_short(r.model)}: {_pc(_of(now, spend))} possible now, "
+               f"{_pc(_of(after, spend))} more after enabling, of {_usd0(spend)} a month")
+        note = _rec_note(r)
+        notes = f"<span>{html.escape(note)}</span>" if note else ""
+        if r.sampled_calls < MIN_SAMPLE:
+            notes += f"<span>Small sample: {r.sampled_calls} call{'s' if r.sampled_calls != 1 else ''}.</span>"
+        if r.share_hard is not None:
             notes += "<span class=hard>Mostly hard work: spot-check answers before moving it.</span>"
-        rows.append(f"<div class=row><div class=who>{_flow_html(r)}{notes}</div>"
+        rows.append(f"<div class=row><div class=who>{_flow_html(r.model, lever, r.targets, _rec_lines(r))}{notes}</div>"
                     f"<div class=bx><div class=track role=img aria-label='{html.escape(tip)}'>{bars}</div>"
                     f"<ul class='legend mini'>{split_html}</ul></div>"
-                    f"<div class=val><b>{_pc(pct)} saved</b>"
-                    f"<span>{_usd0(r['saved'])} of {_usd0(r['spend'])}/mo</span></div></div>")
+                    f"<div class=val><b>{_pc(_of(saved, spend))} saved</b>"
+                    f"<span>{_usd0(saved)} of {_usd0(spend)}/mo</span></div></div>")
     legend = "<ul class=legend><li><span class='sw sr'></span>Possible now</li>"
-    if any(r["after"] > 0 for r in drawn):
+    if any((r.saved_after_enabling_per_month or 0.0) > 0 for r in drawn):
         legend += "<li><span class='sw sr2'></span>After enabling</li>"
     legend += "<li><span class='sw kept'></span>Still spent</li>"
-    levers = {r["lever"] for r in drawn}
     if "switch" in levers:
         legend += "<li><span class='lk arrow'></span>Arrow: move all calls</li>"
     if "router" in levers:
         legend += "<li><span class='lk fork'></span>Fork: Smart Router picks a model per call, % is its share of calls</li>"
-    if any(r["enable"] for r in drawn):
+    if any(r.enable for r in drawn):
         legend += "<li><span class='lk dash'></span>Dashed: enable this model in your orq.ai workspace first</li>"
-    foot = "".join(f"<p class='m foot'>{html.escape(_short(r['model']))}: "
-                   + ("not analysed, its sampled calls could not be priced reliably." if r["action"] == "not_analysed"
+    foot = "".join(f"<p class='m foot'>{html.escape(_short(r.model))}: "
+                   + ("not analysed, its sampled calls could not be priced reliably." if r.action == "not_analysed"
                       else "keep, already the cheapest model that is as strong.") + "</p>" for r in kept)
-    if not_analysed["model_count"]:
-        foot += (f"<p class='m foot'>Not analysed: {_usd0(not_analysed['per_month'])}/mo of spend on "
-                 f"{not_analysed['model_count']} model{'s' if not_analysed['model_count'] != 1 else ''}.</p>")
+    if n := not_analysed.model_count:
+        foot += (f"<p class='m foot'>Not analysed: {_usd0(not_analysed.per_month)}/mo of spend on "
+                 f"{n} model{'s' if n != 1 else ''}.</p>")
     return legend + "</ul><div class=chart>" + "".join(rows) + "</div>" + foot
 
 
-def _scope_cell(sc: dict | None, approx: bool, show_coverage: bool) -> str:
+def _scope_cell(sc: SummaryScope | None, approx: bool, show_coverage: bool) -> str:
     """Both levers in one scope, each with the models it needs enabled and, when coverage varies, its coverage."""
     if not sc:
         return "<div class=cell><p class=m>n/a</p></div>"
-    out = ["<div class='cell hl'><p class=tag>This report's figure</p>" if sc.get("headline") else "<div class=cell>"]
-    for cls, lever, name in (("f1", "router", "Smart Router"), ("f2", "switch", "Change model")):
-        f = sc[lever]
-        out += [f"<p class={cls}>{_pc(f['pct_of_spend'])}<span>{name}</span></p>",
-                f"<p class=ci>{_usd0(f['per_month'])}/mo</p>"]
-        if f["enable"]:
-            names = html.escape(", ".join(f["enable"]), quote=True)
-            out.append(f"<p class=en title='{names}'>enable {len(f['enable'])} model"
-                       f"{'s' if len(f['enable']) != 1 else ''}</p>")
+    out = ["<div class='cell hl'><p class=tag>This report's figure</p>" if sc.headline else "<div class=cell>"]
+    for cls, f, name in (("f1", sc.router, "Smart Router"), ("f2", sc.switch, "Change model")):
+        out += [f"<p class={cls}>{_pc(f.pct_of_spend)}<span>{name}</span></p>", f"<p class=ci>{_usd0(f.per_month)}/mo</p>"]
+        if f.enable:
+            names = html.escape(", ".join(f.enable), quote=True)
+            out.append(f"<p class=en title='{names}'>enable {len(f.enable)} model{'s' if len(f.enable) != 1 else ''}</p>")
         if show_coverage:
-            out.append(f"<p class=en>{_pct(f['coverage'])} of spend covered</p>")
+            out.append(f"<p class=en>{_pct(f.coverage)} of spend covered</p>")
     if approx:
         out.append("<p class=en>approximate</p>")
     return "".join(out) + "</div>"
 
 
-def _scope_grid(scopes: list[dict]) -> str:
+def _scope_grid(scopes: list[SummaryScope]) -> str:
     """2x2 grid: provider scope in columns, availability in rows; the headline cell is tinted."""
-    by = {sc["scope"]: sc for sc in scopes}
-    covs = {sc[k]["coverage"] for sc in scopes for k in ("router", "switch")}
+    by = {sc.scope: sc for sc in scopes}
+    covs = {f.coverage for sc in scopes for f in (sc.router, sc.switch)}
     out = ["<div class=grid><span class=corner></span><p class=ch>Same provider</p><p class=ch>Any provider</p>"]
     for avail, label in (("all", "All available"), ("enabled", "Enabled only")):
         out.append(f"<p class=rh>{label}</p>")
         for prov in ("same_provider", "any_provider"):
-            sc = by.get(f"{prov}:{avail}")
-            out.append(_scope_cell(sc, prov == "any_provider", len(covs) > 1))
+            out.append(_scope_cell(by.get(f"{prov}:{avail}"), prov == "any_provider", len(covs) > 1))
     return "".join(out) + "</div>"
 
 
-def _uncertainty_rows(scopes: list[dict]) -> list[dict]:
+def _scope_label(sc: SummaryScope) -> str:
+    return SCOPE_LABEL.get(sc.scope, sc.scope) + (" (headline)" if sc.headline else "")
+
+
+def _uncertainty_rows(scopes: list[SummaryScope]) -> list[Json]:
     rows = []
     for sc in scopes:
-        label = SCOPE_LABEL.get(sc["scope"], sc["scope"]) + (" (headline)" if sc["headline"] else "")
-        for lever, fig in (("Smart Router", sc["router"]), ("Change model", sc["switch"])):
-            ci = fig["ci90_per_month"]
-            rows.append({"scope": label, "lever": lever, "pm": fig["per_month"], "pct": fig["pct_of_spend"],
+        for lever, fig in (("Smart Router", sc.router), ("Change model", sc.switch)):
+            ci = fig.ci90_per_month
+            rows.append({"scope": _scope_label(sc), "lever": lever, "pm": fig.per_month, "pct": fig.pct_of_spend,
                          "ci": f"{_usd0(ci[0])} to {_usd0(ci[1])}" if ci else "n/a",
-                         "range": (ci[0], fig.get("per_month"), ci[1], lever) if ci else None})
+                         "range": (ci[0], fig.per_month, ci[1], lever) if ci else None})
     ends = [v for r in rows if r["range"] for v in (r["range"][0], r["range"][2])]
     # one shared scale for every row, from just below the lowest bound to the highest, so overlaps show
     span = (max(ends) - min(ends)) if ends else 0
@@ -2603,11 +2600,11 @@ def _range_head(rows: list[dict]) -> str:
     return f"Range, {_usd0(r[4])} to {_usd0(r[5])}, lines every {_usd0(step)}"  # table formatters that return markup, not text
 
 
-def _pool_tables(scopes: list[dict]) -> str:
+def _pool_tables(scopes: list[SummaryScope]) -> str:
     out = []
     for sc in scopes:
-        cap = SCOPE_LABEL.get(sc["scope"], sc["scope"]) + (" (headline)" if sc["headline"] else "")
-        out.append(_table(sc["models"], [("Model in use", "model", str),
+        cap = _scope_label(sc)
+        out.append(_table([m.model_dump() for m in sc.models], [("Model in use", "model", str),
                                          ("Router pool", "pool", lambda p: ", ".join(p or []) or "none"),
                                          ("Change to", "switch", _txt),
                                          ("Enable first", "enable", lambda e: ", ".join(e or []) or "nothing")],
@@ -2620,12 +2617,12 @@ CHECK = ("<svg class=ok viewBox='0 0 20 20' aria-hidden=true><circle cx=10 cy=10
          "stroke-linejoin=round /></svg>")
 
 
-def _caching_body(cs: dict) -> str:
+def _caching_body(cs: SummaryCaching) -> str:
     """Current caching first, then what turning it on where it is missing would add."""
-    n, found, share = cs["threads_scanned"], cs["savings_found"] or 0, cs.get("cached_share")
+    n, found, share = cs.threads_scanned, cs.savings_found or 0, cs.cached_share
     scope = f"the {n} costliest multi-turn threads"
     now = (f"{_pct(share)} of input tokens in {scope} were read from cache, saving "
-           f"{_usd(cs.get('saved_by_cache') or 0)} in those threads." if share else
+           f"{_usd(cs.saved_by_cache or 0)} in those threads." if share else
            f"No input tokens in {scope} were read from cache.")
     if found >= 1:
         return (f"<p>{now}</p><p><b>Turning caching on where it is missing:</b> {_usd(found)} more in those threads, "
@@ -2806,10 +2803,14 @@ def _copy_id(text: str) -> str:
     return "cp" + hashlib.sha1(text.encode()).hexdigest()[:10]
 
 
-def _stored_plans(summ: dict) -> dict[str, dict]:
-    return {"router": {"lever": "router", "enable": summ["router"]["enable"], "moves": summ["router"]["routers"],
-                       "replacements": summ["router"]["replacements"]},
-            "switch": {"lever": "switch", "enable": summ["switch"]["enable"], "moves": summ["switch"]["replacements"]}}
+def _stored_plans(summ: Summary) -> dict[str, Json]:
+    """The setup plans (see _setup_plan) as the summary stores them."""
+    def dump(xs: list[RouterSetup] | list[Replacement]) -> list[Json]:
+        return [x.model_dump() for x in xs]
+
+    return {"router": {"lever": "router", "enable": summ.router.enable, "moves": dump(summ.router.routers),
+                       "replacements": dump(summ.router.replacements)},
+            "switch": {"lever": "switch", "enable": summ.switch.enable, "moves": dump(summ.switch.replacements)}}
 
 
 def _and(moves: list[dict]) -> str:
@@ -2903,29 +2904,28 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
         raise SystemExit(f"narrative slots empty: {', '.join(missing)}")
     if "summary" not in report:
         raise SystemExit("report.json has no summary; rerun analyze")
-    S = report["summary"]
-    cs = S["caching"]  # the caching slot is only used when the caching card is shown
+    cs = report["summary"]["caching"]  # the caching slot is only used when the caching card is shown
     if not cs.get("error") and (cs["savings_found"] or 0) >= 1 and not narrative.get("caching"):
         raise SystemExit("narrative slots empty: caching")
-    win = S["window"]
+    S = Summary.model_validate(report["summary"])
+    cs, win = S.caching, S.window
     ws = str(report.get("workspace") or "your workspace")
-    total = S["spend_total"] or 0
-    h_pm = S["router"]["per_month"]
-    n = S["sampled_calls"]
-    caching_error = S["caching"].get("error")
-    caching_small = not caching_error and (S["caching"]["savings_found"] or 0) < 1
-    spend_pm = S["spend_per_month"]
+    total = S.spend_total or 0
+    h_pm, sw_pm = S.router.per_month, S.switch.per_month
+    n = S.sampled_calls
+    caching_error = cs.error
+    caching_small = not caching_error and (cs.savings_found or 0) < 1
+    spend_pm = S.spend_per_month
     first = re.split(r"\n\s*\n", narrative["summary"].strip())[0]
     verdict = html.escape(" ".join(first.split()))
-    sw_pm = S["switch"]["per_month"]
-    p_router, p_switch = S["router"]["pct_of_spend"], S["switch"]["pct_of_spend"]
-    rec = {"router": "r", "switch": "s"}.get(S["recommended"], "")  # "": neither lever saves anything
+    p_router, p_switch = S.router.pct_of_spend, S.switch.pct_of_spend
+    rec = {"router": "r", "switch": "s"}.get(S.recommended or "", "")  # "": neither lever saves anything
     # the spend bar, the plan and the coverage line follow the recommended lever
-    plan = S["switch" if rec == "s" else "router"]
-    cov = plan["coverage"]
+    plan: RouterLever | SwitchLever = S.switch if rec == "s" else S.router
+    cov = plan.coverage
     bar = ""
-    if rec and spend_pm and plan["per_month"] is not None and plan["saved_today_per_month"] is not None:
-        now_v, more_v = max(0.0, plan["saved_today_per_month"]), plan["saved_after_enabling_per_month"]
+    if rec and spend_pm and plan.per_month is not None and plan.saved_today_per_month is not None:
+        now_v, more_v = max(0.0, plan.saved_today_per_month), plan.saved_after_enabling_per_month or 0.0
         left_v = max(0.0, spend_pm - now_v - more_v)
         bar = _waterfall(spend_pm, now_v, more_v, left_v, "Smart Router" if rec == "r" else "Change model")
     adds = round((h_pm or 0) - (sw_pm or 0)) if h_pm is not None and sw_pm is not None else None
@@ -2934,7 +2934,7 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
         gap = ""
     elif not rec:
         gap = "<p class='m gap'>Neither lever saves money on the sampled calls.</p>"
-    elif S["levers_overlap"]:
+    elif S.levers_overlap:
         gap = ("<p class='m gap'>Both save about the same: the difference is within the margin of error, "
                "so either works.</p>")
     elif adds > 0:
@@ -2964,26 +2964,27 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
     nav = ("<nav class=toc aria-label='On this page'><span>On this page</span><ul>"
            + "".join(f"<li><a href='#{k}'>{t}</a></li>" for k, t in toc if k != "setup" or setup) + "</ul></nav>")
     theme = f"<button type=button class=theme aria-label='Switch colour theme'>{SUN}{MOON}</button>"
-    to_day = _day(win["to"])
+    to_day = _day(win.to)
     cap = ""
-    if (win.get("requested") or 0) > win["days"]:
-        cap = f"; you asked for {win['requested']}, the workspace keeps traces for {win.get('retention')} days"
+    if (win.requested or 0) > win.days:
+        cap = f"; you asked for {win.requested}, the workspace keeps traces for {win.retention} days"
     head = (f"<header class=top><div><h1>Where you can save on LLM spend</h1>"
-            f"<p class=m>{html.escape(ws)} · {html.escape(_day(win['from']))} to {html.escape(to_day)} "
-            f"({win['days']} days{cap}), scaled to a month: {_usd0(spend_pm)}/mo LLM spend.</p></div>{theme}</header>")
+            f"<p class=m>{html.escape(ws)} · {html.escape(_day(win.from_))} to {html.escape(to_day)} "
+            f"({win.days} days{cap}), scaled to a month: {_usd0(spend_pm)}/mo LLM spend.</p></div>{theme}</header>")
     caption = (_plan_caption("switch", p_switch, sw_pm) if rec == "s" else _plan_caption("router", p_router, h_pm)
                if rec else "<p class=m>No saving found: no sampled model has a cheaper model that is as strong.</p>")
     parts = [_card("What to do", caption
-                   + _actions_chart(S["recommendations"]["switch" if rec == "s" else "router"], S["not_analysed"]),
+                   + _actions_chart(S.recommendations.switch if rec == "s" else S.recommendations.router,
+                                    S.not_analysed),
                    "do"),
              setup,
              _card("Other model choices", "<p class=m>Share of monthly spend saved, by which models are allowed.</p>"
-                   + _scope_grid(S["scopes"]) + f"<p class=m>{html.escape(TOKENIZER_NOTE)}</p>", "scopes")]
+                   + _scope_grid(S.scopes) + f"<p class=m>{html.escape(TOKENIZER_NOTE)}</p>", "scopes")]
     if not caching_error:
         parts.append(_card("Caching", _caching_body(cs) + ("" if caching_small else _md(narrative["caching"])),
                            "caching"))
     gen = html.escape(_day(report["generated_at"]) if report.get("generated_at") else to_day)
-    unc = _uncertainty_rows(S["scopes"])
+    unc = _uncertainty_rows(S.scopes)
     dets = [_details("Estimates with uncertainty", "90% CI per scope and lever",
                      "<p class=m>The 90% CI covers sampling noise only, not answer quality. The range plot "
                      "shows it on one scale for every row (it does not start at $0): where two bars overlap, the "
@@ -2995,19 +2996,19 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
             _details("Method and caveats", "sample, coverage, limits, terms",
                      _md(narrative["caveats"]) + (
                          f"<p class=m>Without the 3 sampled calls that save the most, the Smart Router estimate is "
-                         f"{_usd0(S['router']['without_top3_per_month'] or 0)}/mo.</p>"
+                         f"{_usd0(S.router.without_top3_per_month or 0)}/mo.</p>"
                          "<dl class=gl>" + "".join(f"<dt>{html.escape(t)}</dt><dd>{html.escape(d)}</dd>"
                                                    for t, d in GLOSSARY) + "</dl>")),
-            _details("Pools and models to enable", "what each move needs, per scope", _pool_tables(S["scopes"])),
+            _details("Pools and models to enable", "what each move needs, per scope", _pool_tables(S.scopes)),
             _details("Where sampled asks move", "headline scope, balanced profile",
-                     _table(_moves_rows(S["sampled_moves"]), [("Model in use", "used", str), ("Router pick", "pick", str),
+                     _table(_moves_rows([m.model_dump() for m in S.sampled_moves]), [("Model in use", "used", str), ("Router pick", "pick", str),
                                                   ("Difficulty tiers", "tier", str), ("Sampled calls", "calls", str),
                                                   ("Calls that cost more", "costs_more", str),
                                                   ("Saving on the sampled calls", "weighted_savings", _usd)],
                             "Where sampled asks move"))]
     if not caching_small and not caching_error:
-        dets.append(_details("Caching candidates", f"{cs['threads_scanned']} threads scanned",
-                             _table(cs["rows"],
+        dets.append(_details("Caching candidates", f"{cs.threads_scanned} threads scanned",
+                             _table([r.model_dump() for r in cs.rows],
                                     [("Thread", "thread", lambda t: "(hidden)" if redact else t),
                                      ("Agent", "agent", lambda a: a or "no agent"), ("Model", "model", str),
                                      ("Turns", "turns", str), ("Saving", "savings", _usd), ("Action", "action", str)],
@@ -3015,7 +3016,7 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
     intro = ""
     if caching_error:
         intro = f"<p><b>Caching:</b> not checked ({html.escape(str(caching_error))}).</p>"
-    intro += (f"<p class=m>{_usd(total)} spent over the {win['days']}-day window. Covers {_pct(cov)} of spend; "
+    intro += (f"<p class=m>{_usd(total)} spent over the {win.days}-day window. Covers {_pct(cov)} of spend; "
              f"figures re-price the sampled calls on the new model. Balanced routing profile, generated {gen}.</p>")
     parts.append(_card("Details", intro + "<div class=rows>" + "".join(dets) + "</div>", "details"))
     body = head + hero + nav + "".join(parts)
