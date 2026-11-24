@@ -40,6 +40,7 @@ from typing import Annotated, Any, Literal, NamedTuple, TypeVar
 
 from evaluatorq.common import model_frontier as mf
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic.config import JsonDict
 
 Json = dict[str, Any]  # an object as the orq CLI or report.json carries it
 T = TypeVar("T")
@@ -102,7 +103,7 @@ def _part_text(part: Any) -> str | None:
     return None
 
 
-def message_text(msg: dict) -> str:
+def message_text(msg: Json) -> str:
     """Text of one message: text parts cleaned of complete <system-reminder> blocks, trimmed, joined by a space."""
     pieces: list[str] = []
     parts = msg.get("parts")
@@ -116,7 +117,7 @@ def message_text(msg: dict) -> str:
     return " ".join(p for p in cleaned if p)
 
 
-def _system_text(attrs: dict) -> str:
+def _system_text(attrs: Json) -> str:
     gen = attrs.get("gen_ai") or {}
     msgs = ((gen.get("input") or {}).get("messages")) or []
     texts = [message_text(m) for m in msgs if m.get("role") in ("system", "developer")]
@@ -130,7 +131,7 @@ def _system_text(attrs: dict) -> str:
     return " ".join(t for t in texts if t)
 
 
-def routing_input(attrs: dict) -> tuple[str | None, str]:
+def routing_input(attrs: Json) -> tuple[str | None, str]:
     """(text, source). source: user | system | instructions | empty_input | prompt_limit."""
     msgs = (((attrs.get("gen_ai") or {}).get("input") or {}).get("messages")) or []
     text, source = "", "empty_input"
@@ -158,7 +159,7 @@ def routing_input(attrs: dict) -> tuple[str | None, str]:
 # --------------------------------------------------------------------------------------------- score, tier, bands
 
 
-def score(probs: dict) -> float:
+def score(probs: Json) -> float:
     return float(probs.get("easy", 0)) * 0.0 + float(probs.get("medium", 0)) * 1.0 + float(probs.get("hard", 0)) * 2.0
 
 
@@ -216,9 +217,9 @@ def switch_target(incumbent: mf.ScoredModel, cands: list[mf.ScoredModel],
     if own is None:
         return None
     priced = [(c, m) for m in cands if m.router_id != incumbent.router_id and (c := cost(m.router_id)) is not None]
-    better = [(c, m) for c, m in priced if m.default_index >= incumbent.default_index and c <= own
-              and (m.default_index > incumbent.default_index or c < own)]
-    return min(better, key=lambda t: (t[0], -t[1].default_index, t[1].router_id))[1] if better else None
+    beats = [(c, m) for c, m in priced if m.default_index >= incumbent.default_index and c <= own
+             and (m.default_index > incumbent.default_index or c < own)]
+    return min(beats, key=lambda t: (t[0], -t[1].default_index, t[1].router_id))[1] if beats else None
 
 
 Cost = Callable[[str], "float | None"]
@@ -256,14 +257,15 @@ def frontier_pool(top: mf.ScoredModel, cands: list[mf.ScoredModel],
     top_p = price(top)
     if top_p is None:
         return [top], True
-    priced = [m for m in cands if not m.free and price(m) is not None]
+    pp = {m.router_id: x for m in cands if not m.free and (x := price(m)) is not None}
+    priced = [m for m in cands if m.router_id in pp]
     front = [m for m in priced if not any(_beats(o, m, price) for o in priced if o is not m)]
     lower = [m for m in front if m.default_index < top.default_index
-             and ident(m.router_id) != ident(top.router_id) and price(m) * ratio <= top_p]
-    best: tuple | None = None
+             and ident(m.router_id) != ident(top.router_id) and pp[m.router_id] * ratio <= top_p]
+    best: tuple[tuple[float, float, str, str], list[mf.ScoredModel]] | None = None
     for mid in lower:
         for low in lower:
-            if price(low) * ratio <= price(mid) and ident(low.router_id) != ident(mid.router_id):
+            if pp[low.router_id] * ratio <= pp[mid.router_id] and ident(low.router_id) != ident(mid.router_id):
                 rank = (min(mid.default_index, low.default_index), mid.default_index + low.default_index,
                         mid.router_id, low.router_id)
                 if best is None or rank > best[0]:
@@ -271,7 +273,7 @@ def frontier_pool(top: mf.ScoredModel, cands: list[mf.ScoredModel],
     if best:
         return best[1], False
     if lower:
-        return [top, max(lower, key=lambda m: (m.default_index, -price(m), m.router_id))], True
+        return [top, max(lower, key=lambda m: (m.default_index, -pp[m.router_id], m.router_id))], True
     return [top], True
 
 
@@ -306,7 +308,8 @@ _TOKEN = re.compile(r'\s*(?:(\d+(?:\.\d+)?)|"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*)|(
 
 
 def _tokenize(expr: str) -> list[tuple[str, Any]]:
-    out, pos = [], 0
+    out: list[tuple[str, Any]] = []
+    pos = 0
     expr = expr.strip()
     while pos < len(expr):
         m = _TOKEN.match(expr, pos)
@@ -402,7 +405,7 @@ def when_conditions(node: tuple) -> int:
     return own + when_conditions(node[2]) + when_conditions(node[3])
 
 
-def eval_when(node: tuple, env: dict) -> Any:
+def eval_when(node: tuple, env: Json) -> Any:
     kind = node[0]
     if kind == "lit":
         return node[1]
@@ -453,7 +456,7 @@ class PriceChoice:
     flag: str | None = None
 
 
-def choose_price(pricing: dict, env: dict) -> PriceChoice:
+def choose_price(pricing: Json, env: Json) -> PriceChoice:
     """Base price unless a variant's condition holds on what the span shows.
 
     Of the matching variants the one with the most comparisons wins (closest to how the client calls the model);
@@ -484,7 +487,7 @@ def choose_price(pricing: dict, env: dict) -> PriceChoice:
     return PriceChoice(prices, best_when, flag)
 
 
-def span_env(summary: dict, attrs: dict, model_id: str) -> dict:
+def span_env(summary: Json, attrs: Json, model_id: str) -> Json:
     usage = (attrs.get("gen_ai") or {}).get("usage") or {}
     tier = (summary.get("cost") or {}).get("pricing_tier") or ((attrs.get("openai") or {}).get("response") or {}).get(
         "service_tier")
@@ -514,7 +517,7 @@ class Tokens:
     prompt: int
 
 
-def span_tokens(summary: dict, attrs: dict) -> Tokens:
+def span_tokens(summary: Json, attrs: Json) -> Tokens:
     u = summary.get("usage") or {}
     prompt = int(u.get("prompt_tokens") or 0)
     read = int(u.get("prompt_cached_tokens") or 0)
@@ -534,7 +537,7 @@ def _ttl_seconds(ttl: str) -> float:
     return int(m.group(1)) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[m.group(2)] if m else math.inf
 
 
-def write_price(prices: dict, ttl: str | None) -> float | None:
+def write_price(prices: dict[str, float], ttl: str | None) -> float | None:
     if ttl and f"cache_write_{ttl}" in prices:
         return prices[f"cache_write_{ttl}"]
     keys = [k for k in prices if k.startswith("cache_write_")]
@@ -543,7 +546,7 @@ def write_price(prices: dict, ttl: str | None) -> float | None:
     return prices[min(keys, key=lambda k: _ttl_seconds(k.removeprefix("cache_write_")))]
 
 
-def price_tokens(t: Tokens, prices: dict) -> float:
+def price_tokens(t: Tokens, prices: dict[str, float]) -> float:
     inp, out = prices.get("input", 0.0), prices.get("output", 0.0)
     read_p = prices.get("cache_read", inp)
     w = write_price(prices, t.ttl)
@@ -694,7 +697,7 @@ class Orq:
         if cache_dir:
             cache_dir.mkdir(parents=True, exist_ok=True)
 
-    def __call__(self, *args: str, body: dict | None = None, cache: bool = True) -> Any:
+    def __call__(self, *args: str, body: Json | None = None, cache: bool = True) -> Any:
         argv = list(args) + (["--workspace", self.workspace] if self.workspace else []) + ["-o", "json"]
         key = hashlib.sha256(json.dumps([argv, body], sort_keys=True).encode()).hexdigest()[:24]
         path = self.cache_dir / f"{key}.json" if (self.cache_dir and cache) else None
@@ -743,7 +746,7 @@ def split_model(m: str) -> tuple[str, str]:
     return tuple(m.split("/", 1)) if "/" in m else ("", m)  # type: ignore[return-value]
 
 
-def is_chat_model(m: str, cat: dict) -> bool:
+def is_chat_model(m: str, cat: Json) -> bool:
     if DECISION_MODEL_RE.match(m) or NON_CHAT_RE.search(m):
         return False
     entry = cat.get(m)
@@ -753,7 +756,7 @@ def is_chat_model(m: str, cat: dict) -> bool:
     return True
 
 
-def has_auto_router(attrs: dict) -> bool:
+def has_auto_router(attrs: Json) -> bool:
     return "auto_router" in json.dumps(list(_keys(attrs)))
 
 
@@ -783,7 +786,7 @@ PROMPT_BUCKETS = [(8_000, "0-8k"), (32_000, "8k-32k"), (math.inf, ">32k")]
 class Truncated(Exception):
     """A telemetry result past its row budget (`has_more`); carries the partial rows."""
 
-    def __init__(self, rows: list[dict]):
+    def __init__(self, rows: list[Json]):
         super().__init__("telemetry truncated")
         self.rows = rows
 
@@ -955,7 +958,7 @@ class Analyzer:
             self.caveat("telemetry truncated", " ".join(group_by))
         return r.get("data") or []
 
-    def previous_window(self) -> dict | None:
+    def previous_window(self) -> Json | None:
         """The window of an earlier run in this --out dir, so a rerun after `confirmation` hits the read cache."""
         try:
             prev = json.loads((self.out / "report.json").read_text())
@@ -1182,8 +1185,9 @@ class Analyzer:
             a += ["--project", project]
         return (self.orq(*a) or {}).get("data") or []
 
-    def list_spans(self, trace: str, project: str) -> list[dict]:
-        out, tok = [], None
+    def list_spans(self, trace: str, project: str) -> list[Json]:
+        out: list[Json] = []
+        tok = None
         for _ in range(10):
             a = ["traces", "list-spans", trace, "--limit", "200"] + (["--project", project] if project else [])
             if tok:
@@ -1195,12 +1199,12 @@ class Analyzer:
                 break
         return out
 
-    def get_span(self, trace: str, span: str, project: str) -> dict:
+    def get_span(self, trace: str, span: str, project: str) -> Json:
         a = ["traces", "get-span", trace, span] + (["--project", project] if project else [])
         return (self.orq(*a) or {}).get("span") or {}
 
     @staticmethod
-    def leaf_llm(spans: list[dict], model: str | None = None) -> list[dict]:
+    def leaf_llm(spans: list[Json], model: str | None = None) -> list[Json]:
         return [s for s in spans if s.get("type") in LLM_SPAN_TYPES and not s.get("has_children")
                 and (model is None or model_key(s.get("provider", ""), s.get("model", "")) == model)]
 
@@ -1259,7 +1263,7 @@ class Analyzer:
 
     # ---- main flow
 
-    def run(self) -> dict:
+    def run(self) -> Json:
         try:
             self._run()
         except Stop as s:
@@ -1676,7 +1680,7 @@ class Analyzer:
                 agent=agent, product=product))
         return out
 
-    def harness(self) -> dict:
+    def harness(self) -> Json:
         try:
             rows = self.tq([{"metric": "orq.gen_ai.cost", "op": "sum"}], ["trace_framework"])
         except OrqError as e:
@@ -1818,7 +1822,7 @@ def _short(model: str) -> str:
     return model.split("/", 1)[-1]
 
 
-def _table(rows: list[dict], cols: list[tuple[str, str, Any]], caption: str = "") -> str:
+def _table(rows: list[Json], cols: list[tuple[str, str, Any]], caption: str = "") -> str:
     if not rows:
         return "<p class=m>Nothing to show.</p>"
     cap = f"<caption>{html.escape(caption)}</caption>" if caption else ""
@@ -2107,7 +2111,7 @@ def _pool_switch(m: Move | Json) -> tuple[list[str], str | None]:
     return (m.pool or [], m.switch) if isinstance(m, Move) else (m.get("pool") or [], m.get("switch"))
 
 
-def _lever(m: Move | Json) -> str:
+def _lever(m: Move | Json) -> Literal["router", "switch", ""]:
     """'router' when the move routes the model over a pool, 'switch' (change model) when it moves it whole, else ''."""
     pool, switch = _pool_switch(m)
     return "router" if len(pool) > 1 else "switch" if switch else ""
@@ -2135,7 +2139,8 @@ def _rec_lines(rec: Recommendation) -> list[str]:
     if rec.saved_per_month <= 0:
         prov = rec.model.split("/")[0]
         return [f"Keep it: no cheaper {PROVIDER_NAME.get(prov, prov)} model is as strong"]
-    head, today = rec.move or {}, rec.today_move
+    head: Move | Json = rec.move or {}
+    today = rec.today_move
     if not rec.enable:
         p = _phrase(head)
         return [p[0].upper() + p[1:]]
@@ -2158,11 +2163,11 @@ def _rec_note(rec: Recommendation) -> str:
                                  rec.spend_per_month)
 
 
-def _headline(report: dict) -> dict:
+def _headline(report: Json) -> Json:
     return next((sc for sc in report.get("scenarios") or [] if sc.get("headline")), {})
 
 
-def _enabled_scope(report: dict, head: dict) -> dict | None:
+def _enabled_scope(report: Json, head: Json) -> Json | None:
     """The same-provider, enabled-models-only scenario (the headline itself when it already is that)."""
     if head.get("availability") == "enabled":
         return head
@@ -2170,14 +2175,14 @@ def _enabled_scope(report: dict, head: dict) -> dict | None:
     return next((sc for sc in report.get("scenarios") or [] if sc.get("scope") == want), None)
 
 
-def _as_switch(info: dict) -> dict:
+def _as_switch(info: Json) -> Json:
     """A model's move under the change-model lever: its switch target only, enabling only that target."""
     sw = info.get("switch")
     return {"model": info.get("model"), "pool": None, "switch": sw,
             "enable": [e for e in info.get("enable") or [] if e == sw]}
 
 
-def _plan_figures(report: dict, per_month: float, lever: str = "router") -> dict:
+def _plan_figures(report: Json, per_month: float, lever: str = "router") -> Json:
     """The plan as numbers: the enabled-only router figure (today) and the extra from enabling models.
 
     Today lists the moves of the enabled scope. A move whose target is the same in the headline scope takes the
@@ -2199,7 +2204,7 @@ def _plan_figures(report: dict, per_month: float, lever: str = "router") -> dict
             h_pm = head.get("router", {}).get("balanced", {}).get("per_month") or 0
     enabled = _enabled_scope(report, head)
 
-    def est(sc: dict) -> dict:
+    def est(sc: Json) -> Json:
         return (sc.get("switch") if sw else (sc.get("router") or {}).get("balanced")) or {}
 
     if enabled is not None and enabled is not head:
@@ -2228,7 +2233,7 @@ def _plan_figures(report: dict, per_month: float, lever: str = "router") -> dict
             "e_info": e_info, "strata": strata, "analysed": analysed}
 
 
-def _today_amounts(f: dict) -> dict[str, float]:
+def _today_amounts(f: Json) -> dict[str, float]:
     """Monthly saving available today per model: the enabled scope's own per-model saving when the report has it.
     Older reports: amounts the reconciliation could not pin down (several moves differ from the headline) split
     what is left of the enabled-scope total by headline saving."""
@@ -2242,7 +2247,7 @@ def _today_amounts(f: dict) -> dict[str, float]:
     return known
 
 
-def _hard_models(ro: dict) -> dict[str, float]:
+def _hard_models(ro: Json) -> dict[str, float]:
     """Models where at least half of the sampled calls are hard asks, with that share."""
     return {u["model"]: u["share_hard"] for u in ro.get("underpowered") or [] if (u.get("share_hard") or 0) >= 0.5}
 
@@ -2250,7 +2255,7 @@ def _hard_models(ro: dict) -> dict[str, float]:
 @dataclass
 class Flow:
     """Where one model's calls go in the headline scope."""
-    lever: str  # see _lever
+    lever: Literal["router", "switch", ""]  # see _lever
     targets: list[Target]
     enable: list[str]  # drawn targets that are not enabled, never the model itself
 
@@ -2386,7 +2391,7 @@ def _not_analysed(report: Json, per_month: float) -> NotAnalysed:
     return NotAnalysed(per_month=sum(x.get("spend") or 0 for x in nc) * per_month, model_count=len(nc))
 
 
-def summary(report: dict) -> dict:
+def summary(report: Json) -> Json:
     """Every number the page shows, so render only formats and a caller can skip the page."""
     head = _headline(report)
     sp = report.get("spend") or {}
@@ -2410,7 +2415,7 @@ def summary(report: dict) -> dict:
 
     recs = {k: _rec_rows(report, per_month, k, keys) for k in ("router", "switch")}
 
-    def lever(name: str, pm: Any, fig: dict, plan: dict, moves: list[dict]) -> dict:
+    def lever(name: str, pm: Any, fig: Json, plan: Json, moves: list[Json]) -> Json:
         t = today[name]
         if t is not None and recs[name]:  # the split the per-model rows show, so page and rows agree
             t = sum(x.saved_today_per_month or 0.0 for x in recs[name])
@@ -2445,12 +2450,14 @@ MOVE_FIELDS = ("used", "pick", "tier", "n", "fallback", "costs_more", "weighted_
 CACHE_FIELDS = ("thread", "agent", "model", "turns", "savings", "action")
 
 
-def _ranges_overlap(head: dict) -> bool:
+def _ranges_overlap(head: Json) -> bool:
     """Whether the 90% ranges of the two levers' monthly savings overlap (a rough, conservative test: both come
     from the same sampled calls, so a paired comparison would separate them sooner)."""
     r = ((head.get("router") or {}).get("balanced") or {}).get("ci90_per_month")
     w = (head.get("switch") or {}).get("ci90_per_month")
-    return bool(r and w) and r[0] <= w[1] and w[0] <= r[1]
+    if not r or not w:
+        return False
+    return r[0] <= w[1] and w[0] <= r[1]
 
 
 def _plan_caption(lever: str, pct: float | None, pm: float | None) -> str:
@@ -2547,11 +2554,11 @@ def _scope_grid(scopes: list[SummaryScope]) -> str:
 
 
 def _scope_label(sc: SummaryScope) -> str:
-    return SCOPE_LABEL.get(sc.scope, sc.scope) + (" (headline)" if sc.headline else "")
+    return (SCOPE_LABEL.get(sc.scope) or sc.scope) + (" (headline)" if sc.headline else "")
 
 
 def _uncertainty_rows(scopes: list[SummaryScope]) -> list[Json]:
-    rows = []
+    rows: list[Json] = []
     for sc in scopes:
         for lever, fig in (("Smart Router", sc.router), ("Change model", sc.switch)):
             ci = fig.ci90_per_month
@@ -2592,7 +2599,7 @@ def _range_cell(v: Any) -> str:
 RAW = (_range_cell,)
 
 
-def _range_head(rows: list[dict]) -> str:
+def _range_head(rows: list[Json]) -> str:
     r = next((x["range"] for x in rows if x["range"]), None)
     if not r:
         return "Range"
@@ -2648,7 +2655,7 @@ def _router_key(model: str) -> str:
     return "savings-" + re.sub(r"[^a-z0-9]+", "-", model.lower()).strip("-")
 
 
-def _setup_plan(report: dict, lever: str) -> dict:
+def _setup_plan(report: Json, lever: str) -> Json:
     """What applying one lever takes: models to enable, and per model in use its router pool or new model.
 
     The router plan also lists `replacements`: a model with no pool to route over is served by its switch target in
@@ -2681,7 +2688,7 @@ def _setup_plan(report: dict, lever: str) -> dict:
     return {**plan, "replacements": replacements} if lever == "router" else plan
 
 
-def _setup_commands(plan: dict) -> str:
+def _setup_commands(plan: Json) -> str:
     """Shell lines that apply the plan; safe to rerun. A router whose key exists is reused, and one is created only
     when every pool model has a Smart Router score right now: the report can be older than the garden, and the
     service rejects an unscored pool model."""
@@ -2724,7 +2731,7 @@ def _setup_commands(plan: dict) -> str:
     return "\n".join(lines)
 
 
-def _setup_prompt(plan: dict) -> str:
+def _setup_prompt(plan: Json) -> str:
     ws = f" in workspace {plan['workspace']} (pass `--workspace {plan['workspace']}` to every orq command)" \
         if plan.get("workspace") else ""
     out = [f"Apply this orq.ai cost-savings plan{ws}. Use the orq CLI (`orq --help`).", ""]
@@ -2813,12 +2820,12 @@ def _stored_plans(summ: Summary) -> dict[str, Json]:
             "switch": {"lever": "switch", "enable": summ.switch.enable, "moves": dump(summ.switch.replacements)}}
 
 
-def _and(moves: list[dict]) -> str:
+def _and(moves: list[Json]) -> str:
     names = [m["model"].split("/")[-1] for m in moves]
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
-def _setup_card(plans: dict[str, dict], rec: str, workspace: Any) -> str:
+def _setup_card(plans: dict[str, Json], rec: str, workspace: Any) -> str:
     ws = urllib.parse.quote(str(workspace or ""), safe="")
     blocks = []
     for lever in (["switch", "router"] if rec == "s" else ["router", "switch"]):
@@ -2892,13 +2899,13 @@ def _font_css() -> str:
     return "".join(out)
 
 
-def _moves_rows(moves: list[dict]) -> list[dict]:
+def _moves_rows(moves: list[Json]) -> list[Json]:
     """Moves with a call count that says how many of the calls were fallbacks (no routing decision)."""
     return [dict(mv, calls=f"{mv.get('n', 0)}" + (f" (incl. {mv['fallback']} fallback)" if mv.get("fallback") else ""))
             for mv in moves]
 
 
-def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
+def render(report: Json, narrative: dict[str, str], redact: bool) -> str:
     missing = [s for s in SLOTS if s != "caching" and not narrative.get(s)]
     if missing:
         raise SystemExit(f"narrative slots empty: {', '.join(missing)}")
@@ -3030,7 +3037,10 @@ def render(report: dict, narrative: dict[str, str], redact: bool) -> str:
 # --------------------------------------------------------------------------------------------- report.json contract
 # The models are the contract; resources/report.schema.json is generated from them (`schema` subcommand). Keys the
 # contract leaves untyped are Any, free objects dict[str, Any], and every object accepts extra keys. A non-null key
-# that may be absent defaults to None, which is never validated; report_schema() drops the default.
+# that may be absent defaults to _ABSENT (None), which is never validated; report_schema() drops the default.
+
+
+_ABSENT: Any = None  # default of a non-null key that may be absent: never validated, dropped from the schema
 
 
 class _Obj(BaseModel):
@@ -3218,15 +3228,15 @@ class Params(_Obj):
     seed: int
     counterfactual_test: bool
     cell_grain: dict[str, Literal["hour", "6h", "day"]] = Field(
-        None, description="Per sampled model, the bucket of the request-count query: hour, or coarser when hourly "
-                          "cells exceed the time-series budget.")
+        _ABSENT, description="Per sampled model, the bucket of the request-count query: hour, or coarser when hourly "
+                             "cells exceed the time-series budget.")
 
 
 class Window(_Obj):
     from_: str = Field(alias="from")
     to: str
     days: int = Field(ge=1)
-    requested: int = Field(None, ge=1)
+    requested: int = Field(_ABSENT, ge=1)
     retention: Annotated[int, Field(ge=1)] | None = None
 
 
@@ -3265,7 +3275,7 @@ class Checks(_Obj):
 
 
 class PerProfile(_Obj):
-    __pydantic_extra__: dict[str, float] = Field(init=False)
+    __pydantic_extra__: dict[str, float] = Field(init=False)  # pyright: ignore[reportIncompatibleVariableOverride]
     balanced: float
     cost: float
 
@@ -3290,11 +3300,11 @@ class Estimate(_Obj):
     ci90_per_month: Interval
     without_top3: float
     unpriced_models: list[str]
-    per_stratum: dict[str, float | None] = None
+    per_stratum: dict[str, float | None] = _ABSENT
 
 
 class ScenarioRouter(_Obj):
-    __pydantic_extra__: dict[str, Estimate] = Field(init=False)
+    __pydantic_extra__: dict[str, Estimate] = Field(init=False)  # pyright: ignore[reportIncompatibleVariableOverride]
     balanced: Estimate
     cost: Estimate
 
@@ -3333,7 +3343,7 @@ class ProfileFigure(_Obj):
 
 
 class Profiles(_Obj):
-    __pydantic_extra__: dict[str, ProfileFigure] = Field(init=False)
+    __pydantic_extra__: dict[str, ProfileFigure] = Field(init=False)  # pyright: ignore[reportIncompatibleVariableOverride]
     balanced: ProfileFigure
     cost: ProfileFigure
 
@@ -3343,7 +3353,7 @@ class RoutingMove(_Obj):
     pick: str
     n: int
     fallback: int
-    weight: float = None
+    weight: float = _ABSENT
 
 
 class Stratum(_Obj):
@@ -3366,7 +3376,7 @@ class NotCovered(_Obj):
 class Routing(_Obj):
     headline: Headline
     profiles: Profiles
-    moves: list[RoutingMove] = None
+    moves: list[RoutingMove] = _ABSENT
     strata: list[Stratum]
     not_covered: list[NotCovered]
     buckets: Any
@@ -3388,24 +3398,24 @@ class CounterfactualTest(_Obj):
 
 
 class Caching(_Obj):
-    threads_scanned: int = None
-    label: str = None
-    savings_found: float = None
-    savings_orq: float = None
-    rows: list[Any] = None
-    error: str = None
+    threads_scanned: int = _ABSENT
+    label: str = _ABSENT
+    savings_found: float = _ABSENT
+    savings_orq: float = _ABSENT
+    rows: list[Any] = _ABSENT
+    error: str = _ABSENT
     cached_share: float | None = None
     saved_by_cache: float | None = None
     threads_caching: int | None = None
 
 
 class Harness(_Obj):
-    metric: str = None
-    rows: list[Any] = None
+    metric: str = _ABSENT
+    rows: list[Any] = _ABSENT
     unattributed: float | None = None
 
 
-REPORT_RULES = {  # the JSON Schema form of Report._finished_run_parts
+REPORT_RULES: JsonDict = {  # the JSON Schema form of Report._finished_run_parts
     "if": {"properties": {"status": {"const": "ok"}}, "required": ["status", "routing"]},
     "then": {"required": ["summary"]},
     "allOf": [{"if": {"properties": {"params": {"properties": {"counterfactual_test": {"const": True}},
@@ -3424,19 +3434,19 @@ class Report(_Obj):
     status: Literal["ok", "stopped"]
     stop: StopInfo | None
     summary: Summary = Field(
-        None, description="Written by analyze on a finished run: every number the page shows. render only formats "
-                          "these; it does not recompute them.")
+        _ABSENT, description="Written by analyze on a finished run: every number the page shows. render only formats "
+                             "these; it does not recompute them.")
     params: Params
-    window: Window = None
-    spend: Spend = None
-    routing_decision_cost: RoutingDecisionCost = None
+    window: Window = _ABSENT
+    spend: Spend = _ABSENT
+    routing_decision_cost: RoutingDecisionCost = _ABSENT
     checks: Checks
-    samples: list[Sample] = None
-    scenarios: list[Scenario] = Field(None, min_length=4, max_length=4)
-    routing: Routing = None
-    counterfactual_test: CounterfactualTest = None
-    caching: Caching = None
-    harness: Harness = None
+    samples: list[Sample] = _ABSENT
+    scenarios: list[Scenario] = Field(_ABSENT, min_length=4, max_length=4)
+    routing: Routing = _ABSENT
+    counterfactual_test: CounterfactualTest = _ABSENT
+    caching: Caching = _ABSENT
+    harness: Harness = _ABSENT
 
     @model_validator(mode="after")
     def _finished_run_parts(self) -> Report:
@@ -3460,7 +3470,7 @@ def _dump_compact(x: Any, ind: str = "") -> str:
     return o + "\n" + ",\n".join(items) + "\n" + ind + c
 
 
-def report_schema() -> dict:
+def report_schema() -> Json:
     """JSON Schema of report.json, generated from Report; resources/report.schema.json holds it."""
     def clean(node: Any, keyed: bool = False) -> Any:  # keyed: a map of names to schemas (properties, $defs)
         if isinstance(node, list):
@@ -3479,7 +3489,7 @@ def report_schema() -> dict:
                 out["type"] = [other["type"], "null"]
         return out
 
-    return {"$schema": "https://json-schema.org/draft/2020-12/schema", "title": Report.model_config["title"],
+    return {"$schema": "https://json-schema.org/draft/2020-12/schema", "title": Report.model_config.get("title"),
             **clean(Report.model_json_schema())}
 
 
@@ -3487,7 +3497,7 @@ def report_schema() -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     an = sub.add_parser("analyze", help="sample, score and estimate; writes report.json")
     an.add_argument("--workspace", help="workspace key (default: the CLI's active workspace)")
