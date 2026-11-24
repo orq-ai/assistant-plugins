@@ -1347,7 +1347,7 @@ class Analyzer:
         self.report["caching"] = self._safe(self.caching) or {"error": "caching scan failed"}
         self.report["harness"] = self._safe(self.harness) or {"error": "harness query failed"}
 
-    def _safe(self, fn):
+    def _safe(self, fn: Callable[[], T]) -> T | None:
         try:
             return fn()
         except Stop:
