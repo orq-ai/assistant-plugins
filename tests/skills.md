@@ -736,6 +736,26 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Ask: "Link to trace 016de4cd7a2b4c21c707f00ad3185eb8"
 - Verify: `orq-trace-format` fires and builds the `traces/(trace:...)` link
 
+## `orq-provider-credentials`
+
+### Scenario 1: Main provider key
+
+- Ask: "Add my Anthropic key to orq"
+- Verify: gives the `router/providers/(provider:anthropic)` link via `orq-link`, tells the user to paste the key there, never asks for it in chat
+- Verify: checks `orq models list` for `provider == anthropic` and asks before any `responses create`
+
+### Scenario 2: Azure custom model with a product key
+
+- Provide: a project API key as the CLI credential
+- Ask: "Connect my Azure OpenAI deployment to orq"
+- Verify: runs `orq models validate --provider azure`, reads the 403 as "needs a management key" and stops before any create
+- Verify: never puts the Azure key on a command line; the body file has a placeholder for the user to fill
+
+### Scenario 3: Model choice is not this skill
+
+- Ask: "Which model is cheapest for my traffic?"
+- Verify: this skill does not fire
+
 ## `orq-trace-format`
 
 ### Scenario 1: Traces in a reply
@@ -833,6 +853,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-quickstart/SKILL.md`
 - `skills/orq-trace-format/SKILL.md`
 - `skills/orq-link/SKILL.md`
+- `skills/orq-provider-credentials/SKILL.md`
 - `commands/traces.md`
 - `skills/orq-create-skill/resources/template.md`
 - `skills/orq-create-skill/resources/writing-guide.md`

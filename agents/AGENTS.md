@@ -32,6 +32,7 @@ These skills are:
  - orq-simulate-agent -> "skills/orq-simulate-agent/SKILL.md"
  - orq-trace-format -> "skills/orq-trace-format/SKILL.md"
  - orq-link -> "skills/orq-link/SKILL.md"
+ - orq-provider-credentials -> "skills/orq-provider-credentials/SKILL.md"
 
 IMPORTANT: You MUST read the SKILL.md file whenever the description of the skills matches the user intent, or may help accomplish their task.
 
@@ -84,6 +85,8 @@ orq-quickstart: `Onboarding for orq.ai in any coding agent — get an API key, r
 orq-trace-format: `Show orq.ai traces and spans to a person as clickable Studio links instead of raw trace ids. Use whenever a reply, report, table, PR or ticket mentions an orq trace, span, trace_id, span_id, run, failing conversation or invocation the reader may want to open: "show me the trace", "link the failing runs", "which trace was that", results from `orq traces search`, `list_traces`, a router or deployment response's `x-orq-trace-id` / `telemetry.trace_id`, an evaluator run, or an experiment. Covers the URL shape, the workspace key and host, and the "opens empty" fix. Do NOT use to query or analyze traces (use orq-analyze-traces or orq-cli), or to set up tracing (use orq-setup-observability).`
 
 orq-link: `Use when a reply should give the orq.ai Studio link to a workspace entity: an agent, dataset, deployment, experiment, prompt, evaluator, knowledge base, memory store, tool, skill, annotation queue, project, MCP server or gateway, monitor or alert, or a list page such as API keys, integrations, budgets or a provider's settings. Triggers on "link to that dataset", "where do I open this agent in orq", "send me the URL of experiment X". Builds `<host>/<workspace-key>/<route>` from the CLI ids. Do NOT use for traces or spans (use orq-trace-format), or for orq documentation pages.`
+
+orq-provider-credentials: `Use when someone wants to connect their own model provider credentials to an orq.ai workspace: an OpenAI, Anthropic or Google key, an Azure OpenAI or Azure Foundry deployment, an AWS Bedrock inference profile, a Vertex AI service account, or any OpenAI-compatible endpoint, and to check, rotate or remove them. Triggers on "connect my Azure OpenAI deployment to orq", "add my Anthropic key", "use my own Bedrock models", "rotate the key on my custom model". Do NOT use to pick the cheapest or best model for a workload, to call a model (use orq-invoke-deployment), or for orq API keys and workspace members (use orq-admin).`
 
 </available_skills>
 

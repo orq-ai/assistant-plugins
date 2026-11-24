@@ -76,6 +76,11 @@
       "sourceType": "github",
       "computedHash": "cf0577c3ae27bbc6f4df5813e71a2c04428b07c44bb6c3cfb6a711abaca8117b"
     },
+    "orq-provider-credentials": {
+      "source": "orq-ai/assistant-plugins",
+      "sourceType": "github",
+      "computedHash": "519e30b562a1947f359301dc1c45856fd889a9611b8e0b5259aa2aaecb73426a"
+    },
     "orq-quickstart": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
