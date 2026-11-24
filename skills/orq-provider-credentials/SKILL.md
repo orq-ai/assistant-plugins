@@ -18,7 +18,7 @@ metadata:
 
 # Provider credentials
 
-**Keys for the main providers are set in the Studio, not the CLI.** The integrations API behind the Studio's provider pages is private, so for OpenAI, Anthropic, Google and the rest of the Integrations list this skill gives the provider page link and checks the result afterwards. Custom models with their own endpoint and credentials (Azure, Bedrock, Vertex, OpenAI-compatible) are created with `orq models`.
+**Keys for the main providers are set in the Studio, not the CLI.** The integrations API behind the Studio's provider pages is private, so for OpenAI, Anthropic, Google and the rest of the BYOK providers list this skill gives the provider page link and checks the result afterwards. Custom models with their own endpoint and credentials (Azure, Bedrock, Vertex, OpenAI-compatible) are created with `orq models`.
 
 ## Gotchas (read first)
 
@@ -65,7 +65,7 @@ Probed 2026-11-24 with CLI 12.13.0, prod and staging. Access rules from orquesta
 
 ## Steps
 
-1. **Pick the path.** OpenAI, Anthropic, Google AI and the other providers on the Studio's Integrations page: step 2. An Azure OpenAI or Foundry deployment, a Bedrock inference profile, a Vertex service account or an OpenAI-compatible endpoint: steps 3 to 5. Unsure: ask.
+1. **Pick the path.** OpenAI, Anthropic, Google AI and the other providers on the Studio's BYOK page: step 2. An Azure OpenAI or Foundry deployment, a Bedrock inference profile, a Vertex service account or an OpenAI-compatible endpoint: steps 3 to 5. Unsure: ask.
 2. **Main provider.** Build the provider page link with [`orq-link`](../orq-link/SKILL.md): `router/providers/(provider:<name>)`, where `<name>` is the `provider` field of `orq models list -o json` (for example `openai`, `anthropic`, `google-ai`). Tell the user to paste the key on that page, never into chat. Then pick a model of that provider by its `refId` ([`model-slugs.md`](../orq-shared/resources/model-slugs.md); `model_id` is shared across providers):
 
    ```sh
@@ -94,7 +94,7 @@ Probed 2026-11-24 with CLI 12.13.0, prod and staging. Access rules from orquesta
    Show the result with `-j '{id: id, refId: refId, provider: provider}'`, never the whole response.
 5. **Verify and clean up.** The new model shows in `orq models list` with the workspace id as `owner`. After asking, one small `responses create` as in step 2. Remind the user to delete the body file.
 
-**Rotate.** Create the replacement first (step 4), tell the user that its `refId` differs from the old one, and wait until every deployment and agent uses the new `refId`. Then delete the old model as below. Bedrock: rotate the integration's credentials in the Studio ([`orq-link`](../orq-link/SKILL.md) `admin/integrations`); the model stays.
+**Rotate.** Create the replacement first (step 4), tell the user that its `refId` differs from the old one, and wait until every deployment and agent uses the new `refId`. Then delete the old model as below. Bedrock: rotate the integration's credentials in the Studio (AWS Bedrock on the BYOK page, [`orq-link`](../orq-link/SKILL.md) `router/providers`); the model stays.
 
 **Remove.** Delete: confirm twice, `orq models delete <id> --force`, then read the response message; a 200 can mean "not deleted" (system model, or used by experiments).
 
@@ -107,12 +107,12 @@ Probed 2026-11-24 with CLI 12.13.0, prod and staging. Access rules from orquesta
 
 ## Open in orq.ai
 
-- **Provider page:** `router/providers/(provider:<name>)` from [`studio-routes.md`](../orq-shared/resources/studio-routes.md) (unverified)
-- **Integrations:** `admin/integrations` from the same file (unverified)
+- **Provider page:** `router/providers/(provider:<name>)` from [`studio-routes.md`](../orq-shared/resources/studio-routes.md)
+- **All provider keys (BYOK):** `router/providers` from the same file
 
 ## Companion skills
 
-- `orq-link`: builds the provider page and integrations links
+- `orq-link`: builds the provider page and BYOK page links
 - `orq-cli`: profiles, credential precedence, `--from-file`
 - `orq-admin`: management keys, which custom model writes need
 - `orq-invoke-deployment`: calling the model once it is connected

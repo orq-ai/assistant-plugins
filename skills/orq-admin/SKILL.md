@@ -110,7 +110,7 @@ Probed 2026-11-24 with CLI 12.13.0 on prod: project keys for the 403s, then an a
 
 ## Open in orq.ai
 
-From [`studio-routes.md`](../orq-shared/resources/studio-routes.md), built with [`orq-link`](../orq-link/SKILL.md) (unverified):
+From [`studio-routes.md`](../orq-shared/resources/studio-routes.md), built with [`orq-link`](../orq-link/SKILL.md):
 
 - **API keys:** `admin/api-keys`
 - **Management keys:** `admin/api-keys/management-keys`

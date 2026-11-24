@@ -3,13 +3,13 @@ name: orq-link
 description: >
   Use when a reply should give the orq.ai Studio link to a workspace entity:
   an agent, dataset, deployment, experiment, prompt, evaluator, knowledge
-  base, tool, skill, annotation queue, project, MCP server or gateway, or a
-  list page such as API keys, integrations or a provider's settings.
+  base, tool, skill, annotation queue, MCP server or gateway, or a list page
+  such as API keys or the provider keys (BYOK) page.
   Triggers on "link to that dataset", "where do I open this agent in orq",
   "send me the URL of experiment X".
   Builds `<host>/<workspace-key>/<route>` from the CLI ids. Do NOT use for
   traces or spans (use orq-trace-format), or for orq documentation pages.
-allowed-tools: Read, Skill, Bash(orq auth whoami:*), Bash(orq agents list:*), Bash(orq datasets list:*), Bash(orq deployments list:*), Bash(orq experiments list:*), Bash(orq prompts list:*), Bash(orq evals all:*), Bash(orq knowledge-bases list:*), Bash(orq tools list:*), Bash(orq skills list:*), Bash(orq annotation-queues list:*), Bash(orq projects list:*), Bash(orq mcp-servers list:*), Bash(orq mcp-gateways list:*), Bash(orq models list:*)
+allowed-tools: Read, Skill, Bash(orq auth whoami:*), Bash(orq agents list:*), Bash(orq datasets list:*), Bash(orq deployments list:*), Bash(orq experiments list:*), Bash(orq prompts list:*), Bash(orq evals all:*), Bash(orq knowledge-bases list:*), Bash(orq tools list:*), Bash(orq skills list:*), Bash(orq annotation-queues list:*), Bash(orq mcp-servers list:*), Bash(orq mcp-gateways list:*), Bash(orq models list:*)
 metadata:
   verified: "2026-11-24"
   surface: cli
@@ -32,13 +32,13 @@ Probed 2026-11-24 with CLI 12.13.0 on prod, research workspace, project API key.
 
 - The user asks for the link to, or where to open, an entity listed in the routes file
 - A reply names an agent, dataset, experiment or other listed entity the user will want to open
-- Another skill needs a list page link (API keys, integrations, a provider page)
+- Another skill needs a list page link (API keys, provider keys, a provider page)
 
 ## When NOT to use
 
 - A trace or span: use `orq-trace-format`
 - orq documentation pages (docs.orq.ai): this skill builds app links only
-- Entities with no row in the routes file (teams, roles, routing rules, workflows, memory stores, monitors): say there is no checked route and give the closest list page if one exists
+- Entities with no row in the routes file (projects, teams, roles, routing rules, workflows, memory stores, monitors): say there is no checked route and give the closest list page if one exists
 
 ## Constraints
 
