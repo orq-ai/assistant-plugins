@@ -62,7 +62,10 @@ def test_plan_has_one_search_per_group_with_the_no_agent_bucket(run):
     no_agent = next(g for g in groups if g["agent"] == h.NO_AGENT)
     assert no_agent["traces"] == 2112
     body = json.loads((run / "bodies" / f"search-{no_agent['n']}.json").read_text())
-    assert body["filters"] == [{"field": "agent_name", "op": "not_exists"}]
+    assert body["filters"] == [
+        {"field": "project_id", "op": "eq", "values": [PROJECT]},
+        {"field": "agent_name", "op": "not_exists"},
+    ]
     assert body["limit"] == h.SEARCH_LIMIT
 
 
@@ -86,6 +89,74 @@ def test_recorded_run_scorecard(run):
     assert pizza["sample"]["tokens_no_cost"]["traces"] == 0  # agent wrapper spans are not unpriced models
     assert pizza["content"]["pii"][0]["entities"]["IBAN_CODE"] == 1
     assert card["generic_names"] == [{"name": "default", "count": 3}]
+    assert card["content_pass"] == "done"
+
+
+def test_counts_subtract_per_group(run):
+    def counts(rows):
+        return {"data": [{"group": {"project_id": PROJECT, "agent_name": a}, "metrics": {"trace_id.count": n}}
+                         for a, n in rows]}
+    (run / "count-model.json").write_text(json.dumps(counts([("pizza-faq-agent", 9), (None, 4)])))
+    (run / "count-model-tokens.json").write_text(json.dumps(counts([("pizza-faq-agent", 6)])))
+    (run / "count-model-tokens-zero.json").write_text(json.dumps(counts([("pizza-faq-agent", 2)])))
+    (run / "count-user-id.json").write_text(json.dumps(counts([(None, 5)])))
+    card = h.cmd_score(run)
+    assert group(card, "pizza-faq-agent")["counts"] == {"model_tokens_zero": 2, "model_no_tokens": 3, "user_id_set": 0}
+    assert group(card, h.NO_AGENT)["counts"] == {"model_tokens_zero": 0, "model_no_tokens": 4, "user_id_set": 5}
+
+
+def test_error_body_in_count_file_is_unobservable(run):
+    (run / "count-model.json").write_text(json.dumps({"error": "boom"}))
+    card = h.cmd_score(run)
+    assert group(card, h.NO_AGENT)["counts"]["model_no_tokens"] is None
+    assert {"check": "model", "reason": "count-model.json has no data list"} in card["unobservable"]
+
+
+def test_missing_search_is_unobservable(tmp_path):
+    shutil.copytree(FIXTURES, tmp_path, dirs_exist_ok=True)
+    h.cmd_plan(tmp_path)
+    pizza = next(g for g in json.loads((tmp_path / "groups.json").read_text()) if g["agent"] == "pizza-faq-agent")
+    (tmp_path / f"search-{pizza['n']}.json").unlink()
+    h.cmd_sample(tmp_path)
+    card = h.cmd_score(tmp_path)
+    assert group(card, "pizza-faq-agent")["sampled"] == 0
+    assert any(u["check"] == "sample" and u["group"] == "pizza-faq-agent" for u in card["unobservable"])
+
+
+def test_empty_conversation_is_no_input(run):
+    tid = h.content_traces(run)[str(next(
+        g["n"] for g in json.loads((run / "groups.json").read_text()) if g["agent"] == "pizza-faq-agent"))][0]
+    (run / "conversation" / f"{tid}.json").write_text(json.dumps({"messages": []}))
+    assert tid in group(h.cmd_score(run), "pizza-faq-agent")["content"]["no_input"]
+
+
+def test_missing_conversation_is_unobservable(run):
+    tid = next(iter(h.content_traces(run).values()))[0]
+    (run / "conversation" / f"{tid}.json").unlink()
+    assert any(u["check"] == "content" and tid in u["reason"] for u in h.cmd_score(run)["unobservable"])
+
+
+def test_skipped_content_pass_is_reported(run):
+    shutil.rmtree(run / "conversation")
+    shutil.rmtree(run / "pii")
+    card = h.cmd_score(run)
+    assert card["content_pass"] == "skipped"
+    assert "content" not in group(card, "pizza-faq-agent")
+
+
+def test_capped_names_are_unobservable(run):
+    names = json.loads((run / "names.json").read_text())
+    names["has_more"] = True
+    (run / "names.json").write_text(json.dumps(names))
+    assert {"check": "generic_names", "reason": "names.json is capped (has_more true)"} in h.cmd_score(run)["unobservable"]
+
+
+def test_error_page_is_not_complete(run):
+    pizza_trace = "d9bdf3b32599079220af79dd5378289b"
+    for p in (run / "spans").glob(f"{pizza_trace}.*.json"):
+        p.unlink()
+    (run / "spans" / f"{pizza_trace}.1.json").write_text(json.dumps({"error": "boom"}))
+    assert h.trace_spans(run, pizza_trace) == ([], False)
 
 
 def test_unpaged_trace_is_unobservable_not_healthy(run):
@@ -104,6 +175,7 @@ def test_missing_operator_makes_the_check_unobservable(run):
     (run / "fields.json").write_text(json.dumps(fields))
     card = h.cmd_score(run)
     assert {"check": "model-tokens", "reason": "operator exists not allowed on tokens.total"} in card["unobservable"]
+    assert group(card, h.NO_AGENT)["counts"]["model_no_tokens"] is None
 
 
 def test_missing_count_file_is_unobservable_and_null(run):

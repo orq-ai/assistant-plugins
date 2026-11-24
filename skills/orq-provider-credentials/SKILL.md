@@ -31,7 +31,6 @@ Probed 2026-11-24 with CLI 12.13.0, prod and staging. Access rules from orquesta
 - **A stored API key cannot be changed in place.** `update-openai-like` re-probes with the stored encrypted key and has no `api_key` field; `models update` has no credential field at all. Rotating an OpenAI-compatible or Vertex credential means delete, then create.
 - **Bedrock stores no secret on the model.** It reads credentials from an integration (`--auth-mode integration` with `--integration-id`) or from the deployment's own AWS identity (`pod-identity`). The integration itself is set up in the Studio.
 - **Delete returns 200 without deleting** a system model or one that experiments still use; the response message says so. Read it before reporting a delete.
-- **`models delete` refuses without `--force`** when there is no terminal, which is always the case in an agent shell.
 
 ## When to use
 
@@ -49,9 +48,8 @@ Probed 2026-11-24 with CLI 12.13.0, prod and staging. Access rules from orquesta
 ## Constraints
 
 - **NEVER** ask for, accept or repeat a secret in chat. If the user pastes one, tell them to rotate it at the provider.
-- **NEVER** put a secret on the command line (`--api-key`, `--configuration api_key=...`): argv is visible to every process (see [`orq-cli`](../orq-cli/SKILL.md), profile section).
 - **NEVER** Read, `cat` or print a body file after the user has put a secret in it, and never print a response's `configuration` block.
-- **ALWAYS** pass secrets through a file the user fills in, with `--from-file <path>`. Tell them to `chmod 600` it and to delete it afterwards.
+- **ALWAYS** pass secrets through a file the user fills in, with `--from-file <path>`, never on the command line (`--api-key`, `--configuration api_key=...`): argv is visible to every process (see [`orq-cli`](../orq-cli/SKILL.md), profile section). Tell them to `chmod 600` the file and to delete it afterwards.
 - **ALWAYS** confirm with AskUserQuestion before each create, and twice before a delete; then run the delete with `--force`.
 - **ALWAYS** follow the credential rules in [`orq-cli`](../orq-cli/SKILL.md) (never expand `$ORQ_API_KEY`; `ORQ_API_KEY` wins over a login) and [`coding-agents.md`](../orq-cli/resources/coding-agents.md).
 
@@ -59,7 +57,7 @@ Probed 2026-11-24 with CLI 12.13.0, prod and staging. Access rules from orquesta
 
 ```
 - [ ] 1. Which provider, which path (Studio page or custom model)
-- [ ] 2. Main provider: link, user sets the key, verify
+- [ ] 2. Main provider: link, user sets the key, one test call
 - [ ] 3. Custom model: management key preflight
 - [ ] 4. Custom model: validate, then create (each confirmed)
 - [ ] 5. Verify and clean up
@@ -68,16 +66,16 @@ Probed 2026-11-24 with CLI 12.13.0, prod and staging. Access rules from orquesta
 ## Steps
 
 1. **Pick the path.** OpenAI, Anthropic, Google AI and the other providers on the Studio's Integrations page: step 2. An Azure OpenAI or Foundry deployment, a Bedrock inference profile, a Vertex service account or an OpenAI-compatible endpoint: steps 3 to 5. Unsure: ask.
-2. **Main provider.** Build the provider page link with [`orq-link`](../orq-link/SKILL.md): `router/providers/(provider:<name>)`, where `<name>` is the `provider` field of `orq models list -o json` (for example `openai`, `anthropic`, `google-ai`). Tell the user to paste the key on that page, never into chat. Then check that the provider's models are listed:
+2. **Main provider.** Build the provider page link with [`orq-link`](../orq-link/SKILL.md): `router/providers/(provider:<name>)`, where `<name>` is the `provider` field of `orq models list -o json` (for example `openai`, `anthropic`, `google-ai`). Tell the user to paste the key on that page, never into chat. Then pick a model of that provider by its `refId` ([`model-slugs.md`](../orq-shared/resources/model-slugs.md); `model_id` is shared across providers):
 
    ```sh
-   orq models list -o json -j "[?provider=='anthropic'].{id: model_id, owner: owner}"
+   orq models list -o json -j "[?provider=='anthropic'].refId"
    ```
 
-   After asking, one small call on a model of that provider:
+   After asking, one small call on it. A `completed` status shows the provider is reachable, not which credential served the call:
 
    ```sh
-   orq responses create --model "anthropic/<model_id>" --input "Reply with OK" --max-output-tokens 16 --store=false -o json -j status
+   orq responses create --model "<refId>" --input "Reply with OK" --max-output-tokens 16 --store=false -o json -j status
    ```
 
 3. **Management key preflight** (custom models only):
@@ -88,21 +86,19 @@ Probed 2026-11-24 with CLI 12.13.0, prod and staging. Access rules from orquesta
 
    403: the credential is a product API key. Ask the user to point the CLI at a management key as a profile (`orq auth profile add <name> --api-key-file -`, see [`orq-cli`](../orq-cli/SKILL.md)) and rerun with `--profile <name>`. 400 about a missing `api_key`: go on.
 4. **Validate, then create.** Read `orq models <command> --help` and `--example` for the body; do not guess fields. Write the body to a file with every non-secret field filled and the secret as `"<paste here>"`, tell the user to fill it in and `chmod 600` it, then pass only the path.
-   - **Azure:** `orq models validate --from-file <path>` first (or `--integration-id` for workload identity, no key). `orq models azure-foundry-deployments` lists a Foundry resource's deployments. Then confirm and `orq models create --from-file <path>`.
+   - **Azure:** `orq models validate --from-file <path>` first (or `--integration-id` for workload identity, no key). `orq models azure-foundry-deployments --from-file <path>` (or `--integration-id`) lists a Foundry resource's deployments; never pass `--api-key`. Then confirm and `orq models create --from-file <path>`.
    - **Bedrock:** `orq models validate-aws-bedrock` with the inference profile ARN, region and auth mode first. Then confirm and `orq models create-aws-bedrock`.
    - **OpenAI-compatible:** confirm, then `orq models create-openai-like --from-file <path>`; it probes the endpoint before saving.
    - **Vertex:** confirm, then `orq models create-vertex --from-file <path>`; it probes Vertex before saving.
 
-   Show the result with `-j '{id: id, model_id: model_id, provider: provider}'`, never the whole response.
+   Show the result with `-j '{id: id, refId: refId, provider: provider}'`, never the whole response.
 5. **Verify and clean up.** The new model shows in `orq models list` with the workspace id as `owner`. After asking, one small `responses create` as in step 2. Remind the user to delete the body file.
 
 **Rotate or remove.** Rotating a stored key: delete, then create again (step 4). Delete: confirm twice, `orq models delete <id> --force`, then read the response message; a 200 can mean "not deleted" (system model, or used by experiments).
 
-**Done when** the credential is in place and a listed model reaches the provider, or the user has the provider page link and knows the check to run, and no secret appeared in the chat or on a command line.
-
 ## Done When
 
-- Main provider: the user has the provider page link and the provider's models are listed
+- Main provider: the user has the provider page link, and the test call completed or the user declined it
 - Custom model: validated where a validate command exists, created after a yes, listed with the workspace as `owner`
 - Every create was confirmed once and every delete twice; delete responses were read
 - No secret in chat, argv or printed output; the user was told to delete the body file

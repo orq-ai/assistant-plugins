@@ -23,10 +23,9 @@ metadata:
 
 Probed 2026-11-24 with CLI 12.13.0 on prod, research workspace, project API key.
 
-- **Routes take the id, never the key or name.** `datasets/<display_name>` opens nothing. The id field differs per group (`_id`, `id`, `experiment_id`, `skill_id`, `project_id`); the routes file names it per row.
+- **Routes take the id, never the key or name.** `datasets/<display_name>` opens nothing. The id field differs per group; the routes file names it per row.
 - **Datasets, experiments, skills and annotation queues have no `key`.** Match the user's name against `display_name`. Names are not unique: two datasets can share one, so ask when the match is not a single row.
 - **Lists page.** `--limit 200` is accepted; when `has_more` is `true`, page with `--starting-after <last id>` before saying an entity does not exist.
-- **Every route is `unverified`** until it has been opened in a browser (see the routes file header). Say so in one line under the link.
 - **`ORQ_API_KEY` hides the workspace key.** `whoami` then returns `active_workspace_key: null`; resolve it as [`orq-trace-format`](../orq-trace-format/SKILL.md) step 2 does, which rejects `null`.
 - **A project-scoped key lists only its project.** An entity in another project of the same workspace is missing from the list, not deleted.
 
@@ -66,10 +65,10 @@ Probed 2026-11-24 with CLI 12.13.0 on prod, research workspace, project API key.
 3. **Find the id.** Skip this when the id is already in the conversation from CLI output. Otherwise list and project the id and name fields, for example for a dataset:
 
    ```sh
-   orq datasets list --limit 200 -o json -j 'data[].{id: _id, name: display_name}'
+   orq datasets list --limit 200 -o json -j '{has_more: has_more, rows: data[].{id: _id, name: display_name}}'
    ```
 
-   Evaluators list with `orq evals all`. Projects carry `project_id`, experiments `experiment_id`, skills `skill_id`, deployments `id`. More than one match: show them and ask which. No match and `has_more` is `true`: page with `--starting-after`. No match at all: say so; with a project-scoped key, say it may sit in another project.
+   Evaluators list with `orq evals all`. More than one match: show them and ask which. No match and `has_more` is `true`: page with `--starting-after`. No match at all: say so; with a project-scoped key, say it may sit in another project.
 4. **Build the link.** Accept only id characters (letters, digits, `-`, `_`); reject `/`, `:`, `?`, `#` and parentheses.
 
    ```sh
@@ -78,8 +77,6 @@ Probed 2026-11-24 with CLI 12.13.0 on prod, research workspace, project API key.
 
    For a provider page take `<name>` from the `provider` field of `orq models list -o json`. List pages have no id.
 5. **Hand it over** as `[<name>](<url>)`, with angle brackets when the route has parentheses. Under it, when the row is unverified: *this route was read from the app source and has not been opened in a browser yet.*
-
-**Done when** each named entity has a link built from a listed id, or the reply says why it has none.
 
 ## Done When
 

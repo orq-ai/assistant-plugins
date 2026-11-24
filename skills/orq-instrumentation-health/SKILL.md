@@ -12,7 +12,7 @@ description: >
   app (use orq-setup-observability), to find out why conversations fail (use
   orq-analyze-traces), or to health-check one agent's config (use
   orq-review-agent).
-allowed-tools: Read, Write, AskUserQuestion, Skill, Bash(orq traces list-fields:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces list-spans:*), Bash(orq traces list-facet-values:*), Bash(orq traces conversation:*), Bash(orq pii detect:*), Bash(uv run --no-project scripts/*)
+allowed-tools: Read, Write, AskUserQuestion, Skill, Bash(orq traces list-fields:*), Bash(orq traces aggregate:*), Bash(orq traces search:*), Bash(orq traces list-spans:*), Bash(orq traces list-facet-values:*), Bash(orq traces conversation:*), Bash(orq pii detect:*), Bash(uv run --no-project */scripts/health_sweep.py *)
 metadata:
   verified: "2026-11-24"
   surface: cli
@@ -81,11 +81,11 @@ Instrumentation Health Progress:
 
 ## Steps
 
-All files go in one run directory in the working directory, `instrumentation-health-<YYYYMMDD-HHMMSS>/`, written `<run>` below. Every `orq` command adds `-o json` and redirects into `<run>`.
+All files go in one run directory in the working directory, `instrumentation-health-<YYYYMMDD-HHMMSS>/`, written `<run>` below. Run the script from the working directory as `uv run --no-project <this skill's directory>/scripts/health_sweep.py`, written `health_sweep.py` below. Every `orq` command adds `-o json` and redirects into `<run>`.
 
 ### Phase 1: Window, run directory, field check
 
-1. Ask nothing about the window unless the user named one: the default is 7 days, `--days N` overrides. Run `uv run --no-project scripts/health_sweep.py init <run> --days 7`. It writes `window.json` and the count bodies under `<run>/bodies/`.
+1. Ask nothing about the window unless the user named one: the default is 7 days, `--days N` overrides. Run `health_sweep.py init <run> --days 7`. It writes `window.json` and the count bodies under `<run>/bodies/`.
 2. `orq traces list-fields -o json > <run>/fields.json`. The script marks a check `unobservable` when its field or operator is missing there.
 
 **Done when** `window.json`, `fields.json` and five `bodies/count-*.json` exist.
@@ -93,32 +93,32 @@ All files go in one run directory in the working directory, `instrumentation-hea
 ### Phase 2: Count checks
 
 3. For each of `total`, `model`, `model-tokens`, `model-tokens-zero`, `user-id`: `orq traces aggregate --from-file <run>/bodies/count-<check>.json -o json > <run>/count-<check>.json`.
-4. `orq traces list-facet-values name --from <from> --to <to> -o json > <run>/names.json`, with `from` and `to` from `window.json`. Add `--all-accessible-projects` when the user asked for the whole workspace.
+4. `orq traces list-facet-values name --from <from> --to <to> -o json > <run>/names.json`, with `from` and `to` from `window.json`, so the names cover the same project as the counts.
 5. If `count-total.json` has no rows, rerun step 3 for `total` once to rule out a transient empty result ([`trace-queries.md`](../orq-shared/resources/trace-queries.md) §0). Still empty: tell the user there are no traces in the window and stop.
 
 **Done when** the five count files and `names.json` are saved, or the user was told the window is empty.
 
 ### Phase 3: Sample checks
 
-6. `uv run --no-project scripts/health_sweep.py plan <run>` writes one search body per group and prints the groups with their trace counts.
+6. `health_sweep.py plan <run>` writes one search body per group and prints the groups with their trace counts.
 7. For each group `n`: `orq traces search --from-file <run>/bodies/search-<n>.json -o json > <run>/search-<n>.json`.
-8. `uv run --no-project scripts/health_sweep.py sample <run>` picks up to 20 traces per group and prints their ids.
+8. `health_sweep.py sample <run>` picks up to 20 traces per group and prints their ids in `list_spans`, and the up to 5 per group for Phase 4 in `content_pass`.
 9. For each id: `orq traces list-spans <trace_id> --limit 100 -o json > <run>/spans/<trace_id>.1.json`. While the saved page has `has_more: true`, fetch the next with `--page-token <next_page_token>` into `<trace_id>.2.json`, `.3.json` and so on. A trace left unpaged is reported `unobservable`, never healthy.
 
 **Done when** every sampled trace has its pages saved up to `has_more: false`.
 
 ### Phase 4: Content pass (opt-in)
 
-10. Ask with `AskUserQuestion`: **run the content pass** or **skip it**. Say that it reads the inputs and outputs of up to 5 sampled traces per group, sends that text to `orq pii detect`, and that those calls may be billed.
-11. On yes: for each id, `orq traces conversation <trace_id> -o json --tool-max-chars 500 > <run>/conversation/<trace_id>.json` (the default `--max-chars 4000` stays).
-12. `uv run --no-project scripts/health_sweep.py pii <run>` writes one `pii/<trace_id>.body.json` per non-empty conversation and prints `pii_calls`. Ask a second time, with that number: **send N `pii detect` calls** or **skip sensitive data**.
+10. Ask with `AskUserQuestion`: **run the content pass** or **skip it**. Say that it reads the inputs and outputs of up to 5 sampled traces per group, sends that text to `orq pii detect`, and that those calls may be billed. Also say that the text is saved under `<run>` in the working directory, so `<run>` must not be committed.
+11. On yes: for each id in `content_pass` from step 8, `orq traces conversation <trace_id> -o json --tool-max-chars 500 > <run>/conversation/<trace_id>.json` (the default `--max-chars 4000` stays).
+12. `health_sweep.py pii <run>` writes one `pii/<trace_id>.body.json` per non-empty conversation and prints `pii_calls`. Ask a second time, with that number: **send N `pii detect` calls** or **skip sensitive data**.
 13. On yes: for each body, `orq pii detect --from-file <run>/pii/<trace_id>.body.json -o json > <run>/pii/<trace_id>.json`.
 
 **Done when** the user skipped the pass, or every conversation and approved `pii detect` response is saved.
 
 ### Phase 5: Scorecard and hand-off
 
-14. `uv run --no-project scripts/health_sweep.py score <run> > <run>/scorecard.json`.
+14. `health_sweep.py score <run> > <run>/scorecard.json`.
 15. Answer in chat, per project, then per agent:
 
     | Check | Read from | Gap means | Fix (baseline checklist) |
@@ -132,11 +132,11 @@ All files go in one run directory in the working directory, `instrumentation-hea
     | Flat tree | `sample.flat` | three or more spans, all children of the root | #4 hierarchy |
     | No session id | `sample.no_session_id` | suggestion only; expected for single-turn apps | Phase 5 enrichment |
     | User id set | `counts.user_id_set` of `traces` | suggestion only | Phase 5 enrichment |
-    | Generic names | `generic_names` | workspace-wide, not per group; router names such as `responses.anthropic` are normal | #3 trace names |
+    | Generic names | `generic_names` | per project, not per group; router names such as `responses.anthropic` are normal | #3 trace names |
     | Empty input or output | `content.no_input`, `content.no_output` | capture is off or the wrong span is captured | #7 input and output |
     | Sensitive data | `content.pii` | entity counts by type (gotcha 11) | #6 sensitive data |
 
-    Give each gap its count and denominator, up to 3 example traces as links (`examples` in the scorecard; for a count check, run the count body's filters through `orq traces search` with `"limit": 3`), and the fix. Then the `unobservable` list. State the window, the project covered, and that a longer window may run past retention.
+    Give each gap its count and denominator, up to 3 example traces as links (`examples` in the scorecard; for `model_tokens_zero`, run that count body's filters through `orq traces search` with `"limit": 3`; `model_no_tokens` is a subtraction and has no example links), and the fix. Then the `unobservable` list, and `content_pass` (`skipped`, `no pii` or `done`). State the window, the project covered, and that a longer window may run past retention.
 16. Offer `orq-setup-observability` for the fixes, naming the gaps it would address. Tell the user `<run>` holds trace content when the content pass ran, and that they can delete it.
 
 **Done when** the scorecard was given in chat with counts, denominators, example links and `unobservable`, and nothing was written to the platform.

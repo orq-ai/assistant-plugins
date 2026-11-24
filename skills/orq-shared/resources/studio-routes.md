@@ -39,7 +39,7 @@ Each route takes the entity's **id**, not its key. The CLI field column names th
 | Monitor | `traces/monitors/<id>` | not checked | not checked | unverified, none in the research workspace |
 | Alert | `traces/alerts/<id>` | not checked | not checked | unverified, none in the research workspace |
 
-The same source file also lists `gateway/rules`, `gateway/guardrail-rules`, `gateway/smart-router` and `gateway/mcp-portal/gateways` as list pages, so some of the routes above may have moved under `gateway/`. The browser check settles which one opens.
+The source also has `gateway/` list pages (`gateway/smart-router`, `gateway/mcp-portal/gateways`), so a route above may have moved there.
 
 ## List pages (no id)
 
@@ -60,7 +60,7 @@ The same source file also lists `gateway/rules`, `gateway/guardrail-rules`, `gat
 <host>/<workspace-key>/router/providers/(provider:<name>)
 ```
 
-`<name>` is the provider id as `orq models list -o json` reports it in `provider` (for example `openai`, `azure`, `google`). Status: unverified.
+`<name>` is the provider id as `orq models list -o json` reports it in `provider` (for example `openai`, `azure`, `google-ai`; `google` is a separate provider). Status: unverified.
 
 ## Not here
 

@@ -8,11 +8,11 @@ The agent runs every `orq` command; this script only writes request bodies and
 reads the saved JSON back. Stdlib only, never calls the network.
 
 Usage:
-    uv run --no-project scripts/health_sweep.py init <run-dir> [--days N]
-    uv run --no-project scripts/health_sweep.py plan <run-dir>
-    uv run --no-project scripts/health_sweep.py sample <run-dir>
-    uv run --no-project scripts/health_sweep.py pii <run-dir>
-    uv run --no-project scripts/health_sweep.py score <run-dir> > <run-dir>/scorecard.json
+    uv run --no-project <skill-dir>/scripts/health_sweep.py init <run-dir> [--days N]
+    uv run --no-project <skill-dir>/scripts/health_sweep.py plan <run-dir>
+    uv run --no-project <skill-dir>/scripts/health_sweep.py sample <run-dir>
+    uv run --no-project <skill-dir>/scripts/health_sweep.py pii <run-dir>
+    uv run --no-project <skill-dir>/scripts/health_sweep.py score <run-dir> > <run-dir>/scorecard.json
 
 Files the agent saves in <run-dir> (all `-o json`):
     fields.json              orq traces list-fields
@@ -88,24 +88,28 @@ def cmd_init(run: Path, days: int, now: datetime | None = None) -> dict:
     return {"window": window, "count_bodies": sorted(f"bodies/count-{n}.json" for n in COUNT_CHECKS)}
 
 
-def count_rows(run: Path, check: str) -> dict[str, int] | None:
+def count_rows(run: Path, check: str) -> tuple[dict[str, int] | None, str]:
+    """Rows per group, or None and the reason. A group with no row has 0 traces."""
     path = run / f"count-{check}.json"
     if not path.exists():
-        return None
+        return None, f"count-{check}.json not saved"
+    doc = load(path)
+    if not isinstance(doc, dict) or not isinstance(doc.get("data"), list):
+        return None, f"count-{check}.json has no data list"
     out = {}
-    for row in load(path).get("data") or []:
-        g = row.get("group") or {}
-        out[group_key(g.get("project_id", ""), g.get("agent_name"))] = int(
-            (row.get("metrics") or {}).get("trace_id.count", 0)
-        )
-    return out
+    for row in doc["data"]:
+        g, metrics = row.get("group") or {}, row.get("metrics") or {}
+        if "trace_id.count" not in metrics:
+            return None, f"count-{check}.json row without trace_id.count"
+        out[group_key(g.get("project_id", ""), g.get("agent_name"))] = int(metrics["trace_id.count"])
+    return out, ""
 
 
 def cmd_plan(run: Path) -> dict:
     window = load(run / "window.json")
-    totals = count_rows(run, "total")
+    totals, reason = count_rows(run, "total")
     if totals is None:
-        raise SystemExit("count-total.json is missing: run the total aggregate first")
+        raise SystemExit(f"{reason}: rerun the total aggregate")
     groups = []
     for n, key in enumerate(sorted(totals)):
         project_id, agent = key.split("|", 1)
@@ -116,7 +120,12 @@ def cmd_plan(run: Path) -> dict:
         )
         dump(
             run / "bodies" / f"search-{n}.json",
-            {"from": window["from"], "to": window["to"], "limit": SEARCH_LIMIT, "filters": [flt]},
+            {
+                "from": window["from"],
+                "to": window["to"],
+                "limit": SEARCH_LIMIT,
+                "filters": [{"field": "project_id", "op": "eq", "values": [project_id]}, flt],
+            },
         )
         groups.append({"n": n, "project_id": project_id, "agent": agent, "traces": totals[key]})
     dump(run / "groups.json", groups)
@@ -125,7 +134,10 @@ def cmd_plan(run: Path) -> dict:
 
 def search_rows(run: Path, n: int) -> list[dict]:
     path = run / f"search-{n}.json"
-    return (load(path).get("data") or []) if path.exists() else []
+    if not path.exists():
+        return []
+    data = load(path).get("data")
+    return data if isinstance(data, list) else []
 
 
 def cmd_sample(run: Path) -> dict:
@@ -144,18 +156,25 @@ def cmd_sample(run: Path) -> dict:
                 break
         sample[str(g["n"])] = picked
     dump(run / "sample.json", sample)
-    return {"list_spans": sorted({t for p in sample.values() for t in p})}
+    return {
+        "list_spans": sorted({t for p in sample.values() for t in p}),
+        "content_pass": sorted({t for tids in content_traces(run).values() for t in tids}),
+    }
 
 
 def trace_spans(run: Path, tid: str) -> tuple[list[dict], bool]:
-    """All saved pages for one trace, and whether the last page says it is complete."""
+    """All saved pages for one trace, and whether they run 1..k with only the last saying has_more false."""
     pages = sorted((run / "spans").glob(f"{tid}.*.json"), key=lambda p: int(p.suffixes[-2][1:]))
-    spans, complete = [], bool(pages)
+    if [int(p.suffixes[-2][1:]) for p in pages] != list(range(1, len(pages) + 1)):
+        return [], False
+    spans, complete = [], False
     for page in pages:
         data = load(page)
-        spans.extend(data.get("data") or [])
-        complete = not data.get("has_more", False)
-    return spans, complete
+        if not isinstance(data.get("data"), list) or not isinstance(data.get("has_more"), bool):
+            return [], False
+        spans.extend(data["data"])
+        complete = not data["has_more"]
+    return spans, complete and bool(spans)
 
 
 def span_findings(spans: list[dict], product: str) -> set[str]:
@@ -171,7 +190,7 @@ def span_findings(spans: list[dict], product: str) -> set[str]:
             found.add("provider_no_model")
         if not s.get("type"):
             found.add("type_missing")
-        # agent wrapper spans (provider "agent") carry rolled-up tokens with cost 0
+        # wrappers (provider "agent", or any span with children) carry rolled-up tokens with cost 0
         wrapper = provider == "agent" or s.get("span_id") in has_child
         if model and tokens > 0 and not cost and not wrapper:
             found.add("tokens_no_cost")
@@ -253,24 +272,34 @@ def unobservable_counts(fields: dict[str, list[str]] | None) -> dict[str, str]:
     for check, filters in COUNT_CHECKS.items():
         for f in filters:
             if fields is None:
-                out[check] = "fields.json missing"
+                reason = "fields.json missing"
             elif f["field"] not in fields:
-                out[check] = f"field {f['field']} not in list-fields"
+                reason = f"field {f['field']} not in list-fields"
             elif f["op"] not in fields[f["field"]]:
-                out[check] = f"operator {f['op']} not allowed on {f['field']}"
+                reason = f"operator {f['op']} not allowed on {f['field']}"
+            else:
+                continue
+            out.setdefault(check, reason)
     return out
 
 
 def cmd_score(run: Path) -> dict:
     window = load(run / "window.json")
     groups = load(run / "groups.json")
-    sample = load(run / "sample.json") if (run / "sample.json").exists() else {}
-    fields = fields_index(run)
-    unobservable = [{"check": c, "reason": r} for c, r in unobservable_counts(fields).items()]
-    counts = {c: count_rows(run, c) for c in COUNT_CHECKS}
-    for c, rows in counts.items():
-        if rows is None and not any(u["check"] == c for u in unobservable):
-            unobservable.append({"check": c, "reason": f"count-{c}.json not saved"})
+    if not (run / "sample.json").exists():
+        raise SystemExit("sample.json is missing: run the sample step first")
+    sample = load(run / "sample.json")
+    bad = unobservable_counts(fields_index(run))
+    counts = {}
+    for c in COUNT_CHECKS:
+        rows, reason = count_rows(run, c)
+        if rows is None:
+            bad.setdefault(c, reason)
+        counts[c] = None if c in bad else rows
+    unobservable = [{"check": c, "reason": r} for c, r in bad.items()]
+    content_ids = content_traces(run)
+    content_ran = (run / "conversation").is_dir() and any((run / "conversation").iterdir())
+    pii_ran = any(not p.name.endswith(".body.json") for p in (run / "pii").glob("*.json"))
 
     def count(check: str, key: str) -> int | None:
         rows = counts[check]
@@ -303,17 +332,25 @@ def cmd_score(run: Path) -> dict:
                 hits["no_session_id"].append(tid)
         out["sampled"] = len(picked) - len(incomplete)
         out["sample"] = {c: {"traces": len(t), "examples": t[:3]} for c, t in hits.items()}
+        if g["traces"] and not picked:
+            unobservable.append(
+                {"check": "sample", "group": g["agent"], "reason": f"search-{g['n']}.json missing or empty"}
+            )
         if incomplete:
             unobservable.append(
                 {"check": "sample", "group": g["agent"], "reason": f"spans missing or not fully paged: {incomplete}"}
             )
         content = {}
-        for tid in content_traces(run).get(str(g["n"]), []) if sample else []:
+        for tid in content_ids.get(str(g["n"]), []) if content_ran else []:
             conv_path, pii_path = run / "conversation" / f"{tid}.json", run / "pii" / f"{tid}.json"
-            if conv_path.exists():
-                gap = conversation_gap(load(conv_path))
-                if gap:
-                    content.setdefault(gap, []).append(tid)
+            if not conv_path.exists():
+                unobservable.append({"check": "content", "group": g["agent"], "reason": f"conversation/{tid}.json not saved"})
+                continue
+            gap = conversation_gap(load(conv_path))
+            if gap:
+                content.setdefault(gap, []).append(tid)
+            if pii_ran and (run / "pii" / f"{tid}.body.json").exists() and not pii_path.exists():
+                unobservable.append({"check": "pii", "group": g["agent"], "reason": f"pii/{tid}.json not saved"})
             if pii_path.exists():
                 entities = load(pii_path).get("entities") or {}
                 if entities:
@@ -326,9 +363,12 @@ def cmd_score(run: Path) -> dict:
 
     names = []
     if (run / "names.json").exists():
-        for row in load(run / "names.json").get("values") or []:
+        doc = load(run / "names.json")
+        for row in doc.get("values") or []:
             if str(row.get("value", "")).strip().lower() in GENERIC_NAMES:
                 names.append({"name": row["value"], "count": row.get("count")})
+        if doc.get("has_more"):
+            unobservable.append({"check": "generic_names", "reason": "names.json is capped (has_more true)"})
     else:
         unobservable.append({"check": "generic_names", "reason": "names.json not saved"})
 
@@ -336,6 +376,7 @@ def cmd_score(run: Path) -> dict:
         "window": window,
         "projects": [{"project_id": p, "groups": gs} for p, gs in projects.items()],
         "generic_names": names,
+        "content_pass": ("done" if pii_ran else "no pii") if content_ran else "skipped",
         "unobservable": unobservable,
     }
 
