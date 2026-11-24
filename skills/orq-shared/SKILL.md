@@ -3,8 +3,8 @@ name: orq-shared
 description: >
   Reference bundle shared by the other orq skills — the verified `orq` CLI trace
   query contract, the run-key preflight that resolves an agent or deployment
-  key before any call, and the rubrics an agent is built, reviewed and improved
-  against. Read the file another skill points you at; do not invoke
+  key before any call, the Studio route table for linking to an entity, and the
+  rubrics an agent is built, reviewed and improved against. Read the file another skill points you at; do not invoke
   this skill on its own. Use when a skill tells you to read
   `../orq-shared/resources/<file>.md`, or when you need the CLI trace filter,
   projection, and write-path rules verbatim. Do NOT use to run CLI commands (use
@@ -34,6 +34,7 @@ skill folder and nothing else.
 | [`resources/config-context.md`](resources/config-context.md) | The list of mechanical facts to read about an agent before judging it: terminal states, declared config with referenced entities resolved, observed behaviour, and the `unobservable` rule. | `orq-analyze-traces` (Phase 0), `orq-review-agent` (run health) |
 | [`resources/prompting-guidelines.md`](resources/prompting-guidelines.md) | The 11 prompting guidelines an agent's `instructions` are checked against, and the evidence-backed vs best-practice labelling rule. | `orq-improve-agent` (rewrite), `orq-review-agent` (instructions check) |
 | [`resources/model-slugs.md`](resources/model-slugs.md) | Which catalogue field names a model (`id`, `refId`, `model_id`) and the four-step rule for resolving an agent's model id to one row. | `orq-cli`, `orq-evaluator-alignment`, `orq-recommend-evaluators`, `orq-review-agent` |
+| [`resources/studio-routes.md`](resources/studio-routes.md) | The Studio URL for each entity the CLI can list (agents, datasets, deployments, experiments and more), which CLI field holds the id, the list pages for API keys, management keys and integrations, and the provider page. | `orq-admin`, `orq-link`, `orq-provider-credentials` |
 | [`resources/tool-description-guide.md`](resources/tool-description-guide.md) | The 5 rules of tool descriptions, a template, common mistakes and a pre-deploy checklist. | `orq-build-agent` (writing tools), `orq-review-agent` (tools check) |
 
 ## Rules for editing these files

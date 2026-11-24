@@ -537,6 +537,12 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: the consuming skill says the reference is unreachable rather than proceeding unguarded
 - Verify: falls back to the four restated rules in its own Constraints section
 
+### Scenario 4: A Studio link comes from the route table
+
+- Ask: "Give me the link to my dataset" (through `orq-link`)
+- Verify: the route is read from `../orq-shared/resources/studio-routes.md`, filled with the dataset's `_id` under `<host>/<workspace-key>/`
+- Verify: a row still marked `unverified` is handed out with that caveat
+
 ---
 
 ## `orq-cli`
@@ -742,6 +748,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-shared/resources/config-context.md`
 - `skills/orq-shared/resources/prompting-guidelines.md`
 - `skills/orq-shared/resources/tool-description-guide.md`
+- `skills/orq-shared/resources/studio-routes.md`
 - `skills/orq-review-agent/SKILL.md`
 - `skills/orq-review-agent/resources/checks.md`
 - `skills/orq-review-agent/resources/report-template.html`
