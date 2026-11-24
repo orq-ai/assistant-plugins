@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.3] - 2026-11-24
+
+### Fixed
+
+- `orq-cli` and `orq-build-evaluator` skills: Human Review (annotation) definitions belong to a project. One without a `project_id` shows as Legacy in the UI. The `orq-cli` command map shows how to list, create and fix definitions through `orq request` on `/v2/human-evals`: `PATCH` with `project_id` keeps the key, and the body must carry the full definition.
+
 ## [5.2.2] - 2026-11-24
 
 ### Fixed
