@@ -279,6 +279,7 @@ Your JSON Evaluation:
    **Using orq.ai Human Review:**
    - Attach human review directly to individual spans in traces
    - Reviewers see full trace context (not just input/output summaries)
+   - Create the Human Review definition inside the project, not at workspace level: a definition without a project shows as Legacy in the UI. How: [`orq-cli` command map](../orq-cli/resources/command-map.md), "Annotation definitions"
    - See: https://docs.orq.ai/docs/evaluators/human-review
 
    **Labeling guidelines for reviewers:**
