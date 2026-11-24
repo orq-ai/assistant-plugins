@@ -1,0 +1,1 @@
+{"messages":[{"index":0,"role":"system","content":[{"type":"text","text":"synthetic system message 0"}]},{"index":1,"role":"user","content":[{"type":"text","text":"synthetic user message 1"}]},{"index":2,"role":"assistant","content":[{"type":"text","text":"synthetic assistant message 2"}]}],"source":{"trace_id":"d6ca46fd696bea71378649704c6c654e"}}

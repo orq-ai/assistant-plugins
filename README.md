@@ -180,6 +180,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 | Skill | What It Does | Documentation |
 |-------|-------------|---------------|
 | **orq-setup-observability** | Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment | [SKILL.md](skills/orq-setup-observability/SKILL.md) |
+| **orq-instrumentation-health** | Audit the instrumentation of traces already in a workspace (model, tokens, cost, span tree, span types, session and user ids, sensitive data), per project and per agent | [SKILL.md](skills/orq-instrumentation-health/SKILL.md) |
 | **orq-invoke-deployment** | Invoke orq.ai deployments, agents, and models via the Python SDK or HTTP API — pass prompt variables, stream responses, and generate integration code | [SKILL.md](skills/orq-invoke-deployment/SKILL.md) |
 | **orq-build-agent** | Design, create, and configure an orq.ai Agent with tools, instructions, knowledge bases, and memory | [SKILL.md](skills/orq-build-agent/SKILL.md) |
 | **orq-build-evaluator** | Create validated LLM-as-a-Judge evaluators following evaluation best practices | [SKILL.md](skills/orq-build-evaluator/SKILL.md) |

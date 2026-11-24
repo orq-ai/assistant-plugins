@@ -332,6 +332,29 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify Phase 6: the findings step lists findings grouped by fixing skill and runs nothing; the fix question comes after it
 - Verify: on "stop here", no other skill is invoked
 
+## `orq-instrumentation-health`
+
+### Scenario 1: Counts and sample on one project
+
+- Provide: a project key with agent traffic and router traffic in the last 7 days
+- Ask: "Are my orq traces instrumented properly?"
+- Verify Phase 1: runs `health_sweep.py init`, then `orq traces list-fields` into the run directory
+- Verify Phase 2: five `aggregate` calls from the written bodies, and `list-facet-values name` with `--from`/`--to`
+- Verify Phase 3: one `search` per group including "no agent", `list-spans` paged until `has_more` is false
+- Verify Phase 5: the scorecard is per project, then per agent, with counts, denominators, up to 3 trace links per gap and an `unobservable` list; router traces are not reported as flat, and errored calls are not counted as missing tokens
+- Verify: no create, update, delete or invoke call
+
+### Scenario 2: Content pass needs two yes answers
+
+- Ask: "Audit my traces, including sensitive data"
+- Verify Phase 4: asks before reading conversations, then asks again with the `pii_calls` number before any `orq pii detect`
+- Verify: the reply gives entity counts by type and trace links, never trace text or detected values
+
+### Scenario 3: Setup still goes to setup
+
+- Ask: "Add orq tracing to my FastAPI app"
+- Verify: `orq-setup-observability` fires, not this skill
+
 ## `orq-recommend-evaluators`
 
 ### Scenario 1: New agent, no traces
@@ -723,6 +746,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-review-agent/resources/checks.md`
 - `skills/orq-review-agent/resources/report-template.html`
 - `skills/orq-review-agent/scripts/model_check.py`
+- `skills/orq-instrumentation-health/SKILL.md`
+- `skills/orq-instrumentation-health/scripts/health_sweep.py`
 - `skills/orq-analyze-traces/SKILL.md`
 - `skills/orq-improve-agent/SKILL.md`
 - `skills/orq-recommend-evaluators/SKILL.md`

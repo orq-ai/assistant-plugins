@@ -19,6 +19,7 @@ These skills are:
  - evaluatorq -> "skills/evaluatorq/SKILL.md"
  - orq-generate-synthetic-dataset -> "skills/orq-generate-synthetic-dataset/SKILL.md"
  - orq-improve-agent -> "skills/orq-improve-agent/SKILL.md"
+ - orq-instrumentation-health -> "skills/orq-instrumentation-health/SKILL.md"
  - orq-invoke-deployment -> "skills/orq-invoke-deployment/SKILL.md"
  - orq-manage-skills -> "skills/orq-manage-skills/SKILL.md"
  - orq-recommend-evaluators -> "skills/orq-recommend-evaluators/SKILL.md"
@@ -51,6 +52,8 @@ orq-recommend-evaluators: `Use when an orq agent or deployment has no or few eva
 
 orq-review-agent: `Health-check an orq agent's setup without changing it, with or without production traffic: instructions, tools, skill references, evaluators, model choice and run health, checked against the suite's best practices, each finding with a suggestion, in one HTML report. Use when someone asks to "review my agent", "is my agent set up well", "audit support-bot before launch", or "give my agent a health check". Do NOT use to find out why conversations fail or to build a failure taxonomy (use orq-analyze-traces), to apply a fix (use orq-improve-agent), to pick evaluators to add (use orq-recommend-evaluators), or to hill-climb a metric.`
 
+orq-instrumentation-health: `Audit how well the traces already in an orq.ai workspace are instrumented, without changing anything: model and token counts, unpriced models, flat or orphaned span trees, missing span types, session and user id coverage and generic trace names, plus an opt-in pass over inputs, outputs and sensitive data, scored per project and per agent with example trace links. Use when someone asks "are my traces instrumented properly", "why are token counts missing from my traces", "audit the instrumentation of my existing traces" or "check trace quality across my agents". Do NOT use to add tracing to an app (use orq-setup-observability), to find out why conversations fail (use orq-analyze-traces), or to health-check one agent's config (use orq-review-agent).`
+
 orq-invoke-deployment: `Invoke orq.ai deployments, agents, and models via the Python SDK or HTTP API — pass prompt variables, stream responses, handle multi-turn agent conversations, and generate integration code`
 
 orq-run-experiment: `Create and run orq.ai experiments — compare configurations against datasets using evaluators, analyze results, with specialized methodology for agent, conversation, and RAG evaluation`
@@ -61,7 +64,7 @@ evaluatorq: `Write and run evaluatorq evaluation scripts (Python or TypeScript) 
 
 orq-compare-agents: `Run cross-framework agent comparisons using evaluatorq — compares any combination of agents (orq.ai, LangGraph, CrewAI, OpenAI Agents SDK, Vercel AI SDK) head-to-head on the same dataset with LLM-as-a-judge scoring. Do NOT use when comparing only orq.ai configurations with no external agents (use orq-run-experiment instead).`
 
-orq-setup-observability: `Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment. Use when setting up tracing, adding the AI Router proxy, integrating OpenTelemetry, auditing existing instrumentation, or enriching traces with metadata. Do NOT use when traces already exist and you need to debug failures (use orq-analyze-traces).`
+orq-setup-observability: `Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment. Use when setting up tracing, adding the AI Router proxy, integrating OpenTelemetry, or enriching traces with metadata. Do NOT use when traces already exist and you need to debug failures (use orq-analyze-traces) or to audit their instrumentation (use orq-instrumentation-health).`
 
 orq-red-team: `Run adversarial red teaming against deployed orq agents or static datasets using the orq red teaming library — adaptive attacks, OWASP Agentic/LLM category coverage, ASR reporting. Use when asked to run a red team, test an agent for vulnerabilities, or check OWASP coverage. Do NOT use when you only need evaluators (use orq-build-evaluator) or trace analysis (use orq-analyze-traces).`
 

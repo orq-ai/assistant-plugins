@@ -1,0 +1,9 @@
+id: review-agent-near-miss-instrumentation
+skill: orq-review-agent
+kind: invocation
+# Near miss: missing token counts across traces is an instrumentation audit, not an agent review.
+prompt: Are my orq traces missing token counts? Check across all my agents and tell me which ones.
+expect_skill: orq-instrumentation-health
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 4
