@@ -82,7 +82,6 @@ MIN_SAMPLE = 15  # fewer sampled calls on a model than this get a "Small sample"
 SCOPES = ("same_provider:all", "same_provider:enabled", "any_provider:all", "any_provider:enabled")
 HEADLINE_SCOPE = "same_provider:all"
 REGION_RE = re.compile(r"^(global|us|eu|apac|ap|jp|au|ca|uk|[a-z]{2}-[a-z]+-[0-9]+)\.")
-VENDOR_RE = re.compile(r"^(anthropic|openai|google|meta|mistral|amazon|cohere|deepseek|zai|moonshotai)\.")
 SR_BLOCK = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
 
 
@@ -1719,11 +1718,6 @@ class Analyzer:
             self.log(f"next: fill {self.out / 'narrative.md'}, then run render; report.html is the deliverable")
 
 
-def _neg(s: str) -> str:
-    """Sort key that orders ISO timestamps newest first inside an ascending sort."""
-    return "".join(chr(0x10FFFF - ord(c)) for c in s)
-
-
 SLOTS = {
     "summary": "one line, at most 12 words, no model names: the lever named in summary.recommended (router is Smart Router, switch is change model) "
                "with its percent of spend and monthly dollars (for example `Save 38% ($150/mo) with Smart "
@@ -2095,30 +2089,13 @@ SCOPE_LABEL = {"same_provider:all": "Same provider, all available", "same_provid
                "any_provider:all": "Any provider, all available", "any_provider:enabled": "Any provider, enabled"}
 TOKENIZER_NOTE = ("Any-provider figures reuse the sampled token counts. Other model families tokenize "
                   "differently, so they carry an error the traces cannot measure.")
-EXAMPLE_CHARS = 280
 
 
 def _ci_cell(s: Any) -> str:
     return str(s)
 
 
-def _ci(c: Any) -> str:
-    return f"{_usd(c[0])} to {_usd(c[1])}" if c else "n/a"
-
-
-NUMERIC = (_usd, _usd0, _pct, _pc, _ci, _ci_cell, _change)
-
-
-def _scenario_rows(report: dict) -> list[dict]:
-    rows = []
-    for sc in report.get("scenarios") or []:
-        r, w = sc["router"]["balanced"], sc["switch"]
-        label = SCOPE_LABEL.get(sc["scope"], sc["scope"])
-        rows.append({"scope": label + (" (headline)" if sc["headline"] else ""), "label": label,
-                     "headline": sc["headline"], "router": r.get("per_month"), "router_ci": r.get("ci90_per_month"),
-                     "switch": w.get("per_month"), "switch_ci": w.get("ci90_per_month"), "coverage": r["coverage"]})
-    rows.sort(key=lambda r: not r["headline"])
-    return rows
+NUMERIC = (_usd, _usd0, _pct, _pc, _ci_cell, _change)
 
 
 PROVIDER_NAME = {"openai": "OpenAI", "anthropic": "Anthropic", "google-ai": "Google", "google": "Google",
@@ -2276,9 +2253,6 @@ def _plan_rows(report: dict, per_month: float, lever: str = "router") -> list[di
         top = max(flagged, key=lambda r: r["saved"])
         top["hard"] = hard[top["model"]]
     return rows
-
-
-TIERS = ("easy", "medium", "hard")
 
 
 def _flow(model: str, head: dict, today: dict | None, moves: list[dict], today_saved: float | None = None,
@@ -2543,10 +2517,6 @@ def _actions_chart(recs: list[dict], not_analysed: dict) -> str:
         foot += (f"<p class='m foot'>Not analysed: {_usd0(not_analysed['per_month'])}/mo of spend on "
                  f"{not_analysed['model_count']} model{'s' if not_analysed['model_count'] != 1 else ''}.</p>")
     return legend + "</ul><div class=chart>" + "".join(rows) + "</div>" + foot
-
-
-def _ci_short(c: Any) -> str:
-    return f"{_usd0(c[0])}\u2013{_usd0(c[1])}" if c else "n/a"
 
 
 def _scope_cell(sc: dict | None, approx: bool, show_coverage: bool) -> str:
