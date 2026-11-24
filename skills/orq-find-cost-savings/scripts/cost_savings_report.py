@@ -3357,6 +3357,18 @@ class Report(_Obj):
         return self
 
 
+def _dump_compact(x: Any, ind: str = "") -> str:
+    """JSON with any object or list that fits in 140 columns on one line, the layout the schema file had by hand."""
+    flat = json.dumps(x, ensure_ascii=False)
+    if len(ind) + len(flat) <= 140 or not isinstance(x, (dict, list)) or not x:
+        return flat
+    inner = ind + "  "
+    items = ([f"{inner}{json.dumps(k)}: {_dump_compact(v, inner)}" for k, v in x.items()] if isinstance(x, dict)
+             else [inner + _dump_compact(v, inner) for v in x])
+    o, c = "{}" if isinstance(x, dict) else "[]"
+    return o + "\n" + ",\n".join(items) + "\n" + ind + c
+
+
 def report_schema() -> dict:
     """JSON Schema of report.json, generated from Report; resources/report.schema.json holds it."""
     def clean(node: Any, keyed: bool = False) -> Any:  # keyed: a map of names to schemas (properties, $defs)
@@ -3364,10 +3376,17 @@ def report_schema() -> dict:
             return [clean(x) for x in node]
         if not isinstance(node, dict):
             return node
-        if keyed:
-            return {k: clean(v) for k, v in node.items()}
-        return {k: clean(v, k in ("properties", "$defs")) for k, v in node.items()
-                if k not in ("title", "default") and not (k == "additionalProperties" and v is True)}
+        if keyed:  # an Any field is listed under required only, as before, not as an empty schema
+            return {k: c for k, c in ((k, clean(v)) for k, v in node.items()) if c != {}}
+        out = {k: clean(v, k in ("properties", "$defs")) for k, v in node.items()
+               if k not in ("title", "default") and not (k == "additionalProperties" and v is True)}
+        alts = out.get("anyOf")
+        if alts and len(alts) == 2 and {"type": "null"} in alts:  # X | None as type: [X, "null"], as written by hand
+            other = alts[0] if alts[1] == {"type": "null"} else alts[1]
+            if list(other) == ["type"] and isinstance(other["type"], str):
+                del out["anyOf"]
+                out["type"] = [other["type"], "null"]
+        return out
 
     return {"$schema": "https://json-schema.org/draft/2020-12/schema", "title": Report.model_config["title"],
             **clean(Report.model_json_schema())}
@@ -3400,7 +3419,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("schema", help="print the JSON Schema of report.json, generated from the Report model")
     a = ap.parse_args(argv)
     if a.cmd == "schema":
-        print(json.dumps(report_schema(), indent=2))
+        print(_dump_compact(report_schema()))
         return 0
     if a.cmd == "analyze":
         if not 1 <= a.sample <= MAX_SAMPLE:
