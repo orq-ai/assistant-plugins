@@ -10,7 +10,7 @@ description: >
   custom model". Do NOT use to pick the cheapest or best model for a workload,
   to call a model (use orq-invoke-deployment), or for orq API keys and
   workspace members (use orq-admin).
-allowed-tools: Read, Write, AskUserQuestion, Skill, Bash(orq auth profile add:*), Bash(orq models list:*), Bash(orq models validate:*), Bash(orq models validate-aws-bedrock:*), Bash(orq models azure-foundry-deployments:*), Bash(orq models create:*), Bash(orq models create-openai-like:*), Bash(orq models create-vertex:*), Bash(orq models create-aws-bedrock:*), Bash(orq models delete:*), Bash(orq responses create:*)
+allowed-tools: Read, Write, AskUserQuestion, Skill, Bash(orq auth profile add:*), Bash(orq auth profile clear:*), Bash(orq models list:*), Bash(orq models validate:*), Bash(orq models validate-aws-bedrock:*), Bash(orq models azure-foundry-deployments:*), Bash(orq models create:*), Bash(orq models create-openai-like:*), Bash(orq models create-vertex:*), Bash(orq models create-aws-bedrock:*), Bash(orq models delete:*), Bash(orq responses create:*)
 metadata:
   verified: "2026-11-24"
   surface: cli
@@ -84,7 +84,7 @@ Probed 2026-11-24 with CLI 12.13.0, prod and staging. Access rules from orquesta
    orq models validate --provider azure -o json
    ```
 
-   403: the credential is a product API key. Ask the user for a management key (created on the [`orq-link`](../orq-link/SKILL.md) `admin/api-keys/management-keys` page, or with `orq-admin`) and to add it as a profile (`orq auth profile add <name> --api-key-file -`, see [`orq-cli`](../orq-cli/SKILL.md)) and rerun with `--profile <name>`. 400 about a missing `api_key`: go on.
+   403: the credential is a product API key. Ask the user for a management key (created on the [`orq-link`](../orq-link/SKILL.md) `admin/api-keys/management-keys` page, or with `orq-admin`) and to add it as a profile (`orq auth profile add <name> --api-key-file -`, see [`orq-cli`](../orq-cli/SKILL.md)) then run `orq auth profile clear` (adding a profile makes it active) and rerun with `--profile <name>`. 400 about a missing `api_key`: go on.
 4. **Validate, then create.** Read `orq models <command> --help` and `--example` for the body; do not guess fields. Write the body to a file with every non-secret field filled and the secret as `"<paste here>"`, tell the user to fill it in and `chmod 600` it, then pass only the path.
    - **Azure:** `orq models validate --from-file <path>` first (or `--integration-id` for workload identity, no key). `orq models azure-foundry-deployments --from-file <path>` (or `--integration-id`) lists a Foundry resource's deployments; never pass `--api-key`. Then confirm and `orq models create --from-file <path>`.
    - **Bedrock:** `orq models validate-aws-bedrock` with the inference profile ARN, region and auth mode first. Then confirm and `orq models create-aws-bedrock`.

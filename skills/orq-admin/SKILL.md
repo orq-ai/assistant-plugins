@@ -9,7 +9,7 @@ description: >
   API key", "remove Bob from the workspace". Do NOT use to log in to the CLI
   or switch profiles (use orq-cli), or to connect model provider keys (use
   orq-provider-credentials).
-allowed-tools: Read, Write, AskUserQuestion, Skill, Bash(orq auth whoami:*), Bash(env -u ORQ_API_KEY orq auth whoami:*), Bash(orq auth profile add:*), Bash(orq auth profile list:*), Bash(orq users list:*), Bash(orq users get:*), Bash(orq users create:*), Bash(orq users update:*), Bash(orq users delete:*), Bash(orq api-keys list:*), Bash(orq api-keys get:*), Bash(orq api-keys create:*), Bash(orq api-keys update:*), Bash(orq api-keys delete:*), Bash(orq api-keys list-capabilities:*), Bash(orq management-keys list:*), Bash(orq management-keys get:*), Bash(orq management-keys create:*), Bash(orq management-keys update:*), Bash(orq management-keys delete:*), Bash(orq management-keys list-capabilities:*), Bash(env -u ORQ_API_KEY orq users:*), Bash(env -u ORQ_API_KEY orq api-keys:*), Bash(env -u ORQ_API_KEY orq management-keys:*)
+allowed-tools: Read, Write, AskUserQuestion, Skill, Bash(orq auth whoami:*), Bash(env -u ORQ_API_KEY orq auth whoami:*), Bash(orq auth profile add:*), Bash(orq auth profile list:*), Bash(orq auth profile clear:*), Bash(orq users list:*), Bash(orq users get:*), Bash(orq users create:*), Bash(orq users update:*), Bash(orq users delete:*), Bash(orq api-keys list:*), Bash(orq api-keys get:*), Bash(orq api-keys create:*), Bash(orq api-keys update:*), Bash(orq api-keys delete:*), Bash(orq api-keys list-capabilities:*), Bash(orq management-keys list:*), Bash(orq management-keys get:*), Bash(orq management-keys create:*), Bash(orq management-keys update:*), Bash(orq management-keys delete:*), Bash(orq management-keys list-capabilities:*), Bash(env -u ORQ_API_KEY orq users:*), Bash(env -u ORQ_API_KEY orq api-keys:*), Bash(env -u ORQ_API_KEY orq management-keys:*)
 metadata:
   verified: "2026-11-24"
   surface: cli
@@ -21,19 +21,22 @@ metadata:
 
 ## Gotchas (read first)
 
-Probed 2026-11-24 with CLI 12.13.0 on prod. Command help and field names from the same CLI; responses from orquesta-web `documentation/mintlify/reference/sdk/apikeys.mdx` and `apps/platform-api/proto/orq/platform/v1/management_keys.proto`.
+Probed 2026-11-24 with CLI 12.13.0 on prod: project keys for the 403s, then an admin login for a full API key and management key cycle (create, verify, rotate, disable, delete). `users create`, `update` and `delete` were not run.
 
 - **The 403 messages name the missing permission.** With a project key: `users list` says "requires the user read permission", `management-keys list` "requires the management-key read permission", `api-keys list` "This API key type cannot access this endpoint". `orq auth whoami` exits 0 under any key and cannot tell them apart, so the preflight is the `list` of the group being changed.
-- **`users create` sends a welcome email** to every new account, and takes a **team UUID** as its argument, not the workspace. Team ids and role values should come from `users list` (field names not seen live). Say so before running it.
-- **`users update` and `users delete` take the workspace-user UUID** from `users list`, not the account id.
-- **`users delete` revokes every API key that user owns.** List those keys first: `orq api-keys list -o json -j "data[?owner=='<user-id>'].{id: id, name: name}"` (the `owner` shape was not seen live; show the rows you matched).
+- **`users list` returns `{users: [...]}`.** Each row has `id` (the workspace-user UUID that `users update` and `users delete` take), `account_id`, `display_name`, `email`, `team_ids` and `roles`.
+- **Roles are opaque ids** (`01J3...`), and no CLI command names them. Ask the user which role id is the admin role; do not guess it from counts.
+- **`users create` sends a welcome email** to every new account, and takes a **team UUID** from `team_ids` as its argument, not the workspace. Say so before running it.
+- **`users delete` revokes every API key that user owns.** List those keys first: `orq api-keys list -o json -j "[?owner.user_id=='<account_id>' || owner.user_id=='<id>'].{id: id, name: name}"`. `owner.user_id` holds the account id on some keys and the workspace-user id on others, so match both.
 - **A new key's raw token is returned once**, in `token`; `get` and `list` only return a masked value. If it is not captured on create, the key has to be made again.
-- **`api-keys create` takes `project_scope`, `permission_mode`, `access`, `constraints.expires_at` and `owner`.** `expiration` and `projects` are legacy; do not use them. A user-owned key is revoked with its user; a service-account owner outlives any user.
-- **`management-keys create` takes a different body:** `name`, `permission_mode`, `access` and a top-level `expires_at`, with no `project_scope` or `owner`. The response holds the record in `management_key` and the raw secret in `token`.
+- **`api-keys list` returns a bare array of every key**, with no paging. A one-project scope is `{"mode": "single", "project_id": "<id>"}`.
+- **`api-keys create` takes `project_scope`, `permission_mode`, `access`, `constraints.expires_at` and `owner`.** `expiration` and `projects` are legacy; do not use them. With no `owner` the key belongs to a service account and outlives any user; a user-owned key (`{"type": "user", "user_id": ...}`) is revoked with its user. The `get` projection in step 5 is accepted by `create` as is.
+- **`management-keys create` takes a different body:** `name`, `permission_mode` (both required), `access` and a top-level `expires_at`, with no `project_scope` or `owner`. The raw secret is in `token`. `management-keys list` wraps rows in `data`, names the id `management_key_id`, and pages with `--limit` (up to 200) and `--starting-after`.
 - **Management key enums are prefixed:** `MANAGEMENT_PERMISSION_MODE_*` and `MANAGEMENT_KEY_STATUS_*`. API keys accept `all`, `restricted`, `read_only` and `active`, `disabled`, `revoked`.
-- **`revoked` is final** for both kinds of key. Use `disabled` to switch a key off reversibly.
+- **`revoked` is final** for both kinds of key. Use `disabled` to switch a key off reversibly; a disabled key gets 401 at once.
+- **`orq auth profile add` makes the new profile active.** Every later command then runs on the new key until `orq auth profile clear`. Run it right after each add.
 - **No CLI call maps the key in use to its id.** Any key could be the one this session runs on.
-- Not seen live yet: the `users list` and `api-keys list` response shapes, and what `whoami` reports under a management key.
+- **`whoami` under a login names the user** in `user.id`, which is `account_id` in `users list`. Under a management key it returns no user and no workspace key.
 
 ## When to use
 
@@ -51,8 +54,8 @@ Probed 2026-11-24 with CLI 12.13.0 on prod. Command help and field names from th
 
 - **NEVER** print a token, put one in chat or on a command line, or Read a file that holds one.
 - **NEVER** delete a user, remove a role or delete or narrow a key without two confirmations.
-- **NEVER** leave the workspace without an admin: before deleting a user or changing a role, count admins in `users list` (field names not seen live; show the rows you counted) and refuse if this would remove the last one.
-- **NEVER** delete the user running this session. Under a login, `env -u ORQ_API_KEY orq auth whoami` names them; under a management key there is no user, so ask who they are.
+- **NEVER** leave the workspace without an admin: before deleting a user or changing a role, ask which role id is admin, count the `users list` rows that hold it, show them, and refuse if this would remove the last one.
+- **NEVER** delete the user running this session. Under a login, `env -u ORQ_API_KEY orq auth whoami -o json -j user.id` gives their `account_id`; under a management key there is no user, so ask who they are.
 - **ALWAYS** confirm every create and update with AskUserQuestion, showing the exact fields.
 - **ALWAYS** send a new token straight into `orq auth profile add <name> --api-key-file -`, or to a file the user names and then `chmod 600`s.
 - **ALWAYS** follow the credential rules in [`orq-cli`](../orq-cli/SKILL.md) (never expand `$ORQ_API_KEY`).
@@ -75,13 +78,15 @@ Probed 2026-11-24 with CLI 12.13.0 on prod. Command help and field names from th
    - **Invite:** `orq users create <team-uuid> --emails <email> --roles <role>`. Say that it sends a welcome email, then confirm.
    - **Change role:** `orq users update <workspace-user-uuid> --role <role>`, after the last-admin check. Confirm.
    - **Remove:** list the keys that user owns, run the last-admin and own-user checks, then confirm twice. Run `orq users delete <workspace-user-uuid> --force`.
-4. **New API key.** Write the body file. It holds no secret: `name`, `project_scope`, `permission_mode`, `access` and `constraints.expires_at`. Check with `orq auth profile list` that the profile name is free, and with `orq api-keys list` that the key name is (page with `--starting-after` while `has_more` is `true`). Confirm, then send the token straight to a profile:
+4. **New API key.** Write the body file. It holds no secret: `name`, `project_scope`, `permission_mode`, `access` and `constraints.expires_at`. Check with `orq auth profile list` that the profile name is free, and with `orq api-keys list` that the key name is. Confirm, then send the token straight to a profile:
 
    ```sh
    orq api-keys create --from-file <body.json> -o json -j token --raw | orq auth profile add <profile> --api-key-file -
    ```
 
-   For a key the user hands to another system, write it to a file they name instead (`orq api-keys create --from-file <body.json> -o json -j token --raw > <path>`) and tell them to `chmod 600` it at once. Then look up the new id by its unique name with `orq api-keys list -o json -j "data[?name=='<name>'].id"`, paging as above. If the pipe failed, the token is lost: tell the user, and disable that key by its id before creating another. Management keys work the same way with `orq management-keys create` and their own body (see Gotchas).
+   Then run `orq auth profile clear` at once, so the next command runs on the admin credential and not on the new key.
+
+   For a key the user hands to another system, write it to a file they name instead (`orq api-keys create --from-file <body.json> -o json -j token --raw > <path>`) and tell them to `chmod 600` it at once. Then look up the new id by its unique name with `orq api-keys list -o json -j "[?name=='<name>'].id"`. If the pipe failed, the token is lost: tell the user, and disable that key by its id before creating another. Management keys work the same way with `orq management-keys create` and their own body (see Gotchas).
 5. **Rotate** (in this order):
    1. `orq api-keys get <old-id> -o json -j '{name: name, project_scope: project_scope, permission_mode: permission_mode, access: access, constraints: constraints, owner: owner}'`.
    2. Write a create body with the same scope fields and owner. If the `get` output does not fit the create body as is, show both and ask before creating.
@@ -91,7 +96,7 @@ Probed 2026-11-24 with CLI 12.13.0 on prod. Command help and field names from th
    6. Disable the old key: `orq api-keys update <old-id> --status disabled`, confirmed.
    7. Delete it only after a second confirmation: `orq api-keys delete <old-id> --force`.
 
-   A management key rotates the same way with `orq management-keys get`, `create`, `update` and `delete`. Its body has no `project_scope` or `owner`, the expiry is the top-level `expires_at`, the new id is in `management_key`, and the status value is `MANAGEMENT_KEY_STATUS_DISABLED`. Verify it with `orq users list --profile <new-profile> -o json`.
+   A management key rotates the same way with `orq management-keys get`, `create`, `update` and `delete`. Its body has no `project_scope` or `owner`, the expiry is the top-level `expires_at`, the id is `management_key_id` in `management-keys list`, and the status value is `MANAGEMENT_KEY_STATUS_DISABLED`. Verify it with `orq users list --profile <new-profile> -o json -j 'length(users)'`.
 6. **Disable, narrow or delete a key.** Deletes run with `--force`, since an agent shell has no terminal. Warn that it may be the key this session or a production system runs on, then confirm twice. Prefer `--status disabled` over delete or `revoked`.
 7. **Verify.** Re-run the matching `list` and report the changed rows, with names, ids, status and expiry. Never include the token.
 

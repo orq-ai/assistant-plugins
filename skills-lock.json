@@ -9,7 +9,7 @@
     "orq-admin": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "c4e8d051d1cedad09f4594d3cc79c86b0f67704decec4ebbf501c0eed2f2b636"
+      "computedHash": "ef2785e0639068edf7b6edafec7b98a272a31382df24afc417948c19cc88bc13"
     },
     "orq-analyze-traces": {
       "source": "orq-ai/assistant-plugins",
@@ -84,7 +84,7 @@
     "orq-provider-credentials": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "e9ee2554774e67d3f438e0b1a6cf3be59f273d2f68f08583082298f2635e1227"
+      "computedHash": "9dea9a6d4a719c4a8d3dcac4fd4e5cfb164fcfce1ac81565b6cc51e5d04d5396"
     },
     "orq-quickstart": {
       "source": "orq-ai/assistant-plugins",
