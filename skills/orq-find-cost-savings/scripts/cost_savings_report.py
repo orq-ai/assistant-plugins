@@ -1180,7 +1180,7 @@ class Analyzer:
                     else {}
             except OrqError:
                 self._ws = {}
-        return self._ws
+        return self._ws or {}
 
     def retention_days(self) -> int | None:
         """The workspace's trace retention (`features.retention_period`), or None when the key cannot read it."""
@@ -1618,7 +1618,8 @@ class Analyzer:
                 d.input, d.source = routing_input(d.span.get("attributes") or {})
             drawn += new
             rounds += 1
-            todo = sorted({d.input for d in drawn if self.needs_decision(d) and self._key(d.input) not in self.decisions})
+            todo = sorted({d.input for d in drawn if d.input and self.needs_decision(d)
+                           and self._key(d.input) not in self.decisions})
             if todo and "routing_decision_cost" not in self.report:
                 self.confirm(todo, len(drawn), len(jobs))
             self.decide_all(todo, len(jobs))
