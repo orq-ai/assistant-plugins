@@ -165,7 +165,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Ask: "Run a red team test on my agent using the evaluatorq CLI"
 - Verify: shows `eq redteam run --target agent:<KEY> --mode dynamic` (not `run adaptive` or `--framework`)
 - Verify: explains that the 5 detail files (`01_agent_context.json` … `05_summary_report.json`) come from `--save detail`
-- Verify: shows `eq redteam ui report.json` to view results (not `eq redteam report summarize`)
+- Verify: shows `eq dashboard report.json` to view results (not `eq redteam ui`, removed in evaluatorq 1.102, or `eq redteam report summarize`)
 
 ### Scenario 3: Run simulation from CLI
 
@@ -240,6 +240,14 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Ask: "Write me a judge prompt for persona consistency"
 - Verify: the prompt uses `{{input.*}}` / `{{output.*}}` variables, not `{{log.*}}` and not bare `{{input}}` / `{{output}}`
 - Verify: after creating an LLM evaluator, recommends `orq-evaluator-alignment`
+
+## `orq-build-benchmark`
+
+- Ask: "Build a benchmark from my codebase to find which model is best at our task"
+- Verify: interviews the user and stages real task instances with established answers before building anything
+- Verify: builds an orq dataset and evaluators, then runs candidate models with evaluatorq
+- Verify: grades against known answers and reports to orq Experiments
+- Verify: validates a staged bundle with `scripts/check_bundle.py` before upload
 
 ## `orq-evaluator-alignment`
 
@@ -488,7 +496,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 - Ask: "Summarize the red team results from ./output/my-run/report.json"
 - Verify: reads the JSON directly and explains `resistance_rate`, `vulnerabilities_found`, `total_results`, and `categories_tested`
-- Verify: optionally invokes `eq redteam ui ./output/my-run/report.json` for interactive viewing
+- Verify: optionally invokes `eq dashboard ./output/my-run/report.json` for interactive viewing (never `eq redteam ui`)
 - Verify: notes which categories were NOT tested
 
 ### Scenario 4: Missing env var
@@ -700,6 +708,28 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ---
 
+## `orq-trace-format`
+
+### Scenario 1: Traces in a reply
+
+- Ask: "Show me the failing traces from the last day"
+- Verify: every trace in the reply is a `[<first 8 chars>](<url>)` link of the form `<host>/<workspace-key>/traces/(trace:<trace_id>)`, with no bare 32-hex id beside it
+- Verify: host and workspace key come from `ORQ_WORKSPACE` / `orq auth whoami`, not a hardcoded `my.orq.ai/<guess>`
+- Verify: the reply carries the "opens empty → Traces project selector to **All projects**" line
+
+### Scenario 2: No workspace key
+
+- Simulate `ORQ_API_KEY` set and no `ORQ_WORKSPACE` (`whoami` returns `null` for the key)
+- Ask: "Link me the trace for this run"
+- Verify: never builds `<host>/null/...`; says the key is unknown and asks for it or shows the full id once
+
+### Scenario 3: Never the dead route
+
+- Ask: "Give me a link to trace b422a93c8b34ddfa70eaf5c7e3705c19"
+- Verify: does NOT emit `traces?query=trace_id:is:...` or the `/v2/traces/<id>/v3spans` API URL
+
+---
+
 ## Critical Files
 
 - `skills/orq-shared/SKILL.md`
@@ -741,6 +771,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-compare-agents/resources/evaluatorq-api.md`
 - `skills/orq-compare-agents/resources/gotchas.md`
 - `skills/orq-build-agent/SKILL.md`
+- `skills/orq-build-benchmark/SKILL.md`
+- `skills/orq-build-benchmark/scripts/check_bundle.py` — bundle preflight; `--selftest` guards the secret scan and seed checks
 - `skills/orq-build-evaluator/SKILL.md`
 - `skills/orq-evaluator-alignment/SKILL.md`
 - `skills/orq-evaluator-alignment/config.toml`
@@ -770,6 +802,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-grade-skill/SKILL.md`
 - `skills/orq-grade-skill/agents/grader.md`
 - `skills/orq-quickstart/SKILL.md`
+- `skills/orq-trace-format/SKILL.md`
+- `commands/traces.md`
 - `skills/orq-create-skill/resources/template.md`
 - `skills/orq-create-skill/resources/writing-guide.md`
 - `commands/orq-manage-skills.md`

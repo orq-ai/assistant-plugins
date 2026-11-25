@@ -7,7 +7,7 @@ description: >
   how my agent handles adversarial inputs". Do NOT use when you only need to build
   evaluators (use orq-build-evaluator) or analyze existing trace failures (use
   orq-analyze-traces).
-allowed-tools: Bash(eq redteam *), Bash(eq dashboard *), Bash(eq --help*), Bash(uv run --package evaluatorq eq *), Bash(uv venv*), Bash(uv pip install 'evaluatorq[redteam]'*), Bash(uv tool install 'evaluatorq[redteam]'*), Bash(jq '{asr:*), Bash(jq -r '.results[]*), Bash(jq '.results | map*), Read, Write, Edit, Grep, Glob, mcp__orq-workspace__search_entities, mcp__orq-workspace__get_agent
+allowed-tools: Bash(eq redteam *), Bash(eq dashboard *), Bash(eq --help*), Bash(uv run --package evaluatorq eq *), Bash(uv venv*), Bash(uv pip install 'evaluatorq[redteam]'*), Bash(uv tool install 'evaluatorq[redteam]'*), Bash(uv pip install 'evaluatorq[redteam,dashboard]'*), Bash(uv tool install 'evaluatorq[redteam,dashboard]'*), Bash(jq '{asr:*), Bash(jq -r '.results[]*), Bash(jq '.results | map*), Read, Write, Edit, Grep, Glob, mcp__orq-workspace__search_entities, mcp__orq-workspace__get_agent
 ---
 
 # Red Team
@@ -20,6 +20,7 @@ This skill is a **reference guide and invocation helper — not a wrapper**. You
 
 ## Constraints
 
+- **ALWAYS** show a trace or span to the user as a Studio link (`[<first 8 chars>](<url>)`), never a bare id. Format, workspace key and host: [`orq-trace-format`](../orq-trace-format/SKILL.md).
 - **NEVER** reimplement red teaming logic — use the `eq redteam` CLI.
 - **NEVER** run against a deployment the user does not own or is not explicitly authorized to test. Confirm authorization before the first run.
 - **NEVER** run without confirming the target key with the user first.
@@ -73,7 +74,7 @@ uv pip install 'evaluatorq[redteam]'    # installs into the active/.venv; then E
 uv tool install 'evaluatorq[redteam]'
 ```
 
-The `[redteam]` extra is required (pulls in `huggingface-hub` plus Streamlit/Plotly for the interactive dashboard, so `eq redteam ui` works with `[redteam]` alone — there is no `[ui]` extra). `openai` and `typer` are core dependencies, installed with the base package.
+The `[redteam]` extra is required (pulls in `huggingface-hub`). Viewing runs in the browser needs the separate `[dashboard]` extra (`'evaluatorq[redteam,dashboard]'`): since evaluatorq 1.102 the old Streamlit `eq redteam ui` is gone and `eq dashboard` replaces it. `openai` and `typer` are core dependencies, installed with the base package.
 
 > Throughout this skill, `eq redteam …` is written assuming `eq` is on PATH. If you resolved it via `$EQ` above (e.g. `uv run --package evaluatorq eq`), substitute that prefix — **but read the uv `.env` trap below first; running `eq` via `uv run` has a credential gotcha when an env-file (`UV_ENV_FILE`) is in play.**
 
@@ -300,15 +301,17 @@ The run prints a summary to stdout on completion. To view an existing report int
 # List previous runs
 eq redteam runs
 
-# Launch interactive Streamlit dashboard for latest run
-eq redteam ui
-
-# Launch dashboard for a specific report
-eq redteam ui ./path/to/report.json
-
-# Lightweight run browser across redteam AND sim runs (needs the [dashboard] extra)
+# Browse all runs (scans .evaluatorq/runs/, sim-runs/ and pairwise-runs/; needs the [dashboard] extra)
 eq dashboard
+
+# Open a specific report
+eq dashboard ./path/to/report.json
+
+# Remote box: bind elsewhere, skip the browser (defaults: 127.0.0.1:8080)
+eq dashboard --host 0.0.0.0 --port 8080 --no-browser
 ```
+
+`eq redteam ui` was removed in evaluatorq 1.102; do not suggest it.
 
 Dashboard trace deep-link buttons appear only when `ORQ_WORKSPACE` (or
 `ORQ_WORKSPACE_SLUG`) is set; `ORQ_UI_BASE_URL` overrides the app host for
@@ -424,8 +427,8 @@ eq redteam run \
 # 3. List runs and view summary
 eq redteam runs
 
-# 4. Open interactive dashboard (optional)
-eq redteam ui ./output/customer-support-report.json
+# 4. Open interactive dashboard (optional, needs the [dashboard] extra)
+eq dashboard ./output/customer-support-report.json
 ```
 
 Expected summary fields in the printed output:
@@ -448,7 +451,9 @@ vulnerabilities_found: 7
 | Bare model names (`gpt-5-mini`) fail via `uv run` even after `unset ORQ_API_KEY` | uv loaded `ORQ_API_KEY` from an env-file (`UV_ENV_FILE` / explicit `--env-file`) after your `unset`, keeping routing on the gateway (uv does **not** auto-read `./.env`) | `env -u ORQ_API_KEY uv run --no-env-file …`, or run `eq` directly off PATH. See the uv `.env` trap section |
 | `Agent not found` / `deployment_not_found` mid-run | Wrong `--target` key, **or** the shell `ORQ_API_KEY` is scoped to a different project than the target (MCP said it exists, but the run key can't see it) | Verify up front with the **shell `ORQ_API_KEY`** — agents via `GET /v2/agents/{key}` (or SDK `agents.retrieve`), deployments via `POST /v2/deployments/get_config` (or SDK `deployments.get_config`). An MCP hit alone is not proof — its key may be another project. On a mismatch, ask the user for the right key (the one scoped to the target's project). See "Verify the target agent or deployment exists" |
 | `ORQ_API_KEY not set` or 401 errors | Missing env var for target agent | **Export** `ORQ_API_KEY` in your shell (`export ORQ_API_KEY=…`); a key only in `.env` is **not** auto-read by a bare `eq` run. See the [run-key preflight](../orq-shared/resources/run-key-preflight.md) for the full resolution-and-export pattern |
-| `ImportError` for `huggingface-hub`/`streamlit` | Incomplete install (missing extra) | `pip install 'evaluatorq[redteam]'` (`openai`/`typer` are core — an ImportError on those means the package itself is missing) |
+| `ImportError` for `huggingface-hub` | Incomplete install (missing extra) | `pip install 'evaluatorq[redteam]'` (`openai`/`typer` are core — an ImportError on those means the package itself is missing) |
+| `eq dashboard` says it requires the dashboard extra | `[dashboard]` not installed | `pip install 'evaluatorq[redteam,dashboard]'` |
+| `No such command 'ui'` | `eq redteam ui` was removed in evaluatorq 1.102 | Use `eq dashboard [report.json]` |
 | `CredentialError` / run hangs at attack generation | No LLM credential for attack/evaluator | Set `OPENAI_API_KEY` (bare model names) **or** `ORQ_API_KEY` (provider-prefixed, e.g. `openai/gpt-5-mini`) |
 | ASR = 0.0 on all categories | Evaluator routing/credential issue, or genuinely resistant | Confirm the evaluator model string matches the active route (gateway → `openai/gpt-5-mini`); check creds before assuming a stronger judge is needed |
 | `openai/...` model rejected | Only `OPENAI_API_KEY` is set → the run goes direct to OpenAI, which rejects the prefix | Use a bare name (`gpt-5-mini`) for direct OpenAI, or set `ORQ_API_KEY` to route via the gateway (the gateway wins when both are set) |

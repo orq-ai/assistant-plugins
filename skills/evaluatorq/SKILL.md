@@ -22,12 +22,13 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 
 ## Constraints
 
+- **ALWAYS** show a trace or span to the user as a Studio link (`[<first 8 chars>](<url>)`), never a bare id. Format, workspace key and host: [`orq-trace-format`](../orq-trace-format/SKILL.md).
 - **NEVER** report a score from fewer than 5 datapoints without saying it is not a score — a 1–4 row inline run is a smoke test of the script, never a measurement. Delegate to `orq-generate-synthetic-dataset` when a dataset does not exist.
 - **NEVER** use `orq.evaluators.invoke()` — use `orq.evals.invoke_async()` inside async scorers or `orq.evals.invoke()` for synchronous calls.
 - **NEVER** invent evaluator IDs — fetch them from the user or **browse** via `search_entities` MCP tool (`type: "evaluator"`).
 - **ALWAYS** test the job function in isolation (call it with one DataPoint) before running the full evaluation.
 - **ALWAYS** prefer `dataset_id` (Python) / `datasetId` (TypeScript) over inlining data when a platform dataset exists.
-- **NEVER** build a judge panel out of `orq/*` router ids, and default to a cross-family panel — correlated judges cannot vote away a shared bias. The `"Single-Provider Trio"` preset is the one deliberate exception, for one-vendor workspaces, and buys less independence than any cross-family preset.
+- **NEVER** build a judge panel out of `orq/*` router ids, and default to a cross-family panel — correlated judges cannot vote away a shared bias. The `"single-provider-trio"` preset is the one deliberate exception, for one-vendor workspaces, and buys less independence than any cross-family preset.
 - **ALWAYS** read the accepted `reasoning_effort` values for that model out of the catalogue (`GET /v2/models`) rather than assuming a scale — the ladder differs per model and changes per release, and an unsupported value is dropped silently, not raised — see [resources/tuning.md](resources/tuning.md).
 - **CLI only:** Check `ORQ_API_KEY` is set before running `eq redteam` or `eq sim`.
 
@@ -236,7 +237,7 @@ Quick reference:
 
 ```bash
 eq redteam run --target agent:<AGENT_KEY> --mode dynamic
-eq redteam ui report.json   # open Streamlit dashboard
+eq dashboard report.json    # open the dashboard (needs the [dashboard] extra)
 ```
 
 ### CLI — Simulation
@@ -271,7 +272,7 @@ from evaluatorq import llm_jury
 correctness = llm_jury(
     name="correctness",
     criteria="The answer is factually correct and directly answers the question.",
-    preset="Balanced Trio",          # or judges=[...] — 3 models from 3 provider families
+    preset="balanced-trio",          # or judges=[...] — 3 models from 3 provider families
     # verdict_kind="numeric", threshold=0.7      # numeric mode
     # labels=[...], passing_labels=[...]         # labeled mode
     reasoning_effort=...,            # the JUDGE's budget — accepted values are per model, see resources/tuning.md

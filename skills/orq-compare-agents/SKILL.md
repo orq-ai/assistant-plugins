@@ -24,6 +24,7 @@ Supported comparison modes:
 
 ## Constraints
 
+- **ALWAYS** show a trace or span to the user as a Studio link (`[<first 8 chars>](<url>)`), never a bare id. Format, workspace key and host: [`orq-trace-format`](../orq-trace-format/SKILL.md).
 - **NEVER** create datasets inline in the comparison script — delegate to `orq-generate-synthetic-dataset` skill or use `{ dataset_id: "..." }` (Python) / `{ datasetId: "..." }` (TypeScript) to load from the platform.
 - **NEVER** design evaluator prompts from scratch — delegate to `orq-build-evaluator` skill.
 - **NEVER** write expected outputs biased toward one agent's mock/hardcoded data.
@@ -203,6 +204,6 @@ Agent Comparison Progress:
 After running the comparison:
 - **Experiment results:** [my.orq.ai](https://my.orq.ai/) → Experiments
 - **Agent details:** [my.orq.ai](https://my.orq.ai/) → Agents
-- **Traces:** [my.orq.ai](https://my.orq.ai/) → Traces, or a direct link to a specific run's trace: `<host>/<workspace-key>/traces/(trace:<trace_id>)` ([host, key and pitfalls](../orq-cli/resources/command-map.md#building-app-urls)). If it opens on "No spans match your search", the Traces project selector is filtering it out: switch it to **All projects**.
+- **Traces:** [my.orq.ai](https://my.orq.ai/) → Traces, or a direct link to a specific run's trace: `<host>/<workspace-key>/traces/(trace:<trace_id>)` ([host, key and pitfalls](../orq-trace-format/SKILL.md)). If it opens on "No spans match your search", the Traces project selector is filtering it out: switch it to **All projects**.
 
 When this skill conflicts with live API responses or docs.orq.ai, trust the API.

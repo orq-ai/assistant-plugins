@@ -22,7 +22,7 @@ The `evaluatorq.redteam` Python API behind the `eq redteam` CLI. Use it when the
 |-------------|-------------|
 | Red-team an orq `agent:`/`deployment:` target | Red-team a **raw model** (e.g. `gpt-5-mini` directly, no deployment) |
 | One-off scans, CI invocations | Red-team an **external-framework agent** (LangGraph, OpenAI Agents SDK, LangChain, any callable) |
-| Interactive report viewing (`eq redteam ui`) | A **custom `AgentTarget`**, or embedding red teaming **inside a Python eval pipeline** |
+| Interactive report viewing (`eq dashboard`) | A **custom `AgentTarget`**, or embedding red teaming **inside a Python eval pipeline** |
 | Standard OWASP coverage | Programmatic report handling (gating CI on `resistance_rate`, `generate_recommendations`, custom export) |
 
 For everything the CLI already does, stay on the CLI — it is less code and less to maintain.

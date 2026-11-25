@@ -5,11 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [5.1.0] - 2026-11-12
+## [5.3.0] - 2026-11-25
 
 ### Added
 
 - `orq-grade-skill` skill: grade one repository-tracked agent skill from real sessions that loaded its exact committed version, and freeze a baseline without proposing edits. Sessions come from Orq traces tagged with a metadata pair by default (`orq launch <agent> --metadata key=value` or `X-ORQ-METADATA-<key>` headers, selected with an OQL filter), or from local Claude Code sessions, ATIF files or exported conversations. Grader subagents score efficiency, quality and skill compliance per batch; the baseline validates every exact quote citation and snapshot hash, files an issue only on recurring or high-priority evidence, applies a majority rule across repeated passes, and writes `baseline.json`, `baseline.md` and an HTML report. Scripts run with `uv run` from their inline dependencies, or with `pip install "evaluatorq>=1.87" "pydantic>=2"` and `python3`.
+
+## [5.2.2] - 2026-11-24
+
+### Fixed
+
+- `orq-red-team` and `evaluatorq` skills: `eq redteam ui` was removed in evaluatorq 1.102, so the skills now open reports with `eq dashboard [report.json]` and say it needs the `[dashboard]` extra (`'evaluatorq[redteam,dashboard]'`). `[redteam]` no longer pulls in Streamlit. Troubleshooting covers the missing-extra error and `No such command 'ui'`.
+
+## [5.2.1] - 2026-11-23
+
+### Changed
+
+- `orq-cli` skill: the coding-agents reference lists `cursor` among the agents `orq setup` and `orq connect` wire. Cursor takes the `skills` and `mcp` capabilities. Needs an orq CLI release that includes Cursor support.
+
+## [5.2.0] - 2026-11-19
+
+### Added
+
+- `orq-trace-format` skill: show orq traces and spans to people as clickable Studio links (`[<first 8 chars>](<url>)`) instead of raw trace ids. It is now the single home of the trace and span URL format, the workspace key and host resolution, and the "opens empty → All projects" fix, moved out of `orq-cli/resources/command-map.md` (which keeps a pointer under "Building app URLs").
+
+### Changed
+
+- 14 trace-touching skills gain an **ALWAYS** constraint to link traces and spans rather than print bare ids, pointing at `orq-trace-format`. Their existing "Building app URLs" links now point there too.
+- `/orq:traces` lists traces in a Markdown table with each trace linked in Studio, instead of an ASCII table of full 32-character trace ids.
+
+## [5.1.0] - 2026-11-17
+
+### Added
+
+- `orq-build-benchmark` skill: turn a team's own work into a custom orq benchmark. Interviews the user, stages real task instances, then builds an orq dataset and evaluators and runs candidate models with evaluatorq, graded against known answers and reported to orq Experiments. Ships `scripts/check_bundle.py` to validate a staged bundle before upload.
+
+### Fixed
+
+- `evaluatorq` and `orq-compare-agents` skills: jury presets are named by their current ids (`balanced-trio`, `strong-jury`, `open-weight-portable`, `eu-region`, `single-provider-trio`). evaluatorq renamed them; the old display names still resolve, with a deprecation warning.
 
 ## [5.0.0] - 2026-11-10
 

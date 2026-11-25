@@ -1,0 +1,10 @@
+id: trace-format-response-fires
+skill: orq-trace-format
+kind: invocation
+# Talks about a trace without asking for a link (companion to the task's own skill). Real rows from the research workspace, pasted so no tool access is needed.
+prompt: 'I invoked my deployment and got this back: {"id": "resp_01JD8", "status": "completed", "telemetry": {"trace_id": "caa9b6028832114d7e017ea4c16c2606"}}. Did it work?'
+expect_skill: orq-trace-format
+expect_skill_anywhere: true
+runs: 1
+pass_threshold: 1
+max_turns: 10
