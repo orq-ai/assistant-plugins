@@ -1,0 +1,172 @@
+{
+ "rows": [
+  {
+   "trace_id": "id000",
+   "session_id": "id001",
+   "thread_id": "id001",
+   "start_time": "2026-11-12T10:46:45.308Z",
+   "name": "messages.anthropic",
+   "cost": {
+    "total": 0.0052758
+   },
+   "attributes": {
+    "metadata": {
+     "skill-probe": "grade-me"
+    },
+    "gen_ai": {
+     "response": {
+      "id": "resp_id002"
+     }
+    }
+   }
+  },
+  {
+   "trace_id": "id003",
+   "session_id": "id001",
+   "thread_id": "id001",
+   "start_time": "2026-11-12T10:46:43.264Z",
+   "name": "messages.anthropic",
+   "cost": {
+    "total": 0.05885625
+   },
+   "attributes": {
+    "metadata": {
+     "skill-probe": "grade-me"
+    },
+    "gen_ai": {
+     "response": {
+      "id": "resp_id004"
+     }
+    }
+   }
+  },
+  {
+   "trace_id": "id005",
+   "session_id": "id001",
+   "thread_id": "id001",
+   "start_time": "2026-11-12T10:46:41.518Z",
+   "name": "messages.anthropic",
+   "cost": {
+    "total": 0.000971
+   },
+   "attributes": {
+    "metadata": {
+     "skill-probe": "grade-me"
+    },
+    "gen_ai": {
+     "response": {
+      "id": "resp_id006"
+     }
+    }
+   }
+  }
+ ],
+ "conversations": {
+  "id000": {
+   "trace_id": "id000",
+   "span_id": "113c926648aa90d0",
+   "items": [
+    {
+     "content": [
+      {
+       "type": "input_text",
+       "text": "Instructions removed from the fixture."
+      }
+     ],
+     "id": "msg_id007",
+     "role": "system",
+     "status": "completed",
+     "type": "message"
+    },
+    {
+     "content": [
+      {
+       "type": "input_text",
+       "text": "Use the probe-greeting skill to give me the probe greeting."
+      }
+     ],
+     "id": "msg_id008",
+     "role": "user",
+     "status": "completed",
+     "type": "message"
+    },
+    {
+     "content": [
+      {
+       "text": "",
+       "type": "reasoning_text"
+      }
+     ],
+     "id": "rs_id009",
+     "signature": "redacted",
+     "summary": [],
+     "type": "reasoning"
+    },
+    {
+     "arguments": "{\"skill\":\"probe-greeting\"}",
+     "call_id": "toolu_id010",
+     "id": "fc_id011",
+     "name": "Skill",
+     "status": "completed",
+     "thought_signature": "redacted",
+     "type": "function_call"
+    },
+    {
+     "call_id": "toolu_id010",
+     "id": "fco_id012",
+     "output": [
+      {
+       "text": "Launching skill: probe-greeting\n\n<system-reminder>\n<total_tokens>14953201 tokens left</total_tokens>\n</system-reminder>",
+       "type": "input_text"
+      }
+     ],
+     "status": "completed",
+     "type": "function_call_output"
+    },
+    {
+     "content": [
+      {
+       "type": "input_text",
+       "text": "Base directory for this skill: /work/client/.claude/skills/probe-greeting\n\n# Probe greeting\n\nReply with exactly one line: `PROBE-OK lantern-42`. Do nothing else.\n"
+      }
+     ],
+     "id": "msg_id013",
+     "role": "user",
+     "status": "completed",
+     "type": "message"
+    },
+    {
+     "content": [
+      {
+       "text": "",
+       "type": "reasoning_text"
+      }
+     ],
+     "id": "rs_id014",
+     "signature": "redacted",
+     "summary": [
+      {
+       "text": "",
+       "type": "summary_text"
+      }
+     ],
+     "type": "reasoning"
+    },
+    {
+     "content": [
+      {
+       "annotations": [],
+       "logprobs": [],
+       "text": "PROBE-OK lantern-42",
+       "type": "output_text"
+      }
+     ],
+     "id": "msg_id015",
+     "role": "assistant",
+     "status": "completed",
+     "type": "message"
+    }
+   ]
+  }
+ }
+}
