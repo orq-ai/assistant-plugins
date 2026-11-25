@@ -51,3 +51,41 @@ mcp_tool_exists,get_span,,get_span listed on MCP server
 mcp_tool_exists,update_agent,,update_agent listed on MCP server
 mcp_tool_args,search_entities,"{""type"": ""agent"", ""query"": ""support""}",search_entities(type=agent, query=...) matches the schema
 cli_flag,reporting query,--metric,orq reporting query accepts --metric
+doc_url,https://docs.orq.ai/reference/experiments/list-experiments,,Experiments API list-experiments page reachable
+doc_url,https://docs.orq.ai/reference/experiments/delete-an-experiment,,Experiments API delete-an-experiment page reachable
+doc_url,https://docs.orq.ai/reference/experiments/list-runs,,Experiments API list-runs page reachable
+doc_url,https://docs.orq.ai/reference/experiments/cancel-a-run,,Experiments API cancel-a-run page reachable
+doc_url,https://docs.orq.ai/reference/experiments/export-a-run,,Experiments API export-a-run page reachable
+doc_url,https://docs.orq.ai/reference/experiments/list-task-columns,,Experiments API list-task-columns page reachable
+doc_url,https://docs.orq.ai/reference/experiments/update-a-task-column,,Experiments API update-a-task-column page reachable
+doc_url,https://docs.orq.ai/reference/experiments/create-an-experiment,,Experiments API create-an-experiment page reachable
+doc_url,https://docs.orq.ai/reference/experiments/execute-a-run,,Experiments API execute-a-run page reachable
+doc_url,https://docs.orq.ai/reference/experiments/query-run-cells,,Experiments API query-run-cells page reachable
+doc_url,https://docs.orq.ai/reference/experiments/get-run-metrics,,Experiments API get-run-metrics page reachable
+cli_subcommand,experiments,,orq experiments exists
+cli_subcommand,experiments create,,orq experiments create exists
+cli_subcommand,experiments create-task,,orq experiments create-task exists
+cli_subcommand,experiments create-eval,,orq experiments create-eval exists
+cli_subcommand,experiments execute-run,,orq experiments execute-run exists
+cli_subcommand,experiments get-run,,orq experiments get-run exists
+cli_subcommand,experiments get-run-metrics,,orq experiments get-run-metrics exists
+cli_subcommand,experiments query-run,,orq experiments query-run exists
+cli_subcommand,experiments export-run,,orq experiments export-run exists
+cli_subcommand,experiments create-run,,orq experiments create-run exists
+cli_subcommand,experiments list-tasks,,orq experiments list-tasks exists
+cli_subcommand,experiments update-task,,orq experiments update-task exists
+cli_subcommand,experiments cancel-run,,orq experiments cancel-run exists
+cli_subcommand,experiments list-runs,,orq experiments list-runs exists
+cli_subcommand,experiments delete,,orq experiments delete exists
+cli_flag,experiments create,--dataset-id,orq experiments create accepts --dataset-id
+cli_flag,experiments create-task,--agent,orq experiments create-task accepts --agent
+cli_flag,experiments create-task,--prompt,orq experiments create-task accepts --prompt
+cli_flag,experiments create-eval,--evaluator-id,orq experiments create-eval accepts --evaluator-id
+cli_flag,experiments execute-run,--scope,orq experiments execute-run accepts --scope
+cli_flag,experiments execute-run,--constraints,orq experiments execute-run accepts --constraints
+cli_flag,experiments get-run-metrics,--baseline-run-id,orq experiments get-run-metrics accepts --baseline-run-id
+cli_flag,experiments query-run,--body-columns,orq experiments query-run accepts --body-columns
+cli_flag,experiments query-run,--starting-after,orq experiments query-run accepts --starting-after
+cli_flag,experiments export-run,--format,orq experiments export-run accepts --format
+cli_flag,experiments create-run,--key,orq experiments create-run accepts --key
+cli_flag,experiments delete,--force,orq experiments delete accepts --force

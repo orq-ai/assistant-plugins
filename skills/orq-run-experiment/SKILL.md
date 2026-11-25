@@ -3,15 +3,16 @@ name: orq-run-experiment
 description: >
   Create and run orq.ai experiments — compare configurations against datasets
   using evaluators, analyze results, and generate prioritized action plans.
-  Use when evaluating LLM agents, deployments, conversations, or RAG pipelines
-  end-to-end. Do NOT use without a dataset and evaluators. Do NOT use for
-  cross-framework comparisons with external agents (use orq-compare-agents).
-allowed-tools: Read, Write, Edit, Grep, Glob, Task, AskUserQuestion, mcp__orq-workspace__list_experiment_runs, mcp__orq-workspace__get_experiment_run, mcp__orq-workspace__search_entities, mcp__orq-workspace__list_datapoints, mcp__orq-workspace__search_docs
+  Use when evaluating an LLM agent, deployment, conversation, or RAG pipeline
+  end-to-end, or comparing prompt and model configurations. Do NOT use without
+  a dataset and evaluators. Do NOT use to compare agents head-to-head, even
+  when every agent is an orq.ai agent (use orq-compare-agents).
+allowed-tools: Read, Write, Edit, Grep, Glob, Bash(orq experiments list:*), Bash(orq experiments get:*), Bash(orq experiments get-run:*), Bash(orq experiments get-run-metrics:*), Bash(orq experiments list-runs:*), Bash(orq experiments list-tasks:*), Bash(orq experiments list-evals:*), Bash(orq experiments query-run:*), Bash(orq experiments export-run:*), Task, AskUserQuestion, mcp__orq-workspace__list_experiment_runs, mcp__orq-workspace__get_experiment_run, mcp__orq-workspace__search_entities, mcp__orq-workspace__list_datapoints, mcp__orq-workspace__search_docs
 ---
 
 # Run Experiment
 
-> `allowed-tools` here is a curated read/search allowlist so lookups run without permission prompts; `create_*`/`update_*`/`delete_*`/`invoke_*` and shell commands are intentionally not pre-approved and still prompt. The `delete_*` tools are disabled entirely while this skill is active.
+> `allowed-tools` here is a curated read/search allowlist so lookups run without permission prompts; `create_*`/`update_*`/`delete_*`/`invoke_*` and shell commands are intentionally not pre-approved and still prompt, except the read-only `orq experiments` commands (`list`, `get*`, `list-*`, `query-run`, `export-run`). The `delete_*` tools are disabled entirely while this skill is active.
 
 You are an **orq.ai evaluation engineer**. Your job is to design, execute, and analyze experiments that measure LLM pipeline quality — then turn results into prioritized, actionable improvements.
 
@@ -179,16 +180,15 @@ Consult these docs as needed:
 
 ### Phase 3: Measure — Run the Experiment
 
-8. **Create and run the experiment** on orq.ai using `create_experiment` MCP tool:
-   - Link the dataset and evaluator(s)
-   - Select the target model/deployment
-   - Configure system prompt (if testing prompt variations)
-   - Run and wait for completion
+8. **Create and run the experiment.** Use the Experiments API by default, through `orq experiments` as in [experiments-api.md](../orq-shared/resources/experiments-api.md): create the experiment on the dataset, add task columns (`prompt` or `agent`), add evaluator columns by ID, `execute` with `EXECUTE_SCOPE_FULL`, and poll the run until `RUN_STATUS_COMPLETED`, `RUN_STATUS_FAILED` or `RUN_STATUS_CANCELED`. It is repeatable from a script or CI, takes an orq.ai agent as the task, runs several prompt configurations side by side in one grid, and compares a new run against this one.
+   - For a quick one-off from chat, the `create_experiment` MCP tool is fine: link the dataset and evaluator(s), pick prompt models or agent keys, and queue it with `auto_run`. It cannot add columns to an existing run, re-run only failed cells, compare against a baseline run or page through cells, so switch to the API for any of those.
+   - On the API, confirm `cell_status_counts.failed` is 0 before reading scores, and retry failed cells with `EXECUTE_SCOPE_PARTIAL`. On MCP, check the run for errored datapoints in `get_experiment_run` and rerun the experiment.
 
-9. **Collect results** using `get_experiment_run` and `list_experiment_runs` MCP tools:
-   - Retrieve experiment run results — use `list_experiment_runs` to find the latest run, then `get_experiment_run` for detailed per-datapoint scores
-   - Extract per-datapoint scores and overall metrics
-   - Note the run cost for budget tracking
+9. **Collect results.**
+   - API: `orq experiments get-run-metrics` for pass rates (0 to 100), averages, cost and latency per task column, `query-run` for per-row evaluator scores, and `export-run` for the task outputs (see experiments-api.md step 5).
+   - MCP: use `list_experiment_runs` to find the latest run, then `get_experiment_run` for detailed per-datapoint scores.
+   - Extract per-datapoint scores and overall metrics, and note the run cost for budget tracking.
+   - On a re-run (step 18), create a new run in the same experiment and read its metrics with `baseline_run_id` set to the previous run, so the deltas come from the API instead of hand comparison. This works for prompt columns only: agent columns get a new column ID in each run, so their `baseline` is null. Compare agent variants as two columns in one run.
 
 ### Phase 4: Act — Analyze Results, Plan Improvements, File Tickets
 
@@ -311,8 +311,8 @@ Consult these docs as needed:
     - Verify improvement tickets are resolved
     - Update dataset if new test cases were added
     - Update evaluator if criteria changed
-    - Run a new experiment with the same setup
-    - Compare results to previous run(s)
+    - On the API, create a new run in the same experiment (it copies the columns), change only the documented thing, execute it, and read metrics with `baseline_run_id` set to the previous run
+    - On MCP, run a new experiment with the same setup and compare results to the previous run(s) by hand
     - File new tickets if regressions or new issues appear
 
 19. **Track progress over time:**
@@ -386,5 +386,5 @@ Is the average score above your threshold?
 
 ## Documentation & Resolution
 
-**Lookup order: [`doc-resolution.md`](../orq-shared/resources/doc-resolution.md).** Live queries first — for this skill that means `mcp__orq-workspace__create_experiment`, `get_experiment_run`, `list_experiment_runs`.
+**Lookup order: [`doc-resolution.md`](../orq-shared/resources/doc-resolution.md).** Live queries first — for this skill that means `mcp__orq-workspace__create_experiment`, `get_experiment_run`, `list_experiment_runs`, or the Experiments API (`orq experiments`, see [experiments-api.md](../orq-shared/resources/experiments-api.md)).
 

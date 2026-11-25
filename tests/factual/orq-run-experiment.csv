@@ -38,3 +38,11 @@ doc_url,https://docs.orq.ai/docs/knowledge/overview,,overview page reachable
 doc_url,https://docs.orq.ai/docs/knowledge/using-in-prompt,,using-in-prompt page reachable
 doc_url,https://docs.orq.ai/docs/knowledge/api,,api page reachable
 doc_url,https://docs.orq.ai/docs/experiments/api,,api page reachable
+doc_url,https://docs.orq.ai/reference/experiments/create-an-experiment,,Experiments API create page reachable
+doc_url,https://docs.orq.ai/reference/experiments/add-a-task-column,,Experiments API task column page reachable
+doc_url,https://docs.orq.ai/reference/experiments/add-an-eval-column,,Experiments API eval column page reachable
+doc_url,https://docs.orq.ai/reference/experiments/execute-a-run,,Experiments API execute page reachable
+doc_url,https://docs.orq.ai/reference/experiments/get-run-metrics,,Experiments API metrics page reachable
+doc_url,https://docs.orq.ai/reference/experiments/query-run-cells,,Experiments API query page reachable
+doc_url,https://docs.orq.ai/reference/experiments/create-a-run,,Experiments API create run page reachable
+cli_subcommand,experiments,,orq experiments exists

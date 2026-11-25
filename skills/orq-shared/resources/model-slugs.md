@@ -25,3 +25,4 @@ When turning a slug *into* something to call, prefer `refId` and fall back to `m
 | `orq-evaluator-alignment` | `lib/orq_client.py` → `_routable_slug()` | slug to call (refId first) |
 | `orq-recommend-evaluators` | `resources/create-and-attach.md`, judge model | slug to call (refId first) |
 | `orq-cli` | `resources/command-map.md`, `models list` row | projection on `refId` |
+| `orq-run-experiment`, `orq-compare-agents`, `orq-build-benchmark` | [`experiments-api.md`](experiments-api.md), prompt task `model` | slug to call (refId first) |

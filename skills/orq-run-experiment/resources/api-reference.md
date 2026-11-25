@@ -6,7 +6,8 @@ MCP tools and HTTP API endpoints used by the orq-run-experiment skill.
 
 ## Contents
 - MCP tools
-- HTTP API fallback (experiments, evaluators, agents, tools, memory, knowledge)
+- Experiments API (v3): create, configure, run and read experiments over HTTP
+- HTTP API fallback (evaluators, agents, tools, memory, knowledge)
 
 ## MCP Tools
 
@@ -28,6 +29,10 @@ Use the orq MCP server (`https://my.orq.ai/v2/mcp`) as the primary interface. Fo
 | `list_models` | List available models (including embedding models) |
 | `get_analytics_overview` | Quick health check — error rate, request volume before experiments |
 | `query_analytics` | Drill-down analytics — correlate experiment results with production metrics |
+
+## Experiments API (v3)
+
+Create, run, re-run and compare experiments with `orq experiments`: see [experiments-api.md](../../orq-shared/resources/experiments-api.md).
 
 ## HTTP API Fallback
 

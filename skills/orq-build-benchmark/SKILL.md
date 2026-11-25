@@ -1,6 +1,6 @@
 ---
 name: orq-build-benchmark
-description: Turn a team's own work into a custom orq benchmark. Interview the user, stage real task instances, then build an orq dataset, orq evaluators, and run candidate models with evaluatorq, graded against known answers and reported to orq Experiments. Use when the user says "make an eval", "build a benchmark from my codebase / docs / tickets / this chat", "which model is best at [our task]", or "turn our work into a benchmark".
+description: Turn a team's own work into a custom orq benchmark. Interview the user, stage real task instances, then build an orq dataset, orq evaluators, and run candidate models graded against known answers. Use when the user says "make an eval", "build a benchmark from my codebase / docs / tickets / this chat", "which model is best at [our task]", or "turn our work into a benchmark".
 ---
 
 # orq build benchmark
@@ -8,9 +8,9 @@ description: Turn a team's own work into a custom orq benchmark. Interview the u
 Use when a user wants to know which model or agent is best at *their* task,
 measured on *their* work. You interview them, stage real task instances with
 established answers, and then build the benchmark on orq directly: an orq
-dataset, orq evaluators, and a run with evaluatorq that reports to orq
-Experiments. There is no third-party upload; everything lands in the user's
-own orq workspace.
+dataset, orq evaluators, and one native orq experiment with a column per
+candidate model or orq.ai agent (evaluatorq for any other candidate). There is
+no third-party upload; everything lands in the user's own orq workspace.
 
 ## At a glance
 
@@ -33,8 +33,8 @@ The skill turns work the team already did into a model benchmark that lives on o
                                rubric / exact-match)
                                     │
                                     ▼
-                               evaluatorq run
-                               1 job per model
+                               orq experiment
+                               1 column per model
                                     │
                                     ▼
                                orq Experiments
@@ -62,7 +62,7 @@ flowchart TD
     F --> G[6. Propose plan<br/>get user approval]
     G --> H[Create orq dataset<br/>1 datapoint per seed]
     H --> I[Create or reuse evaluators<br/>marketplace first, then rubric / exact-match]
-    I --> K[evaluatorq: 1 job per model<br/>reports to orq Experiments]
+    I --> K[orq experiment: 1 task column per model<br/>evaluatorq if a candidate is not a prompt]
     K --> M[Read results, pick winner]
 ```
 
@@ -243,9 +243,10 @@ One datapoint per task seed. Use the orq MCP tools (`create_dataset` then
 
 - `inputs`: the task input. For `qa`, the question text. For `document_input`,
   the question plus the attached file content (or a reference the job can load).
-  For `agentic`, the instruction plus any input files. The step 4 template
-  assumes this example dataset keeps the prompt in an input column named `text` and so read
-  `dp.inputs['text']`; if you name the column differently, change that key to match.
+  For `agentic`, the instruction plus any input files. Step 4 assumes the
+  prompt sits in an input column named `text` and templates it as `{{text}}` (the
+  evaluatorq path reads `dp.inputs['text']`); if you name the column differently,
+  change both to match.
 - `expected_output`: the established answer from the seed. For `agentic`
   file-producing tasks, put the acceptance criteria or a pointer to the accepted
   artifact here; the rubric judge grades the produced file against it.
@@ -253,8 +254,8 @@ One datapoint per task seed. Use the orq MCP tools (`create_dataset` then
   these in `inputs` as extra columns next to `text`. A datapoint stores only
   `inputs`, `expected_output` and `messages`; a `metadata` field is accepted with
   a 200 and then dropped, so a category kept there is gone when you read the
-  results. The job only reads `dp.inputs['text']`, so the extra columns do not
-  reach the candidate. The rubric judge does read them: `llm_jury` renders the
+  results. The candidate columns only template `{{text}}`, so the extra columns
+  do not reach the candidate. On the evaluatorq path, `llm_jury` renders the
   whole `inputs` object as JSON for the judge, so it sees `evidence` and
   `category` next to the prompt. Leave out of `inputs` anything the judge must
   not see.
@@ -279,149 +280,53 @@ Check the marketplace first, then fill the gaps.
 - Exact-match for fixed label sets: the built-in `exact_match` evaluator (orq), or
   evaluatorq's `exact_match_evaluator()`.
 
-### 4. Run the candidates with evaluatorq
+### 4. Run the candidates as an orq experiment
 
-The template below needs a recent evaluatorq build that exports `evaluatorq`, `job`,
-`llm_jury`, `exact_match_evaluator`, and `DatasetIdInput`. Install the current package
-from `orq-ai/evaluatorq` (`uv add "evaluatorq @ git+https://github.com/orq-ai/evaluatorq"`,
-or a published release once available). The older evaluatorq bundled in `orqkit` does
-not export all of these, so a template run fails at import against it. Confirm with
-`python -c "import evaluatorq; evaluatorq.llm_jury"` before running.
+Use the Experiments API through `orq experiments`, following [experiments-api.md](../orq-shared/resources/experiments-api.md). Steps 1 to 3 do not change.
 
-One `evaluatorq()` call, one job per candidate
-model or agent, evaluated on the dataset. Results upload to orq Experiments when
-`ORQ_API_KEY` is set.
+- Create one experiment on the step 2 dataset, and in its first run add one `prompt` task column per candidate model. Every column gets the same messages, for example a user message of `{{text}}` (the input column from step 2), so the model is the only difference. Resolve each candidate's `refId` from `orq models list` per [model-slugs.md](../orq-shared/resources/model-slugs.md) and use it as `prompt_config.model` and as the column's `display_name`; do not invent model ids.
+- Add the step 3 evaluators once, by ID. Each one scores every candidate column. The rubric judge must be an orq evaluator here (`create_llm_eval`), numeric, and its model must not be one of the candidates: a model scoring its own answer self-prefers and inflates its grade.
+- Execute with `EXECUTE_SCOPE_FULL`, poll until terminal, and check `cell_status_counts.failed`. A failed candidate cell carries the reason in `error_message` (a deprecated model fails every cell in its column).
+- Keep every candidate in this one run. Adding a candidate later means a new column and `EXECUTE_SCOPE_PARTIAL`, which runs only the new and failed cells.
 
-Start the script with these helpers. The template prints from `rubric_scores`
-inside `main()`, and step 5 reads the results with all three: `rubric_scores` gives
-each candidate's scored, errored and skipped counts, `paired_gap` compares two
-candidates on the datapoints both scored, and `tied` applies the tie rule:
+An orq.ai agent candidate fits the same run as an `agent` task column, as in `orq-compare-agents` path A. Use evaluatorq instead when a candidate is neither a prompt nor an orq.ai agent: an external agent, a task that needs custom code to load files or produce an `agentic` artifact, or a judge only `llm_jury` can express. The template for that path is in [resources/evaluatorq-path.md](resources/evaluatorq-path.md).
+
+### 5. Read the results
+
+A run can complete while every rubric cell failed, so read counts before scores.
+
+Per candidate, `orq experiments get-run-metrics` gives the rubric average at `{task_column_id}_{evaluator_id}` (`.number.avg`, with `.number.count` for how many scored), and cost and latency at `{task_column_id}_orq_cost` and `_orq_latency`. Do not rank on those averages: when counts differ they are not comparable.
+
+Compare two candidates on the rows both scored. Fetch per-row rubric scores for each candidate column with the evaluator query in experiments-api.md step 5 (page until `has_more` is false), save them as `{row_id: score}`, and use these helpers. They take those flat dicts; the evaluatorq path has its own `paired_gap` for evaluatorq tables.
 
 ```python
 import math
 import statistics
 
-
-def rubric_scores(results, evaluator='task-rubric'):
-    """Per candidate: scores by datapoint, plus how many errored or were skipped."""
-    table = {}
-    for index, point in enumerate(results):
-        for job in point.job_results or []:
-            row = table.setdefault(job.job_name, {'scored': {}, 'errored': 0, 'skipped': 0})
-            score = next((s for s in job.evaluator_scores or [] if s.evaluator_name == evaluator), None)
-            if job.error or (score is not None and score.error):
-                row['errored'] += 1
-            elif score is not None:
-                row['scored'][index] = float(score.score.value)
-    for row in table.values():
-        row['skipped'] = len(results) - len(row['scored']) - row['errored']
-    return table
-
-
 MIN_SHARED = 5  # below this a standard error says little, so no gap is reported
 
 
-def paired_gap(a, b):
-    """Mean of a minus b on shared datapoints, its standard error, and how many were
-    shared. None under MIN_SHARED."""
-    diffs = [a['scored'][i] - b['scored'][i] for i in a['scored'] if i in b['scored']]
+def paired_row_gap(a, b):
+    """a, b: {row_id: score} for two candidates, failed or missing rows left out.
+    Mean of a minus b on shared rows, its standard error, and the shared count.
+    None under MIN_SHARED."""
+    diffs = [a[r] - b[r] for r in a if r in b]
     if len(diffs) < MIN_SHARED:
         return None
     return statistics.mean(diffs), statistics.stdev(diffs) / math.sqrt(len(diffs)), len(diffs)
 
 
 def tied(gap):
-    """True when paired_gap cannot separate two candidates, in either direction."""
+    """True when paired_row_gap cannot separate two candidates, in either direction."""
     return gap is None or abs(gap[0]) <= 2 * gap[1]
 ```
 
-Then the template, grounded in the current evaluatorq API:
+Open the experiment in orq (link shape in [orq-trace-format](../orq-trace-format/SKILL.md)) and compare candidates per category, not just overall. Next to each score, report that candidate's scored and failed counts.
 
-```python
-import asyncio
-from evaluatorq import DatasetIdInput, evaluatorq, exact_match_evaluator, job, llm_jury
+Report the winner with its margin and where it is weak, following two rules:
 
-CANDIDATES = ['openai/gpt-5', 'anthropic/claude-opus-4-1', 'google-ai/gemini-2.5-pro']
-
-def make_job(model: str):
-    @job(model)
-    async def run(dp, _i):
-        # call_model: define this yourself. Invoke the candidate on the datapoint
-        # input via your orq client / invoke_model and return its text output; keep
-        # every candidate identical except the model id. This example dataset uses a
-        # 'text' input column for the prompt (see step 2), so dp.inputs['text'] is the prompt.
-        # For an `agentic` task, return the produced file's text: that text is the
-        # answer the judge grades.
-        return await call_model(model, dp.inputs['text'])
-    return run
-
-rubric = llm_jury(
-    name='task-rubric',
-    criteria=(
-        'Score the answer against these criteria drawn from the team\'s own review notes:\n'
-        '- <criterion 1 from intake>\n- <criterion 2 from intake>\n...'
-    ),
-    # Numeric on purpose. The binary pass or fail rule in `orq-run-experiment` is for
-    # finding failure modes in one system. A benchmark ranks candidates against each
-    # other, and pass or fail ties most of them on a small set.
-    verdict_kind='numeric',
-    # Required: a numeric classify judge errors without these. The score runs 0 to 1, and
-    # these are its anchors, lowest first. Write them from the intake's good vs bad notes.
-    levels=[
-        '<what a rejected answer looks like>',
-        '<what a usable answer that needs edits looks like>',
-        '<what an answer the team would ship as is looks like>',
-    ],
-    # The judge must NOT be one of CANDIDATES. A model scoring its own answer self-prefers
-    # and inflates its grade, and nothing downstream guards against it. Pick a strong model
-    # that is not under test.
-    model='<judge_model_not_in_CANDIDATES>',
-)
-
-async def main():
-    results = await evaluatorq(
-        'our-task-benchmark',
-        data=DatasetIdInput(dataset_id='<orq_dataset_id>'),
-        jobs=[make_job(m) for m in CANDIDATES],
-        evaluators=[rubric],            # add exact_match_evaluator() for fixed-label tasks
-        description='Which model is best at <our task>',
-    )
-    # Step 5 reads these. Print them before reporting anything.
-    print({model: {**row, 'scored': len(row['scored'])} for model, row in rubric_scores(results).items()})
-
-asyncio.run(main())
-```
-
-Every job runs against every datapoint, so each candidate is one column. Verify
-the candidate model ids against `list_models` (orq MCP) before running; do not
-invent model ids.
-
-### 5. Read the results
-
-A run can report success while every rubric score errored, so read the results that
-`evaluatorq()` returns with the helpers from step 4.
-
-
-If a whole evaluator errored, fix it and rerun.
-
-Open the run in orq Experiments (the call prints the experiment URL) and compare
-candidates per category, not just overall. Next to each score, report that candidate's
-scored, errored and skipped counts from `rubric_scores`.
-
-Report the winner with its margin and where it is weak, with two exceptions:
-
-- Compare two candidates with `paired_gap`, never by their overall means. When the
-  counts differ, a mean over fewer datapoints is not comparable, but the paired gap
-  still is: it only uses the datapoints both candidates scored. One error in fifty
-  does not block a winner.
-- If `tied(paired_gap(a, b))` is true, report those candidates as tied: the absolute
-  gap is at most twice its standard error, or fewer than `MIN_SHARED` datapoints were
-  shared. Report the shared count `paired_gap` returns next to the gap.
-
-## Later: native orq experiments
-
-Once the orq experiments API is finished (ADR-18), move step 4 to a native
-experiment on the same dataset and evaluators. Nothing in steps 1 to 3 changes.
+- Compare two candidates with `paired_row_gap`, never by their overall means. One failed cell in fifty does not block a winner.
+- If `tied(paired_row_gap(a, b))` is true, report those candidates as tied: the absolute gap is at most twice its standard error, or fewer than `MIN_SHARED` rows were shared. Report the shared count next to the gap.
 
 ## Hard rules recap
 

@@ -148,3 +148,4 @@ cli_flag,traces conversation,-x,orq traces conversation accepts -x
 cli_flag,traces conversation,--exclude,orq traces conversation accepts --exclude
 cli_subcommand,traces conv,,orq traces conv exists
 cli_flag,traces conversation,--tool-max-chars,orq traces conversation accepts --tool-max-chars
+cli_subcommand,experiments,,orq experiments exists

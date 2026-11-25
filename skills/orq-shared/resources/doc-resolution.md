@@ -20,3 +20,5 @@ that has drifted is worth reporting, not just working around.
 A skill that ships its own verified reference — `orq-analyze-traces` and
 `orq-improve-agent` both use [`trace-queries.md`](trace-queries.md) — inserts it
 directly below live queries, because it records probe results the docs do not.
+`orq-run-experiment`, `orq-compare-agents` and `orq-build-benchmark` do the same
+with [`experiments-api.md`](experiments-api.md).

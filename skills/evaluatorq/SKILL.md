@@ -8,7 +8,7 @@ description: >
   `orq-red-team` for `eq redteam` adversarial testing and `orq-simulate-agent` for
   `eq sim` multi-turn user simulation. Do NOT use when comparing multiple
   agents head-to-head (use orq-compare-agents) or when running
-  orq.ai-native experiments only (use orq-run-experiment).
+  orq.ai-native experiments on prompts or a single orq.ai agent with platform evaluators (use orq-run-experiment, which drives the Experiments API).
 allowed-tools: Bash(eq redteam *), Bash(eq sim *), Bash(eq dashboard *), Bash(pip install evaluatorq*), Bash(pip install 'evaluatorq*), Bash(pip install orq-ai-sdk*), Bash(python evaluate.py*), Bash(npx tsx evaluate.ts*), Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion, mcp__orq-workspace__search_entities
 ---
 
@@ -39,8 +39,8 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 - `orq-generate-synthetic-dataset` — create a dataset when none exists
 - `orq-build-evaluator` — design an LLM-as-a-judge evaluator prompt, when the judge should be a reusable platform entity rather than an `llm_jury()` in the script
 - `orq-evaluator-alignment` — validate a judge against human labels before trusting its verdicts
-- `orq-compare-agents` — run the same evaluatorq evaluation across multiple agents
-- `orq-run-experiment` — run orq.ai-native experiments without writing code
+- `orq-compare-agents` — compare several agents head-to-head, orq.ai agents through the Experiments API and external agents through evaluatorq
+- `orq-run-experiment` — run orq.ai-native experiments on prompts or one orq.ai agent through the Experiments API, no custom scorer code
 - `orq-analyze-traces` — diagnose agent failures from production traces
 - `orq-red-team` — full `eq redteam` walkthrough: modes, categories, output, dashboard
 - `orq-simulate-agent` — full `eq sim` walkthrough: personas, scenarios, goal scoring
@@ -56,7 +56,7 @@ You are an **evaluatorq specialist**. You help users write evaluation scripts us
 ## When NOT to use
 
 - **Comparing multiple agents?** → `orq-compare-agents`
-- **orq.ai-native experiments only, no custom code?** → `orq-run-experiment`
+- **Prompts or a single orq.ai agent scored by platform evaluators, no custom scorer?** → `orq-run-experiment` (Experiments API via `orq experiments`)
 - **No dataset yet?** → `orq-generate-synthetic-dataset` first
 - **Need to diagnose what's failing in production?** → `orq-analyze-traces`
 - **Designing the judge criteria itself, or need it as a platform evaluator?** → `orq-build-evaluator`
