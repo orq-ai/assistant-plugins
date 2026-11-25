@@ -372,8 +372,7 @@ if (!("output" in response) || response.status !== "completed") {
   throw new Error("Expected a completed non-streaming response");
 }
 const text = (response.output ?? [])
-  .filter(item => item.type === "message")
-  .flatMap(item => item.content ?? [])
+  .flatMap(item => (item.type === "message" && "content" in item ? item.content ?? [] : []))
   .filter(part => part.type === "output_text")
   .map(part => part.text).join("");
 if (!text) throw new Error(`Agent response ${response.id} has no output_text block`);

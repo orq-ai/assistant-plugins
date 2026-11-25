@@ -29,17 +29,17 @@
     "orq-build-evaluator": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "41f091a0a68a6ed5b07af2718206d277393955187eac6f79cbdb6c3f7af84acb"
+      "computedHash": "ef3a6e43e5a75ccf288ab920bb489f4efd39812f3266774814f1a40ab1a6f95c"
     },
     "orq-cli": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "07e50e161964321c588e1047f1564aebe06770597c7b2e6f2bd707536da8c4f8"
+      "computedHash": "a60a0b76396396e332af4614bf1866a415db8fef889741bcd1833d8defd96204"
     },
     "orq-compare-agents": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "34b1df153792acfb68ad05bcd67edd3d99d9c2f4858dc6f8095e2ca7907a5d26"
+      "computedHash": "f9c429e865a849b3cc8e7fc7d56fa5fd5ab03d92e672582c4434d44b13df1229"
     },
     "orq-create-skill": {
       "source": "orq-ai/assistant-plugins",
@@ -69,7 +69,7 @@
     "orq-invoke-deployment": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "facf6effdc2e242cd7852284ba6d0e897a103b916eac334121401fe5bb24a6b5"
+      "computedHash": "110a2eb2e48b1f1c3bc8f2d3577ce59a56f72a3ccc9f4cb4002b36caf6cc80f0"
     },
     "orq-link": {
       "source": "orq-ai/assistant-plugins",
