@@ -585,6 +585,36 @@ def test_render_reads_only_the_summary(tmp_path):
     assert "thread-kept-1" in page and "thread-dropped-2" not in page and "(hidden)" in c.render(only, n, redact=True)
 
 
+def test_report_json_key_order_is_pinned(tmp_path):
+    # agents and humans read report.json top down: summary first, raw samples late. Reordering is a contract change.
+    run(tmp_path)
+    rep = json.loads((tmp_path / "report.json").read_text())
+    assert list(rep) == ["schema_version", "generated_at", "workspace", "status", "stop", "summary", "params",
+                         "checks", "window", "spend", "routing_decision_cost", "samples", "scenarios", "routing",
+                         "caching", "harness"]
+    assert list(rep["summary"]) == ["window", "caveats", "spend_total", "spend_per_month", "scope", "sampled_calls",
+                                    "recommended", "levers_overlap", "router", "switch", "recommendations", "scopes",
+                                    "not_analysed", "sampled_moves", "caching"]
+
+
+def test_render_redact_hides_thread_ids_in_caching_rows(tmp_path):
+    _, rep = run(tmp_path)
+    rep["caching"] |= {"savings_found": 9.0, "rows": [
+        {"thread": "thread-secret-1", "agent": "support", "model": SOL, "turns": 4, "candidate": True,
+         "savings": 9.0, "action": "keep the prompt prefix stable"}]}
+    rep["summary"] = c.summary(rep)
+    (tmp_path / "report.json").write_text(json.dumps(rep))
+    narrative = tmp_path / "narrative.md"
+    narrative.write_text("## summary\n\nx\n\n## routing\n\nx\n\n## caching\n\nx\n\n## caveats\n\nx\n")
+    args = ["render", "--out", str(tmp_path), "--narrative", str(narrative)]
+    assert c.main(args) == 0
+    plain = (tmp_path / "report.html").read_text()
+    assert c.main([*args, "--redact"]) == 0
+    redacted = (tmp_path / "report.html").read_text()
+    table = redacted.split("<summary>Caching candidates")[1].split("</details>")[0]
+    assert "thread-secret-1" in plain and "thread-secret-1" not in redacted and "(hidden)" in table
+
+
 def test_caching_card_shows_current_caching_with_a_check(tmp_path):
     _, rep = run(tmp_path)
     rep["caching"] = {"threads_scanned": 200, "savings_found": 0.01, "cached_share": 0.786, "saved_by_cache": 46.67,
