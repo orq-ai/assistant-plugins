@@ -496,7 +496,7 @@ class Budget(FakeOrq):
 
     def __call__(self, *args, body=None, cache=True):
         a = list(args)
-        if a[:2] == ["telemetry", "query"] and "project" in a and "--mode" in a:
+        if a[:2] == ["telemetry", "query"] and "project" in a and ("--grain" in a or "--interval-seconds" in a):
             grain = a[a.index("--grain") + 1] if "--grain" in a else a[a.index("--interval-seconds") + 1]
             self.grains.append(grain)
             rows = [{"group": {"project": "p1"}, "timestamp": f"2026-11-{d:02d}T00:00:00Z",
@@ -506,8 +506,8 @@ class Budget(FakeOrq):
             if grain == "21600":
                 raise c.OrqError(a, 1, "HTTP 400 time-series result exceeds the safety budget")
             return {"data": rows}
-        if a[:2] == ["traces", "search"]:
-            self.windows = getattr(self, "windows", []) + [(a[a.index("--from") + 1], a[a.index("--to") + 1])]
+        if a[:2] == ["traces", "search"] and '"model"' in a[a.index("--filters") + 1]:  # draws, not the thread scan
+            self.windows =getattr(self, "windows", []) + [(a[a.index("--from") + 1], a[a.index("--to") + 1])]
         return super().__call__(*args, body=body, cache=cache)
 
 
@@ -631,3 +631,28 @@ def test_a_trace_without_an_id_is_skipped_with_a_caveat_not_read(tmp_path):
     assert None not in an.orq.span_reads and rep["samples"]
     checks = [x["check"] for x in rep["checks"]["caveats"]]
     assert "trace without id" in checks and "read failed" not in checks
+
+
+@pytest.mark.parametrize("err", [c.OrqError(["traces"], 1, "HTTP 500"), c.subprocess.TimeoutExpired("orq", 180),
+                                 json.JSONDecodeError("bad", "x", 0)])
+def test_a_cli_failure_in_a_read_is_a_caveat(tmp_path, err):
+    class Flaky(FakeOrq):
+        def __call__(self, *args, body=None, cache=True):
+            if list(args[:2]) == ["telemetry", "query"] and "thread" in args:
+                raise err
+            return super().__call__(*args, body=body, cache=cache)
+
+    an = c.Analyzer(ns(tmp_path))
+    an.orq = Flaky()
+    rep = an.run()
+    assert rep["status"] == "ok", rep["stop"]
+    assert rep["caching"] == {"error": "caching scan failed"}
+    assert any(x["check"] == "read failed" for x in rep["checks"]["caveats"])
+
+
+def test_a_code_bug_in_a_read_stops_the_run_instead_of_looking_like_flaky_data(tmp_path, monkeypatch):
+    monkeypatch.setattr(c.Analyzer, "harness", lambda self: {}["missing"])
+    an, rep = run(tmp_path)
+    assert rep["status"] == "stopped" and rep["stop"]["check"] == "analyze failed"
+    assert "KeyError" in rep["stop"]["numbers"]["detail"]
+    assert not any(x["check"] == "read failed" for x in rep["checks"]["caveats"])

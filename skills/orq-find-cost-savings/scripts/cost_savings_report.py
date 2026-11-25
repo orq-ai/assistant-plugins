@@ -1354,9 +1354,7 @@ class Analyzer:
     def _safe(self, fn: Callable[[], T]) -> T | None:
         try:
             return fn()
-        except Stop:
-            raise
-        except Exception as e:  # noqa: BLE001 - one failed read must not end the run
+        except (OrqError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:  # CLI failures only; bugs raise
             self.caveat("read failed", str(e)[:300])
             return None
 
