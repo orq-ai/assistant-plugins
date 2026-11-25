@@ -28,7 +28,7 @@ Exception: removing shipped content that was never the canonical surface (e.g. s
 
 ### Releases
 
-Merging to `main` runs `.github/workflows/release.yml`: it creates GitHub release `v<version>` from root `plugin.json`, with the matching `CHANGELOG.md` section as notes. No version bump means no release. The CHANGELOG entry (step 2 above) is therefore required, and `skills-ci` fails a PR without one. `orq-trace` (marketplace.json) is not released separately.
+Merging to `main` runs `.github/workflows/release.yml`: it creates GitHub release `v<version>` from root `plugin.json`, with the matching `CHANGELOG.md` section as notes. No version bump means no release. The CHANGELOG entry (step 2 above) is therefore required, and `skills-ci` fails a PR without one.
 
 **When to bump:** in the same PR as the change, whenever it alters shipped content (`skills/`, manifests, `mcp.json`, commands). Merging that PR is the release, so bump once per PR, never in a follow-up commit on `main`. Skip the bump for changes that ship nothing (CI, `tests/`, maintainer docs like this file); they merge without a release.
 
@@ -99,7 +99,3 @@ node tests/scripts/validate-skills.mjs --fix
 ```
 
 > `--fix` hashes **staged** content. An unstaged edit is not reflected; the validator warns when it finds one.
-
-## Sub-plugin versioning
-
-`plugins/trace-hooks` has its own independent version, in the `orq-trace` entry of `.claude-plugin/marketplace.json`. It deliberately has no `plugins/trace-hooks/.claude-plugin/plugin.json`: that entry is `strict: false` and carries the manifest inline, because Claude Desktop's marketplace sync skips the `./`-sourced plugins (`orq-skills`, `orq-mcp`) when it finds a nested `.claude-plugin/plugin.json` under their root. Do not re-add the nested file. Bump it whenever files under `plugins/trace-hooks/` are touched in a commit — same semver rules apply. Do **not** bump the root 4-manifest version for trace-hooks-only changes.
