@@ -373,8 +373,8 @@ not traces.
 references a Human Review definition by `key`. The UI marks a definition
 **Legacy** ("workspace-level and will be deprecated soon") when it has no
 `project_id`, so create definitions inside a project. No CLI group or public
-doc covers definitions yet (RES-1945); use the private `/v2/human-evals` route
-through `orq request`, which reuses the CLI's auth:
+doc covers definitions yet; use the private `/v2/human-evals` route through `orq request`, which reuses the CLI's
+auth:
 
 ```sh
 orq request GET /v2/human-evals --workspace <ws> -o json < /dev/null   # project_id null = Legacy
@@ -384,19 +384,21 @@ orq request PATCH /v2/human-evals/<id> --workspace <ws> --from-file def.json --f
 
 - `def.json` carries `project_id`. `POST` needs `id` (a 26-char ULID), `type`
   (`single_select`, `multi_select`, `range`, `boolean`, `text`, `correction`),
-  `display_name` and `description`; `key` defaults to `orq_<10 chars>`.
+  `display_name` and `description`; `key` defaults to `orq_<10 chars>`
+  *(read from the API proto and handler; `POST` was not run live)*.
 - To fix a Legacy definition, `PATCH` it with `project_id` set rather than
   recreating it: id and key stay the same, so span values already written stay
   linked. Send the whole definition as `GET` returns it (`id`, `key`, `type`,
   `display_name`, `description`, `options`/`config`) plus `project_id`; a body
   with only the required fields returns `400 Request body failed validation`.
 - A workspace-scoped credential may set any project; a project-scoped API key
-  only its own (403 otherwise).
-- `< /dev/null`: `orq request` waits on an open stdin and hangs in a
-  non-interactive shell.
+  only its own (403 otherwise) *(read from `assertProjectWithinReach`; the 403
+  was not triggered live)*.
+- `< /dev/null` on every call: see "Escape hatch" below for why.
 
 Verified 2026-11-24 against prod (orquesta-demos): 10 definitions moved into a
-project with `PATCH`, keys unchanged.
+project with `PATCH`, keys unchanged. `GET` re-checked 2026-11-25 on orq
+12.6.11 (API 4.17.11): all 10 carry the `project_id`.
 
 **`evals` details, probed 2026-09-24 on 10.3.1 (API 4.14.20):**
 
