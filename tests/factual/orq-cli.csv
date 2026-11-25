@@ -142,6 +142,8 @@ cli_flag,traces search,--jmespath,orq traces search accepts --jmespath
 cli_flag,traces search,--profile,orq traces search accepts --profile
 cli_flag,request,--profile,orq request accepts --profile
 cli_flag,request,--server,orq request accepts --server
+cli_flag,request,--from-file,orq request accepts --from-file
+cli_flag,request,--workspace,orq request accepts --workspace
 cli_flag,traces conversation,-x,orq traces conversation accepts -x
 cli_flag,traces conversation,--exclude,orq traces conversation accepts --exclude
 cli_subcommand,traces conv,,orq traces conv exists
