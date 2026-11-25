@@ -21,7 +21,7 @@ eq redteam run \
   --save detail \
   --artifacts-dir ./redteam-results
 
-eq redteam ui ./redteam-results/03_summary_report.json
+eq dashboard ./redteam-results/03_summary_report.json
 ```
 
 ### Generate + simulate + export
@@ -59,7 +59,7 @@ Quick reference:
 
 ```bash
 eq redteam run --target agent:<AGENT_KEY> --mode dynamic
-eq redteam ui report.json   # open Streamlit dashboard
+eq dashboard report.json    # open the dashboard (needs the [dashboard] extra)
 ```
 
 ---

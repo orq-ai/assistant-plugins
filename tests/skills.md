@@ -145,7 +145,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Ask: "Run a red team test on my agent using the evaluatorq CLI"
 - Verify: shows `eq redteam run --target agent:<KEY> --mode dynamic` (not `run adaptive` or `--framework`)
 - Verify: explains that the 5 detail files (`01_agent_context.json` … `05_summary_report.json`) come from `--save detail`
-- Verify: shows `eq redteam ui report.json` to view results (not `eq redteam report summarize`)
+- Verify: shows `eq dashboard report.json` to view results (not `eq redteam ui`, removed in evaluatorq 1.102, or `eq redteam report summarize`)
 
 ### Scenario 3: Run simulation from CLI
 
@@ -485,7 +485,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 - Ask: "Summarize the red team results from ./output/my-run/report.json"
 - Verify: reads the JSON directly and explains `resistance_rate`, `vulnerabilities_found`, `total_results`, and `categories_tested`
-- Verify: optionally invokes `eq redteam ui ./output/my-run/report.json` for interactive viewing
+- Verify: optionally invokes `eq dashboard ./output/my-run/report.json` for interactive viewing (never `eq redteam ui`)
 - Verify: notes which categories were NOT tested
 
 ### Scenario 4: Missing env var
