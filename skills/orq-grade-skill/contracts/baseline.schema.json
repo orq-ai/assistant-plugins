@@ -1,0 +1,494 @@
+{
+  "$defs": {
+    "Finding": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "enum": [
+            "file",
+            "dont_file"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "owning_surface": {
+          "minLength": 1,
+          "title": "Owning Surface",
+          "type": "string"
+        },
+        "behavioral_rule": {
+          "minLength": 1,
+          "title": "Behavioral Rule",
+          "type": "string"
+        },
+        "issue": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Issue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "decision",
+        "reason",
+        "owning_surface",
+        "behavioral_rule"
+      ],
+      "title": "Finding",
+      "type": "object"
+    },
+    "GradedSession": {
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "minLength": 1,
+          "title": "Session Id",
+          "type": "string"
+        },
+        "efficiency": {
+          "$ref": "#/$defs/Score"
+        },
+        "quality": {
+          "$ref": "#/$defs/Score"
+        },
+        "usage": {
+          "enum": [
+            "loaded",
+            "late",
+            "missed",
+            "not_applicable",
+            "unknown"
+          ],
+          "title": "Usage",
+          "type": "string"
+        },
+        "usage_reason": {
+          "minLength": 1,
+          "title": "Usage Reason",
+          "type": "string"
+        },
+        "skill_compliance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Score"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "low_score": {
+          "title": "Low Score",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "session_id",
+        "efficiency",
+        "quality",
+        "usage",
+        "usage_reason",
+        "low_score"
+      ],
+      "title": "GradedSession",
+      "type": "object"
+    },
+    "Instruction": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "start_line": {
+          "minimum": 1,
+          "title": "Start Line",
+          "type": "integer"
+        },
+        "end_line": {
+          "minimum": 1,
+          "title": "End Line",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "start_line",
+        "end_line"
+      ],
+      "title": "Instruction",
+      "type": "object"
+    },
+    "Issue": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "plain-language name a non-engineer understands",
+          "title": "Title"
+        },
+        "claim": {
+          "minLength": 1,
+          "title": "Claim",
+          "type": "string"
+        },
+        "priority": {
+          "enum": [
+            "p0",
+            "p1",
+            "p2",
+            "p3"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "cause": {
+          "enum": [
+            "skill_missing",
+            "skill_wrong",
+            "skill_ambiguous",
+            "trigger",
+            "ignored_rule"
+          ],
+          "title": "Cause",
+          "type": "string"
+        },
+        "skill_hash": {
+          "maxLength": 64,
+          "minLength": 64,
+          "title": "Skill Hash",
+          "type": "string"
+        },
+        "instruction": {
+          "$ref": "#/$defs/Instruction"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Pointer"
+          },
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "claim",
+        "priority",
+        "cause",
+        "skill_hash",
+        "instruction",
+        "evidence"
+      ],
+      "title": "Issue",
+      "type": "object"
+    },
+    "Pointer": {
+      "additionalProperties": false,
+      "description": "Graders give an ATIF step id + exact quote; the baseline adds offsets into that step's text.",
+      "properties": {
+        "session_id": {
+          "minLength": 1,
+          "title": "Session Id",
+          "type": "string"
+        },
+        "step": {
+          "minimum": 1,
+          "title": "Step",
+          "type": "integer"
+        },
+        "start": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start"
+        },
+        "end": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End"
+        },
+        "quote": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quote"
+        }
+      },
+      "required": [
+        "session_id",
+        "step"
+      ],
+      "title": "Pointer",
+      "type": "object"
+    },
+    "Score": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Score"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "score",
+        "reason"
+      ],
+      "title": "Score",
+      "type": "object"
+    },
+    "ScoreSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "mean": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Mean"
+        },
+        "scored": {
+          "minimum": 0,
+          "title": "Scored",
+          "type": "integer"
+        },
+        "unavailable": {
+          "minimum": 0,
+          "title": "Unavailable",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mean",
+        "scored",
+        "unavailable"
+      ],
+      "title": "ScoreSummary",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "skill": {
+      "title": "Skill",
+      "type": "string"
+    },
+    "skill_hash": {
+      "title": "Skill Hash",
+      "type": "string"
+    },
+    "passes": {
+      "minimum": 1,
+      "title": "Passes",
+      "type": "integer"
+    },
+    "batch_size": {
+      "minimum": 1,
+      "title": "Batch Size",
+      "type": "integer"
+    },
+    "source_hashes": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Source Hashes",
+      "type": "object"
+    },
+    "scores": {
+      "additionalProperties": {
+        "additionalProperties": {
+          "$ref": "#/$defs/ScoreSummary"
+        },
+        "type": "object"
+      },
+      "title": "Scores",
+      "type": "object"
+    },
+    "statistics": {
+      "additionalProperties": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Statistics",
+      "type": "object"
+    },
+    "session_grades": {
+      "additionalProperties": {
+        "$ref": "#/$defs/GradedSession"
+      },
+      "title": "Session Grades",
+      "type": "object"
+    },
+    "session_spread": {
+      "additionalProperties": {
+        "additionalProperties": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": "object"
+      },
+      "description": "max-min score across passes",
+      "title": "Session Spread",
+      "type": "object"
+    },
+    "findings": {
+      "items": {
+        "$ref": "#/$defs/Finding"
+      },
+      "title": "Findings",
+      "type": "array"
+    },
+    "filed_issues": {
+      "items": {
+        "$ref": "#/$defs/Issue"
+      },
+      "title": "Filed Issues",
+      "type": "array"
+    },
+    "pass_filed_ids": {
+      "description": "issue ids each pass filed, before the majority vote",
+      "items": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "title": "Pass Filed Ids",
+      "type": "array"
+    },
+    "agreement": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "description": "per target issue id, passes that filed it",
+      "title": "Agreement",
+      "type": "object"
+    },
+    "top_issue_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Top Issue Ids",
+      "type": "array"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Limitations",
+      "type": "array"
+    },
+    "weekly_average": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Weekly Average"
+    }
+  },
+  "required": [
+    "schema_version",
+    "skill",
+    "skill_hash",
+    "passes",
+    "batch_size",
+    "source_hashes",
+    "scores",
+    "statistics",
+    "session_grades",
+    "session_spread",
+    "findings",
+    "filed_issues",
+    "pass_filed_ids",
+    "agreement",
+    "top_issue_ids",
+    "limitations",
+    "weekly_average"
+  ],
+  "title": "Baseline",
+  "type": "object"
+}
