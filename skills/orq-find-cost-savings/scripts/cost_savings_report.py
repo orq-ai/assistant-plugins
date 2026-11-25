@@ -1231,6 +1231,10 @@ class Analyzer:
                 continue
             t = traces[rng.randrange(len(traces))]
             tid = t.get("trace_id") or t.get("id")
+            if not tid:
+                self.caveat("trace without id", f"{model} in {project or '(no project)'}: search returned a trace "
+                            "with no trace_id; drew again")
+                continue
             spans = self.list_spans(tid, project)
             leaves = self.leaf_llm(spans, model)
             if not leaves:
@@ -1649,6 +1653,9 @@ class Analyzer:
         agent = product = None
         for t in traces:
             tid = t.get("trace_id") or t.get("id")
+            if not tid:
+                self.caveat("trace without id", f"thread {thread}: search returned a trace with no trace_id; skipped")
+                continue
             ag = t.get("agent")
             agent = agent or (ag.get("key") or ag.get("id") if isinstance(ag, dict) else ag)
             product = product or (((t.get("attributes") or {}).get("orq") or {}).get("product"))

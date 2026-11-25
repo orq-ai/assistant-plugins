@@ -604,3 +604,30 @@ def test_analyze_refuses_to_write_a_report_that_breaks_the_contract(tmp_path, mo
     with pytest.raises(pydantic.ValidationError, match="recommended"):
         run(tmp_path)
     assert not (tmp_path / "report.json").exists()
+
+
+def test_a_trace_without_an_id_is_skipped_with_a_caveat_not_read(tmp_path):
+    class NoId(FakeOrq):
+        def __init__(self):
+            super().__init__()
+            self.searches, self.span_reads = 0, []
+
+        def __call__(self, *args, body=None, cache=True):
+            a = list(args)
+            if a[:2] in (["traces", "list-spans"], ["traces", "get-span"]):
+                self.span_reads.append(a[2])
+            out = super().__call__(*args, body=body, cache=cache)
+            if a[:2] == ["traces", "search"]:
+                self.searches += 1
+                if self.searches % 2:  # every other draw, and the thread scan, meet an id-less trace
+                    by_thread = "thread_id" in a[a.index("--filters") + 1]
+                    out["data"] = [{"agent": {"key": "support"}}] if by_thread else [{}]
+            return out
+
+    an = c.Analyzer(ns(tmp_path))
+    an.orq = NoId()
+    rep = an.run()
+    assert rep["status"] == "ok", rep["stop"]
+    assert None not in an.orq.span_reads and rep["samples"]
+    checks = [x["check"] for x in rep["checks"]["caveats"]]
+    assert "trace without id" in checks and "read failed" not in checks
