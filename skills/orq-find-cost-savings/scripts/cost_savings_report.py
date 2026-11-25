@@ -1589,10 +1589,9 @@ class Analyzer:
         chat = [(r["key"], r["spend"]) for r in by_model if is_chat_model(r["key"], self.cat)]
         self.agg = self._safe(self.aggregates) or {}
         self.cpt = self._safe(self.calls_per_trace) or {}
-        for m, _ in chat:
-            if (self.cpt.get(m) or 0) > AGENT_HEAVY_CALLS:
-                self.caveat("agent-heavy traffic", f"{m}: {self.cpt[m]:.1f} LLM calls per trace; each sampled trace "
-                            "is routed as a whole on its last user message")
+        if heavy := [f"{m} {self.cpt[m]:.0f}" for m, _ in chat if (self.cpt.get(m) or 0) > AGENT_HEAVY_CALLS]:
+            self.caveat("agent-heavy traffic", f"LLM calls per trace: {', '.join(heavy)}; each sampled trace is "
+                        "routed as a whole on its last user message")
         alloc = allocate(chat, target)
         self.log(f"strata: {json.dumps(alloc)}")
         cells: dict[str, list[Cell]] = {}
