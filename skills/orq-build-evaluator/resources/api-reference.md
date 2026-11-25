@@ -26,7 +26,7 @@ POST /v2/evaluators
 {
   "type": "llm_eval",
   "mode": "single",
-  "model": "openai/gpt-4.1",
+  "model": "openai/gpt-6-luna",
   "prompt": "<the judge prompt, with {{input.user_query}} / {{output.response}}>",
   "output_type": "categorical",
   "key": "tone-classifier",
@@ -47,7 +47,7 @@ The same call via the CLI, which is the better option in a script or CI job (`or
 
 ```bash
 orq evals create -o json \
-  --key tone-classifier --type llm_eval --mode single --model openai/gpt-4.1 \
+  --key tone-classifier --type llm_eval --mode single --model openai/gpt-6-luna \
   --output-type categorical --path Default \
   --prompt "$(cat judge-prompt.txt)" \
   --categories professional --categories casual --categories aggressive \

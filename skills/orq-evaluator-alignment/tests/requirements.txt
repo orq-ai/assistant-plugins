@@ -9,7 +9,7 @@
 # skills have a runnable suite; adding one to a new skill is all it takes to gate
 # that skill's tests too.
 pytest>=8.0
-evaluatorq>=1.4.0
+evaluatorq>=1.30.0
 fire>=0.7.0
 httpx>=0.27
 loguru>=0.7.3

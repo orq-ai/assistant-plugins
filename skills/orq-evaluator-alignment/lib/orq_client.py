@@ -164,7 +164,8 @@ def _routable_slug(model_record: dict[str, Any]) -> str | None:
     an open-weights model served via groq has `model_id="openai/gpt-oss-120b"`,
     and that bare `openai/…` slug hits OpenAI's provider path → `403
     permission_error`, while its `refId="groq/openai/gpt-oss-120b"` routes. Fall
-    back to `model_id` when no `refId` is present.
+    back to `model_id` when no `refId` is present. The rule is written once in
+    `orq-shared/resources/model-slugs.md`; change it there first.
     """
     return model_record.get('refId') or model_record.get('model_id') or None
 
@@ -199,7 +200,6 @@ def build_create_body(
     model: str,
     description: str | None,
     output_type: str,
-    display_name: str | None = None,
     categorical_labels: list[Any] | None = None,
     scale: list[Any] | None = None,
     guardrail_value: bool = True,
@@ -236,10 +236,8 @@ def build_create_body(
     }
     if description is not None:
         body['description'] = description
-    # orq shows `display_name` as the evaluator's name; when omitted it falls back
-    # to the `key`. Forward the source's name so the aligned copy is recognisable.
-    if display_name is not None:
-        body['display_name'] = display_name
+    # No `display_name`: create has no such field. `key` is the name;
+    # GET returns that same value under `display_name`.
 
     if output_type == 'boolean':
         body['guardrail_config'] = {
@@ -297,8 +295,8 @@ def build_create_dataset_body(
 ) -> dict[str, Any]:
     """`POST /v2/datasets` body for an empty dataset (RES-980 §11.5, save-back).
 
-    `display_name` is orq's shown name (mirrors the evaluator create shape;
-    confirm the exact field against the live API). `path`'s first segment names
+    `display_name` is the dataset's name in the `POST /v2/datasets` spec (unlike
+    evaluators, which take only `key`). `path`'s first segment names
     the owning project, as with evaluators. Pure so the shape is unit-testable.
     """
     body: dict[str, Any] = {'display_name': display_name}
@@ -611,7 +609,6 @@ class OrqClient:
         model: str,
         description: str | None = None,
         output_type: str,
-        display_name: str | None = None,
         categorical_labels: list[Any] | None = None,
         scale: list[Any] | None = None,
         guardrail_value: bool = True,
@@ -634,7 +631,6 @@ class OrqClient:
             model=model,
             description=description,
             output_type=output_type,
-            display_name=display_name,
             categorical_labels=categorical_labels,
             scale=scale,
             guardrail_value=guardrail_value,

@@ -6,7 +6,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ---
 
-## `create-skill`
+## `orq-create-skill`
 
 ### Scenario 1: New CLI skill from scratch
 
@@ -14,7 +14,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify Phase 1: round 1 asks create-vs-update; round 2 asks for the surface (confirms `gh`) and scope mode (fast/thorough) in one call
 - Verify Phase 2: runs `gh --help` and subcommand help to build the inventory
 - Verify Phase 3: searches `skills/*/SKILL.md` for existing `gh` skills
-- Verify: writes the inventory to `.create-skill/<surface>.md`, not into `skills/` and not directly into the skill
+- Verify: writes the inventory to `.orq-create-skill/<surface>.md`, not into `skills/` and not directly into the skill
 
 ### Scenario 2: Update existing skill
 
@@ -44,7 +44,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Run inside this repo
 - Verify Phase 6: updates `agents/AGENTS.md`, the `README.md` table, `tests/skills.md`, `skills-lock.json`, and bumps all four `plugin.json` manifests plus `CHANGELOG.md`
 - Verify Phase 6: `node tests/scripts/validate-skills.mjs` passes afterwards
-- Verify Phase 7: `.create-skill/` no longer exists
+- Verify Phase 7: `.orq-create-skill/` no longer exists
 
 ---
 
@@ -56,7 +56,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Ask: "Add orq.ai tracing to my app"
 - Verify Phase 1: scans the project, identifies OpenAI SDK, reports no existing tracing
 - Verify Phase 2: recommends **AI Router** mode (framework supports it, fastest path)
-- Verify Phase 3: changes `base_url` to `https://api.orq.ai/v2/router`, uses `provider/model` format (e.g., `openai/gpt-4o`)
+- Verify Phase 3: changes `base_url` to `https://my.orq.ai/v3/router`, uses `provider/model` format (e.g., `openai/gpt-6-luna`)
 - Verify: does NOT use `from orq_ai_sdk.tracing import traced` (wrong import path)
 - Verify: does NOT hardcode `service.name=my-app`
 
@@ -97,6 +97,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ## `orq-invoke-deployment`
 
+- Regression: an EU-model failure must not trigger a retry through deprecated agent invoke/stream/run APIs. Legacy execution requires an explicit user request. Streaming and continuation stay on general Responses.
+
 ### Scenario 1: Deployment invocation (happy path)
 
 - Ask: "Invoke my deployment `customer-support` with variable `customer_name` set to 'Jane'"
@@ -109,16 +111,17 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 ### Scenario 2: Agent invocation with multi-turn
 
 - Ask: "Send a message to my agent and then follow up"
-- Verify: uses `client.agents.responses.create()`, NOT `client.agents.invoke()`
-- Verify: message format uses A2A parts structure (`parts: [{kind: "text", text: ...}]`), not OpenAI-style `content`
-- Verify: saves `task_id` from first response and passes it in the follow-up call
+- Verify: shows orq and OpenAI SDK variants; prefers orq for new code or when imported, reuses OpenAI when it is already imported and orq is not. Python async orq uses `responses.create_async()`.
+- Verify: uses `/v3/router/responses` with `model="agent/<key>"`, or `orq responses create`
+- Verify: message format uses Responses `input`; text comes from message `content` blocks
+- Verify: saves `id` from the first response and passes `previous_response_id` in the follow-up call
 
 ### Scenario 3: Model (AI Router) invocation
 
-- Ask: "Call GPT-4.1 directly through the AI Router"
-- Verify: uses `provider/model` format (e.g., `openai/gpt-4.1`), not bare model name
-- Verify: points OpenAI client at `base_url="https://api.orq.ai/v2/router"`
-- Verify: does NOT use orq SDK for this path — uses `openai.OpenAI()`
+- Ask: "Call GPT-6 Luna directly through the AI Router"
+- Verify: uses `provider/model` format (e.g., `openai/gpt-6-luna`), not bare model name
+- Verify: both SDK variants use general Responses with `model="openai/gpt-6-luna"` and `input`; orq takes the host and OpenAI takes the `/v3/router` base URL.
+- Verify: prefers the orq SDK for new code or existing orq imports; reuses OpenAI only when it is already imported and orq is not.
 
 ### Scenario 4: Streaming recommendation
 
@@ -142,7 +145,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Ask: "Run a red team test on my agent using the evaluatorq CLI"
 - Verify: shows `eq redteam run --target agent:<KEY> --mode dynamic` (not `run adaptive` or `--framework`)
 - Verify: explains that the 5 detail files (`01_agent_context.json` … `05_summary_report.json`) come from `--save detail`
-- Verify: shows `eq redteam ui report.json` to view results (not `eq redteam report summarize`)
+- Verify: shows `eq dashboard report.json` to view results (not `eq redteam ui`, removed in evaluatorq 1.102, or `eq redteam report summarize`)
 
 ### Scenario 3: Run simulation from CLI
 
@@ -185,7 +188,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 - Ask: "Compare my two orq.ai agents `agent-gpt4o` and `agent-claude` head-to-head"
 - Verify Phase 1: identifies both agents, browses via `search_entities`, then verifies each key with the run key via the [run-key preflight](../skills/orq-shared/resources/run-key-preflight.md)
-- Verify Phase 4: generates evaluatorq script with two `@job` functions, each using `agents.responses.create()` (not `agents.invoke()`)
+- Verify Phase 4: generates evaluatorq script with two `@job` functions, each using general `responses.create(model="agent/<key>", input=...)`
 - Verify: script uses `from orq_ai_sdk import Orq` (not `from orq import ...`)
 - Verify: both jobs use the same evaluator for fair comparison
 
@@ -217,6 +220,14 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Ask: "Write me a judge prompt for persona consistency"
 - Verify: the prompt uses `{{input.*}}` / `{{output.*}}` variables, not `{{log.*}}` and not bare `{{input}}` / `{{output}}`
 - Verify: after creating an LLM evaluator, recommends `orq-evaluator-alignment`
+
+## `orq-build-benchmark`
+
+- Ask: "Build a benchmark from my codebase to find which model is best at our task"
+- Verify: interviews the user and stages real task instances with established answers before building anything
+- Verify: builds an orq dataset and evaluators, then runs candidate models with evaluatorq
+- Verify: grades against known answers and reports to orq Experiments
+- Verify: validates a staged bundle with `scripts/check_bundle.py` before upload
 
 ## `orq-evaluator-alignment`
 
@@ -295,6 +306,32 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify Phase 3a: leaves `{{template_variables}}` unsubstituted and does not propose removing tool definitions
 - Verify: asks which suggestions to apply before rewriting, and skips Phase 4 unless the user asks to save
 
+## `orq-review-agent`
+
+### Scenario 1: Review a fixture agent, read-only
+
+- Provide: the fixture agent `support-bot` in the skill-evals project (`max_iterations: 2` against three-step instructions, no tools, no evaluators)
+- Ask: "Review my orq agent support-bot"
+- Verify Phase 1: resolves the run key, then reads the config once with `orq agents retrieve` into the run directory
+- Verify Phase 2: reads `orq models list` and counts traces; with 0 traces, re-runs the count without the filter and states `config-only` mode
+- Verify Phase 3: reports the `max_iterations: 2` vs three-step instructions contradiction labelled `predicted broken` (no traffic), ranked first, and "no evaluators attached" → `orq-recommend-evaluators`
+- Verify Phase 3: the model check resolves `anthropic/claude-haiku-4-5` by date suffix to `anthropic/claude-haiku-4-5-20251001` and says so
+- Verify Phase 5: writes `agent-review-support-bot-<timestamp>/report.html`, with the scratch JSON in the same directory, all six checks and an `unobservable` list
+- Verify: every finding carries a one- or two-sentence suggestion of what to change (e.g. raise `max_iterations` or merge the steps)
+- Verify: makes no `create_*`, `update_*`, `delete_*` or `invoke_*` call, and writes no rewritten prompt, tool description or diff
+
+### Scenario 2: A key from another project
+
+- Provide: an agent key that exists in a different project than the active key
+- Verify: stops on `HTTP 404 Not Found: Agent not found` and asks for the right key or workspace, instead of reviewing an empty config
+
+### Scenario 3: Hand-off only after a yes
+
+- Ask: "Review support-bot", answer "show the findings" to the first question, then "stop here" to the fix question
+- Verify Phase 6: the summary gives the counts per tier, the top 3 findings and the report path, then asks before showing the findings
+- Verify Phase 6: the findings step lists findings grouped by fixing skill and runs nothing; the fix question comes after it
+- Verify: on "stop here", no other skill is invoked
+
 ## `orq-recommend-evaluators`
 
 ### Scenario 1: New agent, no traces
@@ -358,7 +395,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify Phase 1: confirms the agent under test and picks a target shape (`agent_key` / `target_callback` via `from_orq_deployment` or `from_chat_completions` / custom `AgentTarget`)
 - Verify Phase 2: builds a `Persona` with the real scalars (`patience`, `assertiveness`, `politeness`, `technical_level` as floats `[0-1]`), a `communication_style` enum, and `background` — not the old `role/tone/goals/constraints` shape
 - Verify Phase 3: builds a `Scenario` with `goal` plus at least one `Criterion` (`must_happen` or `must_not_happen`); does NOT hand-roll a `should_stop()` function
-- Verify Phase 4: uses `wrap_simulation_agent(model=...)` as an evaluatorq job or `simulate(sim_model=...)` directly with default-on auto-upload — not a custom loop around `agents.responses.create()`
+- Verify Phase 4: uses `wrap_simulation_agent(model=...)` as an evaluatorq job or `simulate(sim_model=...)` directly with default-on auto-upload — not a custom loop around `client.responses.create()`
 - Verify wrapper cleanup: puts scorers on `evaluatorq(..., evaluators=[...])`, does not pass `evaluators=` to `wrap_simulation_agent()`, and calls `await job.aclose()` in `finally`
 - Verify Phase 5: dry-runs one persona × one scenario at `max_turns=3`, prints `terminated_by` / `goal_completion_score` / `rules_broken`, asks the user to review before scaling
 - Verify Phase 6: surfaces direct-call spans under `orq.simulation.pipeline`, wrapped spans under `orq.job`, the `SimulationResult` fields, and the Experiment URL printed for uploaded runs
@@ -439,7 +476,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 - Ask: "Summarize the red team results from ./output/my-run/report.json"
 - Verify: reads the JSON directly and explains `resistance_rate`, `vulnerabilities_found`, `total_results`, and `categories_tested`
-- Verify: optionally invokes `eq redteam ui ./output/my-run/report.json` for interactive viewing
+- Verify: optionally invokes `eq dashboard ./output/my-run/report.json` for interactive viewing (never `eq redteam ui`)
 - Verify: notes which categories were NOT tested
 
 ### Scenario 4: Missing env var
@@ -631,12 +668,61 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ---
 
+## `orq-quickstart`
+
+### Scenario 1: Already connected
+
+- Ask: "Run the orq quickstart" and say you are already set up
+- Verify: calls `search_entities` with `type: "agent"` before anything else
+- Verify: does NOT stop on an unset `ORQ_API_KEY` when the read succeeds
+- Verify: shows a snapshot of agents, deployments, prompts, datasets and experiments, and marks any type with `has_more: true` as "first page"
+- Verify: lists the installed orq skills from the session, not from memory
+
+### Scenario 2: Not set up
+
+- Simulate no orq.ai MCP tools in the session
+- Ask: "Set me up with orq.ai"
+- Verify: sends the user to my.orq.ai Settings → API Keys and never asks for the key in chat
+- Verify: gives the MCP registration for the harness it is running in (Codex: `codex mcp add`, Claude Code: plugin or `claude mcp add`)
+- Verify: tells the user to restart if the registration needs it, then stops
+
+---
+
+## `orq-trace-format`
+
+### Scenario 1: Traces in a reply
+
+- Ask: "Show me the failing traces from the last day"
+- Verify: every trace in the reply is a `[<first 8 chars>](<url>)` link of the form `<host>/<workspace-key>/traces/(trace:<trace_id>)`, with no bare 32-hex id beside it
+- Verify: host and workspace key come from `ORQ_WORKSPACE` / `orq auth whoami`, not a hardcoded `my.orq.ai/<guess>`
+- Verify: the reply carries the "opens empty → Traces project selector to **All projects**" line
+
+### Scenario 2: No workspace key
+
+- Simulate `ORQ_API_KEY` set and no `ORQ_WORKSPACE` (`whoami` returns `null` for the key)
+- Ask: "Link me the trace for this run"
+- Verify: never builds `<host>/null/...`; says the key is unknown and asks for it or shows the full id once
+
+### Scenario 3: Never the dead route
+
+- Ask: "Give me a link to trace b422a93c8b34ddfa70eaf5c7e3705c19"
+- Verify: does NOT emit `traces?query=trace_id:is:...` or the `/v2/traces/<id>/v3spans` API URL
+
+---
+
 ## Critical Files
 
 - `skills/orq-shared/SKILL.md`
 - `skills/orq-shared/resources/run-key-preflight.md`
 - `skills/orq-shared/resources/trace-queries.md`
 - `skills/orq-shared/resources/doc-resolution.md`
+- `skills/orq-shared/resources/config-context.md`
+- `skills/orq-shared/resources/prompting-guidelines.md`
+- `skills/orq-shared/resources/tool-description-guide.md`
+- `skills/orq-review-agent/SKILL.md`
+- `skills/orq-review-agent/resources/checks.md`
+- `skills/orq-review-agent/resources/report-template.html`
+- `skills/orq-review-agent/scripts/model_check.py`
 - `skills/orq-analyze-traces/SKILL.md`
 - `skills/orq-improve-agent/SKILL.md`
 - `skills/orq-recommend-evaluators/SKILL.md`
@@ -665,6 +751,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-compare-agents/resources/evaluatorq-api.md`
 - `skills/orq-compare-agents/resources/gotchas.md`
 - `skills/orq-build-agent/SKILL.md`
+- `skills/orq-build-benchmark/SKILL.md`
+- `skills/orq-build-benchmark/scripts/check_bundle.py` — bundle preflight; `--selftest` guards the secret scan and seed checks
 - `skills/orq-build-evaluator/SKILL.md`
 - `skills/orq-evaluator-alignment/SKILL.md`
 - `skills/orq-evaluator-alignment/config.toml`
@@ -690,7 +778,10 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-manage-skills/resources/authoring-guide.md`
 - `skills/orq-manage-skills/resources/governance-guide.md`
 - `skills/orq-manage-skills/resources/known-caveats.md`
-- `skills/create-skill/SKILL.md`
-- `skills/create-skill/resources/template.md`
-- `skills/create-skill/resources/writing-guide.md`
+- `skills/orq-create-skill/SKILL.md`
+- `skills/orq-quickstart/SKILL.md`
+- `skills/orq-trace-format/SKILL.md`
+- `commands/traces.md`
+- `skills/orq-create-skill/resources/template.md`
+- `skills/orq-create-skill/resources/writing-guide.md`
 - `commands/orq-manage-skills.md`

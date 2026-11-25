@@ -1,5 +1,5 @@
 ---
-name: create-skill
+name: orq-create-skill
 description: >
   Build or update an agent skill from an API, CLI, or MCP surface. Use when
   the user wants to document a new capability surface as a skill, or when an
@@ -80,7 +80,7 @@ Read the source material and extract a structured inventory.
 - Mark which operations are safe (read) vs. dangerous (write/delete)
 - Identify common workflows (sequences of calls that accomplish a task)
 
-Write the inventory to the scratchpad: `.create-skill/<surface-name>.md`, relative to the repo root (or the working directory outside a repo). One directory, one run, deleted whole in Phase 7. Never write it inside `skills/` — a stray inventory there gets committed and hashed into `skills-lock.json`.
+Write the inventory to the scratchpad: `.orq-create-skill/<surface-name>.md`, relative to the repo root (or the working directory outside a repo). One directory, one run, deleted whole in Phase 7. Never write it inside `skills/` — a stray inventory there gets committed and hashed into `skills-lock.json`.
 
 **Done when:** every operation the surface exposes is listed in the scratchpad with its params, response shape, and safe/dangerous classification.
 
@@ -216,9 +216,9 @@ A SKILL.md alone is not a registered skill. Check whether the repo has a contrib
 
 ### Phase 7: Clean up
 
-Delete the `.create-skill/` scratchpad directory. The evidence now lives in the skill itself: gotchas carry the exact calls that produced them.
+Delete the `.orq-create-skill/` scratchpad directory. The evidence now lives in the skill itself: gotchas carry the exact calls that produced them.
 
-**Done when:** `.create-skill/` no longer exists.
+**Done when:** `.orq-create-skill/` no longer exists.
 
 ## Done When
 

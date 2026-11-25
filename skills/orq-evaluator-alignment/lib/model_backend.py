@@ -5,7 +5,7 @@ One interface — `await complete(prompt, *, system=None, ...)` returning
 `{text, cost_usd}` — with five implementations selected by config:
 
 - `orq_router`       **the default.** Any model in the workspace's router registry,
-  reached over the OpenAI-compatible `/v3/router` endpoint with `ORQ_API_KEY` —
+  reached over the general `/v3/router/responses` endpoint with `ORQ_API_KEY` —
   the same credential and route the judge itself uses, so no second vendor account
   is involved. Cost is priced from the registry's own per-1K rates.
 - `claude_subagent`  shell out to `claude -p ... --output-format json` (per-call
@@ -165,10 +165,10 @@ class OrqRouterBackend:
         which is why this sends a 1-token completion rather than reading a flag.
         """
         try:
-            await self._client.chat.completions.create(
+            await self._client.responses.create(
                 model=self.model,
-                messages=[{'role': 'user', 'content': 'ok'}],
-                max_tokens=1,
+                input='ok',
+                max_output_tokens=1,
             )
         except Exception as exc:  # noqa: BLE001 — translated, not swallowed
             raise BackendUnavailable(_router_failure_reason(self.model, exc)) from exc
@@ -180,17 +180,18 @@ class OrqRouterBackend:
         system: str | None = None,
         variables: dict[str, Any] | None = None,
     ) -> CompletionResult:
-        messages: list[dict[str, Any]] = []
+        params: dict[str, Any] = {'model': self.model, 'input': prompt, 'max_output_tokens': self.max_tokens}
         if system:
-            messages.append({'role': 'system', 'content': system})
-        messages.append({'role': 'user', 'content': prompt})
+            params['instructions'] = system
         try:
-            resp = await self._client.chat.completions.create(
-                model=self.model, messages=messages, max_tokens=self.max_tokens,
+            resp = await self._client.responses.create(
+                **params,
             )
         except Exception as exc:  # noqa: BLE001
             raise BackendUnavailable(_router_failure_reason(self.model, exc)) from exc
-        text = (resp.choices[0].message.content or '') if resp.choices else ''
+        if resp.status != 'completed':
+            raise BackendUnavailable(f'{self.model}: response {resp.id} has status {resp.status}')
+        text = resp.output_text or ''
         return CompletionResult(text=text, cost_usd=await self._cost(resp))
 
     async def _cost(self, resp: Any) -> float:
@@ -209,8 +210,8 @@ class OrqRouterBackend:
         if self._prices is None:
             return 0.0
         pin, pout = self._prices
-        return (getattr(usage, 'prompt_tokens', 0) / 1000) * pin + (
-            getattr(usage, 'completion_tokens', 0) / 1000
+        return (getattr(usage, 'input_tokens', 0) / 1000) * pin + (
+            getattr(usage, 'output_tokens', 0) / 1000
         ) * pout
 
 

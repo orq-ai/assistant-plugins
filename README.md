@@ -55,10 +55,10 @@ Use this if you want easy access to all components — skills, MCP tools, and tr
 | `orq-skills` | Skills, commands, and agents for the Build → Evaluate → Optimize lifecycle |
 | `orq-mcp` | MCP server registration — Claude can call orq.ai APIs directly |
 
-Verify with the interactive onboarding — checks `ORQ_API_KEY`, MCP reachability, and credentials:
+Verify with the onboarding skill — it registers the MCP server if needed and proves the connection with a real workspace read. Ask:
 
 ```
-/orq:quickstart
+Run the orq quickstart
 ```
 
 ---
@@ -154,7 +154,6 @@ Quick-action slash commands. Use `/orq:<command>` in Claude Code.
 
 | Command | What It Does | Usage |
 |---------|-------------|-------|
-| **quickstart** | Interactive onboarding — credentials, MCP setup, skills tour | `/orq:quickstart` |
 | **workspace** | Workspace overview — agents, deployments, prompts, datasets, experiments | `/orq:workspace [section]` |
 | **traces** | Query and summarize traces with filters | `/orq:traces [--deployment name] [--status error] [--last 24h]` |
 | **models** | List available AI models by provider | `/orq:models [search-term]` |
@@ -183,6 +182,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 | **orq-build-agent** | Design, create, and configure an orq.ai Agent with tools, instructions, knowledge bases, and memory | [SKILL.md](skills/orq-build-agent/SKILL.md) |
 | **orq-build-evaluator** | Create validated LLM-as-a-Judge evaluators following evaluation best practices | [SKILL.md](skills/orq-build-evaluator/SKILL.md) |
 | **orq-recommend-evaluators** | Recommend the evaluators an agent is missing, from its traces or (with no traffic) its instructions and config, skip ones already attached, and create each only after approval | [SKILL.md](skills/orq-recommend-evaluators/SKILL.md) |
+| **orq-review-agent** | Health-check an agent's setup without changing it, with or without traffic: instructions, tools, skill references, evaluators, model and run health checked against the suite's rubrics, with a suggestion per finding in one HTML report | [SKILL.md](skills/orq-review-agent/SKILL.md) |
 | **orq-evaluator-alignment** | Align an existing LLM-judge (boolean, categorical, numeric) to human judgment — measure how often it changes its mind, group the least reliable cases and ask a few questions instead of labelling every row, rewrite the judge prompt, and recreate the evaluator after approval | [SKILL.md](skills/orq-evaluator-alignment/SKILL.md) |
 | **orq-analyze-traces** | Analyze a live agent from its production traces — relay config and terminal states, build a failure taxonomy by open/axial coding, write an error-analysis file other skills read | [SKILL.md](skills/orq-analyze-traces/SKILL.md) |
 | **orq-improve-agent** | Improve an underperforming agent — rewrite instructions against a prompting framework, or move a config knob, grounded in the error-analysis file orq-analyze-traces writes | [SKILL.md](skills/orq-improve-agent/SKILL.md) |
@@ -193,9 +193,12 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 | **orq-red-team** | Run adversarial red teaming against deployed orq agents or static datasets using the orq red teaming library — adaptive attacks, OWASP coverage, ASR reporting | [SKILL.md](skills/orq-red-team/SKILL.md) |
 | **orq-manage-skills** | Manage orq.ai Skills (the platform entity, formerly Snippets) — list/get/create/update/delete, authoring guidance, reference-scan before delete or rename, and the `{{snippet.<display_name>}}` consumption pattern | [SKILL.md](skills/orq-manage-skills/SKILL.md) |
 | **orq-simulate-agent** | Run multi-turn agent simulations using evaluatorq's first-class primitives (`simulate()`, `generate_and_simulate()`, `wrap_simulation_agent()`) — drive an agent under test with a UserSimulatorAgent and built-in JudgeAgent, scored against criteria | [SKILL.md](skills/orq-simulate-agent/SKILL.md) |
-| **create-skill** | Build or update an agent skill from an API, CLI, or MCP surface — probe the surface, verify every claim, write a tested contract, and register it | [SKILL.md](skills/create-skill/SKILL.md) |
-| **orq-shared** | Reference bundle the other skills read — the verified `orq` CLI trace query contract and the run-key preflight; not invoked on its own | [SKILL.md](skills/orq-shared/SKILL.md) |
+| **orq-create-skill** | Build or update an agent skill from an API, CLI, or MCP surface — probe the surface, verify every claim, write a tested contract, and register it | [SKILL.md](skills/orq-create-skill/SKILL.md) |
+| **orq-shared** | Reference bundle the other skills read — the verified `orq` CLI trace query contract, the run-key preflight, and the prompting, tool-description and config-context rubrics; not invoked on its own | [SKILL.md](skills/orq-shared/SKILL.md) |
 | **orq-cli** | Drive the `orq` command-line interface — install check, auth, workspace selection, `orq doctor` troubleshooting, and read/write commands with JSON output and JMESPath queries | [SKILL.md](skills/orq-cli/SKILL.md) |
+| **orq-build-benchmark** | Turn a team's own work into a custom orq benchmark — interview the user, stage real task instances, build an orq dataset and evaluators, and run candidate models with evaluatorq, graded against known answers | [SKILL.md](skills/orq-build-benchmark/SKILL.md) |
+| **orq-quickstart** | Onboarding in any coding agent — API key, MCP registration for your harness, a verified workspace read, a snapshot, and a first task | [SKILL.md](skills/orq-quickstart/SKILL.md) |
+| **orq-trace-format** | Show traces and spans as clickable Studio links instead of raw trace ids — URL shape, workspace key and host, and the "opens empty" fix | [SKILL.md](skills/orq-trace-format/SKILL.md) |
 <!-- END_SKILLS_TABLE -->
 
 ---
@@ -225,6 +228,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 
 ```
 /orq:analytics --group-by deployment           # Spot high error rates
+"Review the checkout agent's setup"            → orq-review-agent
 "Analyze traces for the checkout agent"        → orq-analyze-traces
 "Build evaluators for the failure modes"       → orq-build-evaluator
 "Generate a dataset covering edge cases"       → orq-generate-synthetic-dataset

@@ -5,10 +5,149 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [4.0.0] - 2026-10-19
+## [6.0.0] - 2026-11-25
 
 ### Removed
 - `orq-trace` plugin dropped from the Claude marketplace (`.claude-plugin/marketplace.json`), along with its README install line and the sub-plugin versioning notes. `plugins/trace-hooks/` is left in the repo, unreferenced.
+
+## [5.2.4] - 2026-11-25
+
+### Fixed
+
+- `orq-cli` and `orq-build-evaluator` skills: Human Review (annotation) definitions belong to a project. One without a `project_id` shows as Legacy in the UI. The `orq-cli` command map shows how to list, create and fix definitions through `orq request` on `/v2/human-evals`: `PATCH` with `project_id` keeps the key, and the body must carry the full definition.
+
+## [5.2.3] - 2026-11-25
+
+### Fixed
+
+- `orq-compare-agents` (`resources/job-patterns.md`) and `orq-invoke-deployment`: the Node orq SDK examples that read agent output text now narrow each output item to `type === "message"` inside `flatMap`. `@orq-ai/node` 4.19.0 types `response.output` as a `ResponseOutputItem` union (4.18.23 had `Array<any>`), so the old `.filter(...).flatMap(item => item.content)` no longer type-checked: a `.filter` callback does not narrow the union.
+
+## [5.2.2] - 2026-11-24
+
+### Fixed
+
+- `orq-red-team` and `evaluatorq` skills: `eq redteam ui` was removed in evaluatorq 1.102, so the skills now open reports with `eq dashboard [report.json]` and say it needs the `[dashboard]` extra (`'evaluatorq[redteam,dashboard]'`). `[redteam]` no longer pulls in Streamlit. Troubleshooting covers the missing-extra error and `No such command 'ui'`.
+
+## [5.2.1] - 2026-11-23
+
+### Changed
+
+- `orq-cli` skill: the coding-agents reference lists `cursor` among the agents `orq setup` and `orq connect` wire. Cursor takes the `skills` and `mcp` capabilities. Needs an orq CLI release that includes Cursor support.
+
+## [5.2.0] - 2026-11-19
+
+### Added
+
+- `orq-trace-format` skill: show orq traces and spans to people as clickable Studio links (`[<first 8 chars>](<url>)`) instead of raw trace ids. It is now the single home of the trace and span URL format, the workspace key and host resolution, and the "opens empty → All projects" fix, moved out of `orq-cli/resources/command-map.md` (which keeps a pointer under "Building app URLs").
+
+### Changed
+
+- 14 trace-touching skills gain an **ALWAYS** constraint to link traces and spans rather than print bare ids, pointing at `orq-trace-format`. Their existing "Building app URLs" links now point there too.
+- `/orq:traces` lists traces in a Markdown table with each trace linked in Studio, instead of an ASCII table of full 32-character trace ids.
+
+## [5.1.0] - 2026-11-17
+
+### Added
+
+- `orq-build-benchmark` skill: turn a team's own work into a custom orq benchmark. Interviews the user, stages real task instances, then builds an orq dataset and evaluators and runs candidate models with evaluatorq, graded against known answers and reported to orq Experiments. Ships `scripts/check_bundle.py` to validate a staged bundle before upload.
+
+### Fixed
+
+- `evaluatorq` and `orq-compare-agents` skills: jury presets are named by their current ids (`balanced-trio`, `strong-jury`, `open-weight-portable`, `eu-region`, `single-provider-trio`). evaluatorq renamed them; the old display names still resolve, with a deprecation warning.
+
+## [5.0.0] - 2026-11-10
+
+### Changed
+
+- **Breaking:** renamed the `create-skill` skill to `orq-create-skill`, so every shipped skill carries the `orq-` prefix (or is `evaluatorq`). The orq CLI installs these skills into each agent's shared skills directory, where a generic name collides with a user's own `create-skill` and the installer then skips ours. Reinstall to pick up the new name; `npx skills remove create-skill` clears the old copy. Its scratchpad moves from `.create-skill/` to `.orq-create-skill/`.
+
+## [4.0.0] - 2026-11-09
+
+### Added
+
+- `orq-quickstart` skill: onboarding that works in any coding agent, not only Claude Code. It gives the MCP registration for the harness it runs in (Claude Code, Codex, Cursor, others), proves the connection with a real `search_entities` read instead of checking `ORQ_API_KEY`, does not assume the MCP server is named `orq-workspace`, and marks paged snapshot counts as partial. `npx skills add` installs it, which it never did for the command.
+
+### Removed
+
+- The `/orq:quickstart` command (`commands/quickstart.md`). It is replaced by the `orq-quickstart` skill; in Claude Code, ask "run the orq quickstart" or use `/orq:orq-quickstart`.
+
+## [3.11.2] - 2026-11-09
+
+### Fixed
+
+- `orq-evaluator-alignment`: the aligned copy's create request no longer sends `display_name`. `POST /v2/evaluators` has no such field, so the server dropped it, and an earlier entry misreported that as orq overwriting the value with the key. The `key` is the evaluator's only name; `GET` returns it as `display_name`.
+
+## [3.11.1] - 2026-10-24
+
+### Changed
+
+- Set the Claude plugin catalog display name to `orq.ai`.
+
+## [3.11.0] - 2026-10-22
+
+### Added
+
+- `orq-analyze-traces/scripts/decide.py` (RES-1629): one `POST /v3/router/decisions` call per trace over every trace in the window, to surface failing traces the analyst never read. Traces go whole to `typesafe/jev-latest` when they fit and to `openai/gpt-6-luna` otherwise, never chunked or trimmed. Subcommands `probe`, `estimate`, `label` (resumable, capped by a required `--budget-usd`, refuses windows over 5,000 traces without `--max-traces`), `pick`, `agreement` and `rates`. Never writes to the platform.
+- `orq-analyze-traces`: a Phase 1 selection pass over the window, a Phase 4 calibration against the analyst's own labels with a fixed clearing rule (10+ agent positives, recall 0.7+), and a window pass that reports each cleared mode's flag rate, interval and flagged trace ids. Spend is approved through `AskUserQuestion`. Falls back to the sample-based path when decisions are unavailable or declined.
+
+### Changed
+
+- Error-analysis artifact: `rate` is now the best available rate and `rate_basis` says which (`window_flags` or `read`); `read_rate` always holds the read-based rate. New `decisions`, `traces.labelled`, per-mode `window_flags` and `flagged`.
+- `orq-improve-agent`, `orq-recommend-evaluators`: quote `rate` with its `rate_basis`, and treat `flagged` as unread examples, never as regression evidence.
+
+### Fixed
+
+- Calibration counts missing analyst-positive labels as misses and rejects unreadable probabilities. Budget reservations halt the whole pass on refusal, retain uncertain charges and attempted overflow retries, and reject non-finite limits. Active-window metadata is written before labelling; reports and picks filter the cache to that population and refuse missing metadata. Add an offline regression suite and pinned API contract sources.
+- Preserve complete API-returned trace IDs in analysis evidence, including platform ULIDs as well as OpenTelemetry IDs; do not substitute record or span IDs.
+
+## [3.10.1] - 2026-10-22
+
+### Changed
+
+- `orq-setup-observability`: added the first-party observability one-liners `orq_ai_sdk.langchain.setup()` and `OpenAIAgentsInstrumentor().instrument()` (RES-1221).
+- `orq-invoke-deployment`: stream deployments with `client.deployments.stream(...)` (an `EventStream`) instead of `invoke(stream=True)`, which returns a single response body and is not iterable (RES-1221).
+- `orq-setup-observability`: the OpenAI Agents one-liner needs a configured `TracerProvider` (the instrumentor reads the global one and replaces the Agents SDK trace processors); documented, with the required packages.
+- Agent text-extraction snippets (`orq-invoke-deployment`, `orq-compare-agents`) raise when the response has no `output_text` block instead of returning an empty answer.
+- `orq-invoke-deployment` API reference: documented the `conversation` (`{id}`) and `thread` (`{id, tags}`) parameters of agent `Responses.create`, with factual rows.
+- `tests/scripts/run_factual_tests.py`: SDK probes use `SystemExit` instead of `assert`, so `python -O` cannot turn a failure into a pass. Added a `previous_response_id` signature row.
+
+## [3.10.0] - 2026-10-22
+
+### Added
+
+- `orq-review-agent` skill (RES-887): a read-only health check of one orq agent. It checks run health, instructions, tools, `{{skill.X}}` references, evaluators and model choice against the suite's rubrics, gives each finding a high-level suggestion (never a rewritten prompt or diff), lists project evaluators the agent does not use and tools its instructions need but it lacks, writes one HTML report into a per-run directory (`agent-review-<key>-<timestamp>/`), posts a summary with the report link, shows the findings on request, then offers the skill that owns each fix. `allowed-tools` pre-approves no write verb. The model check (`scripts/model_check.py`, stdlib only) applies the RES-1338 A1 rule with the RES-887 guardrails, and lists a cheaper provider of the same model as its own finding. The rule text lives once in the script and is printed in every result. An unresolved model id lists the closest catalogue names, and a config contradiction certain to break every run is labelled `predicted broken` when there is no traffic to confirm it. Probed live on CLI 11.0.2; untested paths are marked `[unverified]`.
+- `orq-shared/resources/config-context.md`, `prompting-guidelines.md` and `tool-description-guide.md`: the Phase 0 relay list, the 11 prompting guidelines and the tool description guide, now shared by the skills that build, review and improve an agent.
+- `orq-shared/resources/model-slugs.md`: which catalogue field names a model (`id`, `refId`, `model_id`) and the rule for resolving an agent's model id, cited by `orq-cli`, `orq-evaluator-alignment`, `orq-recommend-evaluators` and `orq-review-agent`.
+- `tests/factual/orq-review-agent.csv` and `tests/evals/orq-review-agent/` (three fires cases, three near-miss cases, a read-only behavioural case on `support-bot` and a cross-project behavioural case).
+
+### Changed
+
+- `orq-analyze-traces` Phase 0, `orq-improve-agent` Phase 3a and `orq-build-agent` link to the shared rubrics instead of keeping their own copies. `orq-analyze-traces` now routes setup health checks to `orq-review-agent`. `orq-improve-agent` Phase 1 also checks that the declared model is available in the project (`orq models list`, resolved per `model-slugs.md`). `tool-description-guide.md` moved from `orq-build-agent/resources/` to `orq-shared/resources/`.
+
+## [3.9.3] - 2026-10-22
+
+### Fixed
+
+- Require evaluatorq 1.30.0 or newer for the Responses helper API, check the minimum in CI, and type-check SDK/HTTP examples directly from markdown to catch scope and schema regressions.
+- Show paired orq/OpenAI Responses examples for models, agents and comparison jobs. Prefer orq for new code and existing orq imports; reuse OpenAI if it is already imported and orq is not. Document async and response-parsing differences.
+- Replace the generated CLI command inventory, group listing and inventory-generation script with progressive `--help` discovery. Retain task-specific examples, behavior caveats and invocation regression checks.
+- Use `openai/gpt-6-luna` in direct model invocation examples and model command defaults instead of older GPT models.
+- Model and agent invocation guidance now defaults to `POST /v3/router/responses` and `orq responses create`, using `provider/model-id` for models and `agent/<key>` for managed agents. Prefer Responses over Chat Completions and avoid v2 inference. Other inference interfaces require an explicit user request and must never be automatic error fallbacks.
+- Update invocation, observability, simulation and comparison examples to Responses request/output shapes, including streaming, structured output and `previous_response_id` continuation. Framework guidance explicitly selects Responses (including LangChain `use_responses_api=True`). Configuration, deployment, evaluator and telemetry APIs retain their own contracts.
+- Route evaluator-alignment recommendation/rewrite helpers and reconstructed judge calls through Responses, preserving structured verdicts and pricing input/output tokens.
+- Add a CI guard against non-Responses inference examples and runtime calls and local synthetic CLI routing probes for both models and agents. Document the CLI SSE decoding limitation and use SDK/curl for consuming streams on the same route. Contract checked against current Orq documentation, LangChain's Responses reference and installed CLI help on 2026-10-22; the reported EU-model failure has not been reproduced against a live agent.
+
+## [3.9.2] - 2026-10-13
+
+### Changed
+
+- `orq-cli/resources/command-map.md` "Building app URLs" is the single definition of trace and span links in the app: `<host>/<workspace-key>/traces/(trace:<trace_id>)` and `…/(trace:<trace_id>//span:<span_id>)`, opened cold in a browser on prod on 2026-10-13. The snippet takes the host from `ORQ_UI_BASE_URL` or the session (`urls.api_base_url`, or `server` under `ORQ_API_KEY`) and fails loudly when there is none, or when the workspace key or an id is missing. It records that a link to a trace outside the user's selected Traces project opens on "No spans match your search" (switch to All projects), and that ids from an invocation's `telemetry` were not checked against the route (RES-1550).
+- `orq-invoke-deployment`, `orq-setup-observability`, `orq-analyze-traces`, `orq-compare-agents` and `orq-shared/resources/trace-queries.md` hand the user a link to the trace instead of "go to my.orq.ai → Traces", and point at that section. `orq-analyze-traces` now requires full 32-hex ids in `evidence` and `passing`.
+- `orq-cli` skill: with `ORQ_API_KEY` set, `orq auth whoami` on 11.0.2 reports `active_workspace_key: null` rather than the logged-in workspace; the constraint and the workspace-key snippet's error message say so.
+
+### Removed
+
+- The `traces?query=trace_id:is:<id>` deep link from `orq-cli`; the app no longer routes it.
 
 ## [3.9.1] - 2026-10-16
 
@@ -353,7 +492,7 @@ Two shipped skills were removed and replaced under new names. Per the versioning
 - `orq-evaluator-alignment`: the instability report names the rows with off-contract repetitions, not just the dataset-wide total. A row can answer off-contract half the time and still band as `stable` on the rest, and the aggregate count could not say which row that was — which is the row a reader is about to trust.
 
 - `orq-evaluator-alignment`: the grey-zone payload no longer silently overrides the count the user chose. `build_queue` appends `low_flip_sample_size` (default 5) *stable* spot-check rows to the queue, and `assemble_payload` was taking the whole queue — so "review 3 with me" put 3 + 5 = 8 examples into context, five of which had no grey zone in them by construction. Those rows are a control group for annotation, not material to open-code; they are excluded by default and reported separately.
-- `orq-evaluator-alignment`: the aligned copy is named after its source instead of after an opaque id. `GET /v2/evaluators/{id}` returns an empty `key` for evaluators created through the current orq UI, so the old fallback produced keys like `01kzxt86ac82d1fvzw3s8wfv83-aligned-<ts>`. The name is now resolved `key` → `display_name` → `raw.key` → id, giving `groundedness-bool-testcase-aligned-<ts>`. The key is what matters here: orq overwrites the `display_name` sent on create with the key, verified against the live API.
+- `orq-evaluator-alignment`: the aligned copy is named after its source instead of after an opaque id. `GET /v2/evaluators/{id}` returns an empty `key` for evaluators created through the current orq UI, so the old fallback produced keys like `01kzxt86ac82d1fvzw3s8wfv83-aligned-<ts>`. The name is now resolved `key` → `display_name` → `raw.key` → id, giving `groundedness-bool-testcase-aligned-<ts>`. The key is what matters here: it is the only name `POST /v2/evaluators` takes, and `GET` returns it as `display_name`.
 - `orq-evaluator-alignment`: the aligned copy is created in the same project as its source rather than in a new folder named after the source's id. The evaluator record carries no `path` on either the detail or the list endpoint, so the source's folder cannot be read back directly; the new `resolve_project_key` maps the id it *does* carry to the project key that heads a create `path`. That id is `domain_id`, not `project_id`: `GET /v2/evaluators/{id}` runs through `normalizeEvalToInternalEvaluator`, an explicit field allowlist that never emits `project_id` — so the first cut of this fix resolved nothing and every copy still landed at the workspace root. Both spellings are read, the project record is matched on any of its id fields, and the lookup pages through `/v2/projects` instead of reading only the first page. Falls back to the workspace root when the project can't be resolved, instead of inventing a folder.
 - `orq-evaluator-alignment`: **a free-text numeric judge no longer gets the wrong score, silently.** `parse_numeric` fell back to the *first* numeric token in the completion, so `'On a scale of 1 to 5, I give this a 4'` parsed as **1.0** with status `ok` — inside the declared scale, so nothing downstream re-checked it, and the wrong score entered `mean`, `stdev` and the instability band. It now reads the verdict the way `parse_categorical` does (after the last `Value:`/`Score:` label, else the last line), scrubs scale mentions (`of 1`, `to 5`, `out of 5`, `/5`) first, and surfaces a verdict line still carrying two different candidates as `wrong_output_type` rather than guessing between them.
 - `orq-evaluator-alignment`: the preservation guard no longer passes a moved verdict space on a substring match. `endpoint not in proposed` is True for a rubric that only ever says `10`, so a rewrite moving the scale from `[1, 5]` to `[1, 10]` cleared the gate while both endpoints were in fact gone; the same shape let a dropped `spam` label read as preserved by a rubric mentioning `spammy`. Both are matched on their own boundaries now.

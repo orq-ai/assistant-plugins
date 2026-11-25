@@ -8,6 +8,6 @@ cd assistant-plugins
 claude --plugin-dir .
 ```
 
-> **Note:** Commands (`/orq:quickstart`, `/orq:workspace`, etc.) and agents are only available when installed as a Claude Code plugin.
+> **Note:** Commands (`/orq:workspace`, `/orq:traces`, etc.) and agents are only available when installed as a Claude Code plugin.
 
 > **Agent Plugins 1.0.0 client?** The same checkout is also a portable plugin — see [Agent Plugins 1.0.0 clients](../README.md#agent-plugins-100-clients).

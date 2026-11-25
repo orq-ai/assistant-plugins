@@ -20,7 +20,7 @@ def my_function():
     ...
 ```
 
-Without initializing `Orq(api_key=...)`, the `@traced` decorator will silently do nothing — no error, but no spans exported.
+`@traced` does not silently no-op without an explicit `Orq(api_key=...)`. It falls back to the `ORQ_API_KEY` environment variable, and when tracing is enabled with no key available (neither passed nor in the environment) it raises `ValueError("ORQ_API_KEY is required when tracing is enabled")`. So set `ORQ_API_KEY` in the environment or initialize the client; a missing key fails loud, it does not quietly drop spans.
 
 ## When to Use
 

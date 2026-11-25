@@ -111,13 +111,37 @@ await evaluatorq("eval", data=[...], jobs=[...], datapoint_parallelism=10, llm_p
 
 Requests evaluatorq issues itself (judges, juries, simulation, red team) take a slot automatically. A job calling a provider SDK directly is invisible to the budget unless you wrap it — and wrap only the request, since holding a slot across parsing shrinks the budget without reducing load:
 
+Use the orq variant for new code or an existing orq import. Reuse the OpenAI variant when OpenAI is already imported and orq is not. In both cases `client` is an already configured async SDK client; keep the slot around the request only.
+
+**orq SDK:**
+
 ```python
 from evaluatorq.common.llm_limit import llm_slot
 
 async def my_job(data, row):
     async with llm_slot():
-        response = await client.chat.completions.create(...)
-    return {"name": "my-job", "output": response.choices[0].message.content}
+        response = await client.responses.create_async(model="openai/gpt-6-luna", input=data.inputs["query"], stream=False)
+    if response.status != "completed":
+        raise RuntimeError(f"Model response {response.id}: {response.status}")
+    text = "".join(
+        part["text"]
+        for item in response.output or [] if item.get("type") == "message"
+        for part in item.get("content", []) if part.get("type") == "output_text"
+    )
+    return {"name": "my-job", "output": text}
+```
+
+**OpenAI SDK (already imported):**
+
+```python
+from evaluatorq.common.llm_limit import llm_slot
+
+async def my_job(data, row):
+    async with llm_slot():
+        response = await client.responses.create(model="openai/gpt-6-luna", input=data.inputs["query"])
+    if response.status != "completed":
+        raise RuntimeError(f"Model response {response.id}: {response.status}")
+    return {"name": "my-job", "output": response.output_text}
 ```
 
 `red_team()`, `simulate()`, `generate_and_simulate()` and `generate()` take `llm_parallelism` with the same meaning.

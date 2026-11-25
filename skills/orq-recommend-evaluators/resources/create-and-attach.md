@@ -16,7 +16,7 @@ Every create, repair and attach in this file happens only after the user approve
 
 - `key` must match `^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$`.
 - Put it in the **agent's** project with `project_id`. `project_id` and `path` are mutually exclusive.
-- **Judge model:** use `openai/gpt-4.1` once this check prints it: `orq models list -o json -j "[?refId=='openai/gpt-4.1'].refId" --raw`. The command takes no `--limit`, and unprojected it returns hundreds of entries. If the check prints nothing, pick another from `orq models list -o json -j "[?has_functions].refId"`. The response is a bare list, so a `data[...]` projection returns `null`. Use the routable `refId`, not `model_id`: several providers share a `model_id` such as `gpt-4.1`.
+- **Judge model:** use `openai/gpt-4.1` once this check prints it: `orq models list -o json -j "[?refId=='openai/gpt-4.1'].refId" --raw`. The command takes no `--limit`, and unprojected it returns hundreds of entries. If the check prints nothing, pick another from `orq models list -o json -j "[?has_functions].refId"`. The response is a bare list, so a `data[...]` projection returns `null`. Use the routable `refId`, not `model_id`: several providers share a `model_id` such as `gpt-4.1` ([`model-slugs.md`](../../orq-shared/resources/model-slugs.md)).
 
 **`python_eval`.** The body carries `code` instead of `prompt`/`model`/`mode`. The `evaluate(log)` contract and the `log` keys are in [`orq-build-evaluator`](../../orq-build-evaluator/SKILL.md) ("Python evaluators"). Two traps fail silently:
 

@@ -11,6 +11,19 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
+# The symlink checks below ask this checkout's git index which paths are links:
+# content_path, to resolve a link git could not materialise, and the
+# .claude-plugin/ loop, through `git ls-files`. Run from anywhere but the top of
+# its own checkout, those reads describe another repository or none: with no
+# repository the loop fails, but content_path quietly validates an unresolved
+# path, and inside an unrelated parent repository the whole run passes with
+# nothing checked. So the plugin root must be the top of its own checkout.
+# `pwd -P`: git reports the physical path, and macOS keeps TMPDIR under a link.
+if [ "$(git rev-parse --show-toplevel 2>/dev/null)" != "$(pwd -P)" ]; then
+  echo "FAIL: $ROOT_DIR is not the top of its own git checkout; the symlink checks need its git index"
+  exit 1
+fi
+
 assert_jq() {
   local file="$1" expr="$2" msg="$3"
   local jq_err
@@ -172,12 +185,20 @@ assert_symlink "mcp.json" ".mcp.json"
 # Anthropic's directory validator blocks them (ARCHIVE_SYMLINK_EXEC_SURFACE);
 # the plugin root is the repo root, so skills/ and .mcp.json resolve from there.
 
+# Listed before the loop, not fed through `< <(git ls-files ...)`: set -e never
+# sees a process substitution's exit status, so a failing git would hand the
+# loop zero lines and the check would pass without looking at anything.
+if ! claude_plugin_files="$(git ls-files -- .claude-plugin)"; then
+  echo "FAIL: git ls-files failed, so .claude-plugin/ could not be checked for symlinks"
+  exit 1
+fi
 while IFS= read -r entry; do
+  [[ -z "$entry" ]] && continue
   if [[ "$(tracked_mode "$entry")" == "120000" ]]; then
     echo "FAIL: $entry is a symlink; no symlinks are allowed under .claude-plugin/"
     exit 1
   fi
-done < <(git ls-files -- .claude-plugin)
+done <<< "$claude_plugin_files"
 
 assert_path -d "skills" "skills/ must exist at the plugin root"
 assert_path -f ".mcp.json" ".mcp.json must exist at the plugin root"

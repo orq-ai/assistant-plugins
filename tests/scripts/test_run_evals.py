@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -76,6 +77,17 @@ def test_skill_fired_requires_the_expected_skill_first() -> None:
     wrong_first = [call("Skill", {"skill": "orq-run-experiment"}), call("Skill", {"skill": "orq-build-evaluator"})]
     assert score(r.skill_fired, c, wrong_first).pass_ is False
     assert score(r.skill_fired, c, [call("Skill", {"skill": "orq-build-evaluator"}, status="incomplete")]).pass_ is False
+
+
+def test_skill_fired_anywhere_accepts_a_later_fire() -> None:
+    c = case(expect_skill="orq-run-experiment", expect_skill_anywhere=True)
+    later = [call("Skill", {"skill": "orq-build-evaluator"}), call("Skill", {"skill": "orq-run-experiment"})]
+    assert score(r.skill_fired, c, later).pass_ is True
+    assert score(r.skill_fired, c, [call("Skill", {"skill": "orq-build-evaluator"})]).pass_ is False
+    read = [call("Skill", {"skill": "orq-build-evaluator"}), call("Read", {"file_path": "/work/plugin/skills/orq-run-experiment/SKILL.md"})]
+    assert score(r.skill_fired, c, read).pass_ is True
+    # Without the opt-in a read is not a fire, so first-skill cases score as before.
+    assert score(r.skill_fired, case(expect_skill="orq-run-experiment"), read[1:]).pass_ is False
 
 
 def test_skill_fired_none_and_any() -> None:
@@ -435,7 +447,16 @@ def test_ci_tests_against_the_evaluatorq_the_runner_pins() -> None:
     repo = Path(__file__).resolve().parents[2]
     pin = re.compile(r"evaluatorq==([\w.]+)")
     runner = pin.findall((repo / "tests/scripts/run_evals.py").read_text(encoding="utf-8"))
-    ci = pin.findall((repo / ".github/workflows/skills-ci.yml").read_text(encoding="utf-8"))
+    workflow = yaml.safe_load((repo / ".github/workflows/skills-ci.yml").read_text(encoding="utf-8"))
+    # Other jobs intentionally test different evaluatorq versions (e.g. the
+    # Responses compatibility floor); only the scoring step must match this runner.
+    scoring_runs = [
+        step["run"]
+        for job in workflow["jobs"].values()
+        for step in job.get("steps", [])
+        if "tests/scripts/test_run_evals.py" in step.get("run", "")
+    ]
+    ci = pin.findall("\n".join(scoring_runs))
     assert runner and ci and set(runner) == set(ci), f"run_evals.py pins {runner}, skills-ci.yml pins {ci}"
 
 

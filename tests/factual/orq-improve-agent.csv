@@ -28,3 +28,4 @@ cli_flag,agents retrieve support-bot,-o,orq agents retrieve support-bot accepts 
 cli_subcommand,agents update support-bot,,orq agents update support-bot exists
 cli_flag,agents update support-bot,--from-file,orq agents update support-bot accepts --from-file
 cli_subcommand,datasets create,,orq datasets create exists
+cli_subcommand,models list,,orq models list exists

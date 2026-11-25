@@ -1,0 +1,51 @@
+name: release
+on:
+  push:
+    branches: [main]
+  # Re-run a failed release without a dummy commit.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Serialise runs: two quick merges would otherwise both miss the "already
+# released" check and race to create the same release.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Create release for the manifest version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(jq -er .version plugin.json)
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::plugin.json version '$version' is not semver"
+            exit 1
+          fi
+          tag="v$version"
+          # Only a 404 means "not released yet"; any other API error must fail
+          # the job rather than fall through to create.
+          if out=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" 2>&1); then
+            echo "$tag already released; skipping"
+            exit 0
+          elif ! grep -q 'HTTP 404' <<< "$out"; then
+            echo "::error::release lookup failed: $out"
+            exit 1
+          fi
+          # A leftover tag without a release would make `gh release create`
+          # ignore --target and release the wrong commit.
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" > /dev/null 2>&1; then
+            echo "::error::tag $tag exists without a release; delete the tag or create the release by hand"
+            exit 1
+          fi
+          tests/scripts/changelog-section.sh "$version" > notes.md
+          gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --notes-file notes.md

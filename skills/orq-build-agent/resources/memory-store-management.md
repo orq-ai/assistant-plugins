@@ -84,12 +84,14 @@ To attach a memory store to an agent, you need three things:
    ```
 
 3. **Include `memory.entity_id` when invoking the agent** to identify whose memory to access:
-   ```json
-   {
-     "message": {"role": "user", "parts": [{"kind": "text", "text": "..."}]},
-     "memory": {"entity_id": "user_12345"}
-   }
+   ```python
+   client.responses.create(
+       model="agent/<agent-key>",
+       input="…",
+       memory={"entity_id": "user_12345"},
+   )
    ```
+   The deprecated `agents.*` path used a raw `{"message": {"role": "user", "parts": [...]}, "memory": {"entity_id": "..."}}` body instead.
 
 Add memory-related instructions to the agent's system prompt:
 

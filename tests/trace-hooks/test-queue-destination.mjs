@@ -19,11 +19,12 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const pluginRoot = path.resolve(here, "../../plugins/trace-hooks");
 const otlpUrl = JSON.stringify(
-  `file://${path.join(here, "..", "src", "otlp.js").replaceAll("\\", "/")}`,
+  `file://${path.join(pluginRoot, "src", "otlp.js").replaceAll("\\", "/")}`,
 );
 const stateUrl = JSON.stringify(
-  `file://${path.join(here, "..", "src", "state.js").replaceAll("\\", "/")}`,
+  `file://${path.join(pluginRoot, "src", "state.js").replaceAll("\\", "/")}`,
 );
 
 let failed = 0;

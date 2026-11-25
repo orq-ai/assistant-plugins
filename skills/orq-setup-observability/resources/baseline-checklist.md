@@ -16,7 +16,7 @@ Verify these requirements after setting up instrumentation. Framework integratio
 
 ### How to Verify Each
 
-**1. Model name** — Open a trace in [Traces](https://my.orq.ai) → click an LLM span → confirm `model` field shows the model ID (e.g., `openai/gpt-4o`).
+**1. Model name** — Open the test trace (the link from SKILL.md step 9, or [Traces](https://my.orq.ai)) → click an LLM span → confirm `model` field shows the model ID (e.g., `openai/gpt-6-luna`).
 
 **2. Token usage** — Same LLM span → check `input_tokens` and `output_tokens` are populated. If zero, the instrumentor may not support the provider or streaming mode.
 

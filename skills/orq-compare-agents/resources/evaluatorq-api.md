@@ -13,7 +13,7 @@ For judges and juries (`llm_jury`, `llm_jury_pairwise`), input shapes, experimen
 | Language | Package | Install |
 |----------|---------|---------|
 | Python | `evaluatorq` | `pip install evaluatorq orq-ai-sdk` (add the `eq` CLI with `pip install 'evaluatorq[redteam]'`) |
-| TypeScript | `@orq-ai/evaluatorq` | `npm install @orq-ai/evaluatorq` |
+| TypeScript | `@orq-ai/evaluatorq` | `npm install @orq-ai/evaluatorq @orq-ai/node` |
 
 ---
 
@@ -241,7 +241,7 @@ evaluators=[
     string_contains_evaluator(case_insensitive=True, name="contains-check"),
     exact_match_evaluator(name="exact-match"),
     {"name": "custom", "scorer": my_scorer},
-    llm_jury(name="quality", criteria="The answer is correct.", preset="Balanced Trio"),
+    llm_jury(name="quality", criteria="The answer is correct.", preset="balanced-trio"),
 ]
 ```
 

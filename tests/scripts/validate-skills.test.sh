@@ -217,6 +217,10 @@ d=$(build_fixture array-manifest)
 echo "[]" > "$d/plugin.json"
 expect_fail "root manifest is an array" "$d" "top level must be a JSON object"
 
+d=$(build_fixture string-manifest)
+echo '"str"' > "$d/plugin.json"
+expect_fail "root manifest is a string" "$d" "top level must be a JSON object, got string"
+
 d=$(build_fixture missing-manifest)
 rm "$d/plugin.json"
 expect_fail "root manifest missing" "$d" "plugin.json: cannot read"
@@ -226,6 +230,14 @@ echo "{ nope" > "$d/plugin.json"
 expect_fail "root manifest is not JSON" "$d" "invalid JSON"
 
 # --- 3. Agent Skills conformance ---
+# Spec §7.1: a skill is a folder with a SKILL.md. A folder without one is listed in
+# the lock, so it ships, and every client skips it.
+d=$(build_fixture no-skill-md)
+mkdir -p "$d/skills/second-skill"
+printf 'notes\n' > "$d/skills/second-skill/README.md"
+relock "$d"
+expect_fail "skill folder without SKILL.md" "$d" "skills/second-skill: missing SKILL.md"
+
 # `disallowed-tools` sat in 14 of 15 skills, making them skippable under §7.1.
 d=$(build_fixture unknown-frontmatter-field)
 sed -i.bak 's/^description: /disallowed-tools: Bash\ndescription: /' "$d/skills/example-skill/SKILL.md"

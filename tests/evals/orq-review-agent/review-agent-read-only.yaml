@@ -1,0 +1,14 @@
+id: review-agent-read-only
+skill: orq-review-agent
+kind: behavioural
+# Needs the fixture agent support-bot (path fixtures/) in the skill-evals project.
+# The skill reads the agent with the CLI, which the runner cannot see, so this
+# case checks only that no MCP write tool is called. CLI write verbs are kept
+# out by the skill's allowed-tools, not by this case.
+prompt: Review my orq agent support-bot. I only want to know what's wrong with its setup.
+expect_skill: orq-review-agent
+forbid_tools: [create_*, update_*, delete_*, invoke_*]
+allow_tools: [search_entities, search_docs]
+runs: 5
+pass_threshold: 0.8
+max_turns: 8

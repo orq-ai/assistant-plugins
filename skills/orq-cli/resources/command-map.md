@@ -14,23 +14,16 @@ Since 5.0.0 the CLI's version is its own and no longer tracks the API's; run
 `orq version -o json` to read both. The command surface is tracked upstream in
 `surface.json`, so it cannot change silently, but it can change deliberately.
 
-To re-derive the tree after a CLI upgrade, instead of editing it by hand. On 8.x
-`orq --help` sorts groups into named sections rather than one `Available
-Commands:` block, so the script reads either shape. Run it
-with `bash` explicitly — under `zsh` (the macOS default) unquoted parameters are
-**not** word-split, so `for g in $groups` iterates once with the whole list as a
-single value and the script silently produces nothing useful:
+Discover commands progressively instead of relying on a copied command inventory:
 
-```bash
-#!/usr/bin/env bash
-groups=$(orq --help 2>&1 | awk '/^Usage:/{next} /^[A-Z][A-Za-z ]+:$/{f=1;next} /^Flags:/{f=0} f&&/^  [a-z]/{print $1}')
-for g in $groups; do
-  subs=$(orq "$g" --help 2>&1 | awk '/Available Commands:/,/^Flags:/' | grep '^  [a-z]' | awk '{print $1}' | tr '\n' ' ')
-  [ -n "$subs" ] && echo "$g: $subs" || echo "$g: (leaf command)"
-done
+```sh
+orq --help
+orq traces --help
+orq traces search --help
+orq help-input
 ```
 
-If you must run it under `zsh`, split explicitly: `for g in ${=groups}`.
+Read only the group and operation needed for the task. The installed CLI's help is the source of truth for available commands, flags and request-body fields.
 
 Response field names are not in the help text; they come from the spec the CLI
 was generated from:
@@ -363,107 +356,49 @@ orq doctor -o json -j "checks[?status!='pass']"      # real problems ('info' row
 
 ---
 
-## Generated resource commands
+## Resource command behavior
 
-> **Probed against 8.6.9 (API 4.14.20), 2026-09-21.** The tree below was re-derived with the script at the top; only
-the groups called out under it changed.
-
-One group per API tag. Groups marked with a leading `→` are the ones worth
-knowing by heart.
-
-```
-→ agents             create delete get-response invoke list retrieve run
-                     stream stream-run update
-  agents-responses   create
-  alerts             create delete get list list-trigger-events list-triggers
-                     update
-  annotation-queues  add-items clear create delete get get-item list
-                     query-items remove-items update
-  api-keys           create delete get list list-capabilities update
-  budgets            create delete get list reset-consumption update
-  chat               create
-  chunking           parse
-  completions        create
-→ datasets           clear create create-datapoint delete delete-datapoint list
-                     list-datapoints retrieve retrieve-datapoint update
-                     update-datapoint
-→ deployments        get-config invoke list stream
-  embeddings         create
-→ evals              all create delete get invoke list-versions update
-  feedback           create delete evaluation evaluation-remove
-  files              content delete get list update upload
-  identities         create delete list retrieve update
-  images             edit generate variation
-  knowledge-bases    create create-chunks create-datasource delete delete-chunk
-                     delete-chunks delete-datasource list list-chunks
-                     list-chunks-paginated list-datasources retrieve
-                     retrieve-chunk retrieve-datasource retrieve-file-url
-                     retrieve-processing-status search toggle-chunk update
-                     update-chunk update-datasource get-chunks-count
-  logs               aggregate get get-context get-patterns list-facet-values
-                     list-facets list-fields list-trace query search
-  management-keys    create delete get list list-capabilities update
-  mcp-gateways       create delete list list-tools retrieve update
-  mcp-servers        create delete list retrieve sync test-tool update
-  model-catalog      get list list-offerings
-  memory-stores      create create-document create-memory delete delete-document
-                     delete-memory list list-documents list-memories retrieve
-                     retrieve-document retrieve-memory update update-document
-                     update-memory
-  models             list create delete disable enable import-litellm
-                     list-litellm list-preview update validate
-                     create-aws-bedrock create-openai-like create-vertex
-                     azure-foundry-deployments
-                     update-aws-bedrock update-openai-like validate-aws-bedrock
-  moderations        create
-  notifiers          create delete get list update
-  ocr                ocr
-  pii                detect redact restore
-→ projects           create delete get list update use
-→ prompts            create delete get-version list list-versions retrieve update
-  reporting          query
-  rerank             create
-  responses          create get
-  schedules          create delete list retrieve trigger update
-→ skills             create delete get list update
-  smart-routers      create delete get list update
-  speech             create
-  tools              create delete get-version list list-versions retrieve update
-→ traces             aggregate conversation create delete get get-span
-                     list-facet-values list-facets list-fields list-spans
-                     query-oql search
-                     insights-service-* (15 subcommands, see below)
-  transcriptions     create
-  translations       create
-  webhooks           count create delete generate-secret get list query update
-  workspace          list use
-  workspace-security add-ip-range create-domain delete-domain delete-ip-range
-                     get-ip-allowlist list-domains update-ip-allowlist
-                     verify-domain
-  workspace-settings get update
-```
-
-New since 5.1.0: `models list-preview`, `projects use`, `traces conversation`
-(`traces thread` before 11.4.0, see below) and the `workspace` built-in now
-shown in the tree. The top-level `status`, `switch` and `orqi` are in the built-ins table.
+Use `orq <group> --help` and then `orq <group> <operation> --help` to discover the current surface. For model and agent inference, default to `orq responses create` on `/v3/router/responses`, with `openai/gpt-6-luna` for model examples or `agent/<key>` for managed agents.
 
 There is no `experiments` group — experiments are MCP/evaluatorq-only.
 `annotation-queues` is the CLI surface for the eval-corrections /
 unified-annotation model (annotation review workflows); its subcommands were
 listed from `--help` and not called on either version.
 
-`traces insights-service-*` is a family of **15** subcommands on 8.6.9 (the
-5.1.0 pass said 18: `…-create-insight`, `…-list-clusters`, `…-run-analysis`,
-`…-get-run-artifacts`, and so on) wrapping the trace-insights service.
-*[unverified: enumerated from `--help`, not called.]*
-
-**Every group is now listed.** The previous pass excluded several as "not
-covered by this skill", and two of the names it listed (`activities`, `people`)
-do not exist as groups at all — do not filter them out when re-deriving the tree.
-
 Note `orq evals all` (not `list`) is the evaluator listing command, and
 `orq traces create` / `orq traces delete` add and remove **span annotations**,
 not traces.
+
+**Annotation definitions: project, not workspace.** A span annotation
+references a Human Review definition by `key`. The UI marks a definition
+**Legacy** ("workspace-level and will be deprecated soon") when it has no
+`project_id`, so create definitions inside a project. No CLI group or public
+doc covers definitions yet; use the private `/v2/human-evals` route through `orq request`, which reuses the CLI's
+auth:
+
+```sh
+orq request GET /v2/human-evals --workspace <ws> -o json < /dev/null   # project_id null = Legacy
+orq request POST /v2/human-evals --workspace <ws> --from-file def.json --force -o json < /dev/null
+orq request PATCH /v2/human-evals/<id> --workspace <ws> --from-file def.json --force -o json < /dev/null
+```
+
+- `def.json` carries `project_id`. `POST` needs `id` (a 26-char ULID), `type`
+  (`single_select`, `multi_select`, `range`, `boolean`, `text`, `correction`),
+  `display_name` and `description`; `key` defaults to `orq_<10 chars>`
+  *(read from the API proto and handler; `POST` was not run live)*.
+- To fix a Legacy definition, `PATCH` it with `project_id` set rather than
+  recreating it: id and key stay the same, so span values already written stay
+  linked. Send the whole definition as `GET` returns it (`id`, `key`, `type`,
+  `display_name`, `description`, `options`/`config`) plus `project_id`; a body
+  with only the required fields returns `400 Request body failed validation`.
+- A workspace-scoped credential may set any project; a project-scoped API key
+  only its own (403 otherwise) *(read from `assertProjectWithinReach`; the 403
+  was not triggered live)*.
+- `< /dev/null` on every call: see "Escape hatch" below for why.
+
+Verified 2026-11-24 against prod (orquesta-demos): 10 definitions moved into a
+project with `PATCH`, keys unchanged. `GET` re-checked 2026-11-25 on orq
+12.6.11 (API 4.17.11): all 10 carry the `project_id`.
 
 **`evals` details, probed 2026-09-24 on 10.3.1 (API 4.14.20):**
 
@@ -474,7 +409,7 @@ not traces.
 | `--search` matches the key only | Not the description |
 | `evals get` has no `key` field | The key created with comes back as `display_name`; `evals all` returns it as `key` |
 | `evals create` under-reports | The create response has `output_type: null` even for a boolean evaluator; `evals get <id>` shows the stored value |
-| `models list` takes no `--limit` | Unprojected it returns hundreds of entries (709 on 2026-09-24). Project it: `-j "[?refId=='openai/gpt-4.1'].refId"` |
+| `models list` takes no `--limit` | Unprojected it returns hundreds of entries (709 on 2026-09-24). Project it: `-j "[?refId=='openai/gpt-4.1'].refId"`. Match on `refId`, not `model_id` ([`model-slugs.md`](../../orq-shared/resources/model-slugs.md)) |
 | `evals invoke` verdicts | Read `value`. `passed` is the guardrail's decision when there is one, so it reads `passed` on a `false` value otherwise |
 
 ---
@@ -722,20 +657,7 @@ earlier; see `orq-shared/resources/trace-queries.md` §5.4.
 
 ## Building app URLs
 
-> **Probed against 5.1.0; not re-probed.** The URL shapes are Studio routes, not
-> CLI behaviour, and the `whoami` line needs a live session.
-
-App URLs are workspace-scoped by **key** (the slug), not by id:
-
-```
-https://my.orq.ai/<workspace-key>/traces?query=trace_id:is:<trace-id>
-https://my.orq.ai/<workspace-key>/experiments/<experiment-id>
-```
-
-```sh
-key="$(orq auth whoami -o json -j active_workspace_key --raw)"
-echo "https://my.orq.ai/${key}/traces?query=$(printf 'trace_id:is:%s' "$trace_id" | jq -sRr @uri)"
-```
+Trace, span and experiment links, the workspace key and host they need, and their pitfalls live in the [`orq-trace-format`](../../orq-trace-format/SKILL.md) skill. Show traces to people as those links, never as bare ids.
 
 ### Which host am I actually talking to?
 
