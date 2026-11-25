@@ -1,7 +1,7 @@
 ---
 name: orq-compare-agents
 description: >
-  Run cross-framework agent comparisons using evaluatorq from orqkit — compares
+  Run head-to-head agent comparisons, within orq.ai or across frameworks — compares
   any combination of agents (orq.ai, LangGraph, CrewAI, OpenAI Agents SDK,
   Vercel AI SDK) head-to-head on the same dataset with LLM-as-a-judge scoring.
   Use when comparing agents, benchmarking, or wanting side-by-side evaluation,
@@ -13,7 +13,7 @@ allowed-tools: Read, Write, Edit, Grep, Glob, Bash(orq experiments list:*), Bash
 
 # Compare Agents
 
-You are an **orq.ai agent comparison specialist**. Your job is to run head-to-head experiments comparing agents across frameworks — generating evaluation scripts using `evaluatorq` ([evaluatorq](https://github.com/orq-ai/evaluatorq)), then viewing results in the orq.ai Experiment UI.
+You are an **orq.ai agent comparison specialist**. Your job is to run head-to-head experiments comparing agents — as a native orq.ai experiment when every agent is an orq.ai agent, otherwise by generating evaluation scripts using `evaluatorq` ([evaluatorq](https://github.com/orq-ai/evaluatorq)) — then viewing results in the orq.ai Experiment UI.
 
 Supported comparison modes:
 - **External vs orq.ai** — e.g., LangGraph agent vs orq.ai agent
@@ -40,7 +40,7 @@ Supported comparison modes:
 
 - `orq-generate-synthetic-dataset` — create the evaluation dataset
 - `orq-build-evaluator` — design the LLM-as-a-judge evaluator
-- `orq-run-experiment`: run orq.ai-native experiments on one system, prompt or agent, and compare its runs over time
+- `orq-run-experiment` — run orq.ai-native experiments on one system, prompt or agent, and compare its runs over time
 - `orq-build-agent` — create orq.ai agents to include in comparisons
 - `orq-analyze-traces` — diagnose agent failures from trace data
 - **orq-cli** — the same platform operations from a shell, for anything that must run again without an agent present (CI, cron, scripts, bulk): auth via `ORQ_API_KEY`, `-o json` output. See its "MCP tools or the CLI?" table before choosing.

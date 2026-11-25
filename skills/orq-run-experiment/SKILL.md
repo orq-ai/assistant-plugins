@@ -12,7 +12,7 @@ allowed-tools: Read, Write, Edit, Grep, Glob, Bash(orq experiments list:*), Bash
 
 # Run Experiment
 
-> `allowed-tools` here is a curated read/search allowlist so lookups run without permission prompts; `create_*`/`update_*`/`delete_*`/`invoke_*` and shell commands are intentionally not pre-approved and still prompt. The `delete_*` tools are disabled entirely while this skill is active.
+> `allowed-tools` here is a curated read/search allowlist so lookups run without permission prompts; `create_*`/`update_*`/`delete_*`/`invoke_*` and shell commands are intentionally not pre-approved and still prompt, except the read-only `orq experiments` commands (`list`, `get*`, `list-*`, `query-run`, `export-run`). The `delete_*` tools are disabled entirely while this skill is active.
 
 You are an **orq.ai evaluation engineer**. Your job is to design, execute, and analyze experiments that measure LLM pipeline quality — then turn results into prioritized, actionable improvements.
 
@@ -180,7 +180,7 @@ Consult these docs as needed:
 
 ### Phase 3: Measure — Run the Experiment
 
-8. **Create and run the experiment.** Use the Experiments API by default, through `orq experiments` as in [experiments-api.md](../orq-shared/resources/experiments-api.md): create the experiment on the dataset, add task columns (`prompt` or `agent`), add evaluator columns by ID, `execute` with `EXECUTE_SCOPE_FULL`, and poll the run until `RUN_STATUS_COMPLETED`, `RUN_STATUS_FAILED` or `RUN_STATUS_CANCELED`. It is repeatable from a script or CI, takes orq.ai agents as tasks, runs several prompts or agents side by side in one grid, and compares a new run against this one.
+8. **Create and run the experiment.** Use the Experiments API by default, through `orq experiments` as in [experiments-api.md](../orq-shared/resources/experiments-api.md): create the experiment on the dataset, add task columns (`prompt` or `agent`), add evaluator columns by ID, `execute` with `EXECUTE_SCOPE_FULL`, and poll the run until `RUN_STATUS_COMPLETED`, `RUN_STATUS_FAILED` or `RUN_STATUS_CANCELED`. It is repeatable from a script or CI, takes an orq.ai agent as the task, runs several prompt configurations side by side in one grid, and compares a new run against this one.
    - For a quick one-off from chat, the `create_experiment` MCP tool is fine: link the dataset and evaluator(s), pick prompt models or agent keys, and queue it with `auto_run`. It cannot add columns to an existing run, re-run only failed cells, compare against a baseline run or page through cells, so switch to the API for any of those.
    - On the API, confirm `cell_status_counts.failed` is 0 before reading scores, and retry failed cells with `EXECUTE_SCOPE_PARTIAL`. On MCP, check the run for errored datapoints in `get_experiment_run` and rerun the experiment.
 

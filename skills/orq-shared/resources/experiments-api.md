@@ -17,7 +17,7 @@ How the commands behave:
 ## When to use it instead of the MCP tools
 
 - the experiment must be repeatable from a script, CI or cron, with no agent present
-- the task is an orq.ai **agent** (agent task column), or several prompt and agent columns sit side by side in one run
+- an agent column pins a version with `agent_tag`, or prompt and agent columns sit side by side in one run (the MCP tool takes one task type per experiment and only an `agent_key` per agent column)
 - a variant runs as a new run of the same experiment and is compared to a baseline run with deltas
 - you need to re-run only failed or new cells, cancel a run, or read per-cell outputs and trace IDs
 

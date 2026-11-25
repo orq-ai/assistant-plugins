@@ -9,7 +9,7 @@ Use when a user wants to know which model or agent is best at *their* task,
 measured on *their* work. You interview them, stage real task instances with
 established answers, and then build the benchmark on orq directly: an orq
 dataset, orq evaluators, and one native orq experiment with a column per
-candidate model or orq.ai agent (evaluatorq for external agents). There is
+candidate model or orq.ai agent (evaluatorq for any other candidate). There is
 no third-party upload; everything lands in the user's own orq workspace.
 
 ## At a glance
