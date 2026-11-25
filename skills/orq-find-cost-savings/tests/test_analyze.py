@@ -33,24 +33,43 @@ def sol_cost(u):
         u["completion_tokens"] * 15e-6
 
 
-LEAVES = {
-    "s1": {"at": "2026-11-10T10:00:01Z", "ask": EASY_ASK, "usage": usage(2000)},
-    "s2": {"at": "2026-11-10T10:00:05Z", "ask": HARD_ASK, "usage": usage(2000, cached=1500)},
+LEAVES = {  # one trace per call: trace id, thread, routing input, usage; the root span is the LLM call
+    "s1": {"trace": "tA", "thread": "th1", "at": "2026-11-10T10:00:01Z", "ask": EASY_ASK, "usage": usage(2000)},
+    "s2": {"trace": "tB", "thread": "", "at": "2026-11-10T10:00:05Z", "ask": HARD_ASK,
+           "usage": usage(2000, cached=1500)},
 }
+TRACES = {v["trace"]: k for k, v in LEAVES.items()}
+# window token totals for sol, priced at its base price to 10.0, the fake's spend on it
+AGG = {"gen_ai.client.inference.usage.input_tokens": 2_000_000,
+       "gen_ai.client.inference.usage.cache_read.input_tokens": 1_000_000,
+       "gen_ai.client.inference.usage.cache_write.input_tokens": 0,
+       "gen_ai.client.inference.usage.output_tokens": 446_667}
+
+
+def row(span):
+    leaf = LEAVES[span]
+    return {"trace_id": leaf["trace"], "root_span_id": span, "thread_id": leaf["thread"], "project_id": "p1",
+            "models": ["gpt-6-sol"], "started_at": leaf["at"], "operation": "chat", "usage": leaf["usage"],
+            "cost": {"total": sol_cost(leaf["usage"])}, "attributes": {}}
 
 
 class FakeOrq:
-    def __init__(self, retention=None):
-        self.decisions, self.retention = 0, retention
+    def __init__(self, retention=None, plan="pro", agg=False):
+        self.decisions, self.retention, self.plan, self.agg = 0, retention, plan, agg
+        self.calls: list[list[str]] = []
 
-    def __call__(self, *args, body=None, cache=True):
+    def __call__(self, *args, body=None, cache=True, pacer=None):
         a = list(args)
+        self.calls.append(a)
         if a[:2] == ["telemetry", "query"]:
             return self.telemetry(a)
         if a[:2] == ["workspaces", "get"]:
-            if self.retention is None:
+            if self.plan is None:
                 raise c.OrqError(a, 1, "HTTP 403 not authorized")
-            return {"workspace": {"key": a[2], "features": {"retention_period": self.retention}}}
+            ws = {"key": a[2], "subscription": {"type": self.plan, "metadata": {"type": self.plan}}, "features": {}}
+            if self.retention:
+                ws["features"]["retention_period"] = self.retention
+            return {"workspace": ws}
         if a[:2] == ["model-catalog", "list"]:
             return {"data": FIX["catalog"]}
         if a[:2] == ["models", "list"]:
@@ -60,17 +79,19 @@ class FakeOrq:
             if flt["field"] == "thread_id":
                 return {"data": [{"trace_id": "tA", "agent": {"key": "support"},
                                   "attributes": {"orq": {"product": "agents"}}}]}
-            return {"data": [{"trace_id": "tA"}]}
+            return {"data": [row(k) for k in LEAVES]}
         if a[:2] == ["traces", "list-spans"]:
-            leaves = [{"type": "span.responses", "has_children": False, "provider": "openai", "model": "gpt-6-sol",
-                       "span_id": k, "started_at": v["at"], "usage": v["usage"]} for k, v in LEAVES.items()]
-            return {"data": [{"type": "trace", "has_children": True, "span_id": "root"}, *leaves], "has_more": False}
+            span = TRACES[a[2]]
+            leaf = LEAVES[span]
+            return {"data": [{"type": "span.responses", "has_children": False, "provider": "openai",
+                              "model": "gpt-6-sol", "span_id": span, "started_at": leaf["at"],
+                              "usage": leaf["usage"]}], "has_more": False}
         if a[:2] == ["traces", "get-span"]:
             leaf = LEAVES[a[3]]
             return {"span": {
                 "summary": {"provider": "openai", "model": "gpt-6-sol", "started_at": leaf["at"], "operation": "chat",
                             "usage": leaf["usage"], "cost": {"total": sol_cost(leaf["usage"])}},
-                "attributes": {"gen_ai": {"input": {"messages": [{"role": "user", "content": leaf["ask"]}]}}}}}
+                "attributes": {"gen_ai": {"input": [{"role": "user", "content": leaf["ask"]}]}}}}
         if a[:2] == ["decisions", "create"]:
             self.decisions += 1
             hard = body["state"] == HARD_ASK
@@ -78,21 +99,26 @@ class FakeOrq:
                                                                   "hard": 1.0 if hard else 0.0}}}}
         raise AssertionError(f"unexpected call {a}")
 
-    @staticmethod
-    def telemetry(a):
+    def telemetry(self, a):
         compute = json.loads(a[a.index("--compute") + 1])[0]
         groups = [a[i + 1] for i, x in enumerate(a) if x == "--group-by"]
         metric = compute["metric"]
+        key = f"{metric}:{compute['op']}"
         if not groups:
             return {"data": []}
         if groups == ["model"]:
-            return {"data": [{"group": {"model": SOL}, "metrics": {"genai.cost:sum": 10.0}},
-                             {"group": {"model": "openai/text-embedding-4"}, "metrics": {"genai.cost:sum": 1.0}}]}
+            per = {"genai.cost": (10.0, 1.0), "genai.requests": (20, 5), "trace_count": (10, 5)}
+            if self.agg:
+                per |= {m: (v, None) for m, v in AGG.items()}
+            if metric not in per:
+                return {"data": []}
+            sol, emb = per[metric]
+            return {"data": [{"group": {"model": SOL}, "metrics": {key: sol}},
+                             {"group": {"model": "openai/text-embedding-4"}, "metrics": {key: emb}}]}
         if groups == ["project"]:
             return {"data": [{"group": {"project": "p1"}, "timestamp": f"2026-11-10T{h:02d}:00:00Z",
-                              "metrics": {"genai.requests:count": 4}} for h in (9, 10, 11)]}
+                              "metrics": {key: 4}} for h in (9, 10, 11)]}
         if groups == ["thread", "project"]:
-            key = "genai.cost:sum" if metric == "genai.cost" else "genai.requests:count"
             return {"data": [{"group": {"thread": "th1", "project": "p1"}, "metrics": {key: 4 if "count" in key
                                                                                        else 2.0}}]}
         if groups == ["trace_framework"]:
@@ -102,7 +128,7 @@ class FakeOrq:
 
 def ns(tmp_path, **kw):
     d = {"workspace": "demo", "out": str(tmp_path), "sample": 10, "counterfactual_test": False, "cache_threads": 5,
-         "seed": 7, "yes": True, "window": 30, "json": False}
+         "seed": 7, "yes": True, "window": 30, "json": False, "keep_cache": True}
     d.update(kw)
     return argparse.Namespace(**d)
 
@@ -133,7 +159,9 @@ def test_analyze_end_to_end(tmp_path):
     assert hard["scenario_savings"]["router|same_provider:enabled|balanced"] == 0.0
     assert hard["scenario_savings"]["switch|same_provider:all"] == pytest.approx(warm)
     assert hard["scenario_savings"]["switch|same_provider:enabled"] == 0.0
-    assert all(r["weight"] == 2.0 for r in rep["samples"])
+    # PPS: one of 3 equal cells, then a trace by its cost; the weight is 1 / that probability
+    assert all(r["weight"] == pytest.approx(3 * (s1 + s2) / r["billed"]) for r in rep["samples"])
+    assert {r["cluster"] for r in rep["samples"]} <= {"th1", "tB"}  # the thread, else the trace
 
     head = rep["routing"]["headline"]
     assert head["coverage"] == pytest.approx(10 / 11)
@@ -198,7 +226,7 @@ def test_render_merges_narrative(tmp_path):
     assert "90% CI" not in page.split("<h2 id=scopes>")[1].split("<h2 id=details>")[0]
     appendix = page.split("<summary>Estimates with uncertainty")[1]
     assert "90% CI ($/mo)" in appendix and "% saved" in appendix and "sampling noise only" in appendix
-    assert ("Router saves" in page or "Router adds nothing" in page) and "Up to $" not in page
+    assert "<p class='m gap'>" in page and "Up to $" not in page
     for gone in ("Dominated", "Routing profiles", "Spend by model", "Scenario figures as a table", "class=plot"):
         assert gone not in page
     assert "<dt>Smart Router</dt>" in page and "Method and caveats" in page  # Terms live in Method
@@ -265,13 +293,13 @@ def test_disabled_decision_model_stops(tmp_path, monkeypatch):
 def test_harness_above_spend_gives_shares_and_caveat(tmp_path, monkeypatch):
     real = FakeOrq.telemetry
 
-    def high(a):
-        out = real(a)
+    def high(self, a):
+        out = real(self, a)
         if "trace_framework" in a:
             out["data"][0]["metrics"]["orq.gen_ai.cost:sum"] = 50.0
         return out
 
-    monkeypatch.setattr(FakeOrq, "telemetry", staticmethod(high))
+    monkeypatch.setattr(FakeOrq, "telemetry", lambda self, a: high(self, a))
     _, rep = run(tmp_path)
     assert rep["harness"]["unattributed"] is None
     assert any(x["check"] == "harness metric exceeds spend" for x in rep["checks"]["caveats"])
@@ -285,9 +313,9 @@ def test_render_refuses_stopped_report(tmp_path, monkeypatch):
         c.main(["render", "--out", str(tmp_path), "--narrative", str(tmp_path / "n.md")])
 
 
-def test_sample_cap():
+def test_sample_cap(tmp_path):
     with pytest.raises(SystemExit):
-        c.main(["analyze", "--out", "/tmp/x", "--sample", "101"])
+        c.main(["analyze", "--out", str(tmp_path), "--sample", str(c.MAX_SAMPLE + 1)])
 
 
 def test_unscored_turn_goes_to_the_top_seat(tmp_path, monkeypatch):
@@ -367,7 +395,7 @@ def test_a_model_without_a_smart_router_score_is_never_a_target(tmp_path):
 
 def test_report_has_no_quality_profile_and_a_minor_schema_version(tmp_path):
     _, rep = run(tmp_path)
-    assert rep["schema_version"] == "1.2"
+    assert rep["schema_version"] == "1.3"
     assert set(rep["routing"]["profiles"]) == {"balanced", "cost"}
     assert all(set(s["router"]) == {"balanced", "cost"} for s in rep["scenarios"])
 
@@ -502,13 +530,13 @@ class Budget(FakeOrq):
         super().__init__()
         self.mode, self.grains = mode, []
 
-    def __call__(self, *args, body=None, cache=True):
+    def __call__(self, *args, body=None, cache=True, pacer=None):
         a = list(args)
         if a[:2] == ["telemetry", "query"] and "project" in a and ("--grain" in a or "--interval-seconds" in a):
             grain = a[a.index("--grain") + 1] if "--grain" in a else a[a.index("--interval-seconds") + 1]
             self.grains.append(grain)
             rows = [{"group": {"project": "p1"}, "timestamp": f"2026-11-{d:02d}T00:00:00Z",
-                     "metrics": {"genai.requests:count": 4}} for d in (9, 10)]
+                     "metrics": {"genai.cost:sum": 4}} for d in (9, 10)]
             if grain == "hour" or self.mode == "truncated":
                 return {"data": rows[:1], "has_more": True}
             if grain == "21600":
@@ -516,7 +544,7 @@ class Budget(FakeOrq):
             return {"data": rows}
         if a[:2] == ["traces", "search"] and '"model"' in a[a.index("--filters") + 1]:  # draws, not the thread scan
             self.windows =getattr(self, "windows", []) + [(a[a.index("--from") + 1], a[a.index("--to") + 1])]
-        return super().__call__(*args, body=body, cache=cache)
+        return super().__call__(*args, body=body, cache=cache, pacer=pacer)
 
 
 def test_hourly_cells_over_budget_fall_back_to_a_coarser_grain(tmp_path):
@@ -525,6 +553,7 @@ def test_hourly_cells_over_budget_fall_back_to_a_coarser_grain(tmp_path):
     rep = an.run()
     assert rep["status"] == "ok", rep["stop"]
     assert an.orq.grains == ["hour", "21600", "day"]  # 6h failed the query, day fits
+    assert rep["params"]["cell_weight"] == {SOL: "cost"}
     assert rep["params"]["cell_grain"] == {SOL: "day"}
     assert not [x for x in rep["checks"]["caveats"] if x["check"] == "telemetry truncated"]
     assert rep["samples"] and all(c.parse_ts(f).date() in (c.parse_ts("2026-11-09T00:00:00Z").date(),
@@ -539,7 +568,7 @@ def test_cells_caveat_only_when_even_daily_cells_are_truncated(tmp_path):
     rep = an.run()
     assert rep["params"]["cell_grain"] == {SOL: "day"}
     trunc = [x for x in rep["checks"]["caveats"] if x["check"] == "telemetry truncated"]
-    assert trunc == [{"check": "telemetry truncated", "detail": f"{SOL}: request counts per project and day"}]
+    assert trunc == [{"check": "telemetry truncated", "detail": f"{SOL}: cost per project and day"}]
 
 
 def test_coverage_is_stored_per_lever(tmp_path):
@@ -590,10 +619,11 @@ def test_report_json_key_order_is_pinned(tmp_path):
     run(tmp_path)
     rep = json.loads((tmp_path / "report.json").read_text())
     assert list(rep) == ["schema_version", "generated_at", "workspace", "status", "stop", "summary", "params",
-                         "checks", "window", "spend", "routing_decision_cost", "samples", "scenarios", "routing",
+                         "checks", "window", "spend", "routing_decision_cost", "sampling", "samples", "scenarios",
+                         "routing",
                          "caching", "harness"]
     assert list(rep["summary"]) == ["window", "caveats", "spend_total", "spend_per_month", "scope", "sampled_calls",
-                                    "recommended", "levers_overlap", "router", "switch", "recommendations", "scopes",
+                                    "sampling", "recommended", "levers_overlap", "router", "switch", "recommendations", "scopes",
                                     "not_analysed", "sampled_moves", "caching"]
 
 
@@ -650,11 +680,11 @@ def test_a_trace_without_an_id_is_skipped_with_a_caveat_not_read(tmp_path):
             super().__init__()
             self.searches, self.span_reads = 0, []
 
-        def __call__(self, *args, body=None, cache=True):
+        def __call__(self, *args, body=None, cache=True, pacer=None):
             a = list(args)
             if a[:2] in (["traces", "list-spans"], ["traces", "get-span"]):
                 self.span_reads.append(a[2])
-            out = super().__call__(*args, body=body, cache=cache)
+            out = super().__call__(*args, body=body, cache=cache, pacer=pacer)
             if a[:2] == ["traces", "search"]:
                 self.searches += 1
                 if self.searches % 2:  # every other draw, and the thread scan, meet an id-less trace
@@ -675,10 +705,10 @@ def test_a_trace_without_an_id_is_skipped_with_a_caveat_not_read(tmp_path):
                                  json.JSONDecodeError("bad", "x", 0)])
 def test_a_cli_failure_in_a_read_is_a_caveat(tmp_path, err):
     class Flaky(FakeOrq):
-        def __call__(self, *args, body=None, cache=True):
+        def __call__(self, *args, body=None, cache=True, pacer=None):
             if list(args[:2]) == ["telemetry", "query"] and "thread" in args:
                 raise err
-            return super().__call__(*args, body=body, cache=cache)
+            return super().__call__(*args, body=body, cache=cache, pacer=pacer)
 
     an = c.Analyzer(ns(tmp_path))
     an.orq = Flaky()

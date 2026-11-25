@@ -4,15 +4,20 @@
 # ///
 """Cost-savings report for one orq.ai workspace.
 
-`analyze` samples leaf LLM spans from the workspace's traces, scores each span's routing input with the Smart Router's
-`jev-general-v1` decision, re-prices the span at the model the router would have picked, and scales the per-model
-saving rate to the window's spend with a bootstrap CI. Pools and model switches come from the intelligence/price
-frontier in evaluatorq's `model_frontier`, in four scopes: same or any provider, enabled or all available models.
-It also scans multi-turn threads for missed prompt caching and writes `report.json` plus `narrative-slots.md`. `render` merges the agent's `narrative.md` into `report.html`.
+`analyze` samples traces from the workspace (probability proportional to trace cost), scores each trace's routing
+input with the Smart Router's `jev-general-v1` decision, re-prices the whole trace at the model the router would have
+picked, and scales the per-model saving rate to the window's spend with a thread-cluster bootstrap CI. It draws in
+rounds and stops once that CI is tight enough. The change-model lever is priced from the window's token totals per
+model, without sampling. Pools and model switches come from the intelligence/price frontier in evaluatorq's
+`model_frontier`, in four scopes: same or any provider, enabled or all available models. It also scans multi-turn
+threads for missed prompt caching and writes `report.json` plus `narrative-slots.md`. `render` merges the agent's
+`narrative.md` into `report.html`.
 
 Every number comes from this script; the agent writes prose only. All reads and the decision calls go through the
-`orq` CLI (`-o json`), so the user's CLI login and workspace are reused. Responses are cached under `<out>/cache`,
-so a rerun resumes without paying twice. Spec: ../resources/design.md.
+`orq` CLI (`-o json`), so the user's CLI login and workspace are reused. Decision calls are paced to the workspace
+plan's rate limit. Responses are cached under `<out>/cache` during a run and deleted afterwards, unless
+`--keep-cache` is given or the run stopped at the confirmation (the approved rerun then reads the same sample).
+Spec: ../resources/design.md.
 """
 
 from __future__ import annotations
@@ -26,8 +31,10 @@ import math
 import random
 import re
 import shlex
+import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 from collections import Counter, defaultdict
@@ -45,14 +52,37 @@ from pydantic.config import JsonDict
 Json = dict[str, Any]  # an object as the orq CLI or report.json carries it
 T = TypeVar("T")
 
-SCHEMA_VERSION = "1.2"
-MAX_SAMPLE = 100
+SCHEMA_VERSION = "1.3"
+MAX_SAMPLE = 500  # traces drawn, so decision calls at most
 MIN_PER_STRATUM = 5
 WINDOW_DAYS = 30
 BOOTSTRAP = 1000
-WORKERS = 8
+READ_WORKERS = 16
+DECISION_WORKERS = 4
 PRICING_GAP = 0.02
 PROMPT_LIMIT = 65_000
+SEARCH_CAP = 100  # rows one `traces search` returns at most
+MIN_WINDOW_S = 1.0  # a search window is not halved below this; a draw that still hits the cap is drawn again
+AGENT_HEAVY_CALLS = 3  # LLM calls per trace above which a model gets a caveat
+
+# adaptive stop: draw in rounds, stop once the headline router CI is tight enough (design.md, Sampling)
+ROUND = 25
+STOP_MIN_DRAWS = 50  # and every allocated model at its minimum, before the rule may stop early
+STOP_REL_HALF_WIDTH = 0.25  # of the estimate
+STOP_ABS_HALF_WIDTH = 0.01  # of window spend
+STOP_BOOTSTRAP = 200
+WALL_TIME_S = 900
+
+# decision-call pacing against the plan's per-minute rate limit, which gateway traffic shares
+PACE_SHARE = 0.30
+RATE_WINDOW_S = 60.0  # the limit's fixed window: the wait after a 429 without a readable Retry-After
+MAX_429 = 6  # 429s on one decision call before the run stops
+DECISION_LATENCY_S = 2.0  # wait estimate only
+READ_S_PER_DRAW = 3.0  # wait estimate only
+FREE_DAILY = 50
+PLAN_RATE = {"free": 20, "growth": 100, "sandbox": 100, "pov": 100, "team": 1000, "pro": 1500, "pro2025": 1500,
+             "custom": 1500, "consumption": 1500}
+PLAN_SAMPLE = {"free": 15, "growth": 100, "sandbox": 100, "pov": 100}  # other known plans: MAX_SAMPLE
 
 DECISION_MODEL = "typesafe/jev-latest"
 DECISION_PRICE_PER_M = 0.042
@@ -117,9 +147,17 @@ def message_text(msg: Json) -> str:
     return " ".join(p for p in cleaned if p)
 
 
+def input_messages(attrs: Json) -> list[Json]:
+    """The span's input messages: `gen_ai.input` is `{messages: [...]}` on responses spans and a bare list on chat
+    completions spans."""
+    inp = (attrs.get("gen_ai") or {}).get("input")
+    msgs = inp if isinstance(inp, list) else (inp or {}).get("messages") if isinstance(inp, dict) else None
+    return [m for m in msgs or [] if isinstance(m, dict)]
+
+
 def _system_text(attrs: Json) -> str:
     gen = attrs.get("gen_ai") or {}
-    msgs = ((gen.get("input") or {}).get("messages")) or []
+    msgs = input_messages(attrs)
     texts = [message_text(m) for m in msgs if m.get("role") in ("system", "developer")]
     raw = gen.get("system_instructions")
     if isinstance(raw, str) and raw:
@@ -133,7 +171,7 @@ def _system_text(attrs: Json) -> str:
 
 def routing_input(attrs: Json) -> tuple[str | None, str]:
     """(text, source). source: user | system | instructions | empty_input | prompt_limit."""
-    msgs = (((attrs.get("gen_ai") or {}).get("input") or {}).get("messages")) or []
+    msgs = input_messages(attrs)
     text, source = "", "empty_input"
     for m in reversed(msgs):
         if m.get("role") == "user":
@@ -559,11 +597,13 @@ def price_tokens(t: Tokens, prices: dict[str, float]) -> float:
 
 @dataclass
 class Draw:
-    """One sampled span; one draw of a (project, hour) cell."""
+    """One sampled trace. `weight` is 1 / its inclusion probability, so stratum_rate is the Hansen-Hurwitz ratio
+    estimator; with inclusion proportional to cost it is the mean of saving / cost."""
     stratum: str
     weight: float
     cur_price: float
     savings: dict[str, float] = field(default_factory=dict)  # per profile
+    cluster: str = ""  # thread (or trace) id; "" makes the draw its own cluster
 
 
 def stratum_rate(draws: list[Draw], profile: str) -> float | None:
@@ -598,11 +638,36 @@ def allocate(spend: list[tuple[str, float]], n: int, minimum: int = MIN_PER_STRA
     return alloc
 
 
+def draw_order(alloc: dict[str, int], minimum: int = MIN_PER_STRATUM) -> list[str]:
+    """One entry per draw: every model's first `minimum` draws, then the rest interleaved by allocation, so a run
+    that stops after any round is spread like the full allocation."""
+    keyed = [((0, i, 0.0) if i < minimum else (1, 0, (i + 0.5) / n), m) for m, n in alloc.items() for i in range(n)]
+    return [m for _, m in sorted(keyed)]
+
+
+def stop_reason(savings: float, ci90: list[float], spend: float) -> str | None:
+    """Why the adaptive stop may end the run now, from the headline CI; None to keep drawing."""
+    half = (ci90[1] - ci90[0]) / 2
+    if savings and half <= STOP_REL_HALF_WIDTH * abs(savings):
+        return "relative_precision"
+    if half <= STOP_ABS_HALF_WIDTH * spend:
+        return "absolute_precision"
+    return None
+
+
 @dataclass
 class BootEstimate:
     savings: float
     ci90: list[float]
     per_stratum: dict[str, float | None]  # None: the stratum has no priced cost
+
+
+def clusters(draws: list[Draw]) -> list[list[Draw]]:
+    """Draws grouped by thread: calls in one conversation are not independent, so the bootstrap resamples these."""
+    by: dict[str, list[Draw]] = {}
+    for i, d in enumerate(draws):
+        by.setdefault(d.cluster or f"#{i}", []).append(d)
+    return list(by.values())
 
 
 def estimate(draws_by: dict[str, list[Draw]], spend: dict[str, float], profile: str, rng: random.Random,
@@ -613,13 +678,12 @@ def estimate(draws_by: dict[str, list[Draw]], spend: dict[str, float], profile: 
         r = stratum_rate(ds, profile)
         per[s] = None if r is None else r * spend.get(s, 0.0)
         total += per[s] or 0.0
+    groups = {s: clusters(ds) for s, ds in draws_by.items() if ds}
     samples = []
     for _ in range(boots):
         tot = 0.0
-        for s, ds in draws_by.items():
-            if not ds:
-                continue
-            res = [ds[rng.randrange(len(ds))] for _ in ds]
+        for s, gs in groups.items():
+            res = [d for _ in gs for d in gs[rng.randrange(len(gs))]]
             r = stratum_rate(res, profile)
             tot += (r or 0.0) * spend.get(s, 0.0)
         samples.append(tot)
@@ -690,14 +754,98 @@ class OrqError(RuntimeError):
         self.stderr = stderr
 
 
+class RateLimited(OrqError):
+    """A decision call still rate limited after MAX_429 waits."""
+
+
+@dataclass(frozen=True)
+class Plan:
+    """The workspace's plan as it bears on decision calls."""
+    type: str  # plan type as the workspace states it; "free" when missing or unknown
+    rate_limit: int  # requests per minute (the decision endpoint shares it with gateway traffic)
+    daily_limit: int | None  # free plans: decision calls a day
+    source: str  # where rate_limit came from: metadata.rateLimit | plan type | features.rate_limit | default
+
+    @property
+    def per_minute(self) -> float:
+        """The pace decision calls keep to."""
+        return max(1.0, PACE_SHARE * self.rate_limit)
+
+    @property
+    def default_sample(self) -> int:
+        return PLAN_SAMPLE.get(self.type, MAX_SAMPLE)
+
+
+def plan_of(ws: Json) -> Plan:
+    """From `workspaces get`: an explicit `subscription.metadata.rateLimit` wins, then the plan type's limit, then
+    `features.rate_limit`; a missing or unknown type is treated as free."""
+    sub = ws.get("subscription") or {}
+    meta = sub.get("metadata") or {}
+    raw = str(meta.get("type") or sub.get("type") or "").lower()
+    kind = raw if raw in PLAN_RATE else "free"
+    daily = FREE_DAILY if kind == "free" else None
+    for value, source in ((meta.get("rateLimit"), "metadata.rateLimit"),
+                          (PLAN_RATE.get(raw), "plan type"),
+                          ((ws.get("features") or {}).get("rate_limit"), "features.rate_limit")):
+        try:
+            if value is not None and int(value) > 0:
+                return Plan(kind, int(value), daily, source)
+        except (TypeError, ValueError):
+            continue
+    return Plan(kind, PLAN_RATE["free"], daily, "default")
+
+
+class Pacer:
+    """Paces the decision workers: one call every 60/per_minute seconds, the gap doubled on each 429 and every
+    worker held until its Retry-After has passed. It never speeds back up within a run.
+
+    ponytail: multiplicative decrease only, no additive increase; a run is short enough that a slower tail is cheap."""
+
+    def __init__(self, per_minute: float, clock: Callable[[], float] = time.monotonic,
+                 sleep: Callable[[float], None] = time.sleep):
+        self.gap, self.clock, self.sleep = 60.0 / per_minute, clock, sleep
+        self.next = self.hold = 0.0
+        self.throttles = 0
+        self.lock = threading.Lock()
+
+    def acquire(self) -> None:
+        while True:
+            with self.lock:
+                now = self.clock()
+                at = max(now, self.next, self.hold)
+                if at <= now:
+                    self.next = now + self.gap
+                    return
+            self.sleep(at - now)
+
+    def throttled(self, wait_s: float) -> None:
+        with self.lock:
+            self.throttles += 1
+            self.gap *= 2
+            self.hold = max(self.hold, self.clock() + wait_s)
+
+
+RATE_LIMITED_RE = re.compile(r"HTTP(?:/[\d.]+)? 429")
+RETRY_AFTER_RE = re.compile(r"^\s*╎\s*Retry-After:\s*(\d+(?:\.\d+)?)\s*$", re.I | re.M)
+VERBOSE_LINE_RE = re.compile(r"^\s*(╎|INFO |DEBUG |request-id=)")
+
+
+def quiet(stderr: str) -> str:
+    """stderr without --verbose output: headers and bodies (the prompt text), config and request ids."""
+    return "\n".join(ln for ln in stderr.splitlines() if not VERBOSE_LINE_RE.match(ln))
+
+
 class Orq:
     def __init__(self, workspace: str | None, cache_dir: Path | None, retries: int = 4):
         self.workspace, self.cache_dir, self.retries = workspace, cache_dir, retries
         self.calls = 0
+        self.verbose = True  # on paced calls, to read Retry-After; off for the run once the CLI panics on it
         if cache_dir:
             cache_dir.mkdir(parents=True, exist_ok=True)
 
-    def __call__(self, *args: str, body: Json | None = None, cache: bool = True) -> Any:
+    def __call__(self, *args: str, body: Json | None = None, cache: bool = True, pacer: Pacer | None = None) -> Any:
+        """One CLI call, read from the cache when it has it. A 5xx (and a 429 outside the pacer) is retried with
+        jittered backoff up to `retries`; with a pacer, a 429 waits its Retry-After without using that budget."""
         argv = list(args) + (["--workspace", self.workspace] if self.workspace else []) + ["-o", "json"]
         key = hashlib.sha256(json.dumps([argv, body], sort_keys=True).encode()).hexdigest()[:24]
         path = self.cache_dir / f"{key}.json" if (self.cache_dir and cache) else None
@@ -708,23 +856,39 @@ class Orq:
             tmp = (self.cache_dir or Path(".")) / f"body-{key}.json"
             tmp.write_text(json.dumps(body))
             argv += ["--from-file", str(tmp)]
+        attempt = limited = 0
         try:
-            for attempt in range(self.retries + 1):
+            while True:
+                if pacer:
+                    pacer.acquire()
+                verbose = pacer is not None and self.verbose
                 self.calls += 1
-                p = subprocess.run(["orq", *argv], capture_output=True, text=True, timeout=180)
+                p = subprocess.run(["orq", *argv, *(["--verbose"] if verbose else [])], capture_output=True,
+                                   text=True, timeout=180)
                 if p.returncode == 0:
                     out = json.loads(p.stdout) if p.stdout.strip() else None
                     if path:
                         path.write_text(json.dumps(out))
                     return out
-                if re.search(r"HTTP (429|50[0-4])", p.stderr) and attempt < self.retries:
-                    time.sleep(2 ** attempt)
+                if verbose and "panic:" in p.stderr:  # the CLI's header redaction can panic; retry without it
+                    self.verbose = False
                     continue
-                raise OrqError(argv, p.returncode, p.stderr)
+                err = quiet(p.stderr)
+                if pacer and RATE_LIMITED_RE.search(p.stderr):
+                    limited += 1
+                    if limited > MAX_429:
+                        raise RateLimited(argv, p.returncode, err)
+                    m = RETRY_AFTER_RE.search(p.stderr)
+                    pacer.throttled(float(m.group(1)) if m else RATE_WINDOW_S)
+                    continue
+                if re.search(r"HTTP (429|50[0-4])", err) and attempt < self.retries:
+                    time.sleep(2 ** attempt * (0.5 + random.random()))  # jitter: parallel readers do not retry in step
+                    attempt += 1
+                    continue
+                raise OrqError(argv, p.returncode, err)
         finally:
             if tmp:
                 tmp.unlink(missing_ok=True)
-        raise AssertionError("unreachable")
 
 
 # --------------------------------------------------------------------------------------------- helpers
@@ -736,6 +900,23 @@ def parse_ts(s: str) -> datetime:
 
 def iso(d: datetime) -> str:
     return d.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def iso_ms(d: datetime) -> str:
+    """ISO with milliseconds: halved search windows end between whole seconds."""
+    return d.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def trace_cost(row: Json) -> float:
+    """A search row's billed cost: the whole trace."""
+    return max(0.0, float((row.get("cost") or {}).get("total") or 0))
+
+
+# window token totals per model (telemetry, traces source); input includes cache reads and writes
+AGG_METRICS = {"input": "gen_ai.client.inference.usage.input_tokens",
+               "cache_read": "gen_ai.client.inference.usage.cache_read.input_tokens",
+               "cache_write": "gen_ai.client.inference.usage.cache_write.input_tokens",
+               "output": "gen_ai.client.inference.usage.output_tokens"}
 
 
 def model_key(provider: str, model: str) -> str:
@@ -796,10 +977,11 @@ CELL_GRAINS = (("hour", "hour", 60), ("6h", "21600", 360), ("day", "day", 1440))
 
 
 class Cell(NamedTuple):
-    """Requests on one model in one (project, time bucket): what draw_one samples from."""
+    """Spend (or, when no cost is recorded, requests) on one model in one (project, time bucket): what draw_one
+    picks a cell by."""
     project: str
     start: str  # ISO
-    requests: float
+    weight: float
     minutes: int  # bucket width
 
 
@@ -817,37 +999,48 @@ class Decision:
 
 
 @dataclass
-class DrawnSpan:
-    """One sampled leaf LLM span, with the routing input read from it."""
+class DrawnTrace:
+    """One sampled trace: its search row (usage and cost of the whole trace, which is what gets priced) and the span
+    its routing input is read from."""
     model: str
     project: str
     cell: str  # start of the (project, time bucket) cell it was drawn from
     trace_id: str
-    span_id: str
-    weight: float  # leaf LLM spans in its trace: the draw stands for that many calls
+    span_id: str  # the span the routing input came from: the root, or the last LLM call
+    inclusion: float  # probability that one draw of this model picks this trace
+    halvings: int  # times the cell's search window was halved to get under the row cap
+    cluster: str  # thread id, or the trace id when the trace has no thread: the bootstrap resamples these
+    row: Json  # `traces search` row
     span: Json  # `traces get-span`
     input: str | None = None
     source: str = "empty_input"  # see routing_input
 
     @property
+    def weight(self) -> float:
+        return 1.0 / self.inclusion
+
+    @property
     def summary(self) -> Json:
-        return self.span.get("summary") or {}
+        return self.row
 
     @property
     def attrs(self) -> Json:
-        return self.span.get("attributes") or {}
+        return self.row.get("attributes") or {}
 
 
 @dataclass(kw_only=True)
 class SampleRow:
-    """One drawn span priced under every scenario. Scenario keys: `router|<scope>|<profile>` and `switch|<scope>`;
+    """One drawn trace priced under every scenario. Scenario keys: `router|<scope>|<profile>` and `switch|<scope>`;
     `picks`, `savings` and `pool` are the headline scope's router, kept flat for the tables."""
     trace_id: str
     span_id: str
     model: str
     project: str
-    weight: float
-    cur_price: float  # this span re-priced from the catalog, on the model it used
+    weight: float  # 1 / inclusion
+    inclusion: float
+    halvings: int
+    cluster: str
+    cur_price: float  # this trace re-priced from the catalog, on the model it used
     billed: float  # what orq billed for it, web search excluded
     source: str
     ask_chars: int
@@ -867,8 +1060,8 @@ class SampleRow:
     env: Json
 
     def to_json(self) -> Json:
-        out = {k: getattr(self, k) for k in ("trace_id", "span_id", "model", "project", "weight", "cur_price",
-                                             "billed", "source", "ask_chars", "prompt_tokens", "flags", "picks",
+        out = {k: getattr(self, k) for k in ("trace_id", "span_id", "model", "project", "weight", "inclusion",
+                                             "halvings", "cluster", "cur_price", "billed", "source", "ask_chars", "prompt_tokens", "flags", "picks",
                                              "savings", "tier", "fallback", "scenario_savings", "unpriced")}
         if self.score is not None:
             out["score"] = self.score
@@ -928,9 +1121,17 @@ class Analyzer:
         self.cards: dict[str, Json] = {}  # workspace model cards by provider/model
         self.garden: dict[str, mf.ScoredModel] = {}
         self.samples: list[SampleRow] = []
-        self.pools: dict[str, dict[str, PoolInfo]] = {}  # model in use -> scope -> pool
+        self.pools: dict[str, dict[str, PoolInfo]] = {}  # model in use -> scope -> pool, fixed once computed
         self._traffic: dict[str, list[tuple[float, Json, Json, Tokens]]] = {}  # model -> (weight, summary, attrs, tokens)
         self._poolable: list[str] | None = None
+        self._ws: Json | None = None  # `workspaces get`, read once
+        self.plan = plan_of({})
+        self.pacer: Pacer | None = None
+        self.agg: dict[str, Tokens] = {}  # window token totals per model
+        self.dropped: list[str] = []  # models of draws dropped because the trace used more than one model
+        self.capped: list[str] = []  # models of draws whose window stayed at the row cap down to MIN_WINDOW_S
+        self.cpt: dict[str, float] = {}  # LLM calls per trace per model
+        self.t0 = time.monotonic()
 
     def log(self, msg: str) -> None:
         print(msg, file=sys.stderr, flush=True)
@@ -970,14 +1171,20 @@ class Analyzer:
             return None
         return w
 
+    def workspace(self) -> Json:
+        """`workspaces get` for this workspace, read once; {} when the key cannot read it."""
+        if self._ws is None:
+            try:
+                key = self.args.workspace or (self.orq("status", cache=False) or {}).get("active_workspace_key")
+                self._ws = ((self.orq("workspaces", "get", key, cache=False) or {}).get("workspace") or {}) if key \
+                    else {}
+            except OrqError:
+                self._ws = {}
+        return self._ws
+
     def retention_days(self) -> int | None:
         """The workspace's trace retention (`features.retention_period`), or None when the key cannot read it."""
-        try:
-            key = self.args.workspace or (self.orq("status", cache=False) or {}).get("active_workspace_key")
-            days = ((self.orq("workspaces", "get", key, cache=False) or {}).get("workspace") or {}) \
-                .get("features", {}).get("retention_period") if key else None
-        except OrqError:
-            return None
+        days = (self.workspace().get("features") or {}).get("retention_period")
         return int(days) if isinstance(days, (int, float)) and days > 0 else None
 
     def set_window(self) -> None:
@@ -1055,8 +1262,16 @@ class Analyzer:
         units = [(_unit(mine.get(k)), _unit(theirs.get(k))) for k in ("input", "output")]
         return any(a is not None and b is not None and a < b for a, b in units)
 
+    def agg_price(self, x: str) -> PriceChoice:
+        """The base price of `x` for window token totals, in its region: totals carry no request time, context
+        length, service tier or cache TTL, so no variant that needs one applies."""
+        return self.price_on(x, {"inference_geo": region_of(x)})
+
     def traffic_cost(self, m: str) -> Cost | None:
-        """The sampled spans of `m` re-priced on a model, same tokens; None when a span hits a missing tier price."""
+        """The traffic of `m` re-priced on a model, same tokens: the window's token totals when telemetry has them,
+        else the sampled traces; None when a sampled trace hits a missing tier price."""
+        if (agg := self.agg.get(m)) is not None:
+            return lambda x: price_tokens(agg, self.agg_price(x).prices)
         spans = self._traffic.get(m)
         if not spans:
             return None
@@ -1148,37 +1363,63 @@ class Analyzer:
         return sorted([{"key": r["group"].get(dim) or "(not set)", "spend": r["metrics"].get("genai.cost:sum") or 0.0}
                        for r in rows], key=lambda r: -r["spend"])
 
+    def model_totals(self, metric: str, op: str) -> dict[str, float]:
+        """One telemetry metric over the window, per model."""
+        return {r["group"]["model"]: float(v) for r in self.tq([{"metric": metric, "op": op}], ["model"])
+                if r["group"].get("model") and (v := r["metrics"].get(f"{metric}:{op}")) is not None}
+
+    def aggregates(self) -> dict[str, Tokens]:
+        """Window token totals per model: input (cached and written included), cache reads, cache writes, output.
+        A model without input or output totals has none."""
+        got = {k: self.model_totals(metric, "sum") for k, metric in AGG_METRICS.items()}
+        out = {}
+        for m in set(got["input"]) & set(got["output"]):
+            inp, rd, wr = int(got["input"][m]), int(got["cache_read"].get(m, 0)), int(got["cache_write"].get(m, 0))
+            out[m] = Tokens(max(0, inp - rd - wr), rd, wr, int(got["output"][m]), None, inp)
+        return out
+
+    def calls_per_trace(self) -> dict[str, float]:
+        """LLM calls per trace per model (genai.requests over trace_count): how agent-heavy its traffic is."""
+        req, traces = self.model_totals("genai.requests", "count"), self.model_totals("trace_count", "count")
+        return {m: n / traces[m] for m, n in req.items() if traces.get(m)}
+
     def cells(self, model: str) -> list[Cell]:
-        """Request counts per (project, time bucket). Hourly first; a model in many projects can exceed the
-        time-series budget (5000 rows over the window), which truncates or fails the query, so it falls back to
-        6-hour and then daily buckets, and records the grain used in `params.cell_grain`."""
+        """Spend per (project, time bucket), which draw_one picks cells by; request counts when the model has no
+        recorded cost. Hourly first; a model in many projects can exceed the time-series budget (5000 rows over the
+        window), which truncates or fails the query, so it falls back to 6-hour and then daily buckets. Records the
+        grain in `params.cell_grain` and the weight in `params.cell_weight`."""
         prov, bare = split_model(model)
         filters = [{"field": "model", "op": "eq", "values": [bare]}]
         if prov:
             filters.append({"field": "provider", "op": "eq", "values": [prov]})
-        got: tuple[list[Json], str, int, bool] | None = None  # (rows, grain label, bucket minutes, complete)
-        err: OrqError | None = None
-        for label, grain, minutes in CELL_GRAINS:
-            try:
-                got = (self.tq([{"metric": "genai.requests", "op": "count"}], ["project"], filters,
-                               mode="timeseries", grain=grain, strict=True), label, minutes, True)
+        for metric, op, name in (("genai.cost", "sum", "cost"), ("genai.requests", "count", "requests")):
+            got: tuple[list[Json], str, int, bool] | None = None  # (rows, grain label, bucket minutes, complete)
+            err: OrqError | None = None
+            for label, grain, minutes in CELL_GRAINS:
+                try:
+                    got = (self.tq([{"metric": metric, "op": op}], ["project"], filters, mode="timeseries",
+                                   grain=grain, strict=True), label, minutes, True)
+                    break
+                except Truncated as t:
+                    got = (t.rows, label, minutes, False)
+                except OrqError as e:  # the budget can fail the query instead of truncating it
+                    err = e
+            if got is None:
+                assert err is not None  # every grain failed
+                raise err
+            rows, label, minutes, complete = got
+            cells = [Cell(r["group"].get("project") or "", r["timestamp"], float(v), minutes) for r in rows
+                     if r.get("timestamp") and (v := r["metrics"].get(f"{metric}:{op}") or 0) > 0]
+            if cells:
                 break
-            except Truncated as t:
-                got = (t.rows, label, minutes, False)
-            except OrqError as e:  # the budget can fail the query instead of truncating it
-                err = e
-        if got is None:
-            assert err is not None  # every grain failed
-            raise err
-        rows, label, minutes, complete = got
         self.report["params"].setdefault("cell_grain", {})[model] = label
+        self.report["params"].setdefault("cell_weight", {})[model] = name
         if not complete:
-            self.caveat("telemetry truncated", f"{model}: request counts per project and {label}")
-        return [Cell(r["group"].get("project") or "", r["timestamp"], float(n), minutes) for r in rows
-                if r.get("timestamp") and (n := r["metrics"].get("genai.requests:count") or 0) > 0]
+            self.caveat("telemetry truncated", f"{model}: {name} per project and {label}")
+        return cells
 
     def search(self, project: str, frm: datetime, to: datetime, filters: list[Json]) -> list[Json]:
-        a = ["traces", "search", "--from", iso(frm), "--to", iso(to), "--limit", "100", "--filters",
+        a = ["traces", "search", "--from", iso_ms(frm), "--to", iso_ms(to), "--limit", str(SEARCH_CAP), "--filters",
              json.dumps(filters)]
         if project:
             a += ["--project", project]
@@ -1207,41 +1448,72 @@ class Analyzer:
         return [s for s in spans if s.get("type") in LLM_SPAN_TYPES and not s.get("has_children")
                 and (model is None or model_key(s.get("provider", ""), s.get("model", "")) == model)]
 
-    def draw_one(self, model: str, cells: list[Cell], seed: int) -> DrawnSpan | None:
+    def window_rows(self, model: str, cell: Cell, rng: random.Random) -> tuple[list[Json], int] | None:
+        """The traces of one random sub-window of the cell that holds fewer than SEARCH_CAP: the whole bucket,
+        else a random half, halved again while the search returns the cap. The halves form a fixed grid, so every
+        search is cached by its window, and a sub-window k halvings deep is reached with probability 2**-k."""
+        lo = parse_ts(cell.start)
+        hi = lo + timedelta(minutes=cell.minutes)
+        k = 0
+        while True:
+            rows = self.search(cell.project, lo, hi, [{"field": "model", "op": "eq", "values": [model]}])
+            if len(rows) < SEARCH_CAP:
+                return rows, k
+            if (hi - lo).total_seconds() / 2 < MIN_WINDOW_S:
+                self.capped.append(model)
+                return None
+            mid = lo + (hi - lo) / 2
+            lo, hi = (lo, mid) if rng.random() < 0.5 else (mid, hi)
+            k += 1
+
+    def draw_one(self, model: str, cells: list[Cell], seed: int) -> DrawnTrace | None:
+        """One trace of `model`, picked with probability proportional to its cost (PPS): a cell by its spend, a
+        sub-window (window_rows), then a trace in it by its search-row cost. Records the inclusion probability. A
+        trace that used more than one model is dropped and drawn again, so the rate is that of single-model traces."""
         rng = random.Random(seed)
-        total = sum(c.requests for c in cells)
+        total = sum(c.weight for c in cells)
         for _attempt in range(6):
             x, acc, cell = rng.random() * total, 0.0, cells[-1]
             for c in cells:
-                acc += c.requests
+                acc += c.weight
                 if acc >= x:
                     cell = c
                     break
-            project, ts, _, minutes = cell
-            begin = parse_ts(ts)
-            traces: list[Json] = []
-            for width in dict.fromkeys((1, 5, 15, 60, minutes)):
-                start = begin + timedelta(minutes=rng.randrange(0, minutes + 1 - width))
-                traces = self.search(project, start, start + timedelta(minutes=width),
-                                     [{"field": "model", "op": "eq", "values": [model]}])
-                if traces:
-                    break
-            if not traces:
+            got = self.window_rows(model, cell, rng)
+            if got is None:
                 continue
-            t = traces[rng.randrange(len(traces))]
-            tid = t.get("trace_id") or t.get("id")
-            if not tid:
-                self.caveat("trace without id", f"{model} in {project or '(no project)'}: search returned a trace "
-                            "with no trace_id; drew again")
+            rows, k = got
+            if any(not (r.get("trace_id") or r.get("id")) for r in rows):
+                self.caveat("trace without id", f"{model} in {cell.project or '(no project)'}: search returned a "
+                            "trace with no trace_id; skipped")
+                rows = [r for r in rows if r.get("trace_id") or r.get("id")]
+            costs = [trace_cost(r) for r in rows]
+            if sum(costs) <= 0:
                 continue
-            spans = self.list_spans(tid, project)
-            leaves = self.leaf_llm(spans, model)
-            if not leaves:
+            i = rng.choices(range(len(rows)), weights=costs)[0]
+            row = rows[i]
+            if len(row.get("models") or []) != 1:
+                self.dropped.append(model)
                 continue
-            s = leaves[rng.randrange(len(leaves))]
-            full = self.get_span(tid, s["span_id"], project)
-            return DrawnSpan(model, project, ts, tid, s["span_id"], float(len(leaves)), full)
+            tid = row.get("trace_id") or row["id"]
+            span_id, span = self.routing_span(row, tid, cell.project)
+            p = (cell.weight / total) * 2.0 ** -k * costs[i] / sum(costs)
+            return DrawnTrace(model, cell.project, cell.start, tid, span_id, p, k, row.get("thread_id") or tid, row,
+                              span)
         return None
+
+    def routing_span(self, row: Json, trace: str, project: str) -> tuple[str, Json]:
+        """The span whose input is the routing input: the root, or the trace's last LLM call when the root has no
+        messages."""
+        root = row.get("root_span_id") or row.get("span_id") or ""
+        span = self.get_span(trace, root, project) if root else {}
+        if input_messages(span.get("attributes") or {}):
+            return root, span
+        leaves = self.leaf_llm(self.list_spans(trace, project))
+        if not leaves:
+            return root, span
+        last = max(leaves, key=lambda s: s.get("started_at") or "")
+        return last["span_id"], self.get_span(trace, last["span_id"], project)
 
     # ---- decisions
 
@@ -1252,9 +1524,13 @@ class Analyzer:
         body = {"model": DECISION_MODEL, "name": "cost-savings-report", "state": text,
                 "timeout": {"call_timeout": 1500}, "retry": {"count": 0}, "questions": QUESTION}
         try:
-            r = self.orq("decisions", "create", body=body)
+            r = self.orq("decisions", "create", body=body, pacer=self.pacer)
             probs = (((r or {}).get("answers") or {}).get("difficulty") or {}).get("probabilities")
             res = Decision(score=score(probs)) if probs else Decision(error="error")
+        except RateLimited as e:
+            raise Stop("decision rate limit", {
+                "detail": f"still rate limited after {MAX_429} waits; rerun later or with a smaller --sample",
+                "rate_limit_per_minute": self.plan.rate_limit, "decisions_made": len(self.decisions)}) from e
         except OrqError as e:
             kind = "decision_timeout" if re.search(r"timeout|timed out|deadline|HTTP 408|HTTP 504", e.stderr,
                                                    re.I) else "error"
@@ -1283,6 +1559,10 @@ class Analyzer:
             self.report["stop"] = {"check": "analyze failed", "numbers": {"detail": f"{type(e).__name__}: {e}"[:300]}}
             self.log(f"stopped: analyze failed {type(e).__name__}: {e}"[:300])
         self.write()
+        # the cache holds prompt texts; a run stopped at the confirmation keeps it so the approved rerun reads the
+        # same sample without paying for it again
+        if not getattr(self.args, "keep_cache", False) and (self.report["stop"] or {}).get("check") != "confirmation":
+            shutil.rmtree(self.out / "cache", ignore_errors=True)
         return self.report
 
     def _run(self) -> None:
@@ -1293,6 +1573,12 @@ class Analyzer:
                 a.workspace = self.orq.workspace = self.report["workspace"] = key
         self.set_window()
         self.log(f"window {self.frm} .. {self.to} ({self.days} days)")
+        self.plan = plan_of(self.workspace())
+        if not self.workspace():
+            self.caveat("plan unknown", "workspaces get failed; pacing and the default sample follow the free plan")
+        self.pacer = Pacer(self.plan.per_minute)
+        target = a.sample or self.plan.default_sample
+        self.report["params"] |= {"sample": target, "sample_source": "flag" if a.sample else "plan"}
         self.load_models()
         by_model = self.spend_by("model")
         total = sum(r["spend"] for r in by_model)
@@ -1301,47 +1587,76 @@ class Analyzer:
                                 "by_agent": self._safe(lambda: self.spend_by("agent")[:50]),
                                 "by_deployment": self._safe(lambda: self.spend_by("deployment")[:50])}
         chat = [(r["key"], r["spend"]) for r in by_model if is_chat_model(r["key"], self.cat)]
-        alloc = allocate(chat, a.sample)
+        self.agg = self._safe(self.aggregates) or {}
+        self.cpt = self._safe(self.calls_per_trace) or {}
+        for m, _ in chat:
+            if (self.cpt.get(m) or 0) > AGENT_HEAVY_CALLS:
+                self.caveat("agent-heavy traffic", f"{m}: {self.cpt[m]:.1f} LLM calls per trace; each sampled trace "
+                            "is routed as a whole on its last user message")
+        alloc = allocate(chat, target)
         self.log(f"strata: {json.dumps(alloc)}")
-
-        # sample spans (free reads)
-        jobs = []
-        for m, n in alloc.items():
-            cells = self.cells(m)
-            if not cells:
+        cells: dict[str, list[Cell]] = {}
+        for m in alloc:
+            cs = self.cells(m)
+            if cs:
+                cells[m] = cs
+            else:
                 self.caveat("no cells", m)
+        jobs = [(m, cells[m], self.rng.randrange(2**31)) for m in draw_order(alloc) if m in cells]
+        need = sum(min(n, MIN_PER_STRATUM) for m, n in alloc.items() if m in cells)
+        self.log(f"plan {self.plan.type}: {self.plan.rate_limit} requests/min, decisions paced to "
+                 f"{self.plan.per_minute:g}/min; up to {len(jobs)} traces, about {self.wait_min(len(jobs), len(jobs)):.0f} min")
+        drawn: list[DrawnTrace] = []
+        reason, rounds, ci = "sample_size", 0, None
+        for start in range(0, len(jobs), ROUND):
+            if rounds and time.monotonic() - self.t0 > WALL_TIME_S:
+                reason = "wall_time"
+                break
+            batch = jobs[start:start + ROUND]
+            with ThreadPoolExecutor(READ_WORKERS) as ex:
+                new = [d for d in ex.map(lambda j: self._safe(lambda: self.draw_one(*j)), batch) if d]
+            for d in new:
+                d.input, d.source = routing_input(d.span.get("attributes") or {})
+            drawn += new
+            rounds += 1
+            todo = sorted({d.input for d in drawn if self.needs_decision(d) and self._key(d.input) not in self.decisions})
+            if todo and "routing_decision_cost" not in self.report:
+                self.confirm(todo, len(drawn), len(jobs))
+            self.decide_all(todo, len(jobs))
+            if not drawn:
                 continue
-            jobs += [(m, cells, self.rng.randrange(2**31)) for _ in range(n)]
-        est_s = len(jobs) * 12 / WORKERS
-        self.log(f"sampling {len(jobs)} spans, about {est_s / 60:.1f} min")
-        with ThreadPoolExecutor(WORKERS) as ex:
-            drawn = [d for d in ex.map(lambda j: self._safe(lambda: self.draw_one(*j)), jobs) if d]
-        empty = {m for m in alloc if not any(d.model == m for d in drawn)}
-        for m in empty:
-            self.caveat("stratum search empty", m)
-
-        # routing inputs
-        for d in drawn:
-            d.input, d.source = routing_input(d.attrs)
+            self.score_samples(drawn)
+            if start + len(batch) >= max(need, STOP_MIN_DRAWS) and start + len(batch) < len(jobs):
+                ci = self.headline_ci(dict(chat), STOP_BOOTSTRAP)
+                if ci and (why := stop_reason(ci.savings, ci.ci90, total)):
+                    reason = why
+                    break
         if not drawn:
             raise Stop("sample not empty", {"drawn": 0})
-        texts = {d.input for d in drawn if d.input}
-        tokens = sum(len(t) / 4 + DECISION_OVERHEAD_TOKENS for t in texts)
-        cost = tokens * DECISION_PRICE_PER_M / 1e6
-        self.report["routing_decision_cost"] = {"calls": len(texts), "estimated_usd": cost}
-        self.log(f"{len(texts)} decision calls, estimated ${cost:.4f}")
-        if not a.yes:
-            if not sys.stdin.isatty():
-                raise Stop("confirmation", {"detail": "rerun with --yes after the user approves the decision cost",
-                                            "calls": len(texts), "estimated_usd": cost})
-            sys.stderr.write("continue? [y/N] ")  # stderr: stdout may be piped (--json)
-            sys.stderr.flush()
-            if sys.stdin.readline().strip().lower() != "y":
-                raise Stop("confirmation", {"detail": "declined", "calls": len(texts), "estimated_usd": cost})
-        with ThreadPoolExecutor(WORKERS) as ex:
-            list(ex.map(self.decide, sorted(texts)))
-
-        self.score_samples(drawn)
+        for m in alloc:
+            if not any(d.model == m for d in drawn):
+                self.caveat("stratum search empty", m)
+        if self.dropped:
+            self.caveat("multi-model traces", f"{len(self.dropped)} draws hit a trace that used more than one model "
+                        f"and were drawn again ({', '.join(f'{m}: {n}' for m, n in Counter(self.dropped).items())}); "
+                        "the estimate covers single-model traces")
+        if self.capped:
+            self.caveat("dense search window", f"{len(self.capped)} draws met {SEARCH_CAP} traces in a "
+                        f"{MIN_WINDOW_S:g} s window and were drawn again")
+        if not getattr(self.orq, "verbose", True):
+            self.caveat("Retry-After unreadable", f"the CLI failed with --verbose; 429s waited {RATE_WINDOW_S:g} s")
+        ci = ci if reason in ("relative_precision", "absolute_precision") else self.headline_ci(dict(chat),
+                                                                                                STOP_BOOTSTRAP)
+        self.report["sampling"] = {
+            "plan": {"type": self.plan.type, "rate_limit_per_minute": self.plan.rate_limit,
+                     "rate_limit_source": self.plan.source, "daily_decision_limit": self.plan.daily_limit,
+                     "decisions_per_minute": self.plan.per_minute},
+            "target": target, "drawn": len(drawn), "rounds": rounds, "stop_reason": reason,
+            "half_width": (ci.ci90[1] - ci.ci90[0]) / 2 if ci else None, "estimate": ci.savings if ci else None,
+            "decision_calls": len(self.decisions), "rate_limited": self.pacer.throttles,
+            "multi_model_dropped": len(self.dropped), "wall_time_s": round(time.monotonic() - self.t0, 1),
+            "calls_per_trace": {m: self.cpt[m] for m, _ in chat if m in self.cpt}}
+        self.log(f"sampled {len(drawn)} traces in {rounds} rounds, stop: {reason}")
         self.pilot_checks(drawn)
         if a.counterfactual_test:
             self.counterfactual()
@@ -1350,6 +1665,76 @@ class Analyzer:
         self.report["caching"] = self._safe(self.caching) or {"error": "caching scan failed"}
         self.report["harness"] = self._safe(self.harness) or {"error": "harness query failed"}
 
+    def wait_min(self, traces: int, calls: int) -> float:
+        """Rough minutes for `traces` reads and `calls` paced decision calls."""
+        reads = traces * READ_S_PER_DRAW / READ_WORKERS
+        decide = max(calls / self.plan.per_minute * 60, calls * DECISION_LATENCY_S / DECISION_WORKERS)
+        return (reads + decide) / 60
+
+    def confirm(self, texts: list[str], drawn: int, jobs: int) -> None:
+        """Before the first decision call: what the run will send and cost, extrapolated from the first round."""
+        calls = min(jobs, math.ceil(len(texts) * jobs / max(1, drawn)))
+        per_call = sum(len(t) / 4 + DECISION_OVERHEAD_TOKENS for t in texts) / len(texts)
+        cost = calls * per_call * DECISION_PRICE_PER_M / 1e6
+        minutes = self.wait_min(jobs - drawn, calls)
+        daily = (f" This uses {calls} of your {self.plan.daily_limit} daily decision calls."
+                 if self.plan.daily_limit else "")
+        note = (f"Up to {calls} decision calls, about ${cost:.4f} and {minutes:.0f} min.{daily} Each call sends one "
+                f"sampled prompt text to {DECISION_MODEL}; the {calls} calls appear as traces in this workspace.")
+        self.report["routing_decision_cost"] = {"calls": calls, "estimated_usd": cost, "minutes": round(minutes, 1)}
+        self.log(note)
+        if self.args.yes:
+            return
+        nums = {"calls": calls, "estimated_usd": cost, "minutes": round(minutes, 1), "plan": self.plan.type,
+                "daily_decision_limit": self.plan.daily_limit, "detail": note}
+        if not sys.stdin.isatty():
+            raise Stop("confirmation", nums | {"next": "rerun with --yes after the user approves"})
+        sys.stderr.write("continue? [y/N] ")  # stderr: stdout may be piped (--json)
+        sys.stderr.flush()
+        if sys.stdin.readline().strip().lower() != "y":
+            raise Stop("confirmation", nums | {"next": "declined"})
+
+    def decide_all(self, texts: list[str], jobs: int) -> None:
+        done = [0]
+
+        def one(t: str) -> None:
+            self.decide(t)
+            done[0] += 1  # ponytail: racy counter, progress display only
+            if done[0] % 10 == 0 or done[0] == len(texts):
+                self.log(f"decisions {len(self.decisions)} made, {done[0]}/{len(texts)} this round")
+        with ThreadPoolExecutor(DECISION_WORKERS) as ex:
+            list(ex.map(one, texts))
+
+    @staticmethod
+    def _key(text: str) -> str:
+        return hashlib.sha256(text.encode()).hexdigest()
+
+    def pools_of(self, m: str) -> dict[str, PoolInfo]:
+        """The model's pool and switch target per scope, computed once: from the window's token totals when
+        telemetry has them, else from the traces sampled so far."""
+        if m not in self.pools:
+            self.pools[m] = {sc: self.pool_for(m, sc) for sc in SCOPES}
+        return self.pools[m]
+
+    def needs_decision(self, d: DrawnTrace) -> bool:
+        """A decision changes the saving only when the trace is unrouted, has an input, and its model has a pool in
+        some scope; a model with none is already the cheapest choice, so the router serves its switch target."""
+        if d.input is None or has_auto_router(d.attrs) or has_auto_router(d.span.get("attributes") or {}):
+            return False
+        if d.model not in self.pools:
+            self._traffic.setdefault(d.model, []).append((d.weight, d.summary, d.attrs, span_tokens(d.summary,
+                                                                                                    d.attrs)))
+        return any(p.pool for p in self.pools_of(d.model).values())
+
+    def headline_ci(self, spend: dict[str, float], boots: int) -> BootEstimate | None:
+        """The headline router estimate over the models whose pricing check passes."""
+        key = f"router|{HEADLINE_SCOPE}|balanced"
+        ok, _gaps = self.priced_ok(self.draws(), spend)
+        unpriced = {r.model for r in self.samples if key in r.unpriced}
+        cov = {m: ds for m, ds in ok.items() if m not in unpriced}
+        return estimate(cov, {m: spend.get(m, 0.0) for m in cov}, key, random.Random(self.args.seed), boots) \
+            if cov else None
+
     def _safe(self, fn: Callable[[], T]) -> T | None:
         try:
             return fn()
@@ -1357,22 +1742,22 @@ class Analyzer:
             self.caveat("read failed", str(e)[:300])
             return None
 
-    def score_samples(self, drawn: list[DrawnSpan]) -> None:
+    def score_samples(self, drawn: list[DrawnTrace]) -> None:
         """Price every sample under each scenario (see SampleRow)."""
-        self.samples, self.pools, self._traffic = [], {}, {}
+        self.samples = []
+        self._traffic = {}
         for d in drawn:
             self._traffic.setdefault(d.model, []).append((d.weight, d.summary, d.attrs, span_tokens(d.summary, d.attrs)))
         for d in drawn:
             m = d.model
-            if m not in self.pools:
-                self.pools[m] = {sc: self.pool_for(m, sc) for sc in SCOPES}
-            pools = self.pools[m]
+            pools = self.pools_of(m)
             summ, attrs = d.summary, d.attrs
             env = span_env(summ, attrs, m)
             toks = span_tokens(summ, attrs)
             cur = self.price_on(m, env)
             cost = summ.get("cost") or {}
             row = SampleRow(trace_id=d.trace_id, span_id=d.span_id, model=m, project=d.project, weight=d.weight,
+                            inclusion=d.inclusion, halvings=d.halvings, cluster=d.cluster,
                             cur_price=price_tokens(toks, cur.prices),
                             billed=float(cost.get("total") or 0) - float(cost.get("web_search") or 0),
                             source=d.source, ask_chars=len(d.input or ""), prompt_tokens=toks.prompt,
@@ -1384,10 +1769,12 @@ class Analyzer:
             for sc in SCOPES:
                 sw = pools[sc].switch
                 ss[f"switch|{sc}"] = self._reprice(row, d, sw, f"switch|{sc}") if sw else 0.0
-            if has_auto_router(attrs):
+            if has_auto_router(attrs) or has_auto_router(d.span.get("attributes") or {}):
                 row.fallback = "already_routed"
             elif d.input is None:
                 row.fallback = d.source
+            elif not self.needs_decision(d):
+                row.fallback = "no_pool"
             else:
                 dec = self.decide(d.input)
                 if dec.score is None:
@@ -1423,8 +1810,8 @@ class Analyzer:
             row.flags = sorted(set(row.flags))
             self.samples.append(row)
 
-    def _reprice(self, row: SampleRow, d: DrawnSpan, target: str, key: str) -> float:
-        """Saving from serving this span on `target` with the same input, cached and output tokens; a missing tier
+    def _reprice(self, row: SampleRow, d: DrawnTrace, target: str, key: str) -> float:
+        """Saving from serving this trace on `target` with the same input, cached and output tokens; a missing tier
         price marks the scenario unpriced."""
         pp = self.price_on(target, span_env(d.summary, d.attrs, target))
         if pp.flag:
@@ -1432,7 +1819,7 @@ class Analyzer:
             row.unpriced.append(key)
         return row.cur_price - price_tokens(row.tokens, pp.prices)
 
-    def pilot_checks(self, drawn: list[DrawnSpan]) -> None:
+    def pilot_checks(self, drawn: list[DrawnTrace]) -> None:
         rows = self.samples
         n = len(rows)
         if n == 0:
@@ -1473,30 +1860,66 @@ class Analyzer:
                          "tier": r.tier.get("balanced"), "fallback": r.fallback, "pool_reason": r.pool_reason})
         self.report["counterfactual_test"] = {"asks": asks, "per_model": dict(per)}
 
-    def estimate(self, spend: dict[str, float], total: float) -> None:
+    def draws(self) -> dict[str, list[Draw]]:
         by: dict[str, list[Draw]] = defaultdict(list)
-        own: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
         for r in self.samples:
-            by[r.model].append(Draw(r.model, r.weight, r.cur_price, dict(r.scenario_savings)))
-            own[r.model][0] += r.cur_price
-            own[r.model][1] += r.billed
+            by[r.model].append(Draw(r.model, r.weight, r.cur_price, dict(r.scenario_savings), r.cluster))
+        return by
+
+    def priced_ok(self, by: dict[str, list[Draw]], spend: dict[str, float]
+                  ) -> tuple[dict[str, list[Draw]], dict[str, float | None]]:
+        """Sampled models whose catalog re-pricing of the drawn traces matches what orq billed, within PRICING_GAP;
+        and each model's gap (None: nothing billed)."""
+        gaps: dict[str, float | None] = {}
+        for m in by:
+            priced = sum(r.cur_price for r in self.samples if r.model == m)
+            billed = sum(r.billed for r in self.samples if r.model == m)
+            gaps[m] = abs(priced - billed) / billed if billed else None
+        return {m: ds for m, ds in by.items() if (g := gaps[m]) is not None and g <= PRICING_GAP}, gaps
+
+    def switch_exact(self, sc: str, spend: dict[str, float]) -> tuple[dict[str, float], dict[str, str]]:
+        """Change-model saving over the window per chat model, from its token totals: spend times the share its
+        switch target's base price saves on the same tokens. A model whose totals are missing, or priced more than
+        PRICING_GAP off its spend, is left out with the reason."""
+        per: dict[str, float] = {}
+        miss: dict[str, str] = {}
+        for m, s in spend.items():
+            agg = self.agg.get(m)
+            if agg is None or s <= 0:
+                miss[m] = "no token totals in telemetry"
+                continue
+            own = price_tokens(agg, self.agg_price(m).prices)
+            gap = abs(own - s) / s
+            if gap > PRICING_GAP:
+                miss[m] = f"token totals priced {gap:.1%} off spend"
+                continue
+            sw = self.pools_of(m)[sc].switch
+            per[m] = s * (own - price_tokens(agg, self.agg_price(sw).prices)) / own if sw else 0.0
+        return per, miss
+
+    def estimate(self, spend: dict[str, float], total: float) -> None:
+        by = self.draws()
+        priced_ok, gaps = self.priced_ok(by, spend)
+        exact = {sc: self.switch_exact(sc, spend) for sc in SCOPES}
+        head_exact, head_miss = exact[HEADLINE_SCOPE]
+        models = list(by) + [m for m in spend if m not in by and m in head_exact]  # sampled first
         strata: list[Json] = []
-        priced_ok: dict[str, list[Draw]] = {}
         not_covered: list[Json] = []
-        for m, ds in by.items():
-            priced, billed = own[m]
-            gap = abs(priced - billed) / billed if billed else None
+        for m in models:
+            ds = by.get(m, [])
+            gap = gaps.get(m)
             reason = ""
-            if gap is None or gap > PRICING_GAP:
+            if not ds:
+                reason = "not sampled"
+            elif gap is None or gap > PRICING_GAP:
                 reason = f"pricing check off by {gap:.1%}" if gap is not None else "no billed cost"
                 self.caveat("pricing check", f"{m}: {reason}")
                 not_covered.append({"model": m, "spend": spend.get(m, 0.0), "reason": reason})
-            else:
-                priced_ok[m] = ds
-            head = self.pools[m][HEADLINE_SCOPE].to_json()
-            strata.append({"model": m, "spend": spend.get(m, 0.0), "n": len(ds), "clusters": len(ds),
+            head = self.pools_of(m)[HEADLINE_SCOPE].to_json()
+            strata.append({"model": m, "spend": spend.get(m, 0.0), "n": len(ds), "clusters": len(clusters(ds)),
                            "pool": head["pool"], "pool_reason": head["reason"], "pricing_gap": gap,
-                           "covered": not reason})
+                           "covered": not reason, "calls_per_trace": self.cpt.get(m),
+                           "switch_source": "totals" if m in head_exact else "sample" if m in priced_ok else None})
         for row in self.report["spend"]["by_model"]:
             if row["key"] not in by:
                 why = "not sampled" if row["key"] in spend else "not a chat model (decision, embedding or media)"
@@ -1505,13 +1928,19 @@ class Analyzer:
 
         def scenario(key: str) -> Json:
             unpriced = {r.model for r in self.samples if key in r.unpriced}
-            cov = {m: ds for m, ds in priced_ok.items() if m not in unpriced}
+            per_exact: dict[str, float] = exact[key.split("|")[1]][0] if key.startswith("switch|") else {}
+            cov = {m: ds for m, ds in priced_ok.items() if m not in unpriced and m not in per_exact}
             cov_spend = {m: spend.get(m, 0.0) for m in cov}
             e = estimate(cov, cov_spend, key, random.Random(self.args.seed))
-            return {"savings": e.savings, "ci90": e.ci90, "per_month": e.savings * k,
-                    "ci90_per_month": [x * k for x in e.ci90], "without_top3": without_top(cov, cov_spend, key),
-                    "coverage": (sum(cov_spend.values()) / total) if total else 0.0,
-                    "per_stratum": e.per_stratum, "unpriced_models": sorted(unpriced)}
+            fixed = sum(per_exact.values())  # no sampling: no spread
+            cover = sum(cov_spend.values()) + sum(spend.get(m, 0.0) for m in per_exact)
+            out = {"savings": fixed + e.savings, "ci90": [fixed + x for x in e.ci90],
+                   "without_top3": fixed + without_top(cov, cov_spend, key),
+                   "coverage": (cover / total) if total else 0.0,
+                   "per_stratum": e.per_stratum | per_exact, "unpriced_models": sorted(unpriced - set(per_exact))}
+            if key.startswith("switch|"):
+                out["from_totals"] = sorted(per_exact)
+            return out | {"per_month": out["savings"] * k, "ci90_per_month": [x * k for x in out["ci90"]]}
 
         scen = {key: scenario(key) for key in
                 [f"router|{sc}|{p}" for sc in SCOPES for p in PROFILES] + [f"switch|{sc}" for sc in SCOPES]}
@@ -1519,17 +1948,22 @@ class Analyzer:
         for s in strata:
             s["covered"] = s["covered"] and s["model"] not in head["unpriced_models"]
             s["savings"] = head["per_stratum"].get(s["model"]) if s["covered"] else None
-            s["rate"] = stratum_rate(by[s["model"]], f"router|{HEADLINE_SCOPE}|balanced")
+            s["rate"] = stratum_rate(by[s["model"]], f"router|{HEADLINE_SCOPE}|balanced") if s["n"] else None
         for m in head["unpriced_models"]:
             if m in priced_ok:
                 not_covered.append({"model": m, "spend": spend.get(m, 0.0),
-                                    "reason": "span tier has no price on a pool model"})
+                                    "reason": "trace tier has no price on a pool model"})
+        sw_head = scen[f"switch|{HEADLINE_SCOPE}"]["per_stratum"]
+        switch_nc = [{"model": r["key"], "spend": r["spend"],
+                      "reason": "not a chat model (decision, embedding or media)" if r["key"] not in spend
+                      else head_miss.get(r["key"], "not sampled")}
+                     for r in self.report["spend"]["by_model"] if sw_head.get(r["key"]) is None]
         self.report["scenarios"] = [
             {"scope": sc, "provider": sc.split(":")[0], "availability": sc.split(":")[1],
              "headline": sc == HEADLINE_SCOPE,
              "router": {p: dict(scen[f"router|{sc}|{p}"]) for p in PROFILES},
              "switch": dict(scen[f"switch|{sc}"]),
-             "models": [{"model": m, **self.pools[m][sc].to_json()} for m in by]}
+             "models": [{"model": m, **self.pools_of(m)[sc].to_json()} for m in models]}
             for sc in SCOPES]
         self.report["routing"] = {
             "headline": {kk: head[kk] for kk in ("savings", "ci90", "without_top3", "coverage", "per_month",
@@ -1538,9 +1972,10 @@ class Analyzer:
             "profiles": {p: {"savings": scen[f"router|{HEADLINE_SCOPE}|{p}"]["savings"],
                              "ci90": scen[f"router|{HEADLINE_SCOPE}|{p}"]["ci90"]} for p in PROFILES},
             "strata": strata, "not_covered": sorted(not_covered, key=lambda r: -r["spend"]),
+            "switch_not_covered": sorted(switch_nc, key=lambda r: -r["spend"]),
             "buckets": self.buckets(), "fallbacks": self.fallbacks(),
             "moves": self.moves(),
-            "underpowered": self.underpowered(), "pareto": self.pareto([s["model"] for s in strata]),
+            "underpowered": self.underpowered(), "pareto": self.pareto(list(by)),
         }
 
     def moves(self) -> list[Json]:
@@ -1630,7 +2065,7 @@ class Analyzer:
         threads.sort(key=lambda t: -t[2])
         threads = threads[: self.args.cache_threads]
         self.log(f"caching: scanning {len(threads)} threads")
-        with ThreadPoolExecutor(WORKERS) as ex:
+        with ThreadPoolExecutor(READ_WORKERS) as ex:
             results = list(ex.map(lambda t: self._safe(lambda: self.scan_thread(*t)), threads))
         cands = [c for res in results if res for c in res]
         prompt = sum(c.prompt_tokens for c in cands)
@@ -2098,6 +2533,28 @@ TOKENIZER_NOTE = ("Any-provider figures reuse the sampled token counts. Other mo
                   "differently, so they carry an error the traces cannot measure.")
 
 
+STOP_TEXT = {"sample_size": "it reached the sample size",
+             "relative_precision": f"the Smart Router 90% range was within {STOP_REL_HALF_WIDTH:.0%} of the estimate",
+             "absolute_precision": f"the Smart Router 90% range was within {STOP_ABS_HALF_WIDTH:.0%} of spend",
+             "wall_time": f"it hit the {WALL_TIME_S // 60} min time cap"}
+
+
+def _sampling_note(sa: SummarySampling | None) -> str:
+    """How many traces were drawn, on which plan, why drawing stopped, and which models the change-model figure
+    prices from token totals instead of the sample."""
+    if sa is None:
+        return ""
+    why = STOP_TEXT.get(sa.stop_reason or "", sa.stop_reason or "")
+    hw = f" (±{_usd0(sa.half_width_per_month)}/mo)" if sa.half_width_per_month is not None else ""
+    out = (f"<p class=m>Sample: {sa.drawn} of up to {sa.target} traces ({html.escape(str(sa.plan))} plan), picked "
+           f"in proportion to their cost; {sa.decision_calls} decision calls. Drawing stopped because "
+           f"{html.escape(why)}{hw}.</p>")
+    if sa.switch_from_totals:
+        out += (f"<p class=m>Change model is priced on every call of the window for {len(sa.switch_from_totals)} "
+                "model(s), from token totals at base prices: no sampling range for those.</p>")
+    return out
+
+
 def _ci_cell(s: Any) -> str:
     return str(s)
 
@@ -2349,6 +2806,8 @@ def _rec_rows(report: Json, per_month: float, lever: str, keys: dict[str, str]) 
     out = []
     for st in sorted(ro.get("strata") or [], key=lambda x: -f["strata"].get(x["model"], 0)):
         m = st["model"]
+        if lever == "router" and st.get("n") == 0:  # priced from token totals for the switch only, never sampled
+            continue
         saved = max(0.0, f["strata"].get(m, 0))
         now = min(saved, max(0.0, today.get(m, 0.0)))
         n = sum(mv.get("n") or 0 for mv in moves if mv.get("used") == m)
@@ -2389,8 +2848,11 @@ def _scopes(report: Json, spend_pm: float | None) -> list[SummaryScope]:
     return out
 
 
-def _not_analysed(report: Json, per_month: float) -> NotAnalysed:
-    nc = (report.get("routing") or {}).get("not_covered") or []
+def _not_analysed(report: Json, per_month: float, lever: str | None = "router") -> NotAnalysed:
+    """Spend the recommended lever's estimate leaves out (the router's when none is recommended)."""
+    ro = report.get("routing") or {}
+    nc = ro.get("switch_not_covered", ro.get("not_covered")) if lever == "switch" else ro.get("not_covered")
+    nc = nc or []
     return NotAnalysed(per_month=sum(x.get("spend") or 0 for x in nc) * per_month, model_count=len(nc))
 
 
@@ -2433,6 +2895,7 @@ def summary(report: Json) -> Json:
             "caveats": list((report.get("checks") or {}).get("caveats") or []),
             "spend_total": total, "spend_per_month": spend_pm, "scope": head.get("scope"),
             "sampled_calls": len(report["samples"]) if "samples" in report else (report.get("params") or {}).get("sample"),
+            "sampling": _summary_sampling(report),
             "recommended": rec, "levers_overlap": _ranges_overlap(head),
             "router": {**lever("router", r_pm, r, rp, [{k: m[k] for k in ("model", "key", "pool")} for m in rp["moves"]]),
                        "replacements": [{k: m[k] for k in ("model", "to")} for m in rp["replacements"]],
@@ -2441,12 +2904,24 @@ def summary(report: Json) -> Json:
             "switch": lever("switch", w_pm, w, wp, [{k: m[k] for k in ("model", "to")} for m in wp["moves"]]),
             "recommendations": {k: [x.model_dump() for x in v] for k, v in recs.items()},
             "scopes": [x.model_dump() for x in _scopes(report, spend_pm)],
-            "not_analysed": _not_analysed(report, per_month).model_dump(),
+            "not_analysed": _not_analysed(report, per_month, rec).model_dump(),
             "sampled_moves": [{k: mv.get(k) for k in MOVE_FIELDS} for mv in (report.get("routing") or {}).get("moves") or []],
             "caching": {"threads_scanned": ca.get("threads_scanned"), "savings_found": ca.get("savings_found"),
                         "cached_share": ca.get("cached_share"), "saved_by_cache": ca.get("saved_by_cache"),
                         "threads_caching": ca.get("threads_caching"), "error": ca.get("error"),
                         "rows": [{k: r.get(k) for k in CACHE_FIELDS} for r in ca.get("rows") or [] if r.get("candidate")][:20]}}
+
+
+def _summary_sampling(report: Json) -> Json | None:
+    sa = report.get("sampling")
+    if not sa:
+        return None
+    pl = sa.get("plan") or {}
+    return {"plan": pl.get("type"), "target": sa.get("target"), "drawn": sa.get("drawn"),
+            "stop_reason": sa.get("stop_reason"), "decision_calls": sa.get("decision_calls"),
+            "half_width_per_month": (sa["half_width"] * 30 / max(1, report["window"]["days"]))
+            if sa.get("half_width") is not None else None,
+            "switch_from_totals": ((_headline(report).get("switch") or {}).get("from_totals") or [])}
 
 
 MOVE_FIELDS = ("used", "pick", "tier", "n", "fallback", "costs_more", "weighted_savings")
@@ -2518,9 +2993,11 @@ def _actions_chart(recs: list[Recommendation], not_analysed: NotAnalysed) -> str
         legend += "<li><span class='lk fork'></span>Fork: Smart Router picks a model per call, % is its share of calls</li>"
     if any(r.enable for r in drawn):
         legend += "<li><span class='lk dash'></span>Dashed: enable this model in your orq.ai workspace first</li>"
-    foot = "".join(f"<p class='m foot'>{html.escape(_short(r.model))}: "
-                   + ("not analysed, its sampled calls could not be priced reliably." if r.action == "not_analysed"
-                      else "keep, already the cheapest model that is as strong.") + "</p>" for r in kept)
+    foot = ""
+    for act, text in (("keep", "keep, already the cheapest model that is as strong"),
+                      ("not_analysed", "not analysed, their traffic could not be priced reliably")):
+        if names := [_short(r.model) for r in kept if (r.action == "not_analysed") == (act == "not_analysed")]:
+            foot += f"<p class='m foot'>{html.escape(', '.join(names))}: {text}.</p>"
     if n := not_analysed.model_count:
         foot += (f"<p class='m foot'>Not analysed: {_usd0(not_analysed.per_month)}/mo of spend on "
                  f"{n} model{'s' if n != 1 else ''}.</p>")
@@ -2879,8 +3356,10 @@ GLOSSARY = [
               "your workload.")),
     ("As strong and cheaper", "Another model scores at least as high on the index and costs no more on your traffic."),
     ("Scope", "Which models are allowed: same provider or any, and enabled models only or all available."),
-    ("Coverage", "The share of spend on the sampled models. Spend on other models is not estimated."),
-    ("Ask, sampled call", "One LLM call (a span) from this workspace's traces, re-priced on the new model."),
+    ("Coverage", ("The share of spend a lever's estimate covers: the sampled models whose re-pricing matches the "
+                  "bill, and for change model also every model priced from its token totals.")),
+    ("Sampled trace", ("One trace from this workspace, picked with a chance in proportion to its cost and re-priced "
+                       "whole on the new model; the router grades its last user message.")),
     ("Easy, Medium, Hard", ("How demanding each sampled call is, as graded by the router. Easy and medium calls "
                             "are the ones the router sends to cheaper models; check answer quality before moving traffic.")),
     ("Ungraded", "Calls the router could not grade; they go to the strongest model in the pool."),
@@ -2965,7 +3444,7 @@ def render(report: Json, narrative: dict[str, str], redact: bool) -> str:
             f"<p class=verdict>{verdict}</p><div class=kpis>"
             f"{kpi('r', 'Smart Router', p_router, h_pm)}{kpi('s', 'Change model', p_switch, sw_pm)}</div>{gap}"
             + _card("Savings against monthly spend",
-                    f"{bar}<p class='m caveat'>{n or 'The'} sampled calls; the estimate covers models that make up {_pct(cov)} of spend. "
+                    f"{bar}<p class='m caveat'>{n or 'The'} sampled traces; the estimate covers models that make up {_pct(cov)} of spend. "
                     "Test answer quality before moving traffic.</p>")
             + "</section>")
 
@@ -3004,8 +3483,8 @@ def render(report: Json, narrative: dict[str, str], redact: bool) -> str:
                           (_range_head(unc), "range", _range_cell)], "Estimates with uncertainty")),
             _details("Why each move", "the reasoning per model", _md(narrative["routing"])),
             _details("Method and caveats", "sample, coverage, limits, terms",
-                     _md(narrative["caveats"]) + (
-                         f"<p class=m>Without the 3 sampled calls that save the most, the Smart Router estimate is "
+                     _md(narrative["caveats"]) + _sampling_note(S.sampling) + (
+                         f"<p class=m>Without the 3 sampled traces that save the most, the Smart Router estimate is "
                          f"{_usd0(S.router.without_top3_per_month or 0)}/mo.</p>"
                          "<dl class=gl>" + "".join(f"<dt>{html.escape(t)}</dt><dd>{html.escape(d)}</dd>"
                                                    for t, d in GLOSSARY) + "</dl>")),
@@ -3201,12 +3680,23 @@ class NotAnalysed(_Obj):
     model_count: int
 
 
+class SummarySampling(_Obj):
+    plan: str | None
+    target: int | None
+    drawn: int | None
+    stop_reason: str | None
+    decision_calls: int | None
+    half_width_per_month: float | None
+    switch_from_totals: list[str]
+
+
 class Summary(_Obj):
     window: SummaryWindow
     spend_total: float | None
     spend_per_month: float | None
     scope: Any
     sampled_calls: int | None
+    sampling: SummarySampling | None = Field(None, description="How the sample was drawn and why drawing stopped.")
     recommended: Literal["router", "switch"] | None = Field(
         description="null when neither lever saves anything (per_month <= 0 or null).")
     levers_overlap: bool
@@ -3225,14 +3715,20 @@ class Summary(_Obj):
 
 
 class Params(_Obj):
-    sample: int = Field(ge=1, le=MAX_SAMPLE)
+    sample: Annotated[int, Field(ge=1, le=MAX_SAMPLE)] | None = Field(
+        description="Traces the run may draw; null until the plan is read when --sample is not given.")
     profile: Literal["balanced"]
     policy: Literal["jev-general-v1"]
     seed: int
     counterfactual_test: bool
+    sample_source: Literal["flag", "plan"] = Field(
+        _ABSENT, description="flag: --sample; plan: the default for the workspace's plan.")
     cell_grain: dict[str, Literal["hour", "6h", "day"]] = Field(
-        _ABSENT, description="Per sampled model, the bucket of the request-count query: hour, or coarser when hourly "
+        _ABSENT, description="Per sampled model, the bucket of the cell query: hour, or coarser when hourly "
                              "cells exceed the time-series budget.")
+    cell_weight: dict[str, Literal["cost", "requests"]] = Field(
+        _ABSENT, description="Per sampled model, what cells are weighted by: spend, or request counts when the model "
+                             "has no recorded cost.")
 
 
 class Window(_Obj):
@@ -3259,6 +3755,32 @@ class Spend(_Obj):
 class RoutingDecisionCost(_Obj):
     calls: int
     estimated_usd: float
+    minutes: float = _ABSENT
+
+
+class PlanInfo(_Obj):
+    type: str
+    rate_limit_per_minute: int = Field(ge=1)
+    rate_limit_source: Literal["metadata.rateLimit", "plan type", "features.rate_limit", "default"]
+    daily_decision_limit: int | None
+    decisions_per_minute: float
+
+
+class Sampling(_Obj):
+    plan: PlanInfo
+    target: int = Field(ge=1, description="Traces the run may draw: --sample, else the plan default.")
+    drawn: int
+    rounds: int
+    stop_reason: Literal["sample_size", "relative_precision", "absolute_precision", "wall_time"] = Field(
+        description="Why drawing stopped: the target was reached, the headline 90% interval was narrow enough "
+                    "(relative or absolute), or the wall-time cap.")
+    half_width: float | None = Field(description="Half the headline 90% interval at the stop, in window dollars.")
+    estimate: float | None
+    decision_calls: int
+    rate_limited: int = Field(description="429 responses waited out.")
+    multi_model_dropped: int
+    wall_time_s: float
+    calls_per_trace: dict[str, float] = Field(description="LLM calls per trace per model, from telemetry.")
 
 
 class StoppingCheck(_Obj):
@@ -3287,7 +3809,9 @@ class Sample(_Obj):
     trace_id: Any
     span_id: Any
     model: Any
-    weight: float = Field(gt=0)
+    weight: float = Field(gt=0, description="1 / inclusion.")
+    inclusion: float = Field(_ABSENT, gt=0, le=1, description="Probability one draw of this model picks this trace.")
+    cluster: str = Field(_ABSENT, description="Bootstrap cluster: the thread, else the trace.")
     cur_price: float
     billed: float
     savings: PerProfile
@@ -3304,6 +3828,9 @@ class Estimate(_Obj):
     without_top3: float
     unpriced_models: list[str]
     per_stratum: dict[str, float | None] = _ABSENT
+    from_totals: list[str] = Field(
+        _ABSENT, description="Change model only: models priced exactly from the window's token totals, with no "
+                             "sampling spread.")
 
 
 class ScenarioRouter(_Obj):
@@ -3368,6 +3895,8 @@ class Stratum(_Obj):
     savings: float | None = None
     pool: list[str] | None
     pool_reason: Any
+    calls_per_trace: float | None = None
+    switch_source: Literal["totals", "sample"] | None = None
 
 
 class NotCovered(_Obj):
@@ -3382,6 +3911,7 @@ class Routing(_Obj):
     moves: list[RoutingMove] = _ABSENT
     strata: list[Stratum]
     not_covered: list[NotCovered]
+    switch_not_covered: list[NotCovered] = _ABSENT
     buckets: Any
     fallbacks: Any
     underpowered: Any
@@ -3431,7 +3961,7 @@ REPORT_RULES: JsonDict = {  # the JSON Schema form of Report._finished_run_parts
 
 class Report(_Obj):
     model_config = ConfigDict(extra="allow", title="orq-find-cost-savings report.json", json_schema_extra=REPORT_RULES)
-    schema_version: Literal["1.2"]
+    schema_version: Literal["1.3"]
     generated_at: str
     workspace: str | None
     status: Literal["ok", "stopped"]
@@ -3443,6 +3973,7 @@ class Report(_Obj):
     window: Window = _ABSENT
     spend: Spend = _ABSENT
     routing_decision_cost: RoutingDecisionCost = _ABSENT
+    sampling: Sampling = _ABSENT
     checks: Checks
     samples: list[Sample] = _ABSENT
     scenarios: list[Scenario] = Field(_ABSENT, min_length=4, max_length=4)
@@ -3507,11 +4038,16 @@ def main(argv: list[str] | None = None) -> int:
     an.add_argument("--out", required=True)
     an.add_argument("--window", type=int, default=WINDOW_DAYS, metavar="DAYS",
                     help="days of traces to analyse, ending now; capped by the workspace's trace retention")
-    an.add_argument("--sample", type=int, default=MAX_SAMPLE)
+    an.add_argument("--sample", type=int, default=None,
+                    help=f"traces to draw at most (default by plan: free {PLAN_SAMPLE['free']}, growth "
+                         f"{PLAN_SAMPLE['growth']}, others {MAX_SAMPLE}); drawing stops earlier once the estimate is "
+                         "precise enough")
     an.add_argument("--counterfactual-test", action="store_true")
     an.add_argument("--cache-threads", type=int, default=200, help="threads to scan for caching gaps")
     an.add_argument("--seed", type=int, default=1917)
     an.add_argument("--yes", action="store_true", help="skip the decision-cost confirmation")
+    an.add_argument("--keep-cache", action="store_true",
+                    help="keep <out>/cache (CLI responses, prompt texts included) after the run; deleted by default")
     an.add_argument("--json", action="store_true",
                     help="print status and summary as JSON on stdout and skip the narrative slots; for callers "
                          "that use report.json without rendering the page")
@@ -3525,7 +4061,7 @@ def main(argv: list[str] | None = None) -> int:
         print(_dump_compact(report_schema()))
         return 0
     if a.cmd == "analyze":
-        if not 1 <= a.sample <= MAX_SAMPLE:
+        if a.sample is not None and not 1 <= a.sample <= MAX_SAMPLE:
             ap.error(f"--sample must be between 1 and {MAX_SAMPLE}")
         if a.window < 1:
             ap.error("--window must be at least 1")

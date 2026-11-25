@@ -960,7 +960,7 @@ def test_a_model_the_lever_does_not_cover_is_not_analysed_not_kept():
     recs = {x.model: x for x in c._rec_rows(report, 1.0, "router", {})}
     assert recs["openai/d"].action == "not_analysed" and recs["openai/a"].action == "switch"
     chart = _chart(report)
-    assert "d: not analysed, its sampled calls could not be priced reliably." in chart and "d: keep" not in chart
+    assert "d: not analysed, their traffic could not be priced reliably." in chart and "d: keep" not in chart
     report["scenarios"][0]["switch"] = {"per_month": 50.0, "per_stratum": {"openai/a": 10.0, "openai/b": 0.0}}
     sw = {x.model: x.action for x in c._rec_rows(report, 1.0, "switch", {})}
     assert sw == {"openai/a": "switch", "openai/b": "keep", "openai/c": "not_analysed", "openai/d": "not_analysed"}
