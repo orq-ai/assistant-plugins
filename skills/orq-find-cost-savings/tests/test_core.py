@@ -687,8 +687,10 @@ def test_small_sample_note_under_min_sample():
                                   {"used": "openai/b", "pick": "openai/y", "n": c.MIN_SAMPLE},
                                   {"used": "openai/b", "pick": "openai/x", "n": 3}]
     chart = _chart(report)
-    assert chart.count("Small sample:") == 2  # a (14) and c (no moves: 0 calls); b has 18
-    assert f"Small sample: {c.MIN_SAMPLE - 1} calls." in chart and "Small sample: 0 calls." in chart
+    assert chart.count("Small sample:") == 1  # a (14); b has 18; c has no moves, so 0 is no count to warn on
+    assert f"Small sample: {c.MIN_SAMPLE - 1} calls." in chart and "Small sample: 0 calls." not in chart
+    small = {r.model: r.small_sample for r in c._rec_rows(report, 1.0, "router", {})}
+    assert small["openai/a"] and not small["openai/b"] and not small["openai/c"]
 
 
 def test_pick_ignores_profiles_other_than_cost_and_balanced_thresholds():

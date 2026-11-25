@@ -79,7 +79,7 @@ NON_CHAT_RE = re.compile(r"embed|rerank|tts|transcri|whisper|moderation|ocr|dall
 
 PRERELEASE_RE = re.compile(r"(?:^|[-_.])(preview|beta|alpha|experimental)(?:$|[-_.])", re.IGNORECASE)  # name segment
 PROVIDER_FAMILY = {"google-ai": "google"}  # one provider for same-provider scopes; routes keep their own prices
-MIN_SAMPLE = 15  # fewer sampled calls on a model than this get a "Small sample" note
+MIN_SAMPLE = 15  # 1 to 14 sampled calls on a model get a "Small sample" note
 SCOPES = ("same_provider:all", "same_provider:enabled", "any_provider:all", "any_provider:enabled")
 HEADLINE_SCOPE = "same_provider:all"
 REGION_RE = re.compile(r"^(global|us|eu|apac|ap|jp|au|ca|uk|[a-z]{2}-[a-z]+-[0-9]+)\.")
@@ -2360,7 +2360,7 @@ def _rec_rows(report: Json, per_month: float, lever: str, keys: dict[str, str]) 
             model=m, action=act, router_key=keys.get(m) if act == "router" else None, move=_move(head),
             today_move=_move(today_move), targets=fl.targets, enable=fl.enable, spend_per_month=spend,
             saved_per_month=saved, pct_of_model_spend=_of(saved, spend), saved_today_per_month=now,
-            saved_after_enabling_per_month=saved - now, sampled_calls=n, small_sample=n < MIN_SAMPLE,
+            saved_after_enabling_per_month=saved - now, sampled_calls=n, small_sample=0 < n < MIN_SAMPLE,
             share_hard=None))
     flagged = [r for r in out if r.model in hard and r.saved_per_month > 0]
     if flagged:
@@ -2499,7 +2499,7 @@ def _actions_chart(recs: list[Recommendation], not_analysed: NotAnalysed) -> str
                f"{_pc(_of(after, spend))} more after enabling, of {_usd0(spend)} a month")
         note = _rec_note(r)
         notes = f"<span>{html.escape(note)}</span>" if note else ""
-        if r.sampled_calls < MIN_SAMPLE:
+        if 0 < r.sampled_calls < MIN_SAMPLE:  # 0 means no recorded moves, not a small sample
             notes += f"<span>Small sample: {r.sampled_calls} call{'s' if r.sampled_calls != 1 else ''}.</span>"
         if r.share_hard is not None:
             notes += "<span class=hard>Mostly hard work: spot-check answers before moving it.</span>"
