@@ -320,12 +320,12 @@ The gateway records the calling harness as `trace_framework`, groupable on the `
 
 ## Report sections
 
-The page shows the summary, routing and caching parts. Spend by agent and deployment, under-powered ask examples, harness traffic and the Pareto line are in `report.json` only; `render` does not show them.
+The page shows the summary, routing and caching parts. Spend by agent and deployment, under-powered models, harness traffic and the Pareto line are in `report.json` only; `render` does not show them.
 
 1. Summary: spend in the window and per month; routing savings with 90% CI, the top-3-excluded figure and coverage; caching savings beside it; Pareto line.
 2. Spend by model, agent, deployment.
 3. Routing: balanced headline; cost column; buckets with the flags above. Action: "create a Smart Router with profile balanced and pool X, Y, Z".
-4. Under-powered asks, up to 3 truncated examples; `--redact` hides them.
+4. Under-powered models: share of hard asks and the cost of moving them one model up. `report.json` stores no ask text.
 5. Caching gaps by agent and thread, with the action per provider.
 6. Harness traffic.
 7. Method and caveats: policy, fallback choice, sample size and strata, not-covered spend, flagged spans, failed caveat checks.

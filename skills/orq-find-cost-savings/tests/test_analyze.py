@@ -102,7 +102,7 @@ class FakeOrq:
 
 def ns(tmp_path, **kw):
     d = {"workspace": "demo", "out": str(tmp_path), "sample": 10, "counterfactual_test": False, "cache_threads": 5,
-         "seed": 7, "redact": False, "yes": True, "window": 30, "json": False}
+         "seed": 7, "yes": True, "window": 30, "json": False}
     d.update(kw)
     return argparse.Namespace(**d)
 
@@ -383,6 +383,14 @@ def test_underpowered_and_moves_count_fallback_samples(tmp_path):
     assert sum(m["n"] for m in an.moves()) == 2 and sum(m["fallback"] for m in an.moves()) == 1
     row = c._moves_rows([{"used": "a", "pick": "b", "n": 11, "fallback": 1}, {"n": 3, "fallback": 0}])
     assert row[0]["calls"] == "11 (incl. 1 fallback)" and row[1]["calls"] == "3"
+
+
+def test_report_json_stores_no_ask_text(tmp_path):
+    run(tmp_path)
+    raw = (tmp_path / "report.json").read_text()
+    up = json.loads(raw)["routing"]["underpowered"]
+    assert up and all("examples" not in u for u in up)  # s2 is hard: sol is under-powered, still no examples
+    assert HARD_ASK not in raw and EASY_ASK not in raw
 
 
 def test_hero_tags_the_bigger_lever_and_small_samples_get_a_note(tmp_path):

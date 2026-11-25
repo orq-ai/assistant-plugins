@@ -863,7 +863,6 @@ class SampleRow:
     pool: list[str] | None = None
     pool_reason: str = ""
     # not written to report.json
-    ask_preview: str = ""
     tokens: Tokens
     env: Json
 
@@ -1377,7 +1376,7 @@ class Analyzer:
                             cur_price=price_tokens(toks, cur.prices),
                             billed=float(cost.get("total") or 0) - float(cost.get("web_search") or 0),
                             source=d.source, ask_chars=len(d.input or ""), prompt_tokens=toks.prompt,
-                            ask_preview=(d.input or "")[:200], tokens=toks, env=env)
+                            tokens=toks, env=env)
             if cur.flag:
                 row.flags.append(cur.flag)
             ss = row.scenario_savings
@@ -1591,10 +1590,9 @@ class Analyzer:
                 num = sum(r.weight * (price_tokens(r.tokens, self.price_on(nxt, r.env).prices) - r.cur_price)
                           for r in hard)
                 extra = num / den
-            ex = [] if self.args.redact else [r.ask_preview for r in hard[:3]]
             out.append({"model": m, "n": len(every), "n_scored": len(rows), "share_hard": len(hard) / len(rows),
                         "next_model": nxt, "next_enabled": self.enabled(nxt) if nxt else None,
-                        "extra_cost_rate": extra, "examples": ex})
+                        "extra_cost_rate": extra})
         return out
 
     def pareto(self, models: list[str]) -> list[Json]:
@@ -3513,7 +3511,6 @@ def main(argv: list[str] | None = None) -> int:
     an.add_argument("--counterfactual-test", action="store_true")
     an.add_argument("--cache-threads", type=int, default=200, help="threads to scan for caching gaps")
     an.add_argument("--seed", type=int, default=1917)
-    an.add_argument("--redact", action="store_true", help="leave ask examples out of report.json")
     an.add_argument("--yes", action="store_true", help="skip the decision-cost confirmation")
     an.add_argument("--json", action="store_true",
                     help="print status and summary as JSON on stdout and skip the narrative slots; for callers "
@@ -3521,7 +3518,7 @@ def main(argv: list[str] | None = None) -> int:
     rn = sub.add_parser("render", help="merge narrative.md into report.html")
     rn.add_argument("--out", required=True)
     rn.add_argument("--narrative", required=True)
-    rn.add_argument("--redact", action="store_true", help="hide thread ids and ask examples")
+    rn.add_argument("--redact", action="store_true", help="hide thread ids in the caching table")
     sub.add_parser("schema", help="print the JSON Schema of report.json, generated from the Report model")
     a = ap.parse_args(argv)
     if a.cmd == "schema":
