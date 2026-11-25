@@ -377,3 +377,13 @@ def test_traces_tie_each_harness_load_to_the_exact_skill_text(
     [session] = json.loads((tmp_path / 'export/sessions.json').read_text())
     steps = AtifTrajectory.from_json(session['trajectory']).steps
     assert [c.function_name for c in steps[session['loads'][0]['step'] - 1].tool_calls] == [loader]
+
+
+def test_claude_code_collection_warns_when_given_a_single_project_folder(
+    client: Client, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    base = tmp_path / 'global/client-helper'
+    claude_session(tmp_path / 'projects/p/s1.jsonl', 's1', base, collect.skill_body(ORIGINAL))
+    report = collect.collect_claude(client.repo, SKILL, tmp_path / 'projects/p', base, tmp_path / 'export')
+    assert report['loaded_sessions'] == 0
+    assert 'pass its parent' in capsys.readouterr().err

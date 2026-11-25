@@ -26,6 +26,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -189,6 +190,13 @@ def collect_claude(repo: Path, skill: str, projects: Path, loaded_from: Path, ou
     """Claude Code sessions whose Skill call injected exactly this version from `loaded_from`."""
     target = Target(repo, skill, loaded_from)
     files = sorted(projects.glob('*/*.jsonl'))
+    if not files:
+        hint = (
+            f'{projects} holds transcripts directly; pass its parent (the projects root, e.g. ~/.claude/projects)'
+            if any(projects.glob('*.jsonl'))
+            else f'no <project>/<session>.jsonl under {projects}; pass the projects root, e.g. ~/.claude/projects'
+        )
+        print(f'warning: scanned 0 Claude Code transcripts: {hint}', file=sys.stderr)
     candidates = []
     for path in files:
         raw = path.read_text()
