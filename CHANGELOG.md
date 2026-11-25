@@ -5,11 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [5.2.1] - 2026-11-24
+## [5.2.3] - 2026-11-25
 
 ### Fixed
 
 - `orq-compare-agents` (`resources/job-patterns.md`) and `orq-invoke-deployment`: the Node orq SDK examples that read agent output text now narrow each output item to `type === "message"` inside `flatMap`. `@orq-ai/node` 4.19.0 types `response.output` as a `ResponseOutputItem` union (4.18.23 had `Array<any>`), so the old `.filter(...).flatMap(item => item.content)` no longer type-checked: a `.filter` callback does not narrow the union.
+
+## [5.2.2] - 2026-11-24
+
+### Fixed
+
+- `orq-red-team` and `evaluatorq` skills: `eq redteam ui` was removed in evaluatorq 1.102, so the skills now open reports with `eq dashboard [report.json]` and say it needs the `[dashboard]` extra (`'evaluatorq[redteam,dashboard]'`). `[redteam]` no longer pulls in Streamlit. Troubleshooting covers the missing-extra error and `No such command 'ui'`.
+
+## [5.2.1] - 2026-11-23
+
+### Changed
+
+- `orq-cli` skill: the coding-agents reference lists `cursor` among the agents `orq setup` and `orq connect` wire. Cursor takes the `skills` and `mcp` capabilities. Needs an orq CLI release that includes Cursor support.
 
 ## [5.2.0] - 2026-11-19
 
