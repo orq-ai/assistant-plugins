@@ -20,6 +20,7 @@ These skills are:
  - evaluatorq -> "skills/evaluatorq/SKILL.md"
  - orq-generate-synthetic-dataset -> "skills/orq-generate-synthetic-dataset/SKILL.md"
  - orq-improve-agent -> "skills/orq-improve-agent/SKILL.md"
+ - orq-instrumentation-health -> "skills/orq-instrumentation-health/SKILL.md"
  - orq-invoke-deployment -> "skills/orq-invoke-deployment/SKILL.md"
  - orq-manage-skills -> "skills/orq-manage-skills/SKILL.md"
  - orq-recommend-evaluators -> "skills/orq-recommend-evaluators/SKILL.md"
@@ -31,6 +32,9 @@ These skills are:
  - orq-shared -> "skills/orq-shared/SKILL.md"
  - orq-simulate-agent -> "skills/orq-simulate-agent/SKILL.md"
  - orq-trace-format -> "skills/orq-trace-format/SKILL.md"
+ - orq-link -> "skills/orq-link/SKILL.md"
+ - orq-provider-credentials -> "skills/orq-provider-credentials/SKILL.md"
+ - orq-admin -> "skills/orq-admin/SKILL.md"
 
 IMPORTANT: You MUST read the SKILL.md file whenever the description of the skills matches the user intent, or may help accomplish their task.
 
@@ -52,6 +56,8 @@ orq-recommend-evaluators: `Use when an orq agent or deployment has no or few eva
 
 orq-review-agent: `Health-check an orq agent's setup without changing it, with or without production traffic: instructions, tools, skill references, evaluators, model choice and run health, checked against the suite's best practices, each finding with a suggestion, in one HTML report. Use when someone asks to "review my agent", "is my agent set up well", "audit support-bot before launch", or "give my agent a health check". Do NOT use to find out why conversations fail or to build a failure taxonomy (use orq-analyze-traces), to apply a fix (use orq-improve-agent), to pick evaluators to add (use orq-recommend-evaluators), or to hill-climb a metric.`
 
+orq-instrumentation-health: `Audit how well the traces already in an orq.ai workspace are instrumented, without changing anything: model and token counts, unpriced models, flat or orphaned span trees, missing span types, session and user id coverage and generic trace names, plus an opt-in pass over inputs, outputs and sensitive data, scored per project and per agent with example trace links. Use when someone asks "are my traces instrumented properly", "why are token counts missing from my traces", "audit the instrumentation of my existing traces" or "check trace quality across my agents". Do NOT use to add tracing to an app (use orq-setup-observability), to find out why conversations fail (use orq-analyze-traces), or to health-check one agent's config (use orq-review-agent).`
+
 orq-invoke-deployment: `Invoke orq.ai deployments, agents, and models via the Python SDK or HTTP API — pass prompt variables, stream responses, handle multi-turn agent conversations, and generate integration code`
 
 orq-run-experiment: `Create and run orq.ai experiments — compare configurations against datasets using evaluators, analyze results, with specialized methodology for agent, conversation, and RAG evaluation`
@@ -62,7 +68,7 @@ evaluatorq: `Write and run evaluatorq evaluation scripts (Python or TypeScript) 
 
 orq-compare-agents: `Run cross-framework agent comparisons using evaluatorq — compares any combination of agents (orq.ai, LangGraph, CrewAI, OpenAI Agents SDK, Vercel AI SDK) head-to-head on the same dataset with LLM-as-a-judge scoring. Do NOT use when comparing only orq.ai configurations with no external agents (use orq-run-experiment instead).`
 
-orq-setup-observability: `Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment. Use when setting up tracing, adding the AI Router proxy, integrating OpenTelemetry, auditing existing instrumentation, or enriching traces with metadata. Do NOT use when traces already exist and you need to debug failures (use orq-analyze-traces).`
+orq-setup-observability: `Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment. Use when setting up tracing, adding the AI Router proxy, integrating OpenTelemetry, or enriching traces with metadata. Do NOT use when traces already exist and you need to debug failures (use orq-analyze-traces) or to audit their instrumentation (use orq-instrumentation-health).`
 
 orq-red-team: `Run adversarial red teaming against deployed orq agents or static datasets using the orq red teaming library — adaptive attacks, OWASP Agentic/LLM category coverage, ASR reporting. Use when asked to run a red team, test an agent for vulnerabilities, or check OWASP coverage. Do NOT use when you only need evaluators (use orq-build-evaluator) or trace analysis (use orq-analyze-traces).`
 
@@ -76,11 +82,17 @@ orq-cli: `Drive the orq command-line interface — verify the install, authentic
 
 orq-simulate-agent: `Run multi-turn agent simulations using evaluatorq's first-class simulation primitives (simulate(), generate_and_simulate(), wrap_simulation_agent()). Drive an agent under test with a UserSimulatorAgent and built-in JudgeAgent that terminates on goal achievement or rule violations. Use when generating realistic multi-turn data, stress-testing conversational agents, or producing seed transcripts. Do NOT use when real production conversations exist (use orq-analyze-traces) or for adversarial red-teaming sweeps (call evaluatorq.red_team() directly).`
 
-orq-shared: `Reference bundle shared by the other orq skills — the verified orq CLI trace query contract (trace-queries.md), the run-key preflight that resolves an agent or deployment key before any call (run-key-preflight.md), and the rubrics an agent is built, reviewed and improved against (config-context.md, prompting-guidelines.md, tool-description-guide.md). Read the file another skill points you at; do not invoke this skill on its own. Do NOT use to run CLI commands (use orq-cli), to analyze traces (use orq-analyze-traces), or to fix an agent (use orq-improve-agent).`
+orq-shared: `Reference bundle shared by the other orq skills — the verified orq CLI trace query contract (trace-queries.md), the run-key preflight that resolves an agent or deployment key before any call (run-key-preflight.md), the Studio route table for linking to an entity (studio-routes.md), and the rubrics an agent is built, reviewed and improved against (config-context.md, prompting-guidelines.md, tool-description-guide.md). Read the file another skill points you at; do not invoke this skill on its own. Do NOT use to run CLI commands (use orq-cli), to analyze traces (use orq-analyze-traces), or to fix an agent (use orq-improve-agent).`
 
 orq-quickstart: `Onboarding for orq.ai in any coding agent — get an API key, register the orq.ai MCP server for the harness you are running in, prove the connection with a real workspace read, show a workspace snapshot, list the installed orq skills, and route the user to a first task. Use when the user is new to orq.ai, asks to set up or verify orq.ai, or another orq skill fails because the MCP server is missing or the credentials are rejected. Do NOT use to drive the orq CLI (use orq-cli) or to instrument an application with tracing (use orq-setup-observability).`
 
 orq-trace-format: `Show orq.ai traces and spans to a person as clickable Studio links instead of raw trace ids. Use whenever a reply, report, table, PR or ticket mentions an orq trace, span, trace_id, span_id, run, failing conversation or invocation the reader may want to open: "show me the trace", "link the failing runs", "which trace was that", results from `orq traces search`, `list_traces`, a router or deployment response's `x-orq-trace-id` / `telemetry.trace_id`, an evaluator run, or an experiment. Covers the URL shape, the workspace key and host, and the "opens empty" fix. Do NOT use to query or analyze traces (use orq-analyze-traces or orq-cli), or to set up tracing (use orq-setup-observability).`
+
+orq-link: `Use when a reply should give the orq.ai Studio link to a workspace entity: an agent, dataset, deployment, experiment, prompt, evaluator, knowledge base, memory store, tool, skill, annotation queue, project, MCP server or gateway, monitor or alert, or a list page such as API keys, integrations, budgets or a provider's settings. Triggers on "link to that dataset", "where do I open this agent in orq", "send me the URL of experiment X". Builds `<host>/<workspace-key>/<route>` from the CLI ids. Do NOT use for traces or spans (use orq-trace-format), or for orq documentation pages.`
+
+orq-provider-credentials: `Use when someone wants to connect their own model provider credentials to an orq.ai workspace: an OpenAI, Anthropic or Google key, an Azure OpenAI or Azure Foundry deployment, an AWS Bedrock inference profile, a Vertex AI service account, or any OpenAI-compatible endpoint, and to check, rotate or remove them. Triggers on "connect my Azure OpenAI deployment to orq", "add my Anthropic key", "use my own Bedrock models", "rotate the key on my custom model". Do NOT use to pick the cheapest or best model for a workload, to call a model (use orq-invoke-deployment), or for orq API keys and workspace members (use orq-admin).`
+
+orq-admin: `Use for orq.ai workspace administration from the CLI: invite or remove workspace members and change their role, mint scoped API keys (one project, read-only, restricted, expiring), rotate, disable or delete API keys, and manage management keys. Triggers on "invite alice@example.com to my orq workspace", "create a read-only key for project X", "rotate our production API key", "remove Bob from the workspace". Do NOT use to log in to the CLI or switch profiles (use orq-cli), or to connect model provider keys (use orq-provider-credentials).`
 
 </available_skills>
 

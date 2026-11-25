@@ -1,0 +1,9 @@
+id: link-fires
+skill: orq-link
+kind: invocation
+# Plain link request for a non-trace entity.
+prompt: Give me the link to my pizza-faq-eval-dataset dataset in orq.
+expect_skill: orq-link
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 4

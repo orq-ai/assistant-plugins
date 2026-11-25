@@ -1,6 +1,6 @@
 ---
 name: orq-setup-observability
-description: Set up orq.ai observability for LLM applications. Use when setting up tracing, adding the AI Router proxy, integrating OpenTelemetry, auditing existing instrumentation, or enriching traces with metadata.
+description: Set up orq.ai observability for LLM applications. Use when setting up tracing, adding the AI Router proxy, integrating OpenTelemetry, or enriching traces with metadata. To audit traces that already exist, use orq-instrumentation-health.
 allowed-tools: Read, Write, Edit, Grep, Glob, WebFetch, Task, AskUserQuestion
 ---
 
@@ -154,6 +154,8 @@ Follow these steps **in order**. Do NOT skip steps.
     - Traces not appearing → check import order, API key, OTEL endpoint
     - Flat hierarchy → ensure instrumentor is initialized before client creation
     - Missing tokens → check if provider/framework supports token reporting
+
+    With many traces already, or several services, run `orq-instrumentation-health` for the same checks counted across every project and agent.
 
 12. **Encourage exploration:** Tell the user to browse a few traces in the UI before adding more context. This helps them form opinions about what data is useful vs missing.
 

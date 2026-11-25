@@ -1,0 +1,9 @@
+id: instrumentation-health-fires
+skill: orq-instrumentation-health
+kind: invocation
+# First trigger phrasing: instrumentation quality of traces that already exist.
+prompt: Are the traces in my orq workspace instrumented properly? I want to know which agents are missing token counts or have flat span trees.
+expect_skill: orq-instrumentation-health
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 4

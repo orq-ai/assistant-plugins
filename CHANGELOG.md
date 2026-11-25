@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.4.0] - 2026-11-25
+
+### Added
+
+- `orq-instrumentation-health` skill: audit how well a workspace's existing traces are instrumented, without changing anything. Counts per project and per agent (model, tokens, unpriced models, session and user ids), a sampled span-tree check (flat or orphaned trees, missing span types), generic trace names, and an opt-in content pass for missing inputs and outputs and sensitive data via `orq pii detect`, asked twice. Ships `scripts/health_sweep.py`, which turns the saved CLI output into the scorecard, with tests on a recorded run.
+- `orq-link` skill: give the Studio link to an agent, dataset, experiment, evaluator or other workspace entity, built from the id the CLI lists. Traces and spans stay with `orq-trace-format`.
+- `orq-provider-credentials` skill: connect model provider credentials. Main provider keys go through the Studio's provider page; Azure, Bedrock, Vertex and OpenAI-compatible custom models are validated and created with `orq models`, with secrets passed only through a file the user fills in.
+- `orq-admin` skill: workspace administration from the CLI. Invite and remove members, mint scoped API keys, rotate, disable and delete API keys and management keys, with every write confirmed, deletes confirmed twice, and new tokens sent straight to a profile.
+- `orq-shared/resources/studio-routes.md`: the Studio route table for workspace entities, list pages and the provider page, read from the app's router and opened in a browser on prod. The one row not opened yet is marked unverified.
+
+### Changed
+
+- `orq-setup-observability` no longer claims to audit existing instrumentation; its description and the final verification step point at `orq-instrumentation-health` for that.
+
 ## [5.3.0] - 2026-11-25
 
 ### Added

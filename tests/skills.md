@@ -352,6 +352,29 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify Phase 6: the findings step lists findings grouped by fixing skill and runs nothing; the fix question comes after it
 - Verify: on "stop here", no other skill is invoked
 
+## `orq-instrumentation-health`
+
+### Scenario 1: Counts and sample on one project
+
+- Provide: a project key with agent traffic and router traffic in the last 7 days
+- Ask: "Are my orq traces instrumented properly?"
+- Verify Phase 1: runs `health_sweep.py init`, then `orq traces list-fields` into the run directory
+- Verify Phase 2: five `aggregate` calls from the written bodies, and `list-facet-values name` with `--from`/`--to`
+- Verify Phase 3: one `search` per group including "no agent", `list-spans` paged until `has_more` is false
+- Verify Phase 5: the scorecard is per project, then per agent, with counts, denominators, up to 3 trace links per gap and an `unobservable` list; router traces are not reported as flat, and errored calls are not counted as missing tokens
+- Verify: no create, update, delete or invoke call
+
+### Scenario 2: Content pass needs two yes answers
+
+- Ask: "Audit my traces, including sensitive data"
+- Verify Phase 4: asks before reading conversations, then asks again with the `pii_calls` number before any `orq pii detect`
+- Verify: the reply gives entity counts by type and trace links, never trace text or detected values
+
+### Scenario 3: Setup still goes to setup
+
+- Ask: "Add orq tracing to my FastAPI app"
+- Verify: `orq-setup-observability` fires, not this skill
+
 ## `orq-recommend-evaluators`
 
 ### Scenario 1: New agent, no traces
@@ -534,6 +557,12 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Verify: the consuming skill says the reference is unreachable rather than proceeding unguarded
 - Verify: falls back to the four restated rules in its own Constraints section
 
+### Scenario 4: A Studio link comes from the route table
+
+- Ask: "Give me the link to my dataset" (through `orq-link`)
+- Verify: the route is read from `../orq-shared/resources/studio-routes.md`, filled with the dataset's `_id` under `<host>/<workspace-key>/`
+- Verify: a row still marked `unverified` is handed out with that caveat
+
 ---
 
 ## `orq-cli`
@@ -708,6 +737,64 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ---
 
+## `orq-link`
+
+### Scenario 1: Dataset link by name
+
+- Ask: "Give me the link to the pizza-faq-eval-dataset dataset"
+- Verify: reads `orq-shared/resources/studio-routes.md`, resolves host and workspace key as `orq-trace-format` step 2 does, runs `orq datasets list` and matches `display_name`
+- Verify: the link is `<host>/<workspace-key>/datasets/<_id>`, never the name, and says the route is unverified
+
+### Scenario 2: Ambiguous name
+
+- Provide: two datasets whose names both contain "golden set"
+- Ask: "Link me the golden set dataset"
+- Verify: lists both matches and asks which, does not pick one
+
+### Scenario 3: Traces go to trace-format
+
+- Ask: "Link to trace 016de4cd7a2b4c21c707f00ad3185eb8"
+- Verify: `orq-trace-format` fires and builds the `traces/(trace:...)` link
+
+## `orq-provider-credentials`
+
+### Scenario 1: Main provider key
+
+- Ask: "Add my Anthropic key to orq"
+- Verify: gives the `router/providers/(provider:anthropic)` link via `orq-link`, tells the user to paste the key there, never asks for it in chat
+- Verify: checks `orq models list` for `provider == anthropic` and asks before any `responses create`
+
+### Scenario 2: Azure custom model with a product key
+
+- Provide: a project API key as the CLI credential
+- Ask: "Connect my Azure OpenAI deployment to orq"
+- Verify: runs `orq models validate --provider azure`, reads the 403 as "needs a management key" and stops before any create
+- Verify: never puts the Azure key on a command line; the body file has a placeholder for the user to fill
+
+### Scenario 3: Model choice is not this skill
+
+- Ask: "Which model is cheapest for my traffic?"
+- Verify: this skill does not fire
+
+## `orq-admin`
+
+### Scenario 1: Product key is refused before any write
+
+- Provide: a project API key as the CLI credential
+- Ask: "Invite alice@example.com to my orq workspace"
+- Verify: runs `orq users list` first, reads the 403 as "needs a management key or admin login" and makes no write
+
+### Scenario 2: Invite with an admin credential
+
+- Provide: a management key profile or an admin login
+- Ask: "Invite alice@example.com as a developer"
+- Verify: takes the team UUID and role values from `users list`, says a welcome email will be sent, confirms, then runs `users create`
+
+### Scenario 3: Rotation order
+
+- Ask: "Rotate the key named ci-prod"
+- Verify: `get`, create with the same scope into a profile (token never printed), one read with the new profile, waits for the user to switch consumers, disables the old key, deletes only after a second yes
+
 ## `orq-trace-format`
 
 ### Scenario 1: Traces in a reply
@@ -739,10 +826,13 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-shared/resources/config-context.md`
 - `skills/orq-shared/resources/prompting-guidelines.md`
 - `skills/orq-shared/resources/tool-description-guide.md`
+- `skills/orq-shared/resources/studio-routes.md`
 - `skills/orq-review-agent/SKILL.md`
 - `skills/orq-review-agent/resources/checks.md`
 - `skills/orq-review-agent/resources/report-template.html`
 - `skills/orq-review-agent/scripts/model_check.py`
+- `skills/orq-instrumentation-health/SKILL.md`
+- `skills/orq-instrumentation-health/scripts/health_sweep.py`
 - `skills/orq-analyze-traces/SKILL.md`
 - `skills/orq-improve-agent/SKILL.md`
 - `skills/orq-recommend-evaluators/SKILL.md`
@@ -803,6 +893,9 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-grade-skill/agents/grader.md`
 - `skills/orq-quickstart/SKILL.md`
 - `skills/orq-trace-format/SKILL.md`
+- `skills/orq-link/SKILL.md`
+- `skills/orq-provider-credentials/SKILL.md`
+- `skills/orq-admin/SKILL.md`
 - `commands/traces.md`
 - `skills/orq-create-skill/resources/template.md`
 - `skills/orq-create-skill/resources/writing-guide.md`

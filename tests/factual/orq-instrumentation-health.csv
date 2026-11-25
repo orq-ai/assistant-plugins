@@ -1,0 +1,17 @@
+test_type,target,assertion,description
+cli_subcommand,traces list-fields,,orq traces list-fields exists
+cli_subcommand,traces aggregate,,orq traces aggregate exists
+cli_flag,traces aggregate,--from-file,orq traces aggregate accepts --from-file
+cli_subcommand,traces search,,orq traces search exists
+cli_flag,traces search,--from-file,orq traces search accepts --from-file
+cli_subcommand,traces list-spans,,orq traces list-spans exists
+cli_flag,traces list-spans,--limit,orq traces list-spans accepts --limit
+cli_flag,traces list-spans,--page-token,orq traces list-spans accepts --page-token
+cli_subcommand,traces list-facet-values,,orq traces list-facet-values exists
+cli_flag,traces list-facet-values,--from,orq traces list-facet-values accepts --from
+cli_flag,traces list-facet-values,--to,orq traces list-facet-values accepts --to
+cli_flag,traces list-facet-values,--all-accessible-projects,orq traces list-facet-values accepts --all-accessible-projects
+cli_subcommand,traces conversation,,orq traces conversation exists
+cli_flag,traces conversation,--tool-max-chars,orq traces conversation accepts --tool-max-chars
+cli_subcommand,pii detect,,orq pii detect exists
+cli_flag,pii detect,--from-file,orq pii detect accepts --from-file

@@ -1,0 +1,9 @@
+id: instrumentation-health-fires-existing-traces
+skill: orq-instrumentation-health
+kind: invocation
+# Second phrasing, and the case orq-setup-observability used to claim: an audit of existing instrumentation, not of one agent's setup.
+prompt: We already send traces to orq from three services. Audit the instrumentation of those existing traces and tell me which service has gaps.
+expect_skill: orq-instrumentation-health
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 4

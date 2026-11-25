@@ -1,0 +1,9 @@
+id: admin-near-miss-cli-login
+skill: orq-admin
+kind: invocation
+# Logging in the CLI is orq-cli, not workspace administration.
+prompt: Log in to the orq CLI.
+expect_skill: orq-cli
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 4

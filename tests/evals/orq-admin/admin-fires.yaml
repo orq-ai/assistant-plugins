@@ -1,0 +1,9 @@
+id: admin-fires
+skill: orq-admin
+kind: invocation
+# Member invite, the most common admin request.
+prompt: Invite alice@example.com to my orq workspace.
+expect_skill: orq-admin
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 4

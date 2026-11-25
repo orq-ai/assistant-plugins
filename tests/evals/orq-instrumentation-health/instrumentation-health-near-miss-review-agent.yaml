@@ -1,0 +1,9 @@
+id: instrumentation-health-near-miss-review-agent
+skill: orq-instrumentation-health
+kind: invocation
+# Near miss: one agent's configuration is a setup review, not a trace audit.
+prompt: Is my orq agent support-bot configured sensibly? Check its instructions, tools and model.
+expect_skill: orq-review-agent
+runs: 3
+pass_threshold: 0.66  # 2 of 3
+max_turns: 4

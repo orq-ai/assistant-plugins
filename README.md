@@ -180,6 +180,7 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 | Skill | What It Does | Documentation |
 |-------|-------------|---------------|
 | **orq-setup-observability** | Set up orq.ai observability for LLM applications — AI Router proxy, OpenTelemetry, tracing setup, and trace enrichment | [SKILL.md](skills/orq-setup-observability/SKILL.md) |
+| **orq-instrumentation-health** | Audit the instrumentation of traces already in a workspace (model, tokens, cost, span tree, span types, session and user ids, sensitive data), per project and per agent | [SKILL.md](skills/orq-instrumentation-health/SKILL.md) |
 | **orq-invoke-deployment** | Invoke orq.ai deployments, agents, and models via the Python SDK or HTTP API — pass prompt variables, stream responses, and generate integration code | [SKILL.md](skills/orq-invoke-deployment/SKILL.md) |
 | **orq-build-agent** | Design, create, and configure an orq.ai Agent with tools, instructions, knowledge bases, and memory | [SKILL.md](skills/orq-build-agent/SKILL.md) |
 | **orq-build-evaluator** | Create validated LLM-as-a-Judge evaluators following evaluation best practices | [SKILL.md](skills/orq-build-evaluator/SKILL.md) |
@@ -197,11 +198,14 @@ Skills are triggered by describing what you need. Claude picks the right skill a
 | **orq-simulate-agent** | Run multi-turn agent simulations using evaluatorq's first-class primitives (`simulate()`, `generate_and_simulate()`, `wrap_simulation_agent()`) — drive an agent under test with a UserSimulatorAgent and built-in JudgeAgent, scored against criteria | [SKILL.md](skills/orq-simulate-agent/SKILL.md) |
 | **orq-create-skill** | Build or update an agent skill from an API, CLI, or MCP surface — probe the surface, verify every claim, write a tested contract, and register it | [SKILL.md](skills/orq-create-skill/SKILL.md) |
 | **orq-grade-skill** | Grade one agent skill from real sessions that loaded it (Orq traces tagged with metadata, Claude Code sessions, or ATIF files) — grader subagents score efficiency, quality and compliance, and a frozen baseline files evidence-backed issues with exact citations in an HTML report | [SKILL.md](skills/orq-grade-skill/SKILL.md) |
-| **orq-shared** | Reference bundle the other skills read — the verified `orq` CLI trace query contract, the run-key preflight, and the prompting, tool-description and config-context rubrics; not invoked on its own | [SKILL.md](skills/orq-shared/SKILL.md) |
+| **orq-shared** | Reference bundle the other skills read — the verified `orq` CLI trace query contract, the run-key preflight, the Studio route table, and the prompting, tool-description and config-context rubrics; not invoked on its own | [SKILL.md](skills/orq-shared/SKILL.md) |
 | **orq-cli** | Drive the `orq` command-line interface — install check, auth, workspace selection, `orq doctor` troubleshooting, and read/write commands with JSON output and JMESPath queries | [SKILL.md](skills/orq-cli/SKILL.md) |
 | **orq-build-benchmark** | Turn a team's own work into a custom orq benchmark — interview the user, stage real task instances, build an orq dataset and evaluators, and run candidate models with evaluatorq, graded against known answers | [SKILL.md](skills/orq-build-benchmark/SKILL.md) |
 | **orq-quickstart** | Onboarding in any coding agent — API key, MCP registration for your harness, a verified workspace read, a snapshot, and a first task | [SKILL.md](skills/orq-quickstart/SKILL.md) |
 | **orq-trace-format** | Show traces and spans as clickable Studio links instead of raw trace ids — URL shape, workspace key and host, and the "opens empty" fix | [SKILL.md](skills/orq-trace-format/SKILL.md) |
+| **orq-link** | Give the Studio link to an agent, dataset, experiment, evaluator or other workspace entity, built from the id the CLI lists | [SKILL.md](skills/orq-link/SKILL.md) |
+| **orq-provider-credentials** | Connect provider credentials: the Studio page for main provider keys, and validated custom models for Azure, Bedrock, Vertex and OpenAI-compatible endpoints, with no secret in chat | [SKILL.md](skills/orq-provider-credentials/SKILL.md) |
+| **orq-admin** | Workspace admin from the CLI: invite and remove members, mint scoped API keys, rotate, disable and delete keys, with every write confirmed and no token printed | [SKILL.md](skills/orq-admin/SKILL.md) |
 <!-- END_SKILLS_TABLE -->
 
 ---
