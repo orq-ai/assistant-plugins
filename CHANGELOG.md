@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [5.3.0] - 2026-11-23
+## [5.3.0] - 2026-11-25
 
 ### Added
 
@@ -20,6 +20,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `orq-cli`, `evaluatorq`: no longer say experiments are MCP or evaluatorq only; they route to the Experiments API via `orq experiments`. The orq-cli routing table and command map no longer say the CLI has no `experiments` group.
 - `orq-improve-agent`: the hand-off to `orq-run-experiment` names the Experiments API for regression checks that re-run after each fix: two agent task columns pin the version before and after the fix with `agent_tag`, so no copy of the agent is created.
 - `orq-shared`: `model-slugs.md` and `doc-resolution.md` list the skills that use the new reference.
+
+## [5.2.2] - 2026-11-24
+
+### Fixed
+
+- `orq-red-team` and `evaluatorq` skills: `eq redteam ui` was removed in evaluatorq 1.102, so the skills now open reports with `eq dashboard [report.json]` and say it needs the `[dashboard]` extra (`'evaluatorq[redteam,dashboard]'`). `[redteam]` no longer pulls in Streamlit. Troubleshooting covers the missing-extra error and `No such command 'ui'`.
+
+## [5.2.1] - 2026-11-23
+
+### Changed
+
+- `orq-cli` skill: the coding-agents reference lists `cursor` among the agents `orq setup` and `orq connect` wire. Cursor takes the `skills` and `mcp` capabilities. Needs an orq CLI release that includes Cursor support.
 
 ## [5.2.0] - 2026-11-19
 

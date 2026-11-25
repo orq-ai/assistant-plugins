@@ -237,7 +237,7 @@ Quick reference:
 
 ```bash
 eq redteam run --target agent:<AGENT_KEY> --mode dynamic
-eq redteam ui report.json   # open Streamlit dashboard
+eq dashboard report.json    # open the dashboard (needs the [dashboard] extra)
 ```
 
 ### CLI — Simulation
