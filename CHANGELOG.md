@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [5.3.0] - 2026-11-25
+## [5.4.0] - 2026-11-25
 
 ### Added
 
@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `orq-cli`, `evaluatorq`: no longer say experiments are MCP or evaluatorq only; they route to the Experiments API via `orq experiments`. The orq-cli routing table and command map no longer say the CLI has no `experiments` group.
 - `orq-improve-agent`: the hand-off to `orq-run-experiment` names the Experiments API for regression checks that re-run after each fix: two agent task columns pin the version before and after the fix with `agent_tag`, so no copy of the agent is created.
 - `orq-shared`: `model-slugs.md` and `doc-resolution.md` list the skills that use the new reference.
+
+## [5.3.0] - 2026-11-25
+
+### Added
+
+- `orq-grade-skill` skill: grade one repository-tracked agent skill from real sessions that loaded its exact committed version, and freeze a baseline without proposing edits. Sessions come from Orq traces tagged with a metadata pair by default (`orq launch <agent> --metadata key=value` or `X-ORQ-METADATA-<key>` headers, selected with an OQL filter), or from local Claude Code sessions, ATIF files or exported conversations. Grader subagents score efficiency, quality and skill compliance per batch; the baseline validates every exact quote citation and snapshot hash, files an issue only on recurring or high-priority evidence, applies a majority rule across repeated passes, and writes `baseline.json`, `baseline.md` and an HTML report. Scripts run with `uv run` from their inline dependencies, or with `pip install "evaluatorq>=1.87" "pydantic>=2"` and `python3`.
 
 ## [5.2.4] - 2026-11-25
 
