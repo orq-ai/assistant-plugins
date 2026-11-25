@@ -1,0 +1,8 @@
+# Test-run dependencies for this skill's pytest suite.
+#
+# The scripts declare their deps inline (PEP 723) so `uv run scripts/<x>.py`
+# needs no setup, but pytest imports the modules directly and never reads that
+# header, so CI needs the same set here. Keep in sync with scripts/.
+pytest>=8.0
+evaluatorq>=1.87
+pydantic>=2

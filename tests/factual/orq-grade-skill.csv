@@ -1,0 +1,18 @@
+test_type,target,assertion,description
+cli_subcommand,launch,,orq launch exists
+cli_subcommand,launch claude,,orq launch claude exists
+cli_flag,launch claude,--metadata,orq launch claude accepts --metadata
+cli_subcommand,traces query-oql,,orq traces query-oql exists
+cli_flag,traces query-oql,--oql,orq traces query-oql accepts --oql
+cli_flag,traces query-oql,--from,orq traces query-oql accepts --from
+cli_flag,traces query-oql,--to,orq traces query-oql accepts --to
+cli_flag,traces query-oql,--page-token,orq traces query-oql accepts --page-token
+cli_subcommand,traces get-conversation,,orq traces get-conversation exists
+doc_url,https://docs.orq.ai/docs/ai-gateway/request-metadata,,request-metadata page reachable
+doc_url,https://docs.orq.ai/ai-studio/observability/oql,,oql page reachable
+pypi_package,evaluatorq,,evaluatorq on PyPI
+pypi_package,pydantic,,pydantic on PyPI
+cli_subcommand,launch codex,,orq launch codex exists
+cli_flag,launch codex,--metadata,orq launch codex accepts --metadata
+cli_subcommand,responses create,,orq responses create exists
+cli_flag,responses create,--metadata,orq responses create accepts --metadata
