@@ -24,12 +24,12 @@
     "orq-build-evaluator": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "41f091a0a68a6ed5b07af2718206d277393955187eac6f79cbdb6c3f7af84acb"
+      "computedHash": "ef3a6e43e5a75ccf288ab920bb489f4efd39812f3266774814f1a40ab1a6f95c"
     },
     "orq-cli": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "07e50e161964321c588e1047f1564aebe06770597c7b2e6f2bd707536da8c4f8"
+      "computedHash": "a60a0b76396396e332af4614bf1866a415db8fef889741bcd1833d8defd96204"
     },
     "orq-compare-agents": {
       "source": "orq-ai/assistant-plugins",
