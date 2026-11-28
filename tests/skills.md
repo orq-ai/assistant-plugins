@@ -48,6 +48,26 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 ---
 
+## `orq-grade-skill`
+
+### Scenario 1: Grade a skill from tagged Orq traces
+
+- Setup: a git repo with one committed skill, and at least ten agent runs that loaded it, launched with `orq launch claude --metadata skill-grading=<skill>` (or sent with the `X-ORQ-METADATA-skill-grading` header)
+- Ask: "Grade how well the <skill> skill works in practice"
+- Verify step 1: runs `scripts/collect.py --trace-metadata skill-grading=<skill>` by absolute path and reports `loaded_sessions` and the skipped count
+- Verify step 2: runs `scripts/pipeline.py prepare`, prints `RUN`, and stops with an `insufficient_data` report when fewer than ten sessions loaded the committed version
+- Verify step 3: spawns one grader subagent per batch in `RUN/grade-plan.json` only after prepare finished, passing absolute paths and the run id; it never writes a grader output file itself
+- Verify step 4: runs `scripts/pipeline.py baseline` only after every grader finished, re-spawns only failing batches, and reports `RUN/baseline.md`, the top findings and the collection limitations
+- Verify: no issues, edits or diff are written, and the client skill files are unchanged
+
+### Scenario 2: Local sessions without uv
+
+- Setup: `uv` not installed; `pip install "evaluatorq>=1.87" "pydantic>=2"` done
+- Ask: "Grade my <skill> skill from my Claude Code sessions"
+- Verify: runs `python3 <skill dir>/scripts/collect.py ... --claude-projects ~/.claude/projects --loaded-from <skill dir>` and the later stages with `python3`, from any working directory
+
+---
+
 ## `orq-setup-observability`
 
 ### Scenario 1: Python OpenAI app — AI Router path
@@ -145,7 +165,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - Ask: "Run a red team test on my agent using the evaluatorq CLI"
 - Verify: shows `eq redteam run --target agent:<KEY> --mode dynamic` (not `run adaptive` or `--framework`)
 - Verify: explains that the 5 detail files (`01_agent_context.json` … `05_summary_report.json`) come from `--save detail`
-- Verify: shows `eq redteam ui report.json` to view results (not `eq redteam report summarize`)
+- Verify: shows `eq dashboard report.json` to view results (not `eq redteam ui`, removed in evaluatorq 1.102, or `eq redteam report summarize`)
 
 ### Scenario 3: Run simulation from CLI
 
@@ -485,7 +505,7 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 
 - Ask: "Summarize the red team results from ./output/my-run/report.json"
 - Verify: reads the JSON directly and explains `resistance_rate`, `vulnerabilities_found`, `total_results`, and `categories_tested`
-- Verify: optionally invokes `eq redteam ui ./output/my-run/report.json` for interactive viewing
+- Verify: optionally invokes `eq dashboard ./output/my-run/report.json` for interactive viewing (never `eq redteam ui`)
 - Verify: notes which categories were NOT tested
 
 ### Scenario 4: Missing env var
@@ -792,6 +812,8 @@ Requires `setup.md` to have run first (seed data for `orq-run-experiment` test).
 - `skills/orq-manage-skills/resources/governance-guide.md`
 - `skills/orq-manage-skills/resources/known-caveats.md`
 - `skills/orq-create-skill/SKILL.md`
+- `skills/orq-grade-skill/SKILL.md`
+- `skills/orq-grade-skill/agents/grader.md`
 - `skills/orq-quickstart/SKILL.md`
 - `skills/orq-trace-format/SKILL.md`
 - `commands/traces.md`

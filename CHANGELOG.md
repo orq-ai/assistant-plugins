@@ -5,11 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [5.3.0] - 2026-11-21
+## [5.4.0] - 2026-11-28
 
 ### Added
 
-- `orq-find-cost-savings` skill (RES-1917): estimates what a workspace would save from Smart Router routing (`jev-general-v1`), switching off dominated models, and prompt caching, from a sample of its own traces, with a 90% CI and coverage. `scripts/cost_savings_report.py` runs `analyze` (sampling, pricing, decision calls after a cost confirmation, estimator, caching scan) and `render` (merges the agent's narrative into HTML); `resources/report.schema.json` is the output contract and `resources/design.md` the spec.
+- `orq-find-cost-savings` skill (RES-1917): estimates what a workspace would save from Smart Router routing (`jev-general-v1`), switching off dominated models, and prompt caching, from a sample of its own traces, with a 90% CI and coverage. `scripts/cost_savings_report.py` runs `analyze` (sampling, pricing, decision calls after a cost confirmation, estimator, caching scan) and `render` (merges the agent's narrative into HTML); `resources/report.schema.json` is the output contract and `resources/design.md` the spec. `analyze --filters` scopes the analysis to a cross-section of traces (project, agent, metadata) by passing an orq filter list to every trace search. Decision calls go through `orq-ai-sdk` with the CLI login and follow the server's `Retry-After`, paced to 30% of the workspace's rate limit, and sampling stops once the range is tight or the approved call count is reached.
+
+## [5.3.0] - 2026-11-25
+
+### Added
+
+- `orq-grade-skill` skill: grade one repository-tracked agent skill from real sessions that loaded its exact committed version, and freeze a baseline without proposing edits. Sessions come from Orq traces tagged with a metadata pair by default (`orq launch <agent> --metadata key=value` or `X-ORQ-METADATA-<key>` headers, selected with an OQL filter), or from local Claude Code sessions, ATIF files or exported conversations. Grader subagents score efficiency, quality and skill compliance per batch; the baseline validates every exact quote citation and snapshot hash, files an issue only on recurring or high-priority evidence, applies a majority rule across repeated passes, and writes `baseline.json`, `baseline.md` and an HTML report. Scripts run with `uv run` from their inline dependencies, or with `pip install "evaluatorq>=1.87" "pydantic>=2"` and `python3`.
+
+## [5.2.4] - 2026-11-25
+
+### Fixed
+
+- `orq-cli` and `orq-build-evaluator` skills: Human Review (annotation) definitions belong to a project. One without a `project_id` shows as Legacy in the UI. The `orq-cli` command map shows how to list, create and fix definitions through `orq request` on `/v2/human-evals`: `PATCH` with `project_id` keeps the key, and the body must carry the full definition.
+
+## [5.2.3] - 2026-11-25
+
+### Fixed
+
+- `orq-compare-agents` (`resources/job-patterns.md`) and `orq-invoke-deployment`: the Node orq SDK examples that read agent output text now narrow each output item to `type === "message"` inside `flatMap`. `@orq-ai/node` 4.19.0 types `response.output` as a `ResponseOutputItem` union (4.18.23 had `Array<any>`), so the old `.filter(...).flatMap(item => item.content)` no longer type-checked: a `.filter` callback does not narrow the union.
+
+## [5.2.2] - 2026-11-24
+
+### Fixed
+
+- `orq-red-team` and `evaluatorq` skills: `eq redteam ui` was removed in evaluatorq 1.102, so the skills now open reports with `eq dashboard [report.json]` and say it needs the `[dashboard]` extra (`'evaluatorq[redteam,dashboard]'`). `[redteam]` no longer pulls in Streamlit. Troubleshooting covers the missing-extra error and `No such command 'ui'`.
+
+## [5.2.1] - 2026-11-23
+
+### Changed
+
+- `orq-cli` skill: the coding-agents reference lists `cursor` among the agents `orq setup` and `orq connect` wire. Cursor takes the `skills` and `mcp` capabilities. Needs an orq CLI release that includes Cursor support.
 
 ## [5.2.0] - 2026-11-19
 
