@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["evaluatorq>=1.98"]
+# dependencies = ["evaluatorq>=1.98", "orq-ai-sdk>=4.16.1"]
 # ///
 """Cost-savings report for one orq.ai workspace.
 
@@ -13,10 +13,13 @@ model, without sampling. Pools and model switches come from the intelligence/pri
 threads for missed prompt caching and writes `report.json` plus `narrative-slots.md`. `render` merges the agent's
 `narrative.md` into `report.html`.
 
-Every number comes from this script; the agent writes prose only. All reads and the decision calls go through the
-`orq` CLI (`-o json`), so the user's CLI login and workspace are reused. Decision calls are paced to the workspace
-plan's rate limit. Responses are cached under `<out>/cache` during a run and deleted afterwards, unless
-`--keep-cache` is given or the run stopped at the confirmation (the approved rerun then reads the same sample).
+Every number comes from this script; the agent writes prose only. Reads go through the `orq` CLI (`-o json`), so the
+user's CLI login and workspace are reused; decision calls go through the `orq-ai-sdk` with the same credentials
+(the CLI login's token, else `ORQ_API_KEY`) and are paced to the workspace plan's rate limit. `--filters` narrows
+every trace read to a scope (a project, an agent, metadata) and moves spend and token totals from telemetry to the
+filtered trace rows. Trace and search reads are cached under `<out>/cache/reads` (they contain prompts) and deleted
+afterwards, unless `--keep-cache` is given or the run stopped at the confirmation (the approved rerun then reads the
+same sample). Decision probabilities (no prompt text) are kept under `<out>/cache/decisions` until a run ends ok.
 Spec: ../resources/design.md.
 """
 
@@ -28,12 +31,14 @@ import hashlib
 import html
 import json
 import math
+import os
 import random
 import re
 import shlex
 import shutil
 import subprocess
 import sys
+import itertools
 import threading
 import time
 import urllib.parse
@@ -42,10 +47,14 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal, NamedTuple, TypeVar
 
+import httpx
 from evaluatorq.common import model_frontier as mf
+from orq_ai_sdk import Orq as OrqSdk
+from orq_ai_sdk.models import OrqError as SdkError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.config import JsonDict
 
@@ -75,14 +84,16 @@ WALL_TIME_S = 900
 
 # decision-call pacing against the plan's per-minute rate limit, which gateway traffic shares
 PACE_SHARE = 0.30
-RATE_WINDOW_S = 60.0  # the limit's fixed window: the wait after a 429 without a readable Retry-After
+RATE_WINDOW_S = 60.0  # the limit's fixed window: the wait after a 429 without a Retry-After
+MAX_RETRY_AFTER_S = float(WALL_TIME_S)  # a longer Retry-After is capped
 MAX_429 = 6  # 429s on one decision call before the run stops
 DECISION_LATENCY_S = 2.0  # wait estimate only
 READ_S_PER_DRAW = 3.0  # wait estimate only
 FREE_DAILY = 50
-PLAN_RATE = {"free": 20, "growth": 100, "sandbox": 100, "pov": 100, "team": 1000, "pro": 1500, "pro2025": 1500,
-             "custom": 1500, "consumption": 1500}
-PLAN_SAMPLE = {"free": 15, "growth": 100, "sandbox": 100, "pov": 100}  # other known plans: MAX_SAMPLE
+DEFAULT_RATE = 20  # requests a minute when the workspace states no limit
+PLAN_SAMPLE = {"free": 15, "growth": 100, "sandbox": 100, "pov": 100}  # any other plan type: MAX_SAMPLE
+DEFAULT_RATE_SAMPLE = 100  # the default sample when the workspace states no rate limit
+MAX_SCAN_PAGES = 300  # pages (SEARCH_CAP traces each) a filtered run reads for spend and token totals
 
 DECISION_MODEL = "typesafe/jev-latest"
 DECISION_PRICE_PER_M = 0.042
@@ -244,7 +255,7 @@ def switch_target(incumbent: mf.ScoredModel, cands: list[mf.ScoredModel],
     """The cheapest candidate that dominates the incumbent: at least as intelligent and no more expensive, strictly
     better on one.
 
-    With `cost` (the incumbent's sampled spans re-priced on a model, cache reads and writes included) price is that
+    With `cost` (the incumbent's window token totals re-priced on a model, cache reads and writes included) price is that
     cost; a model `cost` cannot price is never a target. Without it, evaluatorq's 3:1 input/output blend."""
     if incumbent.free:
         return None
@@ -287,7 +298,7 @@ def frontier_pool(top: mf.ScoredModel, cands: list[mf.ScoredModel],
     MIN_TIER_RATIO cheaper than the seat above it; of the trios that pass, the one whose weakest seat is strongest
     wins, ties on total index. With no trio the best pair is returned and flagged relaxed; with no pair, [top].
 
-    Price is `cost` (the incumbent's sampled spans re-priced on the model, cache included) when given, so the
+    Price is `cost` (the incumbent's window token totals re-priced on the model, cache included) when given, so the
     frontier, the tier gaps and dominance follow this workspace's traffic; else evaluatorq's 3:1 blend."""
     ratio = MIN_TIER_RATIO
     ident = mf.model_identity
@@ -754,17 +765,13 @@ class OrqError(RuntimeError):
         self.stderr = stderr
 
 
-class RateLimited(OrqError):
-    """A decision call still rate limited after MAX_429 waits."""
-
-
 @dataclass(frozen=True)
 class Plan:
     """The workspace's plan as it bears on decision calls."""
-    type: str  # plan type as the workspace states it; "free" when missing or unknown
+    type: str  # plan type as the workspace states it; "free" when it states none
     rate_limit: int  # requests per minute (the decision endpoint shares it with gateway traffic)
     daily_limit: int | None  # free plans: decision calls a day
-    source: str  # where rate_limit came from: metadata.rateLimit | plan type | features.rate_limit | default
+    source: str  # where rate_limit came from: metadata.rateLimit | features.rate_limit | default
 
     @property
     def per_minute(self) -> float:
@@ -773,33 +780,32 @@ class Plan:
 
     @property
     def default_sample(self) -> int:
-        return PLAN_SAMPLE.get(self.type, MAX_SAMPLE)
+        n = PLAN_SAMPLE.get(self.type, MAX_SAMPLE)
+        return min(n, DEFAULT_RATE_SAMPLE) if self.source == "default" else n
 
 
 def plan_of(ws: Json) -> Plan:
-    """From `workspaces get`: an explicit `subscription.metadata.rateLimit` wins, then the plan type's limit, then
-    `features.rate_limit`; a missing or unknown type is treated as free."""
+    """From `workspaces get`: the rate limit is `subscription.metadata.rateLimit`, then `features.rate_limit`, else
+    DEFAULT_RATE. The plan type sets the default sample and the free plan's daily limit; a type the script does not
+    know keeps its own name, with no daily limit."""
     sub = ws.get("subscription") or {}
     meta = sub.get("metadata") or {}
-    raw = str(meta.get("type") or sub.get("type") or "").lower()
-    kind = raw if raw in PLAN_RATE else "free"
+    kind = str(meta.get("type") or sub.get("type") or "free").lower()
     daily = FREE_DAILY if kind == "free" else None
     for value, source in ((meta.get("rateLimit"), "metadata.rateLimit"),
-                          (PLAN_RATE.get(raw), "plan type"),
                           ((ws.get("features") or {}).get("rate_limit"), "features.rate_limit")):
         try:
             if value is not None and int(value) > 0:
                 return Plan(kind, int(value), daily, source)
         except (TypeError, ValueError):
             continue
-    return Plan(kind, PLAN_RATE["free"], daily, "default")
+    return Plan(kind, DEFAULT_RATE, daily, "default")
 
 
 class Pacer:
-    """Paces the decision workers: one call every 60/per_minute seconds, the gap doubled on each 429 and every
-    worker held until its Retry-After has passed. It never speeds back up within a run.
-
-    ponytail: multiplicative decrease only, no additive increase; a run is short enough that a slower tail is cheap."""
+    """Paces the decision workers: one call every 60/per_minute seconds, the gap doubled on a 429 (once per hold
+    period) and every worker held until its Retry-After has passed. It never speeds back up within a run; a run is
+    short enough that a slower tail is cheap."""
 
     def __init__(self, per_minute: float, clock: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep):
@@ -820,75 +826,97 @@ class Pacer:
 
     def throttled(self, wait_s: float) -> None:
         with self.lock:
+            now = self.clock()
             self.throttles += 1
-            self.gap *= 2
-            self.hold = max(self.hold, self.clock() + wait_s)
+            if now >= self.hold:  # a 429 inside an active hold is the same overload: held, not slowed again
+                self.gap *= 2
+            self.hold = max(self.hold, now + wait_s)
 
 
-RATE_LIMITED_RE = re.compile(r"HTTP(?:/[\d.]+)? 429")
-RETRY_AFTER_RE = re.compile(r"^\s*╎\s*Retry-After:\s*(\d+(?:\.\d+)?)\s*$", re.I | re.M)
-VERBOSE_LINE_RE = re.compile(r"^\s*(╎|INFO |DEBUG |request-id=)")
+def retry_after(headers: Any, now: datetime | None = None) -> float:
+    """Seconds a 429 asks to wait: its Retry-After (seconds or an HTTP date), else RATE_WINDOW_S."""
+    raw = (headers.get("retry-after") if headers is not None else None) or ""
+    try:
+        wait = float(raw)
+    except ValueError:
+        try:
+            wait = (parsedate_to_datetime(raw) - (now or datetime.now(UTC))).total_seconds()
+        except (TypeError, ValueError):
+            return RATE_WINDOW_S
+    return min(max(wait, 0.0), MAX_RETRY_AFTER_S)
 
 
-def quiet(stderr: str) -> str:
-    """stderr without --verbose output: headers and bodies (the prompt text), config and request ids."""
-    return "\n".join(ln for ln in stderr.splitlines() if not VERBOSE_LINE_RE.match(ln))
+def backoff(attempt: int) -> None:
+    """Sleep before retry `attempt` (0 first): 1 s, 2 s, 4 s, ..., jittered so parallel workers do not retry in step."""
+    time.sleep(2 ** attempt * (0.5 + random.random()))
 
 
 class Orq:
     def __init__(self, workspace: str | None, cache_dir: Path | None, retries: int = 4):
         self.workspace, self.cache_dir, self.retries = workspace, cache_dir, retries
         self.calls = 0
-        self.verbose = True  # on paced calls, to read Retry-After; off for the run once the CLI panics on it
         if cache_dir:
             cache_dir.mkdir(parents=True, exist_ok=True)
 
-    def __call__(self, *args: str, body: Json | None = None, cache: bool = True, pacer: Pacer | None = None) -> Any:
-        """One CLI call, read from the cache when it has it. A 5xx (and a 429 outside the pacer) is retried with
-        jittered backoff up to `retries`; with a pacer, a 429 waits its Retry-After without using that budget."""
+    def __call__(self, *args: str, cache: bool = True) -> Any:
+        """One CLI call, read from the cache when it has it. A 5xx or 429 is retried with jittered backoff up to
+        `retries`."""
         argv = list(args) + (["--workspace", self.workspace] if self.workspace else []) + ["-o", "json"]
-        key = hashlib.sha256(json.dumps([argv, body], sort_keys=True).encode()).hexdigest()[:24]
+        key = hashlib.sha256(json.dumps(argv).encode()).hexdigest()[:24]
         path = self.cache_dir / f"{key}.json" if (self.cache_dir and cache) else None
         if path and path.exists():
             return json.loads(path.read_text())
-        tmp = None
-        if body is not None:
-            tmp = (self.cache_dir or Path(".")) / f"body-{key}.json"
-            tmp.write_text(json.dumps(body))
-            argv += ["--from-file", str(tmp)]
-        attempt = limited = 0
-        try:
-            while True:
-                if pacer:
-                    pacer.acquire()
-                verbose = pacer is not None and self.verbose
-                self.calls += 1
-                p = subprocess.run(["orq", *argv, *(["--verbose"] if verbose else [])], capture_output=True,
-                                   text=True, timeout=180)
-                if p.returncode == 0:
-                    out = json.loads(p.stdout) if p.stdout.strip() else None
-                    if path:
-                        path.write_text(json.dumps(out))
-                    return out
-                if verbose and "panic:" in p.stderr:  # the CLI's header redaction can panic; retry without it
-                    self.verbose = False
-                    continue
-                err = quiet(p.stderr)
-                if pacer and RATE_LIMITED_RE.search(p.stderr):
-                    limited += 1
-                    if limited > MAX_429:
-                        raise RateLimited(argv, p.returncode, err)
-                    m = RETRY_AFTER_RE.search(p.stderr)
-                    pacer.throttled(float(m.group(1)) if m else RATE_WINDOW_S)
-                    continue
-                if re.search(r"HTTP (429|50[0-4])", err) and attempt < self.retries:
-                    time.sleep(2 ** attempt * (0.5 + random.random()))  # jitter: parallel readers do not retry in step
-                    attempt += 1
-                    continue
-                raise OrqError(argv, p.returncode, err)
-        finally:
-            if tmp:
-                tmp.unlink(missing_ok=True)
+        attempt = 0
+        while True:
+            self.calls += 1
+            p = subprocess.run(["orq", *argv], capture_output=True, text=True, timeout=180)
+            if p.returncode == 0:
+                out = json.loads(p.stdout) if p.stdout.strip() else None
+                if path:
+                    path.write_text(json.dumps(out))
+                return out
+            if re.search(r"HTTP (429|50[0-4])", p.stderr) and attempt < self.retries:
+                backoff(attempt)
+                attempt += 1
+                continue
+            raise OrqError(argv, p.returncode, p.stderr)
+
+
+class CredentialsError(Exception):
+    """No credentials for decision calls: no CLI login (or no `orq` binary) and no `ORQ_API_KEY`."""
+
+
+def make_client(workspace: str | None) -> OrqSdk:
+    """The SDK client for decision calls, with the credentials the CLI reads with: the token of the CLI login (it
+    lasts about an hour, so it is asked for again when it expires), else `ORQ_API_KEY` when no login is available.
+    Raises CredentialsError when neither works."""
+    server = os.environ.get("ORQ_API_BASE_URL") or None
+    argv = ["orq", "auth", "token", "-o", "json"] + (["--workspace", workspace] if workspace else [])
+    tok: dict[str, Any] = {}
+    lock = threading.Lock()
+
+    def token() -> str:
+        with lock:
+            if not tok or tok["expires"] - time.time() < 60:
+                try:
+                    p = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+                    if p.returncode != 0:
+                        raise OrqError(argv, p.returncode, p.stderr)
+                    out = json.loads(p.stdout)
+                    tok.update(value=out["token"], server=out.get("server"),
+                               expires=parse_ts(out["expires_at"]).timestamp() if out.get("expires_at")
+                               else time.time() + 600)
+                except (OrqError, KeyError, ValueError, OSError, subprocess.TimeoutExpired) as e:
+                    raise CredentialsError(str(e)[:200]) from e
+            return tok["value"]
+
+    try:
+        token()
+    except CredentialsError:
+        if key := os.environ.get("ORQ_API_KEY"):
+            return OrqSdk(api_key=key, server_url=server)
+        raise
+    return OrqSdk(api_key=token, server_url=server or tok.get("server"))
 
 
 # --------------------------------------------------------------------------------------------- helpers
@@ -905,6 +933,10 @@ def iso(d: datetime) -> str:
 def iso_ms(d: datetime) -> str:
     """ISO with milliseconds: halved search windows end between whole seconds."""
     return d.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def single_model(row: Json) -> bool:
+    return len(row.get("models") or []) == 1
 
 
 def trace_cost(row: Json) -> float:
@@ -1102,17 +1134,38 @@ class CacheCandidate:
     product: str | None
 
 
+@dataclass(frozen=True)
+class Scan:
+    """What a filtered run reads from the matching trace rows instead of telemetry. A model is in `cells` and
+    `cell_info` together or in neither."""
+    spend: list[Json]  # per model, single-model traces
+    agents: list[Json]
+    agg: dict[str, Tokens]
+    cells: dict[str, list[Cell]]
+    cell_info: dict[str, Json]
+    threads: list[tuple[str, str, float, int]]  # (thread, project, spend, traces)
+    multi_spend: float  # spend in traces that used more than one model
+
+    @property
+    def total(self) -> float:
+        return sum(r["spend"] for r in self.spend) + self.multi_spend
+
+
 class Analyzer:
     def __init__(self, args: argparse.Namespace):
         self.args = args
         self.out = Path(args.out)
         self.out.mkdir(parents=True, exist_ok=True)
-        self.orq = Orq(args.workspace, self.out / "cache")
+        self.orq = Orq(args.workspace, self.out / "cache" / "reads")
+        self.decision_dir = self.out / "cache" / "decisions"
+        self.client: OrqSdk | None = None
+        self.filters: list[Json] = list(getattr(args, "filters", None) or [])
         self.rng = random.Random(args.seed)
         self.report: dict[str, Any] = {"schema_version": SCHEMA_VERSION, "generated_at": iso(datetime.now(UTC)),
                                        "workspace": args.workspace, "status": "ok", "stop": None,
                                        "params": {"sample": args.sample, "profile": "balanced", "policy": POLICY,
-                                                  "seed": args.seed, "counterfactual_test": args.counterfactual_test},
+                                                  "seed": args.seed, "counterfactual_test": args.counterfactual_test}
+                                       | ({"filters": self.filters} if self.filters else {}),
                                        "checks": {"stopping": [], "caveats": []}}
         self.decisions: dict[str, Decision] = {}  # by sha256 of the routing input
         self.frm = self.to = ""  # the window, ISO
@@ -1122,13 +1175,19 @@ class Analyzer:
         self.garden: dict[str, mf.ScoredModel] = {}
         self.samples: list[SampleRow] = []
         self.pools: dict[str, dict[str, PoolInfo]] = {}  # model in use -> scope -> pool, fixed once computed
-        self._traffic: dict[str, list[tuple[float, Json, Json, Tokens]]] = {}  # model -> (weight, summary, attrs, tokens)
         self._poolable: list[str] | None = None
         self._ws: Json | None = None  # `workspaces get`, read once
         self.plan = plan_of({})
         self.pacer: Pacer | None = None
         self.agg: dict[str, Tokens] = {}  # window token totals per model
-        self.dropped: list[str] = []  # models of draws dropped because the trace used more than one model
+        # per model, per draw: (multi-model cost, whole cost, weight) of its first window; see multi_share
+        self.multi_obs: dict[str, list[tuple[float, float, float]]] = defaultdict(list)
+        self.multi_spend = 0.0  # window spend in multi-model traces; exact in a filtered run, else from multi_obs
+        self.scanned: Scan | None = None  # filtered run only
+        self.approved: int | None = None  # decision calls the user approved; a hard cap
+        self.sent = 0  # decision calls started
+        self.keep_reads = False  # the reads outlive a run stopped at the confirmation: the approved rerun reuses them
+        self.lock = threading.Lock()
         self.capped: list[str] = []  # models of draws whose window stayed at the row cap down to MIN_WINDOW_S
         self.cpt: dict[str, float] = {}  # LLM calls per trace per model
         self.t0 = time.monotonic()
@@ -1158,6 +1217,12 @@ class Analyzer:
             self.caveat("telemetry truncated", " ".join(group_by))
         return r.get("data") or []
 
+    def bad_filters(self, e: OrqError) -> Stop | None:
+        """A 400 on a filtered call is the server rejecting --filters: the stop carries its message."""
+        if self.filters and "HTTP 400" in e.stderr:
+            return Stop("filters", {"detail": e.stderr.strip()[:300]})
+        return None
+
     def previous_window(self) -> Json | None:
         """The window of an earlier run in this --out dir, so a rerun after `confirmation` hits the read cache."""
         try:
@@ -1165,7 +1230,8 @@ class Analyzer:
         except (OSError, json.JSONDecodeError):
             return None
         w = prev.get("window")
-        if not w or prev.get("workspace") != self.args.workspace or w.get("requested") != self.args.window:
+        if not w or prev.get("workspace") != self.args.workspace or w.get("requested") != self.args.window \
+                or (prev.get("params") or {}).get("filters", []) != self.filters:
             return None
         if datetime.now(UTC) - parse_ts(w["to"]) > timedelta(hours=24):
             return None
@@ -1199,11 +1265,17 @@ class Analyzer:
         for _ in range(2):
             self.to, self.frm = iso(to), iso(to - timedelta(days=days))
             try:
-                self.tq([{"metric": "genai.cost", "op": "sum"}], [])
+                if self.filters:  # telemetry cannot filter on every field a trace search can
+                    self.orq("traces", "search", "--from", self.frm, "--to", self.to, "--limit", "1", "--filters",
+                             json.dumps(self.filters), cache=False)
+                else:
+                    self.tq([{"metric": "genai.cost", "op": "sum"}], [])
                 break
             except OrqError as e:
                 m = re.search(r"retention period of (\d+) days", e.stderr)
                 if not m:
+                    if stop := self.bad_filters(e):
+                        raise stop from e
                     raise
                 days = max(1, int(m.group(1)) - 1)
         self.days = days
@@ -1268,28 +1340,10 @@ class Analyzer:
         return self.price_on(x, {"inference_geo": region_of(x)})
 
     def traffic_cost(self, m: str) -> Cost | None:
-        """The traffic of `m` re-priced on a model, same tokens: the window's token totals when telemetry has them,
-        else the sampled traces; None when a sampled trace hits a missing tier price."""
-        if (agg := self.agg.get(m)) is not None:
-            return lambda x: price_tokens(agg, self.agg_price(x).prices)
-        spans = self._traffic.get(m)
-        if not spans:
+        """The window's traffic of `m` re-priced on a model, same tokens; None when it has no token totals."""
+        if (agg := self.agg.get(m)) is None:
             return None
-        memo: dict[str, float | None] = {}
-
-        def cost(x: str) -> float | None:
-            if x not in memo:
-                total = 0.0
-                for w, summ, attrs, toks in spans:
-                    pp = self.price_on(x, span_env(summ, attrs, x))
-                    if pp.flag:
-                        memo[x] = None
-                        break
-                    total += w * price_tokens(toks, pp.prices)
-                else:
-                    memo[x] = total
-            return memo[x]
-        return cost
+        return lambda x: price_tokens(agg, self.agg_price(x).prices)
 
     def in_scope(self, x: str, m: str, scope: str) -> bool:
         prov, avail = scope.split(":")
@@ -1335,6 +1389,8 @@ class Analyzer:
         inc = self.garden.get(m)
         if inc is None or inc.free or not self.v2(m).get("intelligence_index") or self.v2(m).get("price") is None:
             return PoolInfo(None, "no intelligence index or price", None, [], False)
+        if m not in self.agg:
+            return PoolInfo(None, "no token totals", None, [], False)
         cands = self.candidates(m, scope)
         cost = self.traffic_cost(m)
         sw = switch_target(inc, cands, cost)
@@ -1388,6 +1444,11 @@ class Analyzer:
         recorded cost. Hourly first; a model in many projects can exceed the time-series budget (5000 rows over the
         window), which truncates or fails the query, so it falls back to 6-hour and then daily buckets. Records the
         grain in `params.cell_grain` and the weight in `params.cell_weight`."""
+        if self.scanned:
+            if model in self.scanned.cells:
+                for k in ("cell_grain", "cell_weight"):
+                    self.report["params"].setdefault(k, {})[model] = self.scanned.cell_info[model][k]
+            return self.scanned.cells.get(model, [])
         prov, bare = split_model(model)
         filters = [{"field": "model", "op": "eq", "values": [bare]}]
         if prov:
@@ -1420,10 +1481,80 @@ class Analyzer:
 
     def search(self, project: str, frm: datetime, to: datetime, filters: list[Json]) -> list[Json]:
         a = ["traces", "search", "--from", iso_ms(frm), "--to", iso_ms(to), "--limit", str(SEARCH_CAP), "--filters",
-             json.dumps(filters)]
+             json.dumps(filters + self.filters)]
         if project:
             a += ["--project", project]
-        return (self.orq(*a) or {}).get("data") or []
+        try:
+            return (self.orq(*a) or {}).get("data") or []
+        except OrqError as e:
+            if stop := self.bad_filters(e):
+                raise stop from e
+            raise
+
+    def scan(self) -> Scan:
+        """A filtered run's replacement for the telemetry reads, which cannot filter on every field a trace search
+        can: every trace of the window the filters match, paged."""
+        rows: dict[str, Json] = {}
+        tok = None
+        for _ in range(MAX_SCAN_PAGES):
+            a = ["traces", "search", "--from", self.frm, "--to", self.to, "--limit", str(SEARCH_CAP), "--filters",
+                 json.dumps(self.filters)] + (["--page-token", tok] if tok else [])
+            try:
+                r = self.orq(*a) or {}
+            except OrqError as e:
+                if stop := self.bad_filters(e):
+                    raise stop from e
+                raise
+            for x in r.get("data") or []:
+                rows[x.get("trace_id") or x.get("id") or f"#{len(rows)}"] = x
+            tok = r.get("next_page_token")
+            if not r.get("has_more") or not tok:
+                break
+        else:
+            raise Stop("filtered scan", {"detail": f"more than {MAX_SCAN_PAGES * SEARCH_CAP} traces match; narrow "
+                                                   "--filters or --window"})
+        spend: dict[str, float] = defaultdict(float)
+        agents: dict[str, float] = defaultdict(float)
+        use: dict[str, list[int]] = defaultdict(lambda: [0, 0, 0, 0])  # prompt, cache read, cache write, completion
+        by_cell: dict[str, dict[tuple[str, str], list[float]]] = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0]))
+        threads: dict[tuple[str, str], list[float]] = defaultdict(lambda: [0.0, 0.0])
+        multi_spend = 0.0
+        for x in rows.values():
+            cost = trace_cost(x)
+            ag = x.get("agent")
+            agents[(ag.get("key") or ag.get("id") if isinstance(ag, dict) else ag) or "(not set)"] += cost
+            if x.get("thread_id"):
+                t = threads[(x["thread_id"], x.get("project_id") or "")]
+                t[0] += cost
+                t[1] += 1
+            models, provs = x.get("models") or [], x.get("providers") or []
+            if len(models) != 1:
+                multi_spend += cost
+                continue
+            m = model_key(provs[0] if len(provs) == 1 else "", models[0])
+            spend[m] += cost
+            u = x.get("usage") or {}
+            for i, k in enumerate(("prompt_tokens", "prompt_cached_tokens", "prompt_cache_creation_tokens",
+                                   "completion_tokens")):
+                use[m][i] += int(u.get(k) or 0)
+            at = x.get("start_time") or x.get("started_at")
+            if at:
+                cell = by_cell[m][(x.get("project_id") or "", iso(parse_ts(at).replace(minute=0, second=0,
+                                                                                         microsecond=0)))]
+                cell[0] += cost
+                cell[1] += 1
+        agg = {m: Tokens(max(0, p - r - w), r, w, o, None, p) for m, (p, r, w, o) in use.items()}
+        cell_list: dict[str, list[Cell]] = {}
+        cell_info: dict[str, Json] = {}
+        for m, cells in by_cell.items():
+            name, i = ("cost", 0) if spend[m] > 0 else ("requests", 1)
+            if cs := [Cell(proj, start, v[i], 60) for (proj, start), v in cells.items() if v[i] > 0]:
+                cell_list[m], cell_info[m] = cs, {"cell_grain": "hour", "cell_weight": name}
+
+        def ranked(d: dict[str, float]) -> list[Json]:
+            return sorted(({"key": k, "spend": v} for k, v in d.items()), key=lambda r: -r["spend"])
+        return Scan(ranked(spend), ranked(agents)[:50], agg, cell_list, cell_info,
+                    [(t, proj, v[0], int(v[1])) for (t, proj), v in threads.items()], multi_spend)
 
     def list_spans(self, trace: str, project: str) -> list[Json]:
         out: list[Json] = []
@@ -1468,11 +1599,11 @@ class Analyzer:
 
     def draw_one(self, model: str, cells: list[Cell], seed: int) -> DrawnTrace | None:
         """One trace of `model`, picked with probability proportional to its cost (PPS): a cell by its spend, a
-        sub-window (window_rows), then a trace in it by its search-row cost. Records the inclusion probability. A
-        trace that used more than one model is dropped and drawn again, so the rate is that of single-model traces."""
+        sub-window (window_rows), then a trace in it by its search-row cost, among the traces that used only this
+        model. Records the inclusion probability; the traces left out are the multi-model share of the spend."""
         rng = random.Random(seed)
         total = sum(c.weight for c in cells)
-        for _attempt in range(6):
+        for attempt in range(6):
             x, acc, cell = rng.random() * total, 0.0, cells[-1]
             for c in cells:
                 acc += c.weight
@@ -1483,6 +1614,12 @@ class Analyzer:
             if got is None:
                 continue
             rows, k = got
+            if attempt == 0 and not self.filters:  # the first attempt only: a retry follows an empty pool
+                whole = sum(trace_cost(r) for r in rows)
+                if whole > 0:
+                    self.multi_obs[model].append((sum(trace_cost(r) for r in rows if not single_model(r)), whole,
+                                                  2.0 ** k / cell.weight))
+            rows = [r for r in rows if single_model(r)]
             if any(not (r.get("trace_id") or r.get("id")) for r in rows):
                 self.caveat("trace without id", f"{model} in {cell.project or '(no project)'}: search returned a "
                             "trace with no trace_id; skipped")
@@ -1492,9 +1629,6 @@ class Analyzer:
                 continue
             i = rng.choices(range(len(rows)), weights=costs)[0]
             row = rows[i]
-            if len(row.get("models") or []) != 1:
-                self.dropped.append(model)
-                continue
             tid = row.get("trace_id") or row["id"]
             span_id, span = self.routing_span(row, tid, cell.project)
             p = (cell.weight / total) * 2.0 ** -k * costs[i] / sum(costs)
@@ -1517,53 +1651,118 @@ class Analyzer:
 
     # ---- decisions
 
+    def sdk(self) -> OrqSdk:
+        with self.lock:
+            if self.client is None:
+                try:
+                    self.client = make_client(self.args.workspace)
+                except CredentialsError as e:
+                    raise self.no_credentials(e) from e
+            return self.client
+
+    @staticmethod
+    def no_credentials(e: CredentialsError) -> Stop:
+        return Stop("decision calls allowed", {"detail": f"no credentials for decision calls ({e}); export "
+                                                         "ORQ_API_KEY or run `orq auth login`"})
+
+    def load_decisions(self) -> None:
+        """Probabilities stored by an earlier run that did not end ok, so a rerun does not pay for them again."""
+        for f in self.decision_dir.glob("*.json"):
+            try:
+                self.decisions[f.stem] = Decision(score=score(json.loads(f.read_text())["probabilities"]))
+            except (OSError, ValueError, KeyError, TypeError):
+                f.unlink(missing_ok=True)
+
     def decide(self, text: str) -> Decision:
-        key = hashlib.sha256(text.encode()).hexdigest()
+        key = self._key(text)
         if key in self.decisions:
             return self.decisions[key]
+        with self.lock:
+            self.sent += 1
         body = {"model": DECISION_MODEL, "name": "cost-savings-report", "state": text,
                 "timeout": {"call_timeout": 1500}, "retry": {"count": 0}, "questions": QUESTION}
-        try:
-            r = self.orq("decisions", "create", body=body, pacer=self.pacer)
-            probs = (((r or {}).get("answers") or {}).get("difficulty") or {}).get("probabilities")
-            res = Decision(score=score(probs)) if probs else Decision(error="error")
-        except RateLimited as e:
-            raise Stop("decision rate limit", {
-                "detail": f"still rate limited after {MAX_429} waits; rerun later or with a smaller --sample",
-                "rate_limit_per_minute": self.plan.rate_limit, "decisions_made": len(self.decisions)}) from e
-        except OrqError as e:
-            kind = "decision_timeout" if re.search(r"timeout|timed out|deadline|HTTP 408|HTTP 504", e.stderr,
-                                                   re.I) else "error"
-            if re.search(r"HTTP 40[13]", e.stderr):
-                raise Stop("decision calls allowed", {"detail": e.stderr.strip()[:300]}) from e
-            res = Decision(error=kind)
+        limited = attempt = 0
+        while True:
+            if self.pacer:
+                self.pacer.acquire()
+            try:
+                answers = self.sdk().router.decisions.create(**body, timeout_ms=180_000).model_dump()["answers"]
+                probs = (answers.get("difficulty") or {}).get("probabilities")
+                res = Decision(score=score(probs)) if probs else Decision(error="error")
+                if probs:
+                    self.decision_dir.mkdir(parents=True, exist_ok=True)
+                    (self.decision_dir / f"{key}.json").write_text(json.dumps({"probabilities": probs}))
+            except SdkError as e:
+                if e.status_code == 429:
+                    limited += 1
+                    if limited > MAX_429:
+                        raise Stop("decision rate limit", {
+                            "detail": f"still rate limited after {MAX_429} waits; rerun later or with a smaller "
+                                      "--sample",
+                            "rate_limit_per_minute": self.plan.rate_limit,
+                            "decisions_made": len(self.decisions)}) from e
+                    if self.pacer:
+                        self.pacer.throttled(retry_after(e.headers))
+                    continue
+                if e.status_code in (401, 403):
+                    raise Stop("decision calls allowed", {"detail": str(e)[:300]}) from e
+                if 500 <= e.status_code <= 504 and attempt < self.orq.retries:
+                    backoff(attempt)
+                    attempt += 1
+                    continue
+                res = Decision(error="decision_timeout" if e.status_code in (408, 504) else "error")
+            except CredentialsError as e:  # the token expired and the login is gone
+                raise self.no_credentials(e) from e
+            except httpx.TimeoutException:
+                res = Decision(error="decision_timeout")
+            except httpx.HTTPError:
+                res = Decision(error="error")
+            break
         self.decisions[key] = res
         return res
 
     # ---- main flow
 
     def run(self) -> Json:
+        done = False
         try:
-            self._run()
-        except Stop as s:
-            self.report["status"] = "stopped"
-            self.report["stop"] = {"check": s.check, "numbers": s.numbers}
-            self.log(f"stopped: {s.check} {json.dumps(s.numbers)}")
-        except OrqError as e:
-            hint = " (check the key has reporting.view)" if re.search(r"HTTP 40[13]", e.stderr) else ""
-            self.report["status"] = "stopped"
-            self.report["stop"] = {"check": "orq call failed", "numbers": {"detail": e.stderr.strip()[:300] + hint}}
-            self.log(f"stopped: orq call failed {e.stderr.strip()[:200]}")
-        except Exception as e:  # missing binary, timeout, non-JSON output: report.json must still describe this run
-            self.report["status"] = "stopped"
-            self.report["stop"] = {"check": "analyze failed", "numbers": {"detail": f"{type(e).__name__}: {e}"[:300]}}
-            self.log(f"stopped: analyze failed {type(e).__name__}: {e}"[:300])
-        self.write()
-        # the cache holds prompt texts; a run stopped at the confirmation keeps it so the approved rerun reads the
-        # same sample without paying for it again
-        if not getattr(self.args, "keep_cache", False) and (self.report["stop"] or {}).get("check") != "confirmation":
-            shutil.rmtree(self.out / "cache", ignore_errors=True)
+            try:
+                self._run()
+            except Stop as s:
+                self.report["status"] = "stopped"
+                self.report["stop"] = {"check": s.check, "numbers": s.numbers}
+                self.log(f"stopped: {s.check} {json.dumps(s.numbers)}")
+            except OrqError as e:
+                hint = " (check the key has reporting.view)" if re.search(r"HTTP 40[13]", e.stderr) else ""
+                self.report["status"] = "stopped"
+                self.report["stop"] = {"check": "orq call failed",
+                                       "numbers": {"detail": e.stderr.strip()[:300] + hint}}
+                self.log(f"stopped: orq call failed {e.stderr.strip()[:200]}")
+            except Exception as e:  # missing binary, timeout, non-JSON output: report.json must still describe this run
+                self.report["status"] = "stopped"
+                self.report["stop"] = {"check": "analyze failed",
+                                       "numbers": {"detail": f"{type(e).__name__}: {e}"[:300]}}
+                self.log(f"stopped: analyze failed {type(e).__name__}: {e}"[:300])
+            self.write()
+            done = True
+        finally:
+            self.cleanup(done and self.report["status"] == "ok")
         return self.report
+
+    def cleanup(self, ok: bool) -> None:
+        """The reads hold prompt texts: deleted at the end of every run, Ctrl-C and a declined confirmation included.
+        Only a run stopped at the confirmation outside a terminal keeps them, so the approved rerun reads the same
+        sample without paying for it again. The decisions hold probabilities only: kept until a run ends ok."""
+        if getattr(self.args, "keep_cache", False):
+            return
+        if not self.keep_reads:
+            shutil.rmtree(self.out / "cache" / "reads", ignore_errors=True)
+        if ok:
+            shutil.rmtree(self.decision_dir, ignore_errors=True)
+        try:
+            (self.out / "cache").rmdir()
+        except OSError:
+            pass
 
     def _run(self) -> None:
         a = self.args
@@ -1571,7 +1770,9 @@ class Analyzer:
             key = (self.orq("status", cache=False) or {}).get("active_workspace_key")
             if key:
                 a.workspace = self.orq.workspace = self.report["workspace"] = key
+        self.sdk()  # credentials first: a run without them stops before it reads anything
         self.set_window()
+        self.load_decisions()
         self.log(f"window {self.frm} .. {self.to} ({self.days} days)")
         self.plan = plan_of(self.workspace())
         if not self.workspace():
@@ -1580,19 +1781,28 @@ class Analyzer:
         target = a.sample or self.plan.default_sample
         self.report["params"] |= {"sample": target, "sample_source": "flag" if a.sample else "plan"}
         self.load_models()
-        by_model = self.spend_by("model")
-        total = sum(r["spend"] for r in by_model)
+        if self.filters:
+            self.scanned = scan = self.scan()
+            by_model, by_agent, by_deployment, total = scan.spend, scan.agents, None, scan.total
+            self.agg, self.multi_spend = scan.agg, scan.multi_spend
+        else:
+            by_model = self.spend_by("model")
+            total = sum(r["spend"] for r in by_model)
+            by_agent = self._safe(lambda: self.spend_by("agent")[:50])
+            by_deployment = self._safe(lambda: self.spend_by("deployment")[:50])
+            self.agg = self._safe(self.aggregates) or {}
+            self.cpt = self._safe(self.calls_per_trace) or {}
         per_month = total * 30 / self.days
-        self.report["spend"] = {"total": total, "per_month": per_month, "by_model": by_model,
-                                "by_agent": self._safe(lambda: self.spend_by("agent")[:50]),
-                                "by_deployment": self._safe(lambda: self.spend_by("deployment")[:50])}
+        self.report["spend"] = {"total": total, "per_month": per_month, "by_model": by_model, "by_agent": by_agent,
+                                "by_deployment": by_deployment}
         chat = [(r["key"], r["spend"]) for r in by_model if is_chat_model(r["key"], self.cat)]
-        self.agg = self._safe(self.aggregates) or {}
-        self.cpt = self._safe(self.calls_per_trace) or {}
+        if chat and not any(m in self.agg for m, _ in chat):
+            raise Stop("token totals", {"detail": "no model has token totals; pools, switch targets and the change "
+                                                  "model figure are priced from them"})
         if heavy := [f"{m} {self.cpt[m]:.0f}" for m, _ in chat if (self.cpt.get(m) or 0) > AGENT_HEAVY_CALLS]:
             self.caveat("agent-heavy traffic", f"LLM calls per trace: {', '.join(heavy)}; each sampled trace is "
                         "routed as a whole on its last user message")
-        alloc = allocate(chat, target)
+        alloc = allocate([x for x in chat if x[0] in self.agg], target)
         self.log(f"strata: {json.dumps(alloc)}")
         cells: dict[str, list[Cell]] = {}
         for m in alloc:
@@ -1602,14 +1812,17 @@ class Analyzer:
             else:
                 self.caveat("no cells", m)
         jobs = [(m, cells[m], self.rng.randrange(2**31)) for m in draw_order(alloc) if m in cells]
-        need = sum(min(n, MIN_PER_STRATUM) for m, n in alloc.items() if m in cells)
+        floor = {m: min(n, MIN_PER_STRATUM) for m, n in alloc.items() if m in cells}
         self.log(f"plan {self.plan.type}: {self.plan.rate_limit} requests/min, decisions paced to "
                  f"{self.plan.per_minute:g}/min; up to {len(jobs)} traces, about {self.wait_min(len(jobs), len(jobs)):.0f} min")
         drawn: list[DrawnTrace] = []
-        reason, rounds, ci = "sample_size", 0, None
+        reason, rounds = "sample_size", 0
         for start in range(0, len(jobs), ROUND):
             if rounds and time.monotonic() - self.t0 > WALL_TIME_S:
                 reason = "wall_time"
+                break
+            if self.approved is not None and self.sent >= self.approved:
+                reason = "decision budget"
                 break
             batch = jobs[start:start + ROUND]
             with ThreadPoolExecutor(READ_WORKERS) as ex:
@@ -1618,15 +1831,21 @@ class Analyzer:
                 d.input, d.source = routing_input(d.span.get("attributes") or {})
             drawn += new
             rounds += 1
-            todo = sorted({d.input for d in drawn if d.input and self.needs_decision(d)
-                           and self._key(d.input) not in self.decisions})
+            todo = sorted({d.input for d in drawn if d.input and self.undecided(d)})
             if todo and "routing_decision_cost" not in self.report:
                 self.confirm(todo, len(drawn), len(jobs))
-            self.decide_all(todo, len(jobs))
+            if self.approved is not None and len(todo) > (left := self.approved - self.sent):
+                todo, reason = todo[:left], "decision budget"  # the draws left without a decision are dropped
+                drawn = [d for d in drawn if not self.undecided(d) or d.input in todo]
+            self.decide_all(todo)
             if not drawn:
                 continue
             self.score_samples(drawn)
-            if start + len(batch) >= max(need, STOP_MIN_DRAWS) and start + len(batch) < len(jobs):
+            if reason == "decision budget":
+                break
+            have = Counter(d.model for d in drawn)
+            if len(drawn) >= max(sum(floor.values()), STOP_MIN_DRAWS) and all(have[m] >= n for m, n in floor.items()) \
+                    and start + len(batch) < len(jobs):
                 ci = self.headline_ci(dict(chat), STOP_BOOTSTRAP)
                 if ci and (why := stop_reason(ci.savings, ci.ci90, total)):
                     reason = why
@@ -1636,25 +1855,24 @@ class Analyzer:
         for m in alloc:
             if not any(d.model == m for d in drawn):
                 self.caveat("stratum search empty", m)
-        if self.dropped:
-            self.caveat("multi-model traces", f"{len(self.dropped)} draws hit a trace that used more than one model "
-                        f"and were drawn again ({', '.join(f'{m}: {n}' for m, n in Counter(self.dropped).items())}); "
-                        "the estimate covers single-model traces")
+        if not self.filters:
+            self.multi_spend = sum(s * self.multi_share(m) for m, s in chat)
+        if self.multi_spend > 0:
+            self.caveat("multi-model traces", f"{self.multi_spend / total:.0%} of spend is in traces that used more "
+                        "than one model; they are not analysed, and the router estimate covers the single-model "
+                        "traces")
         if self.capped:
             self.caveat("dense search window", f"{len(self.capped)} draws met {SEARCH_CAP} traces in a "
                         f"{MIN_WINDOW_S:g} s window and were drawn again")
-        if not getattr(self.orq, "verbose", True):
-            self.caveat("Retry-After unreadable", f"the CLI failed with --verbose; 429s waited {RATE_WINDOW_S:g} s")
-        ci = ci if reason in ("relative_precision", "absolute_precision") else self.headline_ci(dict(chat),
-                                                                                                STOP_BOOTSTRAP)
+        final = self.headline_ci(dict(chat), BOOTSTRAP)
         self.report["sampling"] = {
             "plan": {"type": self.plan.type, "rate_limit_per_minute": self.plan.rate_limit,
                      "rate_limit_source": self.plan.source, "daily_decision_limit": self.plan.daily_limit,
                      "decisions_per_minute": self.plan.per_minute},
             "target": target, "drawn": len(drawn), "rounds": rounds, "stop_reason": reason,
-            "half_width": (ci.ci90[1] - ci.ci90[0]) / 2 if ci else None, "estimate": ci.savings if ci else None,
-            "decision_calls": len(self.decisions), "rate_limited": self.pacer.throttles,
-            "multi_model_dropped": len(self.dropped), "wall_time_s": round(time.monotonic() - self.t0, 1),
+            "half_width": (final.ci90[1] - final.ci90[0]) / 2 if final else None,
+            "estimate": final.savings if final else None,
+            "decision_calls": self.sent, "rate_limited": self.pacer.throttles, "wall_time_s": round(time.monotonic() - self.t0, 1),
             "calls_per_trace": {m: self.cpt[m] for m, _ in chat if m in self.cpt}}
         self.log(f"sampled {len(drawn)} traces in {rounds} rounds, stop: {reason}")
         self.pilot_checks(drawn)
@@ -1663,7 +1881,8 @@ class Analyzer:
             return
         self.estimate(dict(chat), total)
         self.report["caching"] = self._safe(self.caching) or {"error": "caching scan failed"}
-        self.report["harness"] = self._safe(self.harness) or {"error": "harness query failed"}
+        self.report["harness"] = ({"error": "not available with --filters"} if self.filters
+                                  else self._safe(self.harness) or {"error": "harness query failed"})
 
     def wait_min(self, traces: int, calls: int) -> float:
         """Rough minutes for `traces` reads and `calls` paced decision calls."""
@@ -1679,29 +1898,35 @@ class Analyzer:
         minutes = self.wait_min(jobs - drawn, calls)
         daily = (f" This uses {calls} of your {self.plan.daily_limit} daily decision calls."
                  if self.plan.daily_limit else "")
-        note = (f"Up to {calls} decision calls, about ${cost:.4f} and {minutes:.0f} min.{daily} Each call sends one "
-                f"sampled prompt text to {DECISION_MODEL}; the {calls} calls appear as traces in this workspace.")
+        capped = (f" The workspace states no rate limit, so the default sample is capped at {DEFAULT_RATE_SAMPLE}; "
+                  "--sample draws more." if self.plan.default_sample < PLAN_SAMPLE.get(self.plan.type, MAX_SAMPLE)
+                  and not self.args.sample else "")
+        note = (f"Up to {calls} decision calls, about ${cost:.4f} and {minutes:.0f} min; sampling usually stops much "
+                f"earlier once the range is tight.{daily}{capped} Each call sends one sampled prompt text to "
+                f"{DECISION_MODEL}; the calls appear as traces in this workspace.")
         self.report["routing_decision_cost"] = {"calls": calls, "estimated_usd": cost, "minutes": round(minutes, 1)}
+        self.approved = calls
         self.log(note)
         if self.args.yes:
             return
         nums = {"calls": calls, "estimated_usd": cost, "minutes": round(minutes, 1), "plan": self.plan.type,
                 "daily_decision_limit": self.plan.daily_limit, "detail": note}
         if not sys.stdin.isatty():
+            self.keep_reads = True
             raise Stop("confirmation", nums | {"next": "rerun with --yes after the user approves"})
         sys.stderr.write("continue? [y/N] ")  # stderr: stdout may be piped (--json)
         sys.stderr.flush()
         if sys.stdin.readline().strip().lower() != "y":
             raise Stop("confirmation", nums | {"next": "declined"})
 
-    def decide_all(self, texts: list[str], jobs: int) -> None:
-        done = [0]
+    def decide_all(self, texts: list[str]) -> None:
+        done = itertools.count(1)
 
         def one(t: str) -> None:
             self.decide(t)
-            done[0] += 1  # ponytail: racy counter, progress display only
-            if done[0] % 10 == 0 or done[0] == len(texts):
-                self.log(f"decisions {len(self.decisions)} made, {done[0]}/{len(texts)} this round")
+            n = next(done)
+            if n % 10 == 0 or n == len(texts):
+                self.log(f"decisions {len(self.decisions)} made, {n}/{len(texts)} this round")
         with ThreadPoolExecutor(DECISION_WORKERS) as ex:
             list(ex.map(one, texts))
 
@@ -1710,8 +1935,7 @@ class Analyzer:
         return hashlib.sha256(text.encode()).hexdigest()
 
     def pools_of(self, m: str) -> dict[str, PoolInfo]:
-        """The model's pool and switch target per scope, computed once: from the window's token totals when
-        telemetry has them, else from the traces sampled so far."""
+        """The model's pool and switch target per scope, computed once from the window's token totals."""
         if m not in self.pools:
             self.pools[m] = {sc: self.pool_for(m, sc) for sc in SCOPES}
         return self.pools[m]
@@ -1721,10 +1945,22 @@ class Analyzer:
         some scope; a model with none is already the cheapest choice, so the router serves its switch target."""
         if d.input is None or has_auto_router(d.attrs) or has_auto_router(d.span.get("attributes") or {}):
             return False
-        if d.model not in self.pools:
-            self._traffic.setdefault(d.model, []).append((d.weight, d.summary, d.attrs, span_tokens(d.summary,
-                                                                                                    d.attrs)))
         return any(p.pool for p in self.pools_of(d.model).values())
+
+    def undecided(self, d: DrawnTrace) -> bool:
+        return bool(d.input and self.needs_decision(d) and self._key(d.input) not in self.decisions)
+
+    def multi_share(self, m: str) -> float:
+        """The share of `m`'s spend in traces that used more than one model, from the windows the draws searched.
+        Weighted like the draws: a window k halvings deep stands for 2**k windows of a cell picked by its spend, so
+        its weight is 2**k / cell spend (the Hansen-Hurwitz ratio of the multi-model cost to the whole cost)."""
+        obs = self.multi_obs.get(m, [])
+        whole = sum(w * c for _, c, w in obs)
+        return sum(w * x for x, _, w in obs) / whole if whole > 0 else 0.0
+
+    def single_spend(self, spend: dict[str, float]) -> dict[str, float]:
+        """Spend the router estimate scales to: what each model spent in traces that used only that model."""
+        return {m: s * (1 - self.multi_share(m)) for m, s in spend.items()}
 
     def headline_ci(self, spend: dict[str, float], boots: int) -> BootEstimate | None:
         """The headline router estimate over the models whose pricing check passes."""
@@ -1732,7 +1968,8 @@ class Analyzer:
         ok, _gaps = self.priced_ok(self.draws(), spend)
         unpriced = {r.model for r in self.samples if key in r.unpriced}
         cov = {m: ds for m, ds in ok.items() if m not in unpriced}
-        return estimate(cov, {m: spend.get(m, 0.0) for m in cov}, key, random.Random(self.args.seed), boots) \
+        single = self.single_spend(spend)
+        return estimate(cov, {m: single.get(m, 0.0) for m in cov}, key, random.Random(self.args.seed), boots) \
             if cov else None
 
     def _safe(self, fn: Callable[[], T]) -> T | None:
@@ -1745,9 +1982,6 @@ class Analyzer:
     def score_samples(self, drawn: list[DrawnTrace]) -> None:
         """Price every sample under each scenario (see SampleRow)."""
         self.samples = []
-        self._traffic = {}
-        for d in drawn:
-            self._traffic.setdefault(d.model, []).append((d.weight, d.summary, d.attrs, span_tokens(d.summary, d.attrs)))
         for d in drawn:
             m = d.model
             pools = self.pools_of(m)
@@ -1822,8 +2056,6 @@ class Analyzer:
     def pilot_checks(self, drawn: list[DrawnTrace]) -> None:
         rows = self.samples
         n = len(rows)
-        if n == 0:
-            raise Stop("sample not empty", {"drawn": 0})
         scored = [r for r in rows if r.tier]
         fb = sum(1 for r in rows if r.fallback in ("decision_timeout", "error", "empty_input", "prompt_limit"))
         err = sum(1 for r in rows if r.fallback == "error")
@@ -1886,7 +2118,7 @@ class Analyzer:
         for m, s in spend.items():
             agg = self.agg.get(m)
             if agg is None or s <= 0:
-                miss[m] = "no token totals in telemetry"
+                miss[m] = "no token totals"
                 continue
             own = price_tokens(agg, self.agg_price(m).prices)
             gap = abs(own - s) / s
@@ -1901,6 +2133,7 @@ class Analyzer:
         by = self.draws()
         priced_ok, gaps = self.priced_ok(by, spend)
         exact = {sc: self.switch_exact(sc, spend) for sc in SCOPES}
+        single = self.single_spend(spend)
         head_exact, head_miss = exact[HEADLINE_SCOPE]
         models = list(by) + [m for m in spend if m not in by and m in head_exact]  # sampled first
         strata: list[Json] = []
@@ -1919,18 +2152,21 @@ class Analyzer:
             strata.append({"model": m, "spend": spend.get(m, 0.0), "n": len(ds), "clusters": len(clusters(ds)),
                            "pool": head["pool"], "pool_reason": head["reason"], "pricing_gap": gap,
                            "covered": not reason, "calls_per_trace": self.cpt.get(m),
-                           "switch_source": "totals" if m in head_exact else "sample" if m in priced_ok else None})
+                           "multi_model_share": self.multi_share(m) or None,
+                           "switch_source": "totals" if m in head_exact else None})
         for row in self.report["spend"]["by_model"]:
             if row["key"] not in by:
-                why = "not sampled" if row["key"] in spend else "not a chat model (decision, embedding or media)"
+                why = ("no token totals" if row["key"] not in self.agg else "not sampled") if row["key"] in spend \
+                    else "not a chat model (decision, embedding or media)"
                 not_covered.append({"model": row["key"], "spend": row["spend"], "reason": why})
         k = 30 / self.days
 
         def scenario(key: str) -> Json:
             unpriced = {r.model for r in self.samples if key in r.unpriced}
-            per_exact: dict[str, float] = exact[key.split("|")[1]][0] if key.startswith("switch|") else {}
-            cov = {m: ds for m, ds in priced_ok.items() if m not in unpriced and m not in per_exact}
-            cov_spend = {m: spend.get(m, 0.0) for m in cov}
+            switch = key.startswith("switch|")
+            per_exact: dict[str, float] = exact[key.split("|")[1]][0] if switch else {}
+            cov = {} if switch else {m: ds for m, ds in priced_ok.items() if m not in unpriced}
+            cov_spend = {m: single.get(m, 0.0) for m in cov}
             e = estimate(cov, cov_spend, key, random.Random(self.args.seed))
             fixed = sum(per_exact.values())  # no sampling: no spread
             cover = sum(cov_spend.values()) + sum(spend.get(m, 0.0) for m in per_exact)
@@ -1956,7 +2192,7 @@ class Analyzer:
         sw_head = scen[f"switch|{HEADLINE_SCOPE}"]["per_stratum"]
         switch_nc = [{"model": r["key"], "spend": r["spend"],
                       "reason": "not a chat model (decision, embedding or media)" if r["key"] not in spend
-                      else head_miss.get(r["key"], "not sampled")}
+                      else head_miss.get(r["key"], "no token totals")}
                      for r in self.report["spend"]["by_model"] if sw_head.get(r["key"]) is None]
         self.report["scenarios"] = [
             {"scope": sc, "provider": sc.split(":")[0], "availability": sc.split(":")[1],
@@ -1972,6 +2208,9 @@ class Analyzer:
             "profiles": {p: {"savings": scen[f"router|{HEADLINE_SCOPE}|{p}"]["savings"],
                              "ci90": scen[f"router|{HEADLINE_SCOPE}|{p}"]["ci90"]} for p in PROFILES},
             "strata": strata, "not_covered": sorted(not_covered, key=lambda r: -r["spend"]),
+            "not_analysed": {"multi_model": {
+                "spend": self.multi_spend, "share": self.multi_spend / total if total else None,
+                "by_model": {m: sh for m in spend if (sh := self.multi_share(m)) > 0}}},
             "switch_not_covered": sorted(switch_nc, key=lambda r: -r["spend"]),
             "buckets": self.buckets(), "fallbacks": self.fallbacks(),
             "moves": self.moves(),
@@ -2055,13 +2294,16 @@ class Analyzer:
     # ---- caching
 
     def caching(self) -> Json:
-        cost_rows = self.tq([{"metric": "genai.cost", "op": "sum"}], ["thread", "project"])
-        req_rows = self.tq([{"metric": "genai.requests", "op": "count"}], ["thread", "project"])
-        reqs = {(r["group"].get("thread"), r["group"].get("project")): r["metrics"].get("genai.requests:count") or 0
-                for r in req_rows}
-        threads = [(r["group"].get("thread"), r["group"].get("project"), r["metrics"].get("genai.cost:sum") or 0)
-                   for r in cost_rows if r["group"].get("thread")]
-        threads = [t for t in threads if reqs.get((t[0], t[1]), 0) >= 3]
+        if self.scanned:  # threads from the scanned rows; their trace count stands in for the request count
+            threads = [(t, proj, spend) for t, proj, spend, n in self.scanned.threads if n >= 3]
+        else:
+            cost_rows = self.tq([{"metric": "genai.cost", "op": "sum"}], ["thread", "project"])
+            req_rows = self.tq([{"metric": "genai.requests", "op": "count"}], ["thread", "project"])
+            reqs = {(r["group"].get("thread"), r["group"].get("project")): r["metrics"].get("genai.requests:count") or 0
+                    for r in req_rows}
+            threads = [(r["group"].get("thread"), r["group"].get("project"), r["metrics"].get("genai.cost:sum") or 0)
+                       for r in cost_rows if r["group"].get("thread")]
+            threads = [t for t in threads if reqs.get((t[0], t[1]), 0) >= 3]
         threads.sort(key=lambda t: -t[2])
         threads = threads[: self.args.cache_threads]
         self.log(f"caching: scanning {len(threads)} threads")
@@ -2243,9 +2485,8 @@ def _day(iso: str) -> str:
     return f"{d.day} {d:%b %Y}"
 
 
-def _scrub(text: str) -> str:
-    """Drop absolute home paths from an example ask before it is printed."""
-    return re.sub(r"(/Users|/home|C:\\Users)/[^\s'\"<>]+", "<path>", text)
+def _filter_text(f: Json) -> str:
+    return f"{f.get('field')} {f.get('op')} {', '.join(str(v) for v in f.get('values') or [])}"
 
 
 def _txt(x: Any) -> str:
@@ -2536,7 +2777,8 @@ TOKENIZER_NOTE = ("Any-provider figures reuse the sampled token counts. Other mo
 STOP_TEXT = {"sample_size": "it reached the sample size",
              "relative_precision": f"the Smart Router 90% range was within {STOP_REL_HALF_WIDTH:.0%} of the estimate",
              "absolute_precision": f"the Smart Router 90% range was within {STOP_ABS_HALF_WIDTH:.0%} of spend",
-             "wall_time": f"it hit the {WALL_TIME_S // 60} min time cap"}
+             "wall_time": f"it hit the {WALL_TIME_S // 60} min time cap",
+             "decision budget": "the approved decision calls were used up"}
 
 
 def _sampling_note(sa: SummarySampling | None) -> str:
@@ -2853,7 +3095,9 @@ def _not_analysed(report: Json, per_month: float, lever: str | None = "router") 
     ro = report.get("routing") or {}
     nc = ro.get("switch_not_covered", ro.get("not_covered")) if lever == "switch" else ro.get("not_covered")
     nc = nc or []
-    return NotAnalysed(per_month=sum(x.get("spend") or 0 for x in nc) * per_month, model_count=len(nc))
+    multi = (((ro.get("not_analysed") or {}).get("multi_model") or {}).get("spend") or 0) if lever != "switch" else 0
+    return NotAnalysed(per_month=sum(x.get("spend") or 0 for x in nc) * per_month, model_count=len(nc),
+                       multi_model_per_month=multi * per_month)
 
 
 def summary(report: Json) -> Json:
@@ -2894,6 +3138,7 @@ def summary(report: Json) -> Json:
     return {"window": {k: report["window"].get(k) for k in ("from", "to", "days", "requested", "retention")},
             "caveats": list((report.get("checks") or {}).get("caveats") or []),
             "spend_total": total, "spend_per_month": spend_pm, "scope": head.get("scope"),
+            "filters": (report.get("params") or {}).get("filters") or [],
             "sampled_calls": len(report["samples"]) if "samples" in report else (report.get("params") or {}).get("sample"),
             "sampling": _summary_sampling(report),
             "recommended": rec, "levers_overlap": _ranges_overlap(head),
@@ -3001,6 +3246,9 @@ def _actions_chart(recs: list[Recommendation], not_analysed: NotAnalysed) -> str
     if n := not_analysed.model_count:
         foot += (f"<p class='m foot'>Not analysed: {_usd0(not_analysed.per_month)}/mo of spend on "
                  f"{n} model{'s' if n != 1 else ''}.</p>")
+    if not_analysed.multi_model_per_month > 0:
+        foot += (f"<p class='m foot'>Not analysed: {_usd0(not_analysed.multi_model_per_month)}/mo of spend in "
+                 "traces that used more than one model.</p>")
     return legend + "</ul><div class=chart>" + "".join(rows) + "</div>" + foot
 
 
@@ -3435,14 +3683,16 @@ def render(report: Json, narrative: dict[str, str], redact: bool) -> str:
     else:
         gap = "<p class='m gap'>Router adds nothing here.</p>"
 
-    def kpi(dot: str, name: str, p: Any, pm: Any) -> str:
+    def kpi(dot: str, name: str, p: Any, pm: Any, cov: Any) -> str:
         tag = "<span class=rec>Recommended</span>" if dot == rec else ""
         return (f"<section class=card><div class=kh><i class={dot}></i><span class=kn>{name}</span>{tag}</div><div class=cb>"
-                f"<p class=big>{_pc(p)}<small>saved, {_usd0(pm)}/mo</small></p></div></section>")
+                f"<p class=big>{_pc(p)}<small>saved, {_usd0(pm)}/mo</small></p>"
+                f"<p class=m>{_pct(cov)} of total spend analysed</p></div></section>")
 
     hero = ("<section class=hero aria-label='Headline'>"
             f"<p class=verdict>{verdict}</p><div class=kpis>"
-            f"{kpi('r', 'Smart Router', p_router, h_pm)}{kpi('s', 'Change model', p_switch, sw_pm)}</div>{gap}"
+            f"{kpi('r', 'Smart Router', p_router, h_pm, S.router.coverage)}"
+            f"{kpi('s', 'Change model', p_switch, sw_pm, S.switch.coverage)}</div>{gap}"
             + _card("Savings against monthly spend",
                     f"{bar}<p class='m caveat'>{n or 'The'} sampled traces; the estimate covers models that make up {_pct(cov)} of spend. "
                     "Test answer quality before moving traffic.</p>")
@@ -3457,9 +3707,10 @@ def render(report: Json, narrative: dict[str, str], redact: bool) -> str:
     cap = ""
     if (win.requested or 0) > win.days:
         cap = f"; you asked for {win.requested}, the workspace keeps traces for {win.retention} days"
+    scope = (f"<p class=m>Scope: {html.escape('; '.join(_filter_text(f) for f in S.filters))}</p>" if S.filters else "")
     head = (f"<header class=top><div><h1>Where you can save on LLM spend</h1>"
             f"<p class=m>{html.escape(ws)} · {html.escape(_day(win.from_))} to {html.escape(to_day)} "
-            f"({win.days} days{cap}), scaled to a month: {_usd0(spend_pm)}/mo LLM spend.</p></div>{theme}</header>")
+            f"({win.days} days{cap}), scaled to a month: {_usd0(spend_pm)}/mo LLM spend.</p>{scope}</div>{theme}</header>")
     caption = (_plan_caption("switch", p_switch, sw_pm) if rec == "s" else _plan_caption("router", p_router, h_pm)
                if rec else "<p class=m>No saving found: no sampled model has a cheaper model that is as strong.</p>")
     parts = [_card("What to do", caption
@@ -3678,6 +3929,7 @@ class SummaryScope(_Obj):
 class NotAnalysed(_Obj):
     per_month: float
     model_count: int
+    multi_model_per_month: float = Field(0.0, description="Spend in multi-model traces, which the router estimate leaves out.")
 
 
 class SummarySampling(_Obj):
@@ -3695,6 +3947,7 @@ class Summary(_Obj):
     spend_total: float | None
     spend_per_month: float | None
     scope: Any
+    filters: list[dict[str, Any]] = Field(default_factory=list, description="The --filters the run was scoped to.")
     sampled_calls: int | None
     sampling: SummarySampling | None = Field(None, description="How the sample was drawn and why drawing stopped.")
     recommended: Literal["router", "switch"] | None = Field(
@@ -3721,6 +3974,7 @@ class Params(_Obj):
     policy: Literal["jev-general-v1"]
     seed: int
     counterfactual_test: bool
+    filters: list[dict[str, Any]] = Field(_ABSENT, description="--filters: every trace read was scoped to these.")
     sample_source: Literal["flag", "plan"] = Field(
         _ABSENT, description="flag: --sample; plan: the default for the workspace's plan.")
     cell_grain: dict[str, Literal["hour", "6h", "day"]] = Field(
@@ -3761,7 +4015,7 @@ class RoutingDecisionCost(_Obj):
 class PlanInfo(_Obj):
     type: str
     rate_limit_per_minute: int = Field(ge=1)
-    rate_limit_source: Literal["metadata.rateLimit", "plan type", "features.rate_limit", "default"]
+    rate_limit_source: Literal["metadata.rateLimit", "features.rate_limit", "default"]
     daily_decision_limit: int | None
     decisions_per_minute: float
 
@@ -3771,14 +4025,14 @@ class Sampling(_Obj):
     target: int = Field(ge=1, description="Traces the run may draw: --sample, else the plan default.")
     drawn: int
     rounds: int
-    stop_reason: Literal["sample_size", "relative_precision", "absolute_precision", "wall_time"] = Field(
+    stop_reason: Literal["sample_size", "relative_precision", "absolute_precision", "wall_time",
+                         "decision budget"] = Field(
         description="Why drawing stopped: the target was reached, the headline 90% interval was narrow enough "
-                    "(relative or absolute), or the wall-time cap.")
+                    "(relative or absolute), the wall-time cap, or the approved decision calls were used up.")
     half_width: float | None = Field(description="Half the headline 90% interval at the stop, in window dollars.")
     estimate: float | None
     decision_calls: int
     rate_limited: int = Field(description="429 responses waited out.")
-    multi_model_dropped: int
     wall_time_s: float
     calls_per_trace: dict[str, float] = Field(description="LLM calls per trace per model, from telemetry.")
 
@@ -3896,13 +4150,20 @@ class Stratum(_Obj):
     pool: list[str] | None
     pool_reason: Any
     calls_per_trace: float | None = None
-    switch_source: Literal["totals", "sample"] | None = None
+    multi_model_share: float | None = Field(None, description="Share of this model's spend in multi-model traces.")
+    switch_source: Literal["totals"] | None = None
 
 
 class NotCovered(_Obj):
     model: str
     spend: float
     reason: str
+
+
+class NotAnalysedSpend(_Obj):
+    multi_model: dict[str, Any] = Field(
+        description="Multi-model traces are left out of the draw: spend, share of all spend, by_model share of each "
+                    "model's own spend.")
 
 
 class Routing(_Obj):
@@ -3912,6 +4173,7 @@ class Routing(_Obj):
     strata: list[Stratum]
     not_covered: list[NotCovered]
     switch_not_covered: list[NotCovered] = _ABSENT
+    not_analysed: NotAnalysedSpend = _ABSENT
     buckets: Any
     fallbacks: Any
     underpowered: Any
@@ -4030,6 +4292,16 @@ def report_schema() -> Json:
 # --------------------------------------------------------------------------------------------- CLI
 
 
+def _filters(text: str) -> list[Json]:
+    try:
+        out = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise argparse.ArgumentTypeError(f"not JSON: {e}") from e
+    if not isinstance(out, list) or not all(isinstance(f, dict) and {"field", "op", "values"} <= f.keys() for f in out):
+        raise argparse.ArgumentTypeError("expected a JSON list of {field, op, values}")
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -4042,6 +4314,10 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"traces to draw at most (default by plan: free {PLAN_SAMPLE['free']}, growth "
                          f"{PLAN_SAMPLE['growth']}, others {MAX_SAMPLE}); drawing stops earlier once the estimate is "
                          "precise enough")
+    an.add_argument("--filters", type=_filters, metavar="JSON",
+                    help="scope every trace read: a JSON list of {field, op, values}, as `orq traces search --filters` "
+                         "takes it, e.g. '[{\"field\": \"project_id\", \"op\": \"eq\", \"values\": [\"p1\"]}]'. "
+                         "Spend and token totals then come from the matching trace rows instead of telemetry")
     an.add_argument("--counterfactual-test", action="store_true")
     an.add_argument("--cache-threads", type=int, default=200, help="threads to scan for caching gaps")
     an.add_argument("--seed", type=int, default=1917)

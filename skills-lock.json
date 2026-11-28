@@ -49,7 +49,7 @@
     "orq-find-cost-savings": {
       "source": "orq-ai/assistant-plugins",
       "sourceType": "github",
-      "computedHash": "8402f40f7cc4c5c3fc6e29ea3ab227762e3a5e28bf519e7db9264f736e6fafc3"
+      "computedHash": "577ddcf6f095ff968c19679ad5daa757081ace21818e9892bb1489a88411f81a"
     },
     "orq-generate-synthetic-dataset": {
       "source": "orq-ai/assistant-plugins",

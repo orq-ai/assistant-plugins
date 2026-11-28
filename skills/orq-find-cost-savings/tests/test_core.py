@@ -468,7 +468,6 @@ def test_report_number_formats():
     assert c._change(-0.46) == "-46%" and c._change(45.4) == "46x the cost"
     assert c._day("2026-10-22T10:29:00Z") == "22 Oct 2026"
     assert c._usd0(-0.2) == "$0" and c._usd0(-3.4) == "-$3" and c._usd0(0.2) == "$0"
-    assert c._scrub("see /Users/someone/repo/a.py and /home/x/y") == "see <path> and <path>"
 
 
 def _bm(pm: float) -> dict:

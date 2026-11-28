@@ -1,142 +1,28 @@
 """End to end: analyze and render against a fake `orq` CLI (the one external boundary), synthetic data only."""
 
-import argparse
-import importlib.util
 import json
 import sys
-from pathlib import Path
 
 import jsonschema
 import pydantic
 import pytest
-
-ROOT = Path(__file__).parents[1]
-SPEC = importlib.util.spec_from_file_location("cost_savings_report_e2e", ROOT / "scripts" / "cost_savings_report.py")
-c = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = c
-SPEC.loader.exec_module(c)
-
-FIX = json.loads((ROOT / "tests" / "fixtures" / "models.json").read_text())
-SCHEMA = json.loads((ROOT / "resources" / "report.schema.json").read_text())
-SOL, SOL61, TERRA, LUNA, ACME = ("openai/gpt-6-sol", "openai/gpt-6.1-sol", "openai/gpt-6-terra", "openai/gpt-6-luna",
-                                  "acme/acme-flash")
-EASY_ASK, HARD_ASK = "say hello", "design a sharded database with cross-region failover"
-
-
-def usage(prompt, cached=0, completion=100):
-    return {"prompt_tokens": prompt, "prompt_cached_tokens": cached, "prompt_cache_creation_tokens": 0,
-            "completion_tokens": completion}
-
-
-def sol_cost(u):
-    return (u["prompt_tokens"] - u["prompt_cached_tokens"]) * 3e-6 + u["prompt_cached_tokens"] * 0.3e-6 + \
-        u["completion_tokens"] * 15e-6
-
-
-LEAVES = {  # one trace per call: trace id, thread, routing input, usage; the root span is the LLM call
-    "s1": {"trace": "tA", "thread": "th1", "at": "2026-11-10T10:00:01Z", "ask": EASY_ASK, "usage": usage(2000)},
-    "s2": {"trace": "tB", "thread": "", "at": "2026-11-10T10:00:05Z", "ask": HARD_ASK,
-           "usage": usage(2000, cached=1500)},
-}
-TRACES = {v["trace"]: k for k, v in LEAVES.items()}
-# window token totals for sol, priced at its base price to 10.0, the fake's spend on it
-AGG = {"gen_ai.client.inference.usage.input_tokens": 2_000_000,
-       "gen_ai.client.inference.usage.cache_read.input_tokens": 1_000_000,
-       "gen_ai.client.inference.usage.cache_write.input_tokens": 0,
-       "gen_ai.client.inference.usage.output_tokens": 446_667}
-
-
-def row(span):
-    leaf = LEAVES[span]
-    return {"trace_id": leaf["trace"], "root_span_id": span, "thread_id": leaf["thread"], "project_id": "p1",
-            "models": ["gpt-6-sol"], "started_at": leaf["at"], "operation": "chat", "usage": leaf["usage"],
-            "cost": {"total": sol_cost(leaf["usage"])}, "attributes": {}}
-
-
-class FakeOrq:
-    def __init__(self, retention=None, plan="pro", agg=False):
-        self.decisions, self.retention, self.plan, self.agg = 0, retention, plan, agg
-        self.calls: list[list[str]] = []
-
-    def __call__(self, *args, body=None, cache=True, pacer=None):
-        a = list(args)
-        self.calls.append(a)
-        if a[:2] == ["telemetry", "query"]:
-            return self.telemetry(a)
-        if a[:2] == ["workspaces", "get"]:
-            if self.plan is None:
-                raise c.OrqError(a, 1, "HTTP 403 not authorized")
-            ws = {"key": a[2], "subscription": {"type": self.plan, "metadata": {"type": self.plan}}, "features": {}}
-            if self.retention:
-                ws["features"]["retention_period"] = self.retention
-            return {"workspace": ws}
-        if a[:2] == ["model-catalog", "list"]:
-            return {"data": FIX["catalog"]}
-        if a[:2] == ["models", "list"]:
-            return FIX["cards"]
-        if a[:2] == ["traces", "search"]:
-            flt = json.loads(a[a.index("--filters") + 1])[0]
-            if flt["field"] == "thread_id":
-                return {"data": [{"trace_id": "tA", "agent": {"key": "support"},
-                                  "attributes": {"orq": {"product": "agents"}}}]}
-            return {"data": [row(k) for k in LEAVES]}
-        if a[:2] == ["traces", "list-spans"]:
-            span = TRACES[a[2]]
-            leaf = LEAVES[span]
-            return {"data": [{"type": "span.responses", "has_children": False, "provider": "openai",
-                              "model": "gpt-6-sol", "span_id": span, "started_at": leaf["at"],
-                              "usage": leaf["usage"]}], "has_more": False}
-        if a[:2] == ["traces", "get-span"]:
-            leaf = LEAVES[a[3]]
-            return {"span": {
-                "summary": {"provider": "openai", "model": "gpt-6-sol", "started_at": leaf["at"], "operation": "chat",
-                            "usage": leaf["usage"], "cost": {"total": sol_cost(leaf["usage"])}},
-                "attributes": {"gen_ai": {"input": [{"role": "user", "content": leaf["ask"]}]}}}}
-        if a[:2] == ["decisions", "create"]:
-            self.decisions += 1
-            hard = body["state"] == HARD_ASK
-            return {"answers": {"difficulty": {"probabilities": {"easy": 0.0 if hard else 1.0, "medium": 0.0,
-                                                                  "hard": 1.0 if hard else 0.0}}}}
-        raise AssertionError(f"unexpected call {a}")
-
-    def telemetry(self, a):
-        compute = json.loads(a[a.index("--compute") + 1])[0]
-        groups = [a[i + 1] for i, x in enumerate(a) if x == "--group-by"]
-        metric = compute["metric"]
-        key = f"{metric}:{compute['op']}"
-        if not groups:
-            return {"data": []}
-        if groups == ["model"]:
-            per = {"genai.cost": (10.0, 1.0), "genai.requests": (20, 5), "trace_count": (10, 5)}
-            if self.agg:
-                per |= {m: (v, None) for m, v in AGG.items()}
-            if metric not in per:
-                return {"data": []}
-            sol, emb = per[metric]
-            return {"data": [{"group": {"model": SOL}, "metrics": {key: sol}},
-                             {"group": {"model": "openai/text-embedding-4"}, "metrics": {key: emb}}]}
-        if groups == ["project"]:
-            return {"data": [{"group": {"project": "p1"}, "timestamp": f"2026-11-10T{h:02d}:00:00Z",
-                              "metrics": {key: 4}} for h in (9, 10, 11)]}
-        if groups == ["thread", "project"]:
-            return {"data": [{"group": {"thread": "th1", "project": "p1"}, "metrics": {key: 4 if "count" in key
-                                                                                       else 2.0}}]}
-        if groups == ["trace_framework"]:
-            return {"data": [{"group": {"trace_framework": "openai-sdk"}, "metrics": {"orq.gen_ai.cost:sum": 9.0}}]}
-        return {"data": []}
-
-
-def ns(tmp_path, **kw):
-    d = {"workspace": "demo", "out": str(tmp_path), "sample": 10, "counterfactual_test": False, "cache_threads": 5,
-         "seed": 7, "yes": True, "window": 30, "json": False, "keep_cache": True}
-    d.update(kw)
-    return argparse.Namespace(**d)
-
-
-def run(tmp_path, **kw):
-    an = c.Analyzer(ns(tmp_path, **kw))
-    an.orq = FakeOrq()
-    return an, an.run()
+from conftest import (
+    ACME,
+    EASY_ASK,
+    FIX,
+    HARD_ASK,
+    LEAVES,
+    LUNA,
+    SCHEMA,
+    SOL,
+    SOL61,
+    TERRA,
+    FakeOrq,
+    c,
+    ns,
+    run,
+    sol_cost,
+)
 
 
 def test_analyze_end_to_end(tmp_path):
@@ -530,7 +416,7 @@ class Budget(FakeOrq):
         super().__init__()
         self.mode, self.grains = mode, []
 
-    def __call__(self, *args, body=None, cache=True, pacer=None):
+    def __call__(self, *args, cache=True):
         a = list(args)
         if a[:2] == ["telemetry", "query"] and "project" in a and ("--grain" in a or "--interval-seconds" in a):
             grain = a[a.index("--grain") + 1] if "--grain" in a else a[a.index("--interval-seconds") + 1]
@@ -544,7 +430,7 @@ class Budget(FakeOrq):
             return {"data": rows}
         if a[:2] == ["traces", "search"] and '"model"' in a[a.index("--filters") + 1]:  # draws, not the thread scan
             self.windows =getattr(self, "windows", []) + [(a[a.index("--from") + 1], a[a.index("--to") + 1])]
-        return super().__call__(*args, body=body, cache=cache, pacer=pacer)
+        return super().__call__(*args, cache=cache)
 
 
 def test_hourly_cells_over_budget_fall_back_to_a_coarser_grain(tmp_path):
@@ -622,7 +508,7 @@ def test_report_json_key_order_is_pinned(tmp_path):
                          "checks", "window", "spend", "routing_decision_cost", "sampling", "samples", "scenarios",
                          "routing",
                          "caching", "harness"]
-    assert list(rep["summary"]) == ["window", "caveats", "spend_total", "spend_per_month", "scope", "sampled_calls",
+    assert list(rep["summary"]) == ["window", "caveats", "spend_total", "spend_per_month", "scope", "filters", "sampled_calls",
                                     "sampling", "recommended", "levers_overlap", "router", "switch", "recommendations", "scopes",
                                     "not_analysed", "sampled_moves", "caching"]
 
@@ -680,11 +566,11 @@ def test_a_trace_without_an_id_is_skipped_with_a_caveat_not_read(tmp_path):
             super().__init__()
             self.searches, self.span_reads = 0, []
 
-        def __call__(self, *args, body=None, cache=True, pacer=None):
+        def __call__(self, *args, cache=True):
             a = list(args)
             if a[:2] in (["traces", "list-spans"], ["traces", "get-span"]):
                 self.span_reads.append(a[2])
-            out = super().__call__(*args, body=body, cache=cache, pacer=pacer)
+            out = super().__call__(*args, cache=cache)
             if a[:2] == ["traces", "search"]:
                 self.searches += 1
                 if self.searches % 2:  # every other draw, and the thread scan, meet an id-less trace
@@ -705,10 +591,10 @@ def test_a_trace_without_an_id_is_skipped_with_a_caveat_not_read(tmp_path):
                                  json.JSONDecodeError("bad", "x", 0)])
 def test_a_cli_failure_in_a_read_is_a_caveat(tmp_path, err):
     class Flaky(FakeOrq):
-        def __call__(self, *args, body=None, cache=True, pacer=None):
+        def __call__(self, *args, cache=True):
             if list(args[:2]) == ["telemetry", "query"] and "thread" in args:
                 raise err
-            return super().__call__(*args, body=body, cache=cache, pacer=pacer)
+            return super().__call__(*args, cache=cache)
 
     an = c.Analyzer(ns(tmp_path))
     an.orq = Flaky()

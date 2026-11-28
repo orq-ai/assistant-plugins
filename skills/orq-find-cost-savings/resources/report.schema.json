@@ -73,8 +73,22 @@
       "type": "object"
     },
     "NotAnalysed": {
-      "properties": {"per_month": {"type": "number"}, "model_count": {"type": "integer"}},
+      "properties": {
+        "per_month": {"type": "number"},
+        "model_count": {"type": "integer"},
+        "multi_model_per_month": {"description": "Spend in multi-model traces, which the router estimate leaves out.", "type": "number"}
+      },
       "required": ["per_month", "model_count"],
+      "type": "object"
+    },
+    "NotAnalysedSpend": {
+      "properties": {
+        "multi_model": {
+          "description": "Multi-model traces are left out of the draw: spend, share of all spend, by_model share of each model's own spend.",
+          "type": "object"
+        }
+      },
+      "required": ["multi_model"],
       "type": "object"
     },
     "NotCovered": {
@@ -92,6 +106,7 @@
         "policy": {"const": "jev-general-v1", "type": "string"},
         "seed": {"type": "integer"},
         "counterfactual_test": {"type": "boolean"},
+        "filters": {"description": "--filters: every trace read was scoped to these.", "items": {"type": "object"}, "type": "array"},
         "sample_source": {"description": "flag: --sample; plan: the default for the workspace's plan.", "enum": ["flag", "plan"], "type": "string"},
         "cell_grain": {
           "additionalProperties": {"enum": ["hour", "6h", "day"], "type": "string"},
@@ -117,7 +132,7 @@
       "properties": {
         "type": {"type": "string"},
         "rate_limit_per_minute": {"minimum": 1, "type": "integer"},
-        "rate_limit_source": {"enum": ["metadata.rateLimit", "plan type", "features.rate_limit", "default"], "type": "string"},
+        "rate_limit_source": {"enum": ["metadata.rateLimit", "features.rate_limit", "default"], "type": "string"},
         "daily_decision_limit": {"type": ["integer", "null"]},
         "decisions_per_minute": {"type": "number"}
       },
@@ -219,7 +234,8 @@
         "moves": {"items": {"$ref": "#/$defs/RoutingMove"}, "type": "array"},
         "strata": {"items": {"$ref": "#/$defs/Stratum"}, "type": "array"},
         "not_covered": {"items": {"$ref": "#/$defs/NotCovered"}, "type": "array"},
-        "switch_not_covered": {"items": {"$ref": "#/$defs/NotCovered"}, "type": "array"}
+        "switch_not_covered": {"items": {"$ref": "#/$defs/NotCovered"}, "type": "array"},
+        "not_analysed": {"$ref": "#/$defs/NotAnalysedSpend"}
       },
       "required": ["headline", "profiles", "strata", "not_covered", "buckets", "fallbacks", "underpowered", "pareto"],
       "type": "object"
@@ -262,15 +278,14 @@
         "drawn": {"type": "integer"},
         "rounds": {"type": "integer"},
         "stop_reason": {
-          "description": "Why drawing stopped: the target was reached, the headline 90% interval was narrow enough (relative or absolute), or the wall-time cap.",
-          "enum": ["sample_size", "relative_precision", "absolute_precision", "wall_time"],
+          "description": "Why drawing stopped: the target was reached, the headline 90% interval was narrow enough (relative or absolute), the wall-time cap, or the approved decision calls were used up.",
+          "enum": ["sample_size", "relative_precision", "absolute_precision", "wall_time", "decision budget"],
           "type": "string"
         },
         "half_width": {"description": "Half the headline 90% interval at the stop, in window dollars.", "type": ["number", "null"]},
         "estimate": {"type": ["number", "null"]},
         "decision_calls": {"type": "integer"},
         "rate_limited": {"description": "429 responses waited out.", "type": "integer"},
-        "multi_model_dropped": {"type": "integer"},
         "wall_time_s": {"type": "number"},
         "calls_per_trace": {"additionalProperties": {"type": "number"}, "description": "LLM calls per trace per model, from telemetry.", "type": "object"}
       },
@@ -284,7 +299,6 @@
         "estimate",
         "decision_calls",
         "rate_limited",
-        "multi_model_dropped",
         "wall_time_s",
         "calls_per_trace"
       ],
@@ -361,7 +375,8 @@
         "savings": {"type": ["number", "null"]},
         "pool": {"anyOf": [{"items": {"type": "string"}, "type": "array"}, {"type": "null"}]},
         "calls_per_trace": {"type": ["number", "null"]},
-        "switch_source": {"anyOf": [{"enum": ["totals", "sample"], "type": "string"}, {"type": "null"}]}
+        "multi_model_share": {"description": "Share of this model's spend in multi-model traces.", "type": ["number", "null"]},
+        "switch_source": {"anyOf": [{"const": "totals", "type": "string"}, {"type": "null"}]}
       },
       "required": ["model", "spend", "n", "clusters", "covered", "pool", "pool_reason"],
       "type": "object"
@@ -371,6 +386,7 @@
         "window": {"$ref": "#/$defs/SummaryWindow"},
         "spend_total": {"type": ["number", "null"]},
         "spend_per_month": {"type": ["number", "null"]},
+        "filters": {"description": "The --filters the run was scoped to.", "items": {"type": "object"}, "type": "array"},
         "sampled_calls": {"type": ["integer", "null"]},
         "sampling": {
           "anyOf": [{"$ref": "#/$defs/SummarySampling"}, {"type": "null"}],

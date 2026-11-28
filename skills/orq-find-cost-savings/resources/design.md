@@ -15,7 +15,7 @@ Spec for `scripts/cost_savings_report.py`. Statements marked **V** were checked 
 | Profile | Balanced headline; cost as a scenario column |
 | Pool | Frontier pool from evaluatorq's `model_frontier` (no pool member dominated by another), in four scopes: same or any provider, enabled or all available; headline is same provider, all available |
 | Change model | Second lever (JSON key `switch`): move a model's traffic to the cheapest model that dominates it; never added to routing. The page says "change model", not "switch", so it is not confused with routing |
-| Transport | The script shells out to the `orq` CLI with `-o json`, so it reuses the user's CLI login and workspace |
+| Transport | Reads shell out to the `orq` CLI with `-o json`, so they reuse the user's CLI login and workspace; decision calls use the `orq-ai-sdk` (`router.decisions.create`) with the CLI login's token from `orq auth token`, else `ORQ_API_KEY` |
 
 ## Layout
 
@@ -33,7 +33,7 @@ skills/orq-find-cost-savings/
 Commands:
 
 ```
-uv run <skill dir>/scripts/cost_savings_report.py analyze --workspace <key> --out <dir> [--window 30] [--sample 100] [--counterfactual-test] [--json] [--cache-threads 200] [--yes]
+uv run <skill dir>/scripts/cost_savings_report.py analyze --workspace <key> --out <dir> [--window 30] [--sample 100] [--filters '<json>'] [--counterfactual-test] [--json] [--cache-threads 200] [--yes]
 uv run <skill dir>/scripts/cost_savings_report.py render --out <dir> --narrative <dir>/narrative.md [--redact]
 ```
 
@@ -81,9 +81,7 @@ With no user text, fall back to the system (or `developer`) prompt, then `instru
 
 ### 2. Score
 
-```
-orq decisions create --from-file body.json -o json
-```
+`client.router.decisions.create(**body)` from `orq-ai-sdk` (`POST /v3/router/decisions`), with this body:
 
 ```json
 {
@@ -130,7 +128,7 @@ Any decision failure (`decision_timeout`, error, `prompt_limit`, `empty_input`) 
 
 ### 6. Savings per trace
 
-The unit is the trace. Its search row carries `usage` and `cost` of the whole trace (V: equal to the sum of its LLM calls on 155 of 155 traces), plus the attributes the pricing function needs (`gen_ai.usage.prompt_tokens_details.cache_creation_<ttl>_tokens`, `openai.response.service_tier`), so no span is priced separately. A trace whose `models` list does not have exactly one model is redrawn and counted (`sampling.multi_model_dropped`, caveat `multi-model traces`); the estimate covers single-model traces.
+The unit is the trace. Its search row carries `usage` and `cost` of the whole trace (V: equal to the sum of its LLM calls on 155 of 155 traces), plus the attributes the pricing function needs (`gen_ai.usage.prompt_tokens_details.cache_creation_<ttl>_tokens`, `openai.response.service_tier`), so no span is priced separately. A trace whose `models` list does not have exactly one model is not in the pool: the search rows of the drawn window are filtered to single-model traces before a trace is picked, and inclusion probabilities are computed over that pool only. Their share is estimated per model as the ratio of the weighted sums, over each draw's first window, of its multi-model trace cost to its whole trace cost (weight 2^k / the cell's spend, the same inclusion as the draw) (`routing.strata[].multi_model_share`; an approximation, since a trace's cost counts all its models while the model's spend counts only its own calls). The router rate is scaled to the model's single-model spend only, and the rest is reported under `routing.not_analysed.multi_model` (spend, share of all spend, per-model share), in `summary.not_analysed.multi_model_per_month`, in the caveat `multi-model traces` and in the page's not-analysed note.
 
 Savings = price(trace, current model) - price(trace, picked model), both from the pricing function on the trace's token breakdown (uncached input, cache read, cache write, output). Negative savings are kept. A picked model without a cache-read price takes cached tokens at its input price. Output tokens are assumed similar.
 
@@ -168,17 +166,17 @@ Strata are models (`provider/model`), not project and model: a workspace can hav
 Sample size N (traces): `--sample`, else the plan default (see Runtime): free 15, growth/sandbox/pov 100, every other plan 500 (`MAX_SAMPLE`).
 
 Allocation of N traces:
-1. Rank models by `genai.cost` in the window.
+1. Rank models by `genai.cost` in the window. Only models with token totals are ranked (see Change model from token totals).
 2. Take models in order while each can get at least 5 traces under spend-proportional allocation; that gives at most N / 5 strata.
 3. Models not taken are not covered by the router figure (change model may still cover them, see below).
 4. Draw order: every model's first 5 draws, then the rest interleaved by allocation, so a run that stops after any round is spread like the full allocation.
 
 Selection inside a stratum, probability proportional to cost (PPS):
-1. Cells: `genai.cost` per (project, hour) for that model; request count (`genai.requests`) when the model has no recorded cost (`params.cell_weight`). `trace_count` is not used for cells: it groups by project unreliably and is missing for some models (V: 0 traces against 148,800 requests on one model). Hourly cells over the time-series budget fall back to 6-hour, then daily (`params.cell_grain`).
+1. Cells: `genai.cost` per (project, hour) for that model (with `--filters`, the same from the scanned rows, always hourly); request count (`genai.requests`) when the model has no recorded cost (`params.cell_weight`). `trace_count` is not used for cells: it groups by project unreliably and is missing for some models (V: 0 traces against 148,800 requests on one model). Hourly cells over the time-series budget fall back to 6-hour, then daily (`params.cell_grain`).
 2. Draw a cell with probability C_cell / C_model.
 3. `traces search` on the whole cell (filter `model`, limit 100). While it returns the 100-row cap (the newest 100, V), halve the window and take one half at random; the halves form a fixed grid, so a window k halvings deep is reached with probability 2^-k and every search is cached by its window. Below 1 s still at the cap: redraw, counted in a `dense search window` caveat.
 4. In the window, pick a trace with probability cost_i / C_window (search-row `cost.total`). Traces with cost 0 are never drawn; they add nothing to spend either.
-5. Inclusion p_i = (C_cell / C_model) x 2^-k x cost_i / C_window, weight w_i = 1 / p_i (`samples[].inclusion`, `weight`). The cost of a window and of the traces in a cell are both estimates of the same spend, so p_i is proportional to cost_i up to how unevenly the halvings split a cell's cost.
+5. Inclusion p_i = (C_cell / C_model) x 2^-k x cost_i / C_window, weight w_i = 1 / p_i (`samples[].inclusion`, `weight`). A draw that finds an empty cell or half-window (no single-model trace of the model in it) is retried, up to 6 attempts. p_i stays the probability that one attempt picks the trace, not renormalised over the non-empty windows: attempts are independent, so the accepted draws all carry the same factor 1 / (1 - P(empty attempt)), which cancels in the ratio estimator below (tested with an empty cell and an empty half-window in `tests/test_sampling.py`); only `inclusion` itself reads that factor too low. The cost of a window and of the traces in a cell are both estimates of the same spend, so p_i is proportional to cost_i up to how unevenly the halvings split a cell's cost.
 
 Estimator per stratum s (Hansen-Hurwitz ratio):
 
@@ -198,11 +196,11 @@ With p_i proportional to cost, rate_s is the mean of savings_i / cost_i over the
 
 #### Adaptive stop
 
-Draws run in rounds of 25 (`ROUND`); decision calls for a round are made before the next round is read. After a round, once at least 50 traces are drawn (`STOP_MIN_DRAWS`) and every stratum has its first 5, the headline router CI is recomputed (200 bootstrap resamples, `STOP_BOOTSTRAP`). Drawing stops when its half-width is at most 25% of the estimate (`STOP_REL_HALF_WIDTH`, `relative_precision`) or at most 1% of window spend (`STOP_ABS_HALF_WIDTH`, `absolute_precision`), when N is reached (`sample_size`), or past 15 minutes of wall time between rounds (`WALL_TIME_S`, `wall_time`). `report.json` `sampling` records the target, the draws, rounds, the stop reason and the half-width; the page states them under Method.
+Draws run in rounds of 25 (`ROUND`); decision calls for a round are made before the next round is read. After a round, once at least 50 traces are drawn (`STOP_MIN_DRAWS`, counting traces drawn, not attempts) and every stratum has its first 5 drawn, the headline router CI is recomputed (200 bootstrap resamples, `STOP_BOOTSTRAP`). Drawing stops when its half-width is at most 25% of the estimate (`STOP_REL_HALF_WIDTH`, `relative_precision`) or at most 1% of window spend (`STOP_ABS_HALF_WIDTH`, `absolute_precision`), when N is reached (`sample_size`), or past 15 minutes of wall time between rounds (`WALL_TIME_S`, `wall_time`). `report.json` `sampling` records the target, the draws, rounds, the stop reason and the half-width, which comes from the final 1,000-resample range, not the 200-resample stop check; the page states them under Method.
 
 #### Change model from token totals
 
-The change-model lever needs no decision, so it is priced on the whole window, not the sample: per model, telemetry sums of `gen_ai.client.inference.usage.input_tokens`, `.cache_read.input_tokens`, `.cache_write.input_tokens` and `.output_tokens` (V: input includes cache reads and writes, so uncached = input - read - write; the `genai.tokens.*` metrics differ slightly and are not used). Saving = spend_m x (price(totals, m) - price(totals, target)) / price(totals, m), both at the base catalog price in the model id's region: totals carry no request time, context length, service tier or cache TTL, so no variant that tests one applies (an accepted limitation, stated on the page). A model whose totals are missing, or priced more than 2% off its spend, falls back to the sample figure; with neither it is listed in `routing.switch_not_covered`. Totals-priced models have no sampling spread (`switch.from_totals`); the switch CI is their exact sum plus the bootstrap of the sample-priced rest. The pareto check and pools use the same totals. Because it needs no decision calls, a free-plan run gets the full change-model figure even with 15 traces.
+The change-model lever needs no decision, so it is priced on the whole window, not the sample: per model, telemetry sums of `gen_ai.client.inference.usage.input_tokens`, `.cache_read.input_tokens`, `.cache_write.input_tokens` and `.output_tokens` (V: input includes cache reads and writes, so uncached = input - read - write; the `genai.tokens.*` metrics differ slightly and are not used). Saving = spend_m x (price(totals, m) - price(totals, target)) / price(totals, m), both at the base catalog price in the model id's region: totals carry no request time, context length, service tier or cache TTL, so no variant that tests one applies (an accepted limitation, stated on the page). Pools and switch targets are chosen on these totals, so a model without them (or priced more than 2% off its spend) has no change-model figure and no pool: it is listed in `routing.switch_not_covered` and `routing.not_covered` with the reason, and it is not sampled. A run where no chat model has totals stops with check `token totals`. Totals-priced models have no sampling spread (`switch.from_totals`), so the switch CI is their exact sum. The pareto check uses the same totals. Because it needs no decision calls, a free-plan run gets the full change-model figure even with 15 traces.
 
 ### 9. Buckets
 
@@ -220,13 +218,19 @@ Runs routing on the pilot asks and stops. Per ask: recommended model, model used
 
 ## Runtime
 
-Plan, from `orq workspaces get` (one call, also the retention): per-minute limit L = `subscription.metadata.rateLimit` when set, else by `subscription.metadata.type`: free 20 (and 50 decision calls a day), growth/sandbox/pov 100, team 1000, pro/pro2025/custom/consumption 1500; an unknown type falls to `features.rate_limit`, then free. If the read fails, the run follows the free plan with a `plan unknown` caveat.
+Plan, from `orq workspaces get` (one call, also the retention): per-minute limit L = `subscription.metadata.rateLimit`, else `features.rate_limit`, else a conservative 20 (source `default`). The plan type (`subscription.metadata.type`) sets the default sample (free 15, growth/sandbox/pov 100, every other type 500) and the free plan's 50 decision calls a day; a type the script does not know keeps its own name, has no daily limit and the default sample of 500. When the rate limit comes from `default`, the default sample is capped at 100 and the confirmation says so; an explicit `--sample` wins. If the read fails, the run follows the free plan with a `plan unknown` caveat.
 
-Decision calls share that limit with the workspace's gateway traffic, so they are paced to 30% of L (`PACE_SHARE`) by one token bucket shared by 4 decision workers (`DECISION_WORKERS`); reads run on 16 workers (`READ_WORKERS`). Paced calls run with `--verbose`, whose stderr carries the response headers as `╎ Header: value` lines. On a 429 the call waits `Retry-After` (else the 60 s window), the pace halves, and the call is retried without using the 5xx retry budget; after 6 waits the run stops with check `decision rate limit` instead of counting decision errors. Verbose lines (headers, the request body with the prompt text) are stripped from every error kept. If the CLI fails with `--verbose`, the run turns it off and 429s wait the full window (caveat `Retry-After unreadable`). Reads retry 429 and 5xx with jittered exponential backoff. The decision body keeps `retry.count: 0`; no fallback models are set.
+Decision calls share that limit with the workspace's gateway traffic, so they are paced to 30% of L (`PACE_SHARE`) by one token bucket shared by 4 decision workers (`DECISION_WORKERS`); reads run on 16 workers (`READ_WORKERS`). The SDK client authenticates with the CLI login's token (`orq auth token`, asked for again when it expires), else `ORQ_API_KEY` when no login is available. The credentials are resolved first, before any read: with neither, or without the `orq` binary, the run stops with check `decision calls allowed`. On a 429 the SDK error's `Retry-After` header (seconds or an HTTP date, capped at the wall-time limit; 60 s when absent) holds every worker, and the call is retried; the pace halves once per hold period, so a 429 that arrives while a hold is active does not halve it again. After 6 waits the run stops with check `decision rate limit` instead of counting decision errors. A 401 or 403 stops the run with check `decision calls allowed`. 5xx responses are retried with jittered exponential backoff, the same `backoff` the reads use for 429 and 5xx. The decision body keeps `retry.count: 0`; no fallback models are set. The number of decision calls the user approved at the confirmation is a hard cap that ends sampling, not the run: before each round the loop checks what is left, sends decisions for as many of the round's inputs as fit and drops the draws left without one, and the run finishes with `sampling.stop_reason` `decision budget` and status ok.
 
-Wait shown up front: reads at about 3 s per trace over 16 workers, plus decision calls at the slower of the pace and 2 s each over 4 workers; on a free plan 15 calls at 6 a minute take about 3 minutes. Progress is logged every 10 decisions.
+Wait shown up front: reads at about 3 s per trace over 16 workers, plus decision calls at the slower of the pace and 2 s each over 4 workers; on a free plan 15 calls at 6 a minute take about 3 minutes. The confirmation adds that sampling usually stops much earlier once the range is tight. Progress is logged every 10 decisions.
 
-Every response is cached under `<out>/cache`. The cache holds prompt texts, so it is deleted at the end of the run unless `--keep-cache` is given; a run stopped at `confirmation` keeps it so the approved rerun reads the same sample for free.
+### Filters
+
+`--filters` is a JSON list of `{field, op, values}`, passed as given and ANDed with the script's own filters (`model`, `thread_id`) on every `traces search`. Telemetry rejects fields such as `project_id`, `agent_name` and `metadata.*` ("filter field not allowed for metric"), and its trace-level metrics measure a different total, so a filtered run replaces the telemetry reads with one paged scan of the matching rows (`next_page_token`, 100 rows a page, at most `MAX_SCAN_PAGES`; past that it stops with check `filtered scan`). From the rows: spend per model and per agent (single-model traces only; the multi-model spend is `routing.not_analysed`), token totals per model from `usage`, hourly cells per (project, model) from `start_time`, and threads for the caching scan (their trace count stands in for the request count). Calls per trace and the harness table have no source in the rows and are left out. A 400 from a filtered call stops the run with check `filters` and the server's message. Filters are recorded in `params.filters` and `summary.filters`, the page header shows them as a Scope line, and a rerun with other filters does not reuse an earlier window.
+
+### Cache
+
+Trace and search reads are cached under `<out>/cache/reads`. They contain prompt texts, so they are deleted at the end of every run, a declined confirmation and Ctrl-C included, unless `--keep-cache` is given; a run stopped at `confirmation` outside a terminal keeps them so the approved `--yes` rerun reads the same sample for free. Decision probabilities are cached under `<out>/cache/decisions`, one file per sha256 of the routing input holding probabilities only, and kept until a run ends with status ok, so a stopped run's paid calls are not repeated.
 
 ## Pilot checks
 
