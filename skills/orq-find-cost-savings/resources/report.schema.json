@@ -1,0 +1,564 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "orq-find-cost-savings report.json",
+  "$defs": {
+    "Ask": {"properties": {"differs": {"type": "boolean"}}, "required": ["span_id", "used", "recommended", "differs"], "type": "object"},
+    "CacheRow": {"properties": {}, "required": ["thread", "agent", "model", "turns", "savings", "action"], "type": "object"},
+    "Caching": {
+      "properties": {
+        "threads_scanned": {"type": "integer"},
+        "label": {"type": "string"},
+        "savings_found": {"type": "number"},
+        "savings_orq": {"type": "number"},
+        "rows": {"items": {}, "type": "array"},
+        "error": {"type": "string"},
+        "cached_share": {"type": ["number", "null"]},
+        "saved_by_cache": {"type": ["number", "null"]},
+        "threads_caching": {"type": ["integer", "null"]}
+      },
+      "type": "object"
+    },
+    "Caveat": {"properties": {"check": {"type": "string"}, "detail": {"type": "string"}}, "required": ["check", "detail"], "type": "object"},
+    "Checks": {
+      "properties": {
+        "stopping": {"items": {"$ref": "#/$defs/StoppingCheck"}, "type": "array"},
+        "caveats": {"items": {"$ref": "#/$defs/Caveat"}, "type": "array"}
+      },
+      "required": ["stopping", "caveats"],
+      "type": "object"
+    },
+    "CounterfactualTest": {
+      "properties": {"asks": {"items": {"$ref": "#/$defs/Ask"}, "type": "array"}, "per_model": {"type": "object"}},
+      "required": ["asks", "per_model"],
+      "type": "object"
+    },
+    "Estimate": {
+      "properties": {
+        "savings": {"type": "number"},
+        "ci90": {"items": {"type": "number"}, "maxItems": 2, "minItems": 2, "type": "array"},
+        "coverage": {"maximum": 1, "minimum": 0, "type": "number"},
+        "per_month": {"type": "number"},
+        "ci90_per_month": {"items": {"type": "number"}, "maxItems": 2, "minItems": 2, "type": "array"},
+        "without_top3": {"type": "number"},
+        "unpriced_models": {"items": {"type": "string"}, "type": "array"},
+        "per_stratum": {"additionalProperties": {"type": ["number", "null"]}, "type": "object"},
+        "from_totals": {
+          "description": "Change model only: models priced exactly from the window's token totals, with no sampling spread.",
+          "items": {"type": "string"},
+          "type": "array"
+        }
+      },
+      "required": ["savings", "ci90", "coverage", "per_month", "ci90_per_month", "without_top3", "unpriced_models"],
+      "type": "object"
+    },
+    "Harness": {
+      "properties": {"metric": {"type": "string"}, "rows": {"items": {}, "type": "array"}, "unattributed": {"type": ["number", "null"]}},
+      "type": "object"
+    },
+    "Headline": {
+      "properties": {
+        "savings": {"type": "number"},
+        "ci90": {"items": {"type": "number"}, "maxItems": 2, "minItems": 2, "type": "array"},
+        "without_top3": {"type": "number"},
+        "coverage": {"maximum": 1, "minimum": 0, "type": "number"},
+        "per_month": {"type": "number"},
+        "ci90_per_month": {"items": {"type": "number"}, "maxItems": 2, "minItems": 2, "type": "array"}
+      },
+      "required": ["savings", "ci90", "without_top3", "coverage", "per_month", "ci90_per_month"],
+      "type": "object"
+    },
+    "Move": {
+      "properties": {"pool": {"anyOf": [{"items": {"type": "string"}, "type": "array"}, {"type": "null"}]}, "switch": {"type": ["string", "null"]}},
+      "required": ["pool", "switch"],
+      "type": "object"
+    },
+    "NotAnalysed": {
+      "properties": {
+        "per_month": {"type": "number"},
+        "model_count": {"type": "integer"},
+        "multi_model_per_month": {"description": "Spend in multi-model traces, which the router estimate leaves out.", "type": "number"}
+      },
+      "required": ["per_month", "model_count"],
+      "type": "object"
+    },
+    "NotAnalysedSpend": {
+      "properties": {
+        "multi_model": {
+          "description": "Multi-model traces are left out of the draw: spend, share of all spend, by_model share of each model's own spend.",
+          "type": "object"
+        }
+      },
+      "required": ["multi_model"],
+      "type": "object"
+    },
+    "NotCovered": {
+      "properties": {"model": {"type": "string"}, "spend": {"type": "number"}, "reason": {"type": "string"}},
+      "required": ["model", "spend", "reason"],
+      "type": "object"
+    },
+    "Params": {
+      "properties": {
+        "sample": {
+          "anyOf": [{"maximum": 500, "minimum": 1, "type": "integer"}, {"type": "null"}],
+          "description": "Traces the run may draw; null until the plan is read when --sample is not given."
+        },
+        "profile": {"const": "balanced", "type": "string"},
+        "policy": {"const": "jev-general-v1", "type": "string"},
+        "seed": {"type": "integer"},
+        "counterfactual_test": {"type": "boolean"},
+        "filters": {"description": "--filters: every trace read was scoped to these.", "items": {"type": "object"}, "type": "array"},
+        "sample_source": {"description": "flag: --sample; plan: the default for the workspace's plan.", "enum": ["flag", "plan"], "type": "string"},
+        "cell_grain": {
+          "additionalProperties": {"enum": ["hour", "6h", "day"], "type": "string"},
+          "description": "Per sampled model, the bucket of the cell query: hour, or coarser when hourly cells exceed the time-series budget.",
+          "type": "object"
+        },
+        "cell_weight": {
+          "additionalProperties": {"enum": ["cost", "requests"], "type": "string"},
+          "description": "Per sampled model, what cells are weighted by: spend, or request counts when the model has no recorded cost.",
+          "type": "object"
+        }
+      },
+      "required": ["sample", "profile", "policy", "seed", "counterfactual_test"],
+      "type": "object"
+    },
+    "PerProfile": {
+      "additionalProperties": {"type": "number"},
+      "properties": {"balanced": {"type": "number"}, "cost": {"type": "number"}},
+      "required": ["balanced", "cost"],
+      "type": "object"
+    },
+    "PlanInfo": {
+      "properties": {
+        "type": {"type": "string"},
+        "rate_limit_per_minute": {"minimum": 1, "type": "integer"},
+        "rate_limit_source": {"enum": ["metadata.rateLimit", "features.rate_limit", "default"], "type": "string"},
+        "daily_decision_limit": {"type": ["integer", "null"]},
+        "decisions_per_minute": {"type": "number"}
+      },
+      "required": ["type", "rate_limit_per_minute", "rate_limit_source", "daily_decision_limit", "decisions_per_minute"],
+      "type": "object"
+    },
+    "ProfileFigure": {
+      "properties": {"savings": {"type": "number"}, "ci90": {"items": {"type": "number"}, "maxItems": 2, "minItems": 2, "type": "array"}},
+      "required": ["savings", "ci90"],
+      "type": "object"
+    },
+    "Profiles": {
+      "additionalProperties": {"$ref": "#/$defs/ProfileFigure"},
+      "properties": {"balanced": {"$ref": "#/$defs/ProfileFigure"}, "cost": {"$ref": "#/$defs/ProfileFigure"}},
+      "required": ["balanced", "cost"],
+      "type": "object"
+    },
+    "Recommendation": {
+      "properties": {
+        "action": {"enum": ["router", "switch", "keep", "not_analysed"], "type": "string"},
+        "router_key": {"type": ["string", "null"]},
+        "move": {"anyOf": [{"$ref": "#/$defs/Move"}, {"type": "null"}]},
+        "today_move": {"anyOf": [{"$ref": "#/$defs/Move"}, {"type": "null"}]},
+        "targets": {"items": {"$ref": "#/$defs/Target"}, "type": "array"},
+        "enable": {"items": {"type": "string"}, "type": "array"},
+        "spend_per_month": {"type": "number"},
+        "saved_per_month": {"type": "number"},
+        "pct_of_model_spend": {"type": ["number", "null"]},
+        "saved_today_per_month": {"type": ["number", "null"]},
+        "saved_after_enabling_per_month": {"type": ["number", "null"]},
+        "sampled_calls": {"type": "integer"},
+        "small_sample": {"type": "boolean"},
+        "share_hard": {"type": ["number", "null"]}
+      },
+      "required": [
+        "model",
+        "action",
+        "router_key",
+        "move",
+        "today_move",
+        "targets",
+        "enable",
+        "spend_per_month",
+        "saved_per_month",
+        "pct_of_model_spend",
+        "saved_today_per_month",
+        "saved_after_enabling_per_month",
+        "sampled_calls",
+        "small_sample",
+        "share_hard"
+      ],
+      "type": "object"
+    },
+    "Recommendations": {
+      "properties": {
+        "router": {"items": {"$ref": "#/$defs/Recommendation"}, "type": "array"},
+        "switch": {"items": {"$ref": "#/$defs/Recommendation"}, "type": "array"}
+      },
+      "required": ["router", "switch"],
+      "type": "object"
+    },
+    "Replacement": {"properties": {}, "required": ["model", "to"], "type": "object"},
+    "RouterLever": {
+      "properties": {
+        "pct_of_spend": {"type": ["number", "null"]},
+        "per_month": {"type": ["number", "null"]},
+        "ci90_per_month": {"anyOf": [{"items": {"type": "number"}, "type": "array"}, {"type": "null"}]},
+        "coverage": {"description": "Share of spend on the models this lever's estimate covers.", "type": ["number", "null"]},
+        "saved_today_per_month": {"type": ["number", "null"]},
+        "saved_after_enabling_per_month": {"type": ["number", "null"]},
+        "without_top3_per_month": {"type": ["number", "null"]},
+        "enable": {"items": {"type": "string"}, "type": "array"},
+        "routers": {"items": {"$ref": "#/$defs/RouterSetup"}, "type": "array"},
+        "replacements": {
+          "description": "Models with no pool to route over: the router figure serves them on their change-model target, so the router plan changes them too.",
+          "items": {"$ref": "#/$defs/Replacement"},
+          "type": "array"
+        }
+      },
+      "required": [
+        "pct_of_spend",
+        "per_month",
+        "ci90_per_month",
+        "coverage",
+        "saved_today_per_month",
+        "saved_after_enabling_per_month",
+        "without_top3_per_month",
+        "enable",
+        "routers",
+        "replacements"
+      ],
+      "type": "object"
+    },
+    "RouterSetup": {"properties": {}, "required": ["model", "key", "pool"], "type": "object"},
+    "Routing": {
+      "properties": {
+        "headline": {"$ref": "#/$defs/Headline"},
+        "profiles": {"$ref": "#/$defs/Profiles"},
+        "moves": {"items": {"$ref": "#/$defs/RoutingMove"}, "type": "array"},
+        "strata": {"items": {"$ref": "#/$defs/Stratum"}, "type": "array"},
+        "not_covered": {"items": {"$ref": "#/$defs/NotCovered"}, "type": "array"},
+        "switch_not_covered": {"items": {"$ref": "#/$defs/NotCovered"}, "type": "array"},
+        "not_analysed": {"$ref": "#/$defs/NotAnalysedSpend"}
+      },
+      "required": ["headline", "profiles", "strata", "not_covered", "buckets", "fallbacks", "underpowered", "pareto"],
+      "type": "object"
+    },
+    "RoutingDecisionCost": {
+      "properties": {"calls": {"type": "integer"}, "estimated_usd": {"type": "number"}, "minutes": {"type": "number"}},
+      "required": ["calls", "estimated_usd"],
+      "type": "object"
+    },
+    "RoutingMove": {
+      "properties": {
+        "used": {"type": "string"},
+        "pick": {"type": "string"},
+        "n": {"type": "integer"},
+        "fallback": {"type": "integer"},
+        "weight": {"type": "number"}
+      },
+      "required": ["used", "pick", "n", "fallback"],
+      "type": "object"
+    },
+    "Sample": {
+      "properties": {
+        "weight": {"description": "1 / inclusion.", "exclusiveMinimum": 0, "type": "number"},
+        "inclusion": {"description": "Probability one draw of this model picks this trace.", "exclusiveMinimum": 0, "maximum": 1, "type": "number"},
+        "cluster": {"description": "Bootstrap cluster: the thread, else the trace.", "type": "string"},
+        "cur_price": {"type": "number"},
+        "billed": {"type": "number"},
+        "savings": {"$ref": "#/$defs/PerProfile"},
+        "picks": {"type": "object"},
+        "fallback": {"type": ["string", "null"]}
+      },
+      "required": ["trace_id", "span_id", "model", "weight", "cur_price", "billed", "savings", "picks", "fallback"],
+      "type": "object"
+    },
+    "SampledMove": {"properties": {}, "required": ["used", "pick", "tier", "n", "fallback", "costs_more", "weighted_savings"], "type": "object"},
+    "Sampling": {
+      "properties": {
+        "plan": {"$ref": "#/$defs/PlanInfo"},
+        "target": {"description": "Traces the run may draw: --sample, else the plan default.", "minimum": 1, "type": "integer"},
+        "drawn": {"type": "integer"},
+        "rounds": {"type": "integer"},
+        "stop_reason": {
+          "description": "Why drawing stopped: the target was reached, the headline 90% interval was narrow enough (relative or absolute), the wall-time cap, or the approved decision calls were used up.",
+          "enum": ["sample_size", "relative_precision", "absolute_precision", "wall_time", "decision budget"],
+          "type": "string"
+        },
+        "half_width": {"description": "Half the headline 90% interval at the stop, in window dollars.", "type": ["number", "null"]},
+        "estimate": {"type": ["number", "null"]},
+        "decision_calls": {"type": "integer"},
+        "rate_limited": {"description": "429 responses waited out.", "type": "integer"},
+        "wall_time_s": {"type": "number"},
+        "calls_per_trace": {"additionalProperties": {"type": "number"}, "description": "LLM calls per trace per model, from telemetry.", "type": "object"}
+      },
+      "required": [
+        "plan",
+        "target",
+        "drawn",
+        "rounds",
+        "stop_reason",
+        "half_width",
+        "estimate",
+        "decision_calls",
+        "rate_limited",
+        "wall_time_s",
+        "calls_per_trace"
+      ],
+      "type": "object"
+    },
+    "Scenario": {
+      "properties": {
+        "scope": {"enum": ["same_provider:all", "same_provider:enabled", "any_provider:all", "any_provider:enabled"], "type": "string"},
+        "provider": {"enum": ["same_provider", "any_provider"], "type": "string"},
+        "availability": {"enum": ["all", "enabled"], "type": "string"},
+        "headline": {"type": "boolean"},
+        "router": {"$ref": "#/$defs/ScenarioRouter"},
+        "switch": {"$ref": "#/$defs/Estimate"},
+        "models": {"items": {"$ref": "#/$defs/ScenarioModel"}, "type": "array"}
+      },
+      "required": ["scope", "provider", "availability", "headline", "router", "switch", "models"],
+      "type": "object"
+    },
+    "ScenarioModel": {
+      "properties": {
+        "model": {"type": "string"},
+        "pool": {"anyOf": [{"items": {"type": "string"}, "type": "array"}, {"type": "null"}]},
+        "switch": {"type": ["string", "null"]},
+        "enable": {"items": {"type": "string"}, "type": "array"},
+        "relaxed": {"type": "boolean"},
+        "reason": {"type": "string"}
+      },
+      "required": ["model", "pool", "switch", "enable", "relaxed", "reason"],
+      "type": "object"
+    },
+    "ScenarioRouter": {
+      "additionalProperties": {"$ref": "#/$defs/Estimate"},
+      "properties": {"balanced": {"$ref": "#/$defs/Estimate"}, "cost": {"$ref": "#/$defs/Estimate"}},
+      "required": ["balanced", "cost"],
+      "type": "object"
+    },
+    "ScopeLever": {
+      "properties": {
+        "pct_of_spend": {"type": ["number", "null"]},
+        "per_month": {"type": ["number", "null"]},
+        "ci90_per_month": {"anyOf": [{"items": {"type": "number"}, "type": "array"}, {"type": "null"}]},
+        "coverage": {"type": ["number", "null"]},
+        "enable": {"items": {"type": "string"}, "type": "array"}
+      },
+      "required": ["pct_of_spend", "per_month", "ci90_per_month", "coverage", "enable"],
+      "type": "object"
+    },
+    "ScopeModel": {"properties": {}, "required": ["model", "pool", "switch", "enable"], "type": "object"},
+    "Spend": {
+      "properties": {
+        "total": {"type": "number"},
+        "per_month": {"type": "number"},
+        "by_model": {"items": {"$ref": "#/$defs/SpendRow"}, "type": "array"},
+        "by_agent": {"anyOf": [{"items": {"$ref": "#/$defs/SpendRow"}, "type": "array"}, {"type": "null"}]},
+        "by_deployment": {"anyOf": [{"items": {"$ref": "#/$defs/SpendRow"}, "type": "array"}, {"type": "null"}]}
+      },
+      "required": ["total", "per_month", "by_model"],
+      "type": "object"
+    },
+    "SpendRow": {"properties": {"key": {"type": "string"}, "spend": {"type": "number"}}, "required": ["key", "spend"], "type": "object"},
+    "StopInfo": {"properties": {"check": {"type": "string"}, "numbers": {"type": "object"}}, "required": ["check", "numbers"], "type": "object"},
+    "StoppingCheck": {
+      "properties": {"check": {"type": "string"}, "pass": {"type": "boolean"}, "numbers": {"type": "object"}},
+      "required": ["check", "pass", "numbers"],
+      "type": "object"
+    },
+    "Stratum": {
+      "properties": {
+        "model": {"type": "string"},
+        "spend": {"type": "number"},
+        "n": {"type": "integer"},
+        "clusters": {"type": "integer"},
+        "covered": {"type": "boolean"},
+        "savings": {"type": ["number", "null"]},
+        "pool": {"anyOf": [{"items": {"type": "string"}, "type": "array"}, {"type": "null"}]},
+        "calls_per_trace": {"type": ["number", "null"]},
+        "multi_model_share": {"description": "Share of this model's spend in multi-model traces.", "type": ["number", "null"]},
+        "switch_source": {"anyOf": [{"const": "totals", "type": "string"}, {"type": "null"}]}
+      },
+      "required": ["model", "spend", "n", "clusters", "covered", "pool", "pool_reason"],
+      "type": "object"
+    },
+    "Summary": {
+      "properties": {
+        "window": {"$ref": "#/$defs/SummaryWindow"},
+        "spend_total": {"type": ["number", "null"]},
+        "spend_per_month": {"type": ["number", "null"]},
+        "filters": {"description": "The --filters the run was scoped to.", "items": {"type": "object"}, "type": "array"},
+        "sampled_calls": {"type": ["integer", "null"]},
+        "sampling": {
+          "anyOf": [{"$ref": "#/$defs/SummarySampling"}, {"type": "null"}],
+          "description": "How the sample was drawn and why drawing stopped."
+        },
+        "recommended": {
+          "anyOf": [{"enum": ["router", "switch"], "type": "string"}, {"type": "null"}],
+          "description": "null when neither lever saves anything (per_month <= 0 or null)."
+        },
+        "levers_overlap": {"type": "boolean"},
+        "router": {"$ref": "#/$defs/RouterLever"},
+        "switch": {"$ref": "#/$defs/SwitchLever"},
+        "recommendations": {
+          "$ref": "#/$defs/Recommendations",
+          "description": "One row per sampled model, per lever; action keep means no cheaper model is as strong, not_analysed that the lever's estimate does not cover the model."
+        },
+        "scopes": {"items": {"$ref": "#/$defs/SummaryScope"}, "type": "array"},
+        "not_analysed": {"$ref": "#/$defs/NotAnalysed"},
+        "sampled_moves": {
+          "description": "Per (model in use, balanced pick) in the headline scope: sampled calls, fallbacks among them, and their saving.",
+          "items": {"$ref": "#/$defs/SampledMove"},
+          "type": "array"
+        },
+        "caching": {"$ref": "#/$defs/SummaryCaching"},
+        "caveats": {"items": {}, "type": "array"}
+      },
+      "required": [
+        "window",
+        "spend_total",
+        "spend_per_month",
+        "scope",
+        "sampled_calls",
+        "recommended",
+        "levers_overlap",
+        "router",
+        "switch",
+        "recommendations",
+        "scopes",
+        "not_analysed",
+        "sampled_moves",
+        "caching",
+        "caveats"
+      ],
+      "type": "object"
+    },
+    "SummaryCaching": {
+      "properties": {
+        "threads_scanned": {"type": ["integer", "null"]},
+        "savings_found": {"type": ["number", "null"]},
+        "error": {"type": ["string", "null"]},
+        "rows": {"description": "Up to 20 candidate threads, largest saving first.", "items": {"$ref": "#/$defs/CacheRow"}, "type": "array"},
+        "cached_share": {"description": "Share of input tokens in the scanned threads already read from cache.", "type": ["number", "null"]},
+        "saved_by_cache": {"description": "What those cache reads saved against the input price, in the scanned threads.", "type": ["number", "null"]},
+        "threads_caching": {"description": "Scanned threads with a model already reading 20% or more of its input from cache.", "type": ["integer", "null"]}
+      },
+      "required": ["threads_scanned", "savings_found", "error", "rows", "cached_share", "saved_by_cache", "threads_caching"],
+      "type": "object"
+    },
+    "SummarySampling": {
+      "properties": {
+        "plan": {"type": ["string", "null"]},
+        "target": {"type": ["integer", "null"]},
+        "drawn": {"type": ["integer", "null"]},
+        "stop_reason": {"type": ["string", "null"]},
+        "decision_calls": {"type": ["integer", "null"]},
+        "half_width_per_month": {"type": ["number", "null"]},
+        "switch_from_totals": {"items": {"type": "string"}, "type": "array"}
+      },
+      "required": ["plan", "target", "drawn", "stop_reason", "decision_calls", "half_width_per_month", "switch_from_totals"],
+      "type": "object"
+    },
+    "SummaryScope": {
+      "properties": {
+        "headline": {"type": "boolean"},
+        "router": {"$ref": "#/$defs/ScopeLever"},
+        "switch": {"$ref": "#/$defs/ScopeLever"},
+        "models": {"items": {"$ref": "#/$defs/ScopeModel"}, "type": "array"}
+      },
+      "required": ["scope", "headline", "router", "switch", "models"],
+      "type": "object"
+    },
+    "SummaryWindow": {
+      "properties": {
+        "from": {"type": "string"},
+        "to": {"type": "string"},
+        "days": {"type": "integer"},
+        "requested": {"type": ["integer", "null"]},
+        "retention": {"type": ["integer", "null"]}
+      },
+      "required": ["from", "to", "days", "requested", "retention"],
+      "type": "object"
+    },
+    "SwitchLever": {
+      "properties": {
+        "pct_of_spend": {"type": ["number", "null"]},
+        "per_month": {"type": ["number", "null"]},
+        "ci90_per_month": {"anyOf": [{"items": {"type": "number"}, "type": "array"}, {"type": "null"}]},
+        "coverage": {"description": "Share of spend on the models this lever's estimate covers.", "type": ["number", "null"]},
+        "saved_today_per_month": {"type": ["number", "null"]},
+        "saved_after_enabling_per_month": {"type": ["number", "null"]},
+        "enable": {"items": {"type": "string"}, "type": "array"},
+        "replacements": {"items": {"$ref": "#/$defs/Replacement"}, "type": "array"}
+      },
+      "required": [
+        "pct_of_spend",
+        "per_month",
+        "ci90_per_month",
+        "coverage",
+        "saved_today_per_month",
+        "saved_after_enabling_per_month",
+        "enable",
+        "replacements"
+      ],
+      "type": "object"
+    },
+    "Target": {
+      "properties": {
+        "share_of_calls": {"type": ["number", "null"]},
+        "tiers": {"items": {"type": "string"}, "type": "array"},
+        "unscored_calls": {"type": "integer"},
+        "enable": {"type": "boolean"},
+        "stays": {"type": "boolean"}
+      },
+      "required": ["model", "share_of_calls", "tiers", "unscored_calls", "enable", "stays"],
+      "type": "object"
+    },
+    "Window": {
+      "properties": {
+        "from": {"type": "string"},
+        "to": {"type": "string"},
+        "days": {"minimum": 1, "type": "integer"},
+        "requested": {"minimum": 1, "type": "integer"},
+        "retention": {"anyOf": [{"minimum": 1, "type": "integer"}, {"type": "null"}]}
+      },
+      "required": ["from", "to", "days"],
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"params": {"properties": {"counterfactual_test": {"const": true}}, "required": ["counterfactual_test"]}, "status": {"const": "ok"}},
+        "required": ["params", "status"]
+      },
+      "then": {"required": ["counterfactual_test"]}
+    }
+  ],
+  "if": {"properties": {"status": {"const": "ok"}}, "required": ["status", "routing"]},
+  "properties": {
+    "schema_version": {"const": "1.3", "type": "string"},
+    "generated_at": {"type": "string"},
+    "workspace": {"type": ["string", "null"]},
+    "status": {"enum": ["ok", "stopped"], "type": "string"},
+    "stop": {"anyOf": [{"$ref": "#/$defs/StopInfo"}, {"type": "null"}]},
+    "summary": {
+      "$ref": "#/$defs/Summary",
+      "description": "Written by analyze on a finished run: every number the page shows. render only formats these; it does not recompute them."
+    },
+    "params": {"$ref": "#/$defs/Params"},
+    "window": {"$ref": "#/$defs/Window"},
+    "spend": {"$ref": "#/$defs/Spend"},
+    "routing_decision_cost": {"$ref": "#/$defs/RoutingDecisionCost"},
+    "sampling": {"$ref": "#/$defs/Sampling"},
+    "checks": {"$ref": "#/$defs/Checks"},
+    "samples": {"items": {"$ref": "#/$defs/Sample"}, "type": "array"},
+    "scenarios": {"items": {"$ref": "#/$defs/Scenario"}, "maxItems": 4, "minItems": 4, "type": "array"},
+    "routing": {"$ref": "#/$defs/Routing"},
+    "counterfactual_test": {"$ref": "#/$defs/CounterfactualTest"},
+    "caching": {"$ref": "#/$defs/Caching"},
+    "harness": {"$ref": "#/$defs/Harness"}
+  },
+  "required": ["schema_version", "generated_at", "workspace", "status", "stop", "params", "checks"],
+  "then": {"required": ["summary"]},
+  "type": "object"
+}

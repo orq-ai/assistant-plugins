@@ -1,0 +1,4400 @@
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["evaluatorq>=1.98", "orq-ai-sdk>=4.16.1"]
+# ///
+"""Cost-savings report for one orq.ai workspace.
+
+`analyze` samples traces from the workspace (probability proportional to trace cost), scores each trace's routing
+input with the Smart Router's `jev-general-v1` decision, re-prices the whole trace at the model the router would have
+picked, and scales the per-model saving rate to the window's spend with a thread-cluster bootstrap CI. It draws in
+rounds and stops once that CI is tight enough. The change-model lever is priced from the window's token totals per
+model, without sampling. Pools and model switches come from the intelligence/price frontier in evaluatorq's
+`model_frontier`, in four scopes: same or any provider, enabled or all available models. It also scans multi-turn
+threads for missed prompt caching and writes `report.json` plus `narrative-slots.md`. `render` merges the agent's
+`narrative.md` into `report.html`.
+
+Every number comes from this script; the agent writes prose only. Reads go through the `orq` CLI (`-o json`), so the
+user's CLI login and workspace are reused; decision calls go through the `orq-ai-sdk` with the same credentials
+(the CLI login's token, else `ORQ_API_KEY`) and are paced to the workspace plan's rate limit. `--filters` narrows
+every trace read to a scope (a project, an agent, metadata) and moves spend and token totals from telemetry to the
+filtered trace rows. Trace and search reads are cached under `<out>/cache/reads` (they contain prompts) and deleted
+afterwards, unless `--keep-cache` is given or the run stopped at the confirmation (the approved rerun then reads the
+same sample). Decision probabilities (no prompt text) are kept under `<out>/cache/decisions` until a run ends ok.
+Spec: ../resources/design.md.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import html
+import json
+import math
+import os
+import random
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import itertools
+import threading
+import time
+import urllib.parse
+from collections import Counter, defaultdict
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
+from pathlib import Path
+from typing import Annotated, Any, Literal, NamedTuple, TypeVar, cast
+
+import httpx
+from evaluatorq.common import model_frontier as mf
+from orq_ai_sdk import Orq as OrqSdk
+from orq_ai_sdk.models import OrqError as SdkError
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic.config import JsonDict
+
+Json = dict[str, Any]  # an object as the orq CLI or report.json carries it
+T = TypeVar("T")
+
+SCHEMA_VERSION = "1.3"
+MAX_SAMPLE = 500  # traces drawn, so decision calls at most
+MIN_PER_STRATUM = 5
+WINDOW_DAYS = 30
+BOOTSTRAP = 1000
+READ_WORKERS = 16
+DECISION_WORKERS = 4
+PRICING_GAP = 0.02
+PROMPT_LIMIT = 65_000
+SEARCH_CAP = 100  # rows one `traces search` returns at most
+MIN_WINDOW_S = 1.0  # a search window is not halved below this; a draw that still hits the cap is drawn again
+AGENT_HEAVY_CALLS = 3  # LLM calls per trace above which a model gets a caveat
+
+# adaptive stop: draw in rounds, stop once the headline router CI is tight enough (design.md, Sampling)
+ROUND = 25
+STOP_MIN_DRAWS = 50  # and every allocated model at its minimum, before the rule may stop early
+STOP_REL_HALF_WIDTH = 0.25  # of the estimate
+STOP_ABS_HALF_WIDTH = 0.01  # of window spend
+STOP_BOOTSTRAP = 200
+WALL_TIME_S = 900
+
+# decision-call pacing against the plan's per-minute rate limit, which gateway traffic shares
+PACE_SHARE = 0.30
+RATE_WINDOW_S = 60.0  # the limit's fixed window: the wait after a 429 without a Retry-After
+MAX_RETRY_AFTER_S = float(WALL_TIME_S)  # a longer Retry-After is capped
+MAX_429 = 6  # 429s on one decision call before the run stops
+DECISION_LATENCY_S = 2.0  # wait estimate only
+READ_S_PER_DRAW = 3.0  # wait estimate only
+FREE_DAILY = 50
+DEFAULT_RATE = 20  # requests a minute when the workspace states no limit
+PLAN_SAMPLE = {"free": 15, "growth": 100, "sandbox": 100, "pov": 100}  # any other plan type: MAX_SAMPLE
+DEFAULT_RATE_SAMPLE = 100  # the default sample when the workspace states no rate limit
+MAX_SCAN_PAGES = 300  # pages (SEARCH_CAP traces each) a filtered run reads for spend and token totals
+
+DECISION_MODEL = "typesafe/jev-latest"
+DECISION_PRICE_PER_M = 0.042
+DECISION_OVERHEAD_TOKENS = 330
+POLICY = "jev-general-v1"
+QUESTION = {
+    "difficulty": {
+        "type": "choice",
+        "instructions": "How difficult is this prompt for an LLM to complete well?",
+        "criteria": {
+            "easy": "Trivial change, any model handles it",
+            "medium": "Moderate complexity, benefits from a capable model",
+            "hard": "Complex task, needs a strong model",
+        },
+    }
+}
+THRESHOLDS = {"cost": (0.59, 1.16), "balanced": (0.11, 0.92)}
+PROFILES = ("balanced", "cost")
+TIERS = ("easy", "medium", "hard")
+
+LLM_SPAN_TYPES = {"span.chat_completion", "span.responses"}
+DECISION_MODEL_RE = re.compile(r"^(typesafe/|orq/decider-)")
+NON_CHAT_RE = re.compile(r"embed|rerank|tts|transcri|whisper|moderation|ocr|dall-e|image", re.I)
+
+PRERELEASE_RE = re.compile(r"(?:^|[-_.])(preview|beta|alpha|experimental)(?:$|[-_.])", re.IGNORECASE)  # name segment
+PROVIDER_FAMILY = {"google-ai": "google"}  # one provider for same-provider scopes; routes keep their own prices
+MIN_SAMPLE = 15  # 1 to 14 sampled calls on a model get a "Small sample" note
+SCOPES = ("same_provider:all", "same_provider:enabled", "any_provider:all", "any_provider:enabled")
+HEADLINE_SCOPE = "same_provider:all"
+REGION_RE = re.compile(r"^(global|us|eu|apac|ap|jp|au|ca|uk|[a-z]{2}-[a-z]+-[0-9]+)\.")
+SR_BLOCK = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
+
+
+# --------------------------------------------------------------------------------------------- routing input
+
+
+def _part_text(part: Any) -> str | None:
+    if isinstance(part, str):
+        return part
+    if not isinstance(part, dict):
+        return None
+    kind = part.get("type") or part.get("kind")
+    if kind not in ("text", "input_text"):
+        return None
+    for key in ("content", "text"):
+        if isinstance(part.get(key), str):
+            return part[key]
+    return None
+
+
+def message_text(msg: Json) -> str:
+    """Text of one message: text parts cleaned of complete <system-reminder> blocks, trimmed, joined by a space."""
+    pieces: list[str] = []
+    parts = msg.get("parts")
+    if isinstance(parts, list):
+        pieces = [t for t in (_part_text(p) for p in parts) if t is not None]
+    elif isinstance(msg.get("content"), str):
+        pieces = [msg["content"]]
+    elif isinstance(msg.get("content"), list):
+        pieces = [t for t in (_part_text(p) for p in msg["content"]) if t is not None]
+    cleaned = [SR_BLOCK.sub("", p).strip() for p in pieces]
+    return " ".join(p for p in cleaned if p)
+
+
+def input_messages(attrs: Json) -> list[Json]:
+    """The span's input messages: `gen_ai.input` is `{messages: [...]}` on responses spans and a bare list on chat
+    completions spans."""
+    inp = (attrs.get("gen_ai") or {}).get("input")
+    msgs = inp if isinstance(inp, list) else (inp or {}).get("messages") if isinstance(inp, dict) else None
+    return [m for m in msgs or [] if isinstance(m, dict)]
+
+
+def _system_text(attrs: Json) -> str:
+    gen = attrs.get("gen_ai") or {}
+    msgs = input_messages(attrs)
+    texts = [message_text(m) for m in msgs if m.get("role") in ("system", "developer")]
+    raw = gen.get("system_instructions")
+    if isinstance(raw, str) and raw:
+        try:
+            parsed = json.loads(raw)
+            texts.append(message_text({"parts": parsed if isinstance(parsed, list) else [parsed]}))
+        except json.JSONDecodeError:
+            texts.append(SR_BLOCK.sub("", raw).strip())
+    return " ".join(t for t in texts if t)
+
+
+def routing_input(attrs: Json) -> tuple[str | None, str]:
+    """(text, source). source: user | system | instructions | empty_input | prompt_limit."""
+    msgs = input_messages(attrs)
+    text, source = "", "empty_input"
+    for m in reversed(msgs):
+        if m.get("role") == "user":
+            t = message_text(m)
+            if t:
+                text, source = t, "user"
+                break
+    if not text:
+        t = _system_text(attrs)
+        if t:
+            text, source = t, "system"
+    if not text:
+        instr = (attrs.get("openresponses") or {}).get("instructions")
+        if isinstance(instr, str) and SR_BLOCK.sub("", instr).strip():
+            text, source = SR_BLOCK.sub("", instr).strip(), "instructions"
+    if not text:
+        return None, "empty_input"
+    if len(text) > PROMPT_LIMIT:
+        return None, "prompt_limit"
+    return text, source
+
+
+# --------------------------------------------------------------------------------------------- score, tier, bands
+
+
+def score(probs: Json) -> float:
+    return float(probs.get("easy", 0)) * 0.0 + float(probs.get("medium", 0)) * 1.0 + float(probs.get("hard", 0)) * 2.0
+
+
+def tier_of(s: float, profile: str) -> str:
+    t1, t2 = THRESHOLDS[profile]
+    if s <= t1:
+        return "easy"
+    if s <= t2:
+        return "medium"
+    return "hard"
+
+
+@dataclass
+class PoolModel:
+    id: str
+    index: float
+    band_price: float
+
+
+def bands(pool: list[PoolModel]) -> dict[str, list[PoolModel]]:
+    ps = sorted(pool, key=lambda p: (-p.index, p.id))
+    n_easy = len(ps) // 2
+    easy = ps[len(ps) - n_easy:] if n_easy else []
+    rest = ps[: len(ps) - n_easy]
+    n_hard = len(rest) // 2
+    return {"hard": rest[:n_hard], "medium": rest[n_hard:], "easy": easy}
+
+
+def pick(pool: list[PoolModel], tier: str, profile: str) -> PoolModel:
+    b = bands(pool)
+    target = tier
+    if not b[target]:
+        stronger = [t for t in TIERS[TIERS.index(tier) + 1:] if b[t]]
+        target = stronger[0] if stronger else next(t for t in reversed(TIERS) if b[t])
+    cand = b[target]
+    return sorted(cand, key=lambda p: (p.band_price, -p.index, p.id))[0]
+
+
+# --------------------------------------------------------------------------------------------- frontier pools
+
+
+def switch_target(incumbent: mf.ScoredModel, cands: list[mf.ScoredModel],
+                  cost: Callable[[str], float | None] | None = None) -> mf.ScoredModel | None:
+    """The cheapest candidate that dominates the incumbent: at least as intelligent and no more expensive, strictly
+    better on one.
+
+    With `cost` (the incumbent's window token totals re-priced on a model, cache reads and writes included) price is that
+    cost; a model `cost` cannot price is never a target. Without it, evaluatorq's 3:1 input/output blend."""
+    if incumbent.free:
+        return None
+    if cost is None:
+        better = [m for m in cands if m.router_id != incumbent.router_id and m.dominates(incumbent)]
+        return min(better, key=lambda m: (m.price, -m.default_index, m.router_id)) if better else None
+    own = cost(incumbent.router_id)
+    if own is None:
+        return None
+    priced = [(c, m) for m in cands if m.router_id != incumbent.router_id and (c := cost(m.router_id)) is not None]
+    beats = [(c, m) for c, m in priced if m.default_index >= incumbent.default_index and c <= own
+             and (m.default_index > incumbent.default_index or c < own)]
+    return min(beats, key=lambda t: (t[0], -t[1].default_index, t[1].router_id))[1] if beats else None
+
+
+Cost = Callable[[str], "float | None"]
+
+
+def _pricer(cost: Cost | None) -> Callable[[mf.ScoredModel], float | None]:
+    return (lambda m: m.price) if cost is None else (lambda m: cost(m.router_id))
+
+
+def _beats(a: mf.ScoredModel, b: mf.ScoredModel, price: Callable[[mf.ScoredModel], float | None]) -> bool:
+    pa, pb = price(a), price(b)
+    if pa is None or pb is None:
+        return False
+    return a.default_index >= b.default_index and pa <= pb and (a.default_index > b.default_index or pa < pb)
+
+
+# A seat counts once it is at least half the price of the seat above. evaluatorq lowers its MIN_TIER_RATIO
+# from 2.75 to the same 2.0; until that release is the floor here, the skill pins it.
+MIN_TIER_RATIO = 2.0
+
+
+def frontier_pool(top: mf.ScoredModel, cands: list[mf.ScoredModel],
+                  cost: Cost | None = None) -> tuple[list[mf.ScoredModel], bool]:
+    """(members strongest first, relaxed): `top` plus up to two cheaper frontier models, by the RES-1285 criteria.
+
+    The lower seats are on the candidates' frontier, weaker than `top`, distinct models, and each sits at least
+    MIN_TIER_RATIO cheaper than the seat above it; of the trios that pass, the one whose weakest seat is strongest
+    wins, ties on total index. With no trio the best pair is returned and flagged relaxed; with no pair, [top].
+
+    Price is `cost` (the incumbent's window token totals re-priced on the model, cache included) when given, so the
+    frontier, the tier gaps and dominance follow this workspace's traffic; else evaluatorq's 3:1 blend."""
+    ratio = MIN_TIER_RATIO
+    ident = mf.model_identity
+    price = _pricer(cost)
+    top_p = price(top)
+    if top_p is None:
+        return [top], True
+    pp = {m.router_id: x for m in cands if not m.free and (x := price(m)) is not None}
+    priced = [m for m in cands if m.router_id in pp]
+    front = [m for m in priced if not any(_beats(o, m, price) for o in priced if o is not m)]
+    lower = [m for m in front if m.default_index < top.default_index
+             and ident(m.router_id) != ident(top.router_id) and pp[m.router_id] * ratio <= top_p]
+    best: tuple[tuple[float, float, str, str], list[mf.ScoredModel]] | None = None
+    for mid in lower:
+        for low in lower:
+            if pp[low.router_id] * ratio <= pp[mid.router_id] and ident(low.router_id) != ident(mid.router_id):
+                rank = (min(mid.default_index, low.default_index), mid.default_index + low.default_index,
+                        mid.router_id, low.router_id)
+                if best is None or rank > best[0]:
+                    best = (rank, [top, mid, low])
+    if best:
+        return best[1], False
+    if lower:
+        return [top, max(lower, key=lambda m: (m.default_index, -pp[m.router_id], m.router_id))], True
+    return [top], True
+
+
+def has_dominated(members: list[mf.ScoredModel], cost: Cost | None = None) -> bool:
+    price = _pricer(cost)
+    return any(_beats(a, b, price) for a in members for b in members if a is not b)
+
+
+def region_of(model_id: str) -> str | None:
+    name = model_id.split("/", 1)[1] if "/" in model_id else model_id
+    m = REGION_RE.match(name)
+    if not m or m.group(1) == "global":
+        return None
+    r = m.group(1)
+    return r.split("-", 1)[0] if "-" in r else r
+
+
+def developer_of(canonical: str) -> str:
+    return canonical.split("/", 1)[0]
+
+
+# --------------------------------------------------------------------------------------------- pricing
+
+
+class _Missing:
+    def __repr__(self) -> str:
+        return "MISSING"
+
+
+MISSING = _Missing()
+_TOKEN = re.compile(r'\s*(?:(\d+(?:\.\d+)?)|"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*)|(==|!=|>=|<=|&&|\|\||[<>()+\-*/%]))')
+
+
+def _tokenize(expr: str) -> list[tuple[str, Any]]:
+    out: list[tuple[str, Any]] = []
+    pos = 0
+    expr = expr.strip()
+    while pos < len(expr):
+        m = _TOKEN.match(expr, pos)
+        if not m or m.end() == pos:
+            raise ValueError(f"bad token in {expr!r} at {pos}")
+        num, s, ident, op = m.groups()
+        if num is not None:
+            out.append(("num", float(num) if "." in num else int(num)))
+        elif s is not None:
+            out.append(("str", s))
+        elif ident is not None:
+            out.append(("var", ident) if ident not in ("true", "false") else ("bool", ident == "true"))
+        else:
+            out.append(("op", op))
+        pos = m.end()
+    return out
+
+
+class _Parser:
+    """Recursive descent: or > and > comparison > additive > multiplicative > primary."""
+
+    def __init__(self, tokens: list[tuple[str, Any]]):
+        self.t, self.i = tokens, 0
+
+    def peek(self) -> tuple[str, Any] | None:
+        return self.t[self.i] if self.i < len(self.t) else None
+
+    def eat(self, op: str | None = None) -> tuple[str, Any]:
+        tok = self.peek()
+        if tok is None or (op is not None and tok != ("op", op)):
+            raise ValueError(f"expected {op} at token {self.i}")
+        self.i += 1
+        return tok
+
+    def parse(self) -> tuple:
+        node = self.or_()
+        if self.peek() is not None:
+            raise ValueError("trailing tokens")
+        return node
+
+    def _binary(self, sub, ops):
+        node = sub()
+        while (tok := self.peek()) and tok[0] == "op" and tok[1] in ops:
+            self.i += 1
+            node = ("bin", tok[1], node, sub())
+        return node
+
+    def or_(self):
+        return self._binary(self.and_, ("||",))
+
+    def and_(self):
+        return self._binary(self.cmp, ("&&",))
+
+    def cmp(self):
+        return self._binary(self.add, ("==", "!=", ">", ">=", "<", "<="))
+
+    def add(self):
+        return self._binary(self.mul, ("+", "-"))
+
+    def mul(self):
+        return self._binary(self.primary, ("*", "/", "%"))
+
+    def primary(self):
+        tok = self.eat()
+        if tok == ("op", "("):
+            node = self.or_()
+            self.eat(")")
+            return node
+        if tok[0] in ("num", "str", "bool"):
+            return ("lit", tok[1])
+        if tok[0] == "var":
+            return ("var", tok[1])
+        raise ValueError(f"unexpected {tok}")
+
+
+def parse_when(expr: str) -> tuple:
+    return _Parser(_tokenize(expr)).parse()
+
+
+def when_vars(node: tuple) -> set[str]:
+    if node[0] == "var":
+        return {node[1]}
+    if node[0] == "bin":
+        return when_vars(node[2]) | when_vars(node[3])
+    return set()
+
+
+def when_conditions(node: tuple) -> int:
+    """Number of comparisons in a condition: how much of the span it tests."""
+    if node[0] != "bin":
+        return 0
+    own = 1 if node[1] in ("==", "!=", ">", ">=", "<", "<=") else 0
+    return own + when_conditions(node[2]) + when_conditions(node[3])
+
+
+def eval_when(node: tuple, env: Json) -> Any:
+    kind = node[0]
+    if kind == "lit":
+        return node[1]
+    if kind == "var":
+        v = env.get(node[1])
+        return MISSING if v is None else v
+    op, a, b = node[1], eval_when(node[2], env), eval_when(node[3], env)
+    if op == "&&":
+        return a is True and b is True
+    if op == "||":
+        return a is True or b is True
+    if a is MISSING or b is MISSING:
+        return MISSING if op in "+-*/%" else False
+    try:
+        if op == "==":
+            return a == b
+        if op == "!=":
+            return a != b
+        if op in (">", ">=", "<", "<="):
+            if isinstance(a, str) != isinstance(b, str):
+                return False
+            return {">": a > b, ">=": a >= b, "<": a < b, "<=": a <= b}[op]
+        if op == "+":
+            return a + b
+        if op == "-":
+            return a - b
+        if op == "*":
+            return a * b
+        if op == "/":
+            return a // b if isinstance(a, int) and isinstance(b, int) else a / b
+        if op == "%":
+            return a % b
+    except (TypeError, ZeroDivisionError):
+        return MISSING if op in "+-*/%" else False
+    raise ValueError(op)
+
+
+def _unit(entry: Any) -> float | None:
+    if not isinstance(entry, dict) or entry.get("cost") is None:
+        return None
+    return float(entry["cost"]) / float(entry.get("per") or 1_000_000)
+
+
+@dataclass
+class PriceChoice:
+    prices: dict[str, float]
+    variant: str | None
+    flag: str | None = None
+
+
+def choose_price(pricing: Json, env: Json) -> PriceChoice:
+    """Base price unless a variant's condition holds on what the span shows.
+
+    Of the matching variants the one with the most comparisons wins (closest to how the client calls the model);
+    ties go to the last listed, which is how the catalog orders newer prices after older ones."""
+    base = {k: u for k, v in pricing.items() if k != "variants" and (u := _unit(v)) is not None}
+    best, best_n, best_when = None, -1, None
+    for var in pricing.get("variants") or []:
+        when = var.get("when")
+        if not when:
+            continue
+        try:
+            node = parse_when(when)
+        except ValueError:
+            continue
+        if eval_when(node, env) is True:
+            n = when_conditions(node)
+            if n >= best_n:
+                best, best_n, best_when = var, n, when
+    prices = dict(base)
+    if best is not None:
+        prices.update({k: u for k, v in best.items() if k != "when" and (u := _unit(v)) is not None})
+    flag = None
+    tier = env.get("tier")
+    if tier in ("batch", "priority", "flex"):
+        has = any(f'"{tier}"' in (v.get("when") or "") for v in pricing.get("variants") or [])
+        if not has:
+            flag = f"no {tier} price"
+    return PriceChoice(prices, best_when, flag)
+
+
+def span_env(summary: Json, attrs: Json, model_id: str) -> Json:
+    usage = (attrs.get("gen_ai") or {}).get("usage") or {}
+    tier = (summary.get("cost") or {}).get("pricing_tier") or ((attrs.get("openai") or {}).get("response") or {}).get(
+        "service_tier")
+    if tier in ("default", "auto", ""):
+        tier = "standard" if tier else None
+    geo = usage.get("inference_geo")
+    if geo in (None, "", "global"):
+        geo = region_of(model_id)
+    started = summary.get("started_at")
+    return {
+        "request_unix": int(parse_ts(started).timestamp()) if started else None,
+        "input_tokens": int((summary.get("usage") or {}).get("prompt_tokens") or 0),
+        "tier": tier,
+        "inference_geo": geo,
+        "speed": usage.get("speed") or None,
+        "operation": summary.get("operation") or None,
+    }
+
+
+@dataclass
+class Tokens:
+    uncached: int
+    cache_read: int
+    cache_write: int
+    output: int
+    ttl: str | None
+    prompt: int
+
+
+def span_tokens(summary: Json, attrs: Json) -> Tokens:
+    u = summary.get("usage") or {}
+    prompt = int(u.get("prompt_tokens") or 0)
+    read = int(u.get("prompt_cached_tokens") or 0)
+    write = int(u.get("prompt_cache_creation_tokens") or 0)
+    details = (((attrs.get("gen_ai") or {}).get("usage") or {}).get("prompt_tokens_details")) or {}
+    ttl = None
+    for k, v in details.items():
+        m = re.match(r"cache_creation_(\w+?)_tokens$", k)
+        if m and v:
+            ttl = m.group(1)
+            break
+    return Tokens(max(0, prompt - read - write), read, write, int(u.get("completion_tokens") or 0), ttl, prompt)
+
+
+def _ttl_seconds(ttl: str) -> float:
+    m = re.match(r"(\d+)([smhd])$", ttl)
+    return int(m.group(1)) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[m.group(2)] if m else math.inf
+
+
+def write_price(prices: dict[str, float], ttl: str | None) -> float | None:
+    if ttl and f"cache_write_{ttl}" in prices:
+        return prices[f"cache_write_{ttl}"]
+    keys = [k for k in prices if k.startswith("cache_write_")]
+    if not keys:
+        return prices.get("cache_write")
+    return prices[min(keys, key=lambda k: _ttl_seconds(k.removeprefix("cache_write_")))]
+
+
+def price_tokens(t: Tokens, prices: dict[str, float]) -> float:
+    inp, out = prices.get("input", 0.0), prices.get("output", 0.0)
+    read_p = prices.get("cache_read", inp)
+    w = write_price(prices, t.ttl)
+    w = inp if w is None else w
+    return t.uncached * inp + t.cache_read * read_p + t.cache_write * w + t.output * out
+
+
+# --------------------------------------------------------------------------------------------- estimator
+
+
+@dataclass
+class Draw:
+    """One sampled trace. `weight` is 1 / its inclusion probability, so stratum_rate is the Hansen-Hurwitz ratio
+    estimator; with inclusion proportional to cost it is the mean of saving / cost."""
+    stratum: str
+    weight: float
+    cur_price: float
+    savings: dict[str, float] = field(default_factory=dict)  # per profile
+    cluster: str = ""  # thread (or trace) id; "" makes the draw its own cluster
+
+
+def stratum_rate(draws: list[Draw], profile: str) -> float | None:
+    den = sum(d.weight * d.cur_price for d in draws)
+    if den <= 0:
+        return None
+    return sum(d.weight * d.savings.get(profile, 0.0) for d in draws) / den
+
+
+def allocate(spend: list[tuple[str, float]], n: int, minimum: int = MIN_PER_STRATUM) -> dict[str, int]:
+    """Spend-proportional allocation over the largest prefix of models where every model gets >= minimum."""
+    ranked = sorted([s for s in spend if s[1] > 0], key=lambda s: -s[1])
+    k = 0
+    for j in range(1, len(ranked) + 1):
+        tot = sum(c for _, c in ranked[:j])
+        if n * ranked[j - 1][1] / tot >= minimum:
+            k = j
+        else:
+            break
+    if k == 0:
+        return {ranked[0][0]: n} if ranked else {}
+    top = ranked[:k]
+    tot = sum(c for _, c in top)
+    raw = [(m, n * c / tot) for m, c in top]
+    alloc = {m: max(minimum, int(math.floor(x))) for m, x in raw}
+    left = n - sum(alloc.values())
+    for m, _x in sorted(raw, key=lambda r: -(r[1] - math.floor(r[1]))):
+        if left <= 0:
+            break
+        alloc[m] += 1
+        left -= 1
+    return alloc
+
+
+def draw_order(alloc: dict[str, int], minimum: int = MIN_PER_STRATUM) -> list[str]:
+    """One entry per draw: every model's first `minimum` draws, then the rest interleaved by allocation, so a run
+    that stops after any round is spread like the full allocation."""
+    keyed = [((0, i, 0.0) if i < minimum else (1, 0, (i + 0.5) / n), m) for m, n in alloc.items() for i in range(n)]
+    return [m for _, m in sorted(keyed)]
+
+
+def stop_reason(savings: float, ci90: list[float], spend: float) -> str | None:
+    """Why the adaptive stop may end the run now, from the headline CI; None to keep drawing."""
+    half = (ci90[1] - ci90[0]) / 2
+    if savings and half <= STOP_REL_HALF_WIDTH * abs(savings):
+        return "relative_precision"
+    if half <= STOP_ABS_HALF_WIDTH * spend:
+        return "absolute_precision"
+    return None
+
+
+@dataclass
+class BootEstimate:
+    savings: float
+    ci90: list[float]
+    per_stratum: dict[str, float | None]  # None: the stratum has no priced cost
+
+
+def clusters(draws: list[Draw]) -> list[list[Draw]]:
+    """Draws grouped by thread: calls in one conversation are not independent, so the bootstrap resamples these."""
+    by: dict[str, list[Draw]] = {}
+    for i, d in enumerate(draws):
+        by.setdefault(d.cluster or f"#{i}", []).append(d)
+    return list(by.values())
+
+
+def estimate(draws_by: dict[str, list[Draw]], spend: dict[str, float], profile: str, rng: random.Random,
+             boots: int = BOOTSTRAP) -> BootEstimate:
+    per: dict[str, float | None] = {}
+    total = 0.0
+    for s, ds in draws_by.items():
+        r = stratum_rate(ds, profile)
+        per[s] = None if r is None else r * spend.get(s, 0.0)
+        total += per[s] or 0.0
+    groups = {s: clusters(ds) for s, ds in draws_by.items() if ds}
+    samples = []
+    for _ in range(boots):
+        tot = 0.0
+        for s, gs in groups.items():
+            res = [d for _ in gs for d in gs[rng.randrange(len(gs))]]
+            r = stratum_rate(res, profile)
+            tot += (r or 0.0) * spend.get(s, 0.0)
+        samples.append(tot)
+    samples.sort()
+    lo = samples[int(0.05 * (len(samples) - 1))] if samples else total
+    hi = samples[int(math.ceil(0.95 * (len(samples) - 1)))] if samples else total
+    return BootEstimate(total, [lo, hi], per)
+
+
+def without_top(draws_by: dict[str, list[Draw]], spend: dict[str, float], profile: str, k: int = 3) -> float:
+    flat = [(s, i, d) for s, ds in draws_by.items() for i, d in enumerate(ds)]
+    den = {s: sum(d.weight * d.cur_price for d in ds) for s, ds in draws_by.items()}
+
+    def share(x: tuple) -> float:  # a draw's contribution to the estimate: its stratum's spend over its priced cost
+        s, _, d = x
+        return d.weight * d.savings.get(profile, 0.0) * spend.get(s, 0.0) / den[s] if den[s] > 0 else 0.0
+    top = sorted(flat, key=lambda x: -share(x))[:k]
+    drop = {(s, i) for s, i, _ in top}
+    kept = {s: [d for i, d in enumerate(ds) if (s, i) not in drop] for s, ds in draws_by.items()}
+    return sum((stratum_rate(ds, profile) or 0.0) * spend.get(s, 0.0) for s, ds in kept.items() if ds)
+
+
+# --------------------------------------------------------------------------------------------- caching
+
+
+@dataclass
+class Turn:
+    """One LLM call of a (thread, model): when it started and its prompt tokens."""
+    t: float  # unix seconds
+    prompt: int
+    cached: int  # read from cache
+    written: int  # written to cache
+
+
+def caching_savings(turns: list[Turn], prices: dict[str, float], ttl_s: float) -> float:
+    """What caching the shared prefix would save over these turns (sorted by time), net of the write premium."""
+    inp, read = prices.get("input", 0.0), prices.get("cache_read")
+    write = write_price(prices, None)
+    if read is None:
+        return 0.0
+    gain = cost = 0.0
+    if write is not None and turns:  # the first turn writes the prefix the later turns read
+        cost += max(0, turns[0].prompt - turns[0].written) * (write - inp)
+    for prev, cur in zip(turns, turns[1:]):
+        read_k = min(prev.prompt if cur.t - prev.t <= ttl_s else 0, cur.prompt)
+        gain += max(0, read_k - cur.cached) * (inp - read)
+        if write is not None:
+            cost += max(0, cur.prompt - read_k - cur.written) * (write - inp)
+    return gain - cost
+
+
+def caching_candidate(turns: list[Turn], prices: dict[str, float]) -> tuple[bool, str]:
+    if len(turns) < 3:
+        return False, "fewer than 3 turns"
+    if prices.get("cache_read") is None:
+        return False, "no cache-read price"
+    if min(t.prompt for t in turns[:-1]) < 1024:
+        return False, "prefix under 1,024 tokens"
+    return True, ""  # a thread that already caches can still miss turns; caching_savings counts only uncached reads
+
+
+# --------------------------------------------------------------------------------------------- orq CLI
+
+
+class OrqError(RuntimeError):
+    def __init__(self, args: list[str], code: int, stderr: str):
+        super().__init__(f"orq {' '.join(args[:3])} -> {code}: {stderr.strip()[:400]}")
+        self.stderr = stderr
+
+
+@dataclass(frozen=True)
+class Plan:
+    """The workspace's plan as it bears on decision calls."""
+    type: str  # plan type as the workspace states it; "free" when it states none
+    rate_limit: int  # requests per minute (the decision endpoint shares it with gateway traffic)
+    daily_limit: int | None  # free plans: decision calls a day
+    source: str  # where rate_limit came from: metadata.rateLimit | features.rate_limit | default
+
+    @property
+    def per_minute(self) -> float:
+        """The pace decision calls keep to."""
+        return max(1.0, PACE_SHARE * self.rate_limit)
+
+    @property
+    def default_sample(self) -> int:
+        n = PLAN_SAMPLE.get(self.type, MAX_SAMPLE)
+        return min(n, DEFAULT_RATE_SAMPLE) if self.source == "default" else n
+
+
+def plan_of(ws: Json) -> Plan:
+    """From `workspaces get`: the rate limit is `subscription.metadata.rateLimit`, then `features.rate_limit`, else
+    DEFAULT_RATE. The plan type sets the default sample and the free plan's daily limit; a type the script does not
+    know keeps its own name, with no daily limit."""
+    sub = ws.get("subscription") or {}
+    meta = sub.get("metadata") or {}
+    kind = str(meta.get("type") or sub.get("type") or "free").lower()
+    daily = FREE_DAILY if kind == "free" else None
+    for value, source in ((meta.get("rateLimit"), "metadata.rateLimit"),
+                          ((ws.get("features") or {}).get("rate_limit"), "features.rate_limit")):
+        try:
+            if value is not None and int(value) > 0:
+                return Plan(kind, int(value), daily, source)
+        except (TypeError, ValueError):
+            continue
+    return Plan(kind, DEFAULT_RATE, daily, "default")
+
+
+class Pacer:
+    """Paces the decision workers: one call every 60/per_minute seconds, the gap doubled on a 429 (once per hold
+    period) and every worker held until its Retry-After has passed. It never speeds back up within a run; a run is
+    short enough that a slower tail is cheap."""
+
+    def __init__(self, per_minute: float, clock: Callable[[], float] = time.monotonic,
+                 sleep: Callable[[float], None] = time.sleep):
+        self.gap, self.clock, self.sleep = 60.0 / per_minute, clock, sleep
+        self.next = self.hold = 0.0
+        self.throttles = 0
+        self.lock = threading.Lock()
+
+    def acquire(self) -> None:
+        while True:
+            with self.lock:
+                now = self.clock()
+                at = max(now, self.next, self.hold)
+                if at <= now:
+                    self.next = now + self.gap
+                    return
+            self.sleep(at - now)
+
+    def throttled(self, wait_s: float) -> None:
+        with self.lock:
+            now = self.clock()
+            self.throttles += 1
+            if now >= self.hold:  # a 429 inside an active hold is the same overload: held, not slowed again
+                self.gap *= 2
+            self.hold = max(self.hold, now + wait_s)
+
+
+def retry_after(headers: Any, now: datetime | None = None) -> float:
+    """Seconds a 429 asks to wait: its Retry-After (seconds or an HTTP date), else RATE_WINDOW_S."""
+    raw = (headers.get("retry-after") if headers is not None else None) or ""
+    try:
+        wait = float(raw)
+    except ValueError:
+        try:
+            wait = (parsedate_to_datetime(raw) - (now or datetime.now(UTC))).total_seconds()
+        except (TypeError, ValueError):
+            return RATE_WINDOW_S
+    return min(max(wait, 0.0), MAX_RETRY_AFTER_S)
+
+
+def backoff(attempt: int) -> None:
+    """Sleep before retry `attempt` (0 first): 1 s, 2 s, 4 s, ..., jittered so parallel workers do not retry in step."""
+    time.sleep(2 ** attempt * (0.5 + random.random()))
+
+
+def sdk_call(call: Callable[[], T], retries: int = 4, on_429: Callable[[float], None] | None = None,
+             timeouts: bool = True, refresh: Callable[[], None] | None = None) -> T:
+    """`call()` with the retry every SDK call shares: a 429 waits its Retry-After (`on_429`, else a sleep) up to
+    MAX_429 times, a 5xx or a timeout (when `timeouts`) backs off up to `retries`, and a 401 `authz_stale` asks
+    `refresh` for a new login token once. Anything else, and an exhausted retry, raises."""
+    attempt = limited = 0
+    stale = False
+    while True:
+        try:
+            return call()
+        except SdkError as e:
+            if e.status_code == 429 and limited < MAX_429:
+                limited += 1
+                (on_429 or time.sleep)(retry_after(e.headers))
+                continue
+            if e.status_code == 401 and "authz_stale" in e.body and refresh and not stale:
+                stale = True
+                refresh()
+                continue
+            if not (500 <= e.status_code <= 504 and attempt < retries):
+                raise
+        except httpx.TimeoutException:
+            if not (timeouts and attempt < retries):
+                raise
+        backoff(attempt)
+        attempt += 1
+
+
+class Orq:
+    def __init__(self, workspace: str | None, cache_dir: Path | None, retries: int = 4):
+        self.workspace, self.cache_dir, self.retries = workspace, cache_dir, retries
+        self.calls = 0
+        if cache_dir:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def cached(self, key: list[Any], load: Callable[[], Json]) -> Json:
+        """`load()`, read from the read cache when an earlier run of this window stored it."""
+        path = self.cache_dir / f"{hashlib.sha256(json.dumps(key, default=str).encode()).hexdigest()[:24]}.json" \
+            if self.cache_dir else None
+        if path and path.exists():
+            return json.loads(path.read_text())
+        out = load()
+        if path:
+            path.write_text(json.dumps(out))
+        return out
+
+    def __call__(self, *args: str, cache: bool = True) -> Any:
+        """One CLI call, read from the cache when it has it. A 5xx or 429 is retried with jittered backoff up to
+        `retries`."""
+        argv = list(args) + (["--workspace", self.workspace] if self.workspace else []) + ["-o", "json"]
+        key = hashlib.sha256(json.dumps(argv).encode()).hexdigest()[:24]
+        path = self.cache_dir / f"{key}.json" if (self.cache_dir and cache) else None
+        if path and path.exists():
+            return json.loads(path.read_text())
+        attempt = 0
+        while True:
+            self.calls += 1
+            p = subprocess.run(["orq", *argv], capture_output=True, text=True, timeout=180)
+            if p.returncode == 0:
+                out = json.loads(p.stdout) if p.stdout.strip() else None
+                if path:
+                    path.write_text(json.dumps(out))
+                return out
+            if re.search(r"HTTP (429|50[0-4])", p.stderr) and attempt < self.retries:
+                backoff(attempt)
+                attempt += 1
+                continue
+            raise OrqError(argv, p.returncode, p.stderr)
+
+
+class CredentialsError(Exception):
+    """No credentials for decision calls: no CLI login (or no `orq` binary) and no `ORQ_API_KEY`."""
+
+
+def make_client(workspace: str | None) -> tuple[OrqSdk, Callable[[], None]]:
+    """The SDK client with the credentials the CLI reads with, and a function that gets a new token: the token of
+    the CLI login (it lasts about an hour, so it is asked for again when it expires), else `ORQ_API_KEY` when no
+    login is available. Raises CredentialsError when neither works."""
+    server = os.environ.get("ORQ_API_BASE_URL") or None
+    argv = ["orq", "auth", "token", "-o", "json"] + (["--workspace", workspace] if workspace else [])
+    tok: dict[str, Any] = {}
+    lock = threading.Lock()
+
+    def token(force: bool = False) -> str:
+        with lock:
+            if force or not tok or tok["expires"] - time.time() < 60:
+                try:
+                    p = subprocess.run(argv + (["--refresh"] if force else []), capture_output=True, text=True,
+                                       timeout=60)
+                    if p.returncode != 0:
+                        raise OrqError(argv, p.returncode, p.stderr)
+                    out = json.loads(p.stdout)
+                    tok.update(value=out["token"], server=out.get("server"),
+                               expires=parse_ts(out["expires_at"]).timestamp() if out.get("expires_at")
+                               else time.time() + 600)
+                except (OrqError, KeyError, ValueError, OSError, subprocess.TimeoutExpired) as e:
+                    raise CredentialsError(str(e)[:200]) from e
+            return tok["value"]
+
+    try:
+        token()
+    except CredentialsError:
+        if key := os.environ.get("ORQ_API_KEY"):
+            return OrqSdk(api_key=key, server_url=server), lambda: None
+        raise
+
+    def refresh() -> None:
+        token(True)
+    return OrqSdk(api_key=token, server_url=server or tok.get("server")), refresh
+
+
+# --------------------------------------------------------------------------------------------- helpers
+
+
+def parse_ts(s: str) -> datetime:
+    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
+def iso(d: datetime) -> str:
+    return d.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def iso_ms(d: datetime) -> str:
+    """ISO with milliseconds: halved search windows end between whole seconds."""
+    return d.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def single_model(row: Json) -> bool:
+    return len(row.get("models") or []) == 1
+
+
+def trace_cost(row: Json) -> float:
+    """A search row's billed cost: the whole trace."""
+    return max(0.0, float((row.get("cost") or {}).get("total") or 0))
+
+
+# window token totals per model (telemetry, traces source); input includes cache reads and writes
+AGG_METRICS = {"input": "gen_ai.client.inference.usage.input_tokens",
+               "cache_read": "gen_ai.client.inference.usage.cache_read.input_tokens",
+               "cache_write": "gen_ai.client.inference.usage.cache_write.input_tokens",
+               "output": "gen_ai.client.inference.usage.output_tokens"}
+
+
+def model_key(provider: str, model: str) -> str:
+    return f"{provider}/{model}" if provider else model
+
+
+def split_model(m: str) -> tuple[str, str]:
+    return tuple(m.split("/", 1)) if "/" in m else ("", m)  # type: ignore[return-value]
+
+
+def is_chat_model(m: str, cat: Json) -> bool:
+    if DECISION_MODEL_RE.match(m) or NON_CHAT_RE.search(m):
+        return False
+    entry = cat.get(m)
+    if entry:
+        outs = ((entry.get("modalities") or {}).get("output")) or ["text"]
+        return "text" in outs
+    return True
+
+
+def has_auto_router(attrs: Json) -> bool:
+    return "auto_router" in json.dumps(list(_keys(attrs)))
+
+
+def _keys(d: Any, prefix: str = ""):
+    if isinstance(d, dict):
+        for k, v in d.items():
+            yield prefix + k
+            yield from _keys(v, prefix + k + ".")
+
+
+def bucket(value: float, edges: list[tuple[float, str]]) -> str:
+    for edge, label in edges:
+        if value <= edge:
+            return label
+    return edges[-1][1]
+
+
+CODING_HARNESSES = {"claude-code", "codex", "opencode", "kilo-code", "pi", "cursor", "cline", "aider"}
+
+ASK_BUCKETS = [(128, "0-128"), (512, "128-512"), (1024, "512-1024"), (math.inf, ">1024")]
+PROMPT_BUCKETS = [(8_000, "0-8k"), (32_000, "8k-32k"), (math.inf, ">32k")]
+
+
+# --------------------------------------------------------------------------------------------- analyze
+
+
+class Truncated(Exception):
+    """A telemetry result past its row budget (`has_more`); carries the partial rows."""
+
+    def __init__(self, rows: list[Json]):
+        super().__init__("telemetry truncated")
+        self.rows = rows
+
+
+# bucket label, --grain value (digits: --interval-seconds), bucket minutes; finest first
+CELL_GRAINS = (("hour", "hour", 60), ("6h", "21600", 360), ("day", "day", 1440))
+
+
+class Cell(NamedTuple):
+    """Spend (or, when no cost is recorded, requests) on one model in one (project, time bucket): what draw_one
+    picks a cell by."""
+    project: str
+    start: str  # ISO
+    weight: float
+    minutes: int  # bucket width
+
+
+class Stop(Exception):
+    def __init__(self, check: str, numbers: Json):
+        super().__init__(check)
+        self.check, self.numbers = check, numbers
+
+
+@dataclass(frozen=True)
+class Decision:
+    """A routing decision on one input: its difficulty score, or why there is none."""
+    score: float | None = None
+    error: str | None = None  # decision_timeout | error
+
+
+@dataclass
+class DrawnTrace:
+    """One sampled trace: its search row (usage and cost of the whole trace, which is what gets priced) and the span
+    its routing input is read from."""
+    model: str
+    project: str
+    cell: str  # start of the (project, time bucket) cell it was drawn from
+    trace_id: str
+    span_id: str  # the span the routing input came from: the root, or the last LLM call
+    inclusion: float  # probability that one draw of this model picks this trace
+    halvings: int  # times the cell's search window was halved to get under the row cap
+    cluster: str  # thread id, or the trace id when the trace has no thread: the bootstrap resamples these
+    row: Json  # `traces search` row
+    span: Json  # `traces get-span`
+    input: str | None = None
+    source: str = "empty_input"  # see routing_input
+
+    @property
+    def weight(self) -> float:
+        return 1.0 / self.inclusion
+
+    @property
+    def summary(self) -> Json:
+        return self.row
+
+    @property
+    def attrs(self) -> Json:
+        return self.row.get("attributes") or {}
+
+
+@dataclass(kw_only=True)
+class SampleRow:
+    """One drawn trace priced under every scenario. Scenario keys: `router|<scope>|<profile>` and `switch|<scope>`;
+    `picks`, `savings` and `pool` are the headline scope's router, kept flat for the tables."""
+    trace_id: str
+    span_id: str
+    model: str
+    project: str
+    weight: float  # 1 / inclusion
+    inclusion: float
+    halvings: int
+    cluster: str
+    cur_price: float  # this trace re-priced from the catalog, on the model it used
+    billed: float  # what orq billed for it, web search excluded
+    source: str
+    ask_chars: int
+    prompt_tokens: int
+    flags: list[str] = field(default_factory=list)
+    picks: dict[str, str] = field(default_factory=dict)  # per profile
+    savings: dict[str, float] = field(default_factory=lambda: {p: 0.0 for p in PROFILES})
+    tier: dict[str, str] = field(default_factory=dict)  # per profile; empty when the span was not scored
+    fallback: str | None = None  # why it was not scored: already_routed, a routing_input source or a decision error
+    scenario_savings: dict[str, float] = field(default_factory=dict)
+    unpriced: list[str] = field(default_factory=list)  # scenario keys where a target has no price for its tier
+    score: float | None = None
+    pool: list[str] | None = None
+    pool_reason: str = ""
+    # not written to report.json
+    tokens: Tokens
+    env: Json
+
+    def to_json(self) -> Json:
+        out = {k: getattr(self, k) for k in ("trace_id", "span_id", "model", "project", "weight", "inclusion",
+                                             "halvings", "cluster", "cur_price", "billed", "source", "ask_chars", "prompt_tokens", "flags", "picks",
+                                             "savings", "tier", "fallback", "scenario_savings", "unpriced")}
+        if self.score is not None:
+            out["score"] = self.score
+        return out | {"pool": self.pool, "pool_reason": self.pool_reason}
+
+
+@dataclass
+class PoolInfo:
+    """What one model in use gets in one scope: a router pool (strongest first) and a change-model target."""
+    pool: list[PoolModel] | None
+    reason: str  # why there is no pool, or why it has two seats; "" otherwise
+    switch: str | None
+    enable: list[str]  # pool members and switch target that are not enabled
+    relaxed: bool
+
+    def to_json(self) -> Json:
+        return {"pool": [p.id for p in self.pool] if self.pool else None, "reason": self.reason,
+                "switch": self.switch, "enable": self.enable, "relaxed": self.relaxed}
+
+
+@dataclass
+class CacheCandidate:
+    """One (thread, model) of the caching scan; `rows` in report.json, field order as written."""
+    thread: str
+    project: str
+    model: str
+    turns: int
+    candidate: bool
+    reason: str
+    savings: float
+    upper_bound: bool
+    action: str
+    thread_spend: float
+    prompt_tokens: int
+    cached_tokens: int
+    cache_saved: float  # what the cache reads already saved against the input price
+    agent: str | None
+    product: str | None
+
+
+@dataclass(frozen=True)
+class Scan:
+    """What a filtered run reads from the matching trace rows instead of telemetry. A model is in `cells` and
+    `cell_info` together or in neither."""
+    spend: list[Json]  # per model, single-model traces
+    agents: list[Json]
+    agg: dict[str, Tokens]
+    cells: dict[str, list[Cell]]
+    cell_info: dict[str, Json]
+    threads: list[tuple[str, str, float, int]]  # (thread, project, spend, traces)
+    multi_spend: float  # spend in traces that used more than one model
+
+    @property
+    def total(self) -> float:
+        return sum(r["spend"] for r in self.spend) + self.multi_spend
+
+
+class Analyzer:
+    def __init__(self, args: argparse.Namespace):
+        self.args = args
+        self.out = Path(args.out)
+        self.out.mkdir(parents=True, exist_ok=True)
+        self.orq = Orq(args.workspace, self.out / "cache" / "reads")
+        self.decision_dir = self.out / "cache" / "decisions"
+        self.client: OrqSdk | None = None
+        self.refresh: Callable[[], None] = lambda: None  # a new login token, once make_client has run
+        self.filters: list[Json] = list(getattr(args, "filters", None) or [])
+        self.rng = random.Random(args.seed)
+        self.report: dict[str, Any] = {"schema_version": SCHEMA_VERSION, "generated_at": iso(datetime.now(UTC)),
+                                       "workspace": args.workspace, "status": "ok", "stop": None,
+                                       "params": {"sample": args.sample, "profile": "balanced", "policy": POLICY,
+                                                  "seed": args.seed, "counterfactual_test": args.counterfactual_test}
+                                       | ({"filters": self.filters} if self.filters else {}),
+                                       "checks": {"stopping": [], "caveats": []}}
+        self.decisions: dict[str, Decision] = {}  # by sha256 of the routing input
+        self.frm = self.to = ""  # the window, ISO
+        self.days = 0
+        self.cat: dict[str, Json] = {}  # model catalog by id
+        self.cards: dict[str, Json] = {}  # workspace model cards by provider/model
+        self.garden: dict[str, mf.ScoredModel] = {}
+        self.samples: list[SampleRow] = []
+        self.pools: dict[str, dict[str, PoolInfo]] = {}  # model in use -> scope -> pool, fixed once computed
+        self._poolable: list[str] | None = None
+        self._ws: Json | None = None  # `workspaces get`, read once
+        self.plan = plan_of({})
+        self.pacer: Pacer | None = None
+        self.agg: dict[str, Tokens] = {}  # window token totals per model
+        # per model, per draw: (multi-model cost, whole cost, weight) of its first window; see multi_share
+        self.multi_obs: dict[str, list[tuple[float, float, float]]] = defaultdict(list)
+        self.multi_spend = 0.0  # window spend in multi-model traces; exact in a filtered run, else from multi_obs
+        self.scanned: Scan | None = None  # filtered run only
+        self.approved: int | None = None  # decision calls the user approved; a hard cap
+        self.sent = 0  # decision calls started
+        self.keep_reads = False  # the reads outlive a run stopped at the confirmation: the approved rerun reuses them
+        self.lock = threading.Lock()
+        self.capped: list[str] = []  # models of draws whose window stayed at the row cap down to MIN_WINDOW_S
+        self.cpt: dict[str, float] = {}  # LLM calls per trace per model
+        self.t0 = time.monotonic()
+
+    def log(self, msg: str) -> None:
+        print(msg, file=sys.stderr, flush=True)
+
+    def caveat(self, check: str, detail: str) -> None:
+        self.report["checks"]["caveats"].append({"check": check, "detail": detail})
+
+    # ---- telemetry
+
+    def tq(self, compute: list[Json], group_by: list[str], filters: list[Json] | None = None, mode: Literal["scalar", "timeseries"] = "scalar",
+           grain: str | None = None, strict: bool = False) -> list[Json]:
+        interval = int(grain) if grain and grain.isdigit() else None
+        r = self.sdk_read("telemetry query", [mode, self.frm, self.to, compute, group_by, filters, grain],
+                          lambda sdk: sdk.telemetry.query(  # sort: the server echoes "" and the SDK rejects that
+                              source="TELEMETRY_SOURCE_TRACES", mode=mode, from_=parse_ts(self.frm),
+                              to=parse_ts(self.to), compute=cast(Any, compute), limit=5000, sort="desc",
+                              group_by=group_by or None, filters=cast(Any, filters),
+                              grain=None if interval or not grain else grain, interval_seconds=interval))
+        if r.get("has_more"):
+            if strict:
+                raise Truncated(r.get("data") or [])
+            self.caveat("telemetry truncated", " ".join(group_by))
+        return r.get("data") or []
+
+    def sdk_read(self, label: str, key: list[Any], call: Callable[[OrqSdk], Any]) -> Json:
+        """One read through the SDK client, read cache and shared retry. A failure is an OrqError, as for a CLI read,
+        so the callers handle both alike."""
+        def load() -> Json:
+            try:
+                res = sdk_call(lambda: call(self.sdk()), self.orq.retries, refresh=lambda: self.refresh())
+            except SdkError as e:
+                raise OrqError(label.split(), e.status_code, f"HTTP {e.status_code} {e.body}") from e
+            except httpx.HTTPError as e:
+                raise OrqError(label.split(), 0, f"{type(e).__name__}: {e}") from e
+            return res.model_dump(by_alias=True, mode="json")
+        return self.orq.cached([label, *key], load)
+
+    def bad_filters(self, e: OrqError) -> Stop | None:
+        """A 400 on a filtered call is the server rejecting --filters: the stop carries its message."""
+        if self.filters and "HTTP 400" in e.stderr:
+            return Stop("filters", {"detail": e.stderr.strip()[:300]})
+        return None
+
+    def previous_window(self) -> Json | None:
+        """The window of an earlier run in this --out dir, so a rerun after `confirmation` hits the read cache."""
+        try:
+            prev = json.loads((self.out / "report.json").read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
+        w = prev.get("window")
+        if not w or prev.get("workspace") != self.args.workspace or w.get("requested") != self.args.window \
+                or (prev.get("params") or {}).get("filters", []) != self.filters:
+            return None
+        if datetime.now(UTC) - parse_ts(w["to"]) > timedelta(hours=24):
+            return None
+        return w
+
+    def workspace(self) -> Json:
+        """`workspaces get` for this workspace, read once; {} when the key cannot read it."""
+        if self._ws is None:
+            try:
+                key = self.args.workspace or (self.orq("status", cache=False) or {}).get("active_workspace_key")
+                self._ws = ((self.orq("workspaces", "get", key, cache=False) or {}).get("workspace") or {}) if key \
+                    else {}
+            except OrqError:
+                self._ws = {}
+        return self._ws or {}
+
+    def retention_days(self) -> int | None:
+        """The workspace's trace retention (`features.retention_period`), or None when the key cannot read it."""
+        days = (self.workspace().get("features") or {}).get("retention_period")
+        return int(days) if isinstance(days, (int, float)) and days > 0 else None
+
+    def set_window(self) -> None:
+        prev = self.previous_window()
+        if prev:
+            self.frm, self.to, self.days = prev["from"], prev["to"], prev["days"]
+            self.report["window"] = dict(prev)
+            return
+        to = datetime.now(UTC).replace(second=0, microsecond=0)
+        retention = self.retention_days()
+        days = min(self.args.window, retention) if retention else self.args.window
+        for _ in range(2):
+            self.to, self.frm = iso(to), iso(to - timedelta(days=days))
+            try:
+                if self.filters:  # telemetry cannot filter on every field a trace search can
+                    self.orq("traces", "search", "--from", self.frm, "--to", self.to, "--limit", "1", "--filters",
+                             json.dumps(self.filters), cache=False)
+                else:
+                    self.tq([{"metric": "genai.cost", "op": "sum"}], [])
+                break
+            except OrqError as e:
+                m = re.search(r"retention period of (\d+) days", e.stderr)
+                if not m:
+                    if stop := self.bad_filters(e):
+                        raise stop from e
+                    raise
+                days = max(1, int(m.group(1)) - 1)
+        self.days = days
+        self.report["window"] = {"from": self.frm, "to": self.to, "days": days, "requested": self.args.window,
+                                 "retention": retention}
+
+    # ---- models
+
+    def load_models(self) -> None:
+        cat = self.orq("model-catalog", "list", cache=False)
+        cat = cat.get("data", cat) if isinstance(cat, dict) else cat
+        self.cat = {m["id"]: m for m in cat}
+        cards = self.orq("models", "list", cache=False)
+        cards = cards.get("data", cards) if isinstance(cards, dict) else cards
+        self.cards = {model_key(c.get("provider", ""), c.get("model_id", "")): c for c in cards}
+        self.garden = mf.garden_from_cards([c for c in cards if isinstance(c, dict)])
+        if mf.catalog_scope(cards) == "project":
+            self.caveat("garden is project-scoped", "models list has no disabled models, so the all-available "
+                        "scopes equal the enabled ones; use a workspace-scoped login")
+        if not self.enabled(DECISION_MODEL):
+            raise Stop("decision model enabled", {"model": DECISION_MODEL,
+                                                  "detail": "enable it in the workspace's model garden"})
+
+    def enabled(self, m: str) -> bool:
+        return bool((self.cards.get(m) or {}).get("enabled"))
+
+    def price_on(self, m: str, env: Json) -> PriceChoice:
+        """The catalog price of `m` for a span with this environment (see span_env)."""
+        return choose_price((self.cat.get(m) or {}).get("pricing") or {}, env)
+
+    def v2(self, m: str) -> Json:
+        """The model's Smart Router score card: intelligence_index and price."""
+        c = self.cards.get(m) or {}
+        return (((c.get("metadata") or {}).get("autorouter") or {}).get("v2")) or {}
+
+    def poolable(self, m: str, score_ok: bool = True) -> bool:
+        """Scored, priced, comparable, seatable and not pre-release (disabled is allowed: the all-available scopes
+        recommend it)."""
+        if PRERELEASE_RE.search(split_model(m)[1]) or self.discounted_offering(m):
+            return False
+        g, v, e = self.garden.get(m), self.v2(m), self.cat.get(m)
+        p = (e or {}).get("pricing") or {}
+        if score_ok and g and g.ranked_on_headline:  # no score at its default effort: the index is not reliable
+            return False
+        return bool(g and not g.free and mf.unseatable_reason(g) in (None, "disabled in the model catalogue")
+                    and v.get("intelligence_index") and v.get("price") is not None and "input" in p and "output" in p)
+
+    def discounted_offering(self, m: str) -> bool:
+        """A same-host offering of another catalog model, priced below it (e.g. a `-contributor` offering): the
+        catalog does not state its terms, so it is never recommended. Dated snapshots share the base price."""
+        e = self.cat.get(m) or {}
+        base = e.get("offering_of")
+        if not base or base == m or base not in self.cat or self.host(base) != self.host(m):
+            return False
+        mine, theirs = e.get("pricing") or {}, (self.cat[base].get("pricing") or {})
+        units = [(_unit(mine.get(k)), _unit(theirs.get(k))) for k in ("input", "output")]
+        return any(a is not None and b is not None and a < b for a, b in units)
+
+    def agg_price(self, x: str) -> PriceChoice:
+        """The base price of `x` for window token totals, in its region: totals carry no request time, context
+        length, service tier or cache TTL, so no variant that needs one applies."""
+        return self.price_on(x, {"inference_geo": region_of(x)})
+
+    def traffic_cost(self, m: str) -> Cost | None:
+        """The window's traffic of `m` re-priced on a model, same tokens; None when it has no token totals."""
+        if (agg := self.agg.get(m)) is None:
+            return None
+        return lambda x: price_tokens(agg, self.agg_price(x).prices)
+
+    def in_scope(self, x: str, m: str, scope: str) -> bool:
+        prov, avail = scope.split(":")
+        if avail == "enabled" and not self.enabled(x):
+            return False
+        if region_of(x) != region_of(m):
+            return False
+        g, gm = self.garden.get(x), self.garden.get(m)
+        if g and gm and not mf.region_compatible(g, gm):
+            return False
+        return prov == "any_provider" or self.host(x) == self.host(m)
+
+    def candidates(self, m: str, scope: str) -> list[mf.ScoredModel]:
+        if self._poolable is None:
+            self._poolable = [x for x in self.garden if self.poolable(x)]
+            skipped = sorted(x for x, g in self.garden.items() if g.ranked_on_headline and self.poolable(x, False))
+            if skipped:
+                self.caveat("no score at default effort", f"excluded as targets: {', '.join(skipped)}")
+        best: dict[str, mf.ScoredModel] = {}  # one candidate per underlying model: the cheapest route, enabled first
+        for x in self._poolable:
+            if not self.in_scope(x, m, scope):
+                continue
+            g, ident = self.garden[x], mf.model_identity(x)
+            cur = best.get(ident)
+            if cur is None or self._route_rank(g) < self._route_rank(cur):
+                best[ident] = g
+        return [best[i] for i in best]
+
+    def _route_rank(self, g: mf.ScoredModel) -> tuple[float, bool, str]:
+        return (g.price, not self.enabled(g.router_id), g.router_id)
+
+    def canonical(self, m: str) -> str:
+        e = self.cat.get(m) or {}
+        return e.get("offering_of") or m
+
+    def host(self, m: str) -> str:
+        e = self.cat.get(m) or {}
+        prov = e.get("provider")
+        host = (prov.get("id") if isinstance(prov, dict) else prov) or split_model(m)[0]
+        return PROVIDER_FAMILY.get(host, host)
+
+    def pool_for(self, m: str, scope: str) -> PoolInfo:
+        inc = self.garden.get(m)
+        if inc is None or inc.free or not self.v2(m).get("intelligence_index") or self.v2(m).get("price") is None:
+            return PoolInfo(None, "no intelligence index or price", None, [], False)
+        if m not in self.agg:
+            return PoolInfo(None, "no token totals", None, [], False)
+        cands = self.candidates(m, scope)
+        cost = self.traffic_cost(m)
+        sw = switch_target(inc, cands, cost)
+        members, relaxed = frontier_pool(sw or inc, cands, cost)
+        assert not has_dominated(members, cost), [x.router_id for x in members]
+        ids = [x.router_id for x in members]
+        assert all(self.v2(x) for x in ids), ids  # Smart Router rejects a pool model without a score
+        switch = sw.router_id if sw else None
+        enable = sorted({x for x in ids + ([switch] if switch else []) if not self.enabled(x)})
+        if len(members) < 2:
+            return PoolInfo(None, "no frontier model 2x cheaper in scope", switch, enable, relaxed)
+        pool = [PoolModel(x, float(self.v2(x)["intelligence_index"]), float(self.v2(x)["price"])) for x in ids]
+        return PoolInfo(pool, "two-model pool: no third tier 2x cheaper" if relaxed else "", switch, enable, relaxed)
+
+    def next_stronger(self, m: str) -> str | None:
+        """The weakest model above this one's index, same host and region, enabled or not."""
+        mine = self.v2(m).get("intelligence_index") or 0
+        cands = [(self.v2(x.router_id)["intelligence_index"], x.router_id)
+                 for x in self.candidates(m, HEADLINE_SCOPE) if self.v2(x.router_id)["intelligence_index"] > mine]
+        return min(cands)[1] if cands else None
+
+    # ---- sampling
+
+    def spend_by(self, dim: str) -> list[Json]:
+        rows = self.tq([{"metric": "genai.cost", "op": "sum"}], [dim])
+        return sorted([{"key": r["group"].get(dim) or "(not set)", "spend": r["metrics"].get("genai.cost:sum") or 0.0}
+                       for r in rows], key=lambda r: -r["spend"])
+
+    def model_totals(self, metric: str, op: str) -> dict[str, float]:
+        """One telemetry metric over the window, per model."""
+        return {r["group"]["model"]: float(v) for r in self.tq([{"metric": metric, "op": op}], ["model"])
+                if r["group"].get("model") and (v := r["metrics"].get(f"{metric}:{op}")) is not None}
+
+    def aggregates(self) -> dict[str, Tokens]:
+        """Window token totals per model: input (cached and written included), cache reads, cache writes, output.
+        A model without input or output totals has none."""
+        got = {k: self.model_totals(metric, "sum") for k, metric in AGG_METRICS.items()}
+        out = {}
+        for m in set(got["input"]) & set(got["output"]):
+            inp, rd, wr = int(got["input"][m]), int(got["cache_read"].get(m, 0)), int(got["cache_write"].get(m, 0))
+            out[m] = Tokens(max(0, inp - rd - wr), rd, wr, int(got["output"][m]), None, inp)
+        return out
+
+    def calls_per_trace(self) -> dict[str, float]:
+        """LLM calls per trace per model (genai.requests over trace_count): how agent-heavy its traffic is."""
+        req, traces = self.model_totals("genai.requests", "count"), self.model_totals("trace_count", "count")
+        return {m: n / traces[m] for m, n in req.items() if traces.get(m)}
+
+    def cells(self, model: str) -> list[Cell]:
+        """Spend per (project, time bucket), which draw_one picks cells by; request counts when the model has no
+        recorded cost. Hourly first; a model in many projects can exceed the time-series budget (5000 rows over the
+        window), which truncates or fails the query, so it falls back to 6-hour and then daily buckets. Records the
+        grain in `params.cell_grain` and the weight in `params.cell_weight`."""
+        if self.scanned:
+            if model in self.scanned.cells:
+                for k in ("cell_grain", "cell_weight"):
+                    self.report["params"].setdefault(k, {})[model] = self.scanned.cell_info[model][k]
+            return self.scanned.cells.get(model, [])
+        prov, bare = split_model(model)
+        filters = [{"field": "model", "op": "eq", "values": [bare]}]
+        if prov:
+            filters.append({"field": "provider", "op": "eq", "values": [prov]})
+        for metric, op, name in (("genai.cost", "sum", "cost"), ("genai.requests", "count", "requests")):
+            got: tuple[list[Json], str, int, bool] | None = None  # (rows, grain label, bucket minutes, complete)
+            err: OrqError | None = None
+            for label, grain, minutes in CELL_GRAINS:
+                try:
+                    got = (self.tq([{"metric": metric, "op": op}], ["project"], filters, mode="timeseries",
+                                   grain=grain, strict=True), label, minutes, True)
+                    break
+                except Truncated as t:
+                    got = (t.rows, label, minutes, False)
+                except OrqError as e:  # the budget can fail the query instead of truncating it
+                    err = e
+            if got is None:
+                assert err is not None  # every grain failed
+                raise err
+            rows, label, minutes, complete = got
+            cells = [Cell(r["group"].get("project") or "", r["timestamp"], float(v), minutes) for r in rows
+                     if r.get("timestamp") and (v := r["metrics"].get(f"{metric}:{op}") or 0) > 0]
+            if cells:
+                break
+        self.report["params"].setdefault("cell_grain", {})[model] = label
+        self.report["params"].setdefault("cell_weight", {})[model] = name
+        if not complete:
+            self.caveat("telemetry truncated", f"{model}: {name} per project and {label}")
+        return cells
+
+    def search(self, project: str, frm: datetime, to: datetime, filters: list[Json]) -> list[Json]:
+        a = ["traces", "search", "--from", iso_ms(frm), "--to", iso_ms(to), "--limit", str(SEARCH_CAP), "--filters",
+             json.dumps(filters + self.filters)]
+        if project:
+            a += ["--project", project]
+        try:
+            return (self.orq(*a) or {}).get("data") or []
+        except OrqError as e:
+            if stop := self.bad_filters(e):
+                raise stop from e
+            raise
+
+    def scan(self) -> Scan:
+        """A filtered run's replacement for the telemetry reads, which cannot filter on every field a trace search
+        can: every trace of the window the filters match, paged."""
+        rows: dict[str, Json] = {}
+        tok = None
+        for _ in range(MAX_SCAN_PAGES):
+            a = ["traces", "search", "--from", self.frm, "--to", self.to, "--limit", str(SEARCH_CAP), "--filters",
+                 json.dumps(self.filters)] + (["--page-token", tok] if tok else [])
+            try:
+                r = self.orq(*a) or {}
+            except OrqError as e:
+                if stop := self.bad_filters(e):
+                    raise stop from e
+                raise
+            for x in r.get("data") or []:
+                rows[x.get("trace_id") or x.get("id") or f"#{len(rows)}"] = x
+            tok = r.get("next_page_token")
+            if not r.get("has_more") or not tok:
+                break
+        else:
+            raise Stop("filtered scan", {"detail": f"more than {MAX_SCAN_PAGES * SEARCH_CAP} traces match; narrow "
+                                                   "--filters or --window"})
+        spend: dict[str, float] = defaultdict(float)
+        agents: dict[str, float] = defaultdict(float)
+        use: dict[str, list[int]] = defaultdict(lambda: [0, 0, 0, 0])  # prompt, cache read, cache write, completion
+        by_cell: dict[str, dict[tuple[str, str], list[float]]] = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0]))
+        threads: dict[tuple[str, str], list[float]] = defaultdict(lambda: [0.0, 0.0])
+        multi_spend = 0.0
+        for x in rows.values():
+            cost = trace_cost(x)
+            ag = x.get("agent")
+            agents[(ag.get("key") or ag.get("id") if isinstance(ag, dict) else ag) or "(not set)"] += cost
+            if x.get("thread_id"):
+                t = threads[(x["thread_id"], x.get("project_id") or "")]
+                t[0] += cost
+                t[1] += 1
+            models, provs = x.get("models") or [], x.get("providers") or []
+            if len(models) != 1:
+                multi_spend += cost
+                continue
+            m = model_key(provs[0] if len(provs) == 1 else "", models[0])
+            spend[m] += cost
+            u = x.get("usage") or {}
+            for i, k in enumerate(("prompt_tokens", "prompt_cached_tokens", "prompt_cache_creation_tokens",
+                                   "completion_tokens")):
+                use[m][i] += int(u.get(k) or 0)
+            at = x.get("start_time") or x.get("started_at")
+            if at:
+                cell = by_cell[m][(x.get("project_id") or "", iso(parse_ts(at).replace(minute=0, second=0,
+                                                                                         microsecond=0)))]
+                cell[0] += cost
+                cell[1] += 1
+        agg = {m: Tokens(max(0, p - r - w), r, w, o, None, p) for m, (p, r, w, o) in use.items()}
+        cell_list: dict[str, list[Cell]] = {}
+        cell_info: dict[str, Json] = {}
+        for m, cells in by_cell.items():
+            name, i = ("cost", 0) if spend[m] > 0 else ("requests", 1)
+            if cs := [Cell(proj, start, v[i], 60) for (proj, start), v in cells.items() if v[i] > 0]:
+                cell_list[m], cell_info[m] = cs, {"cell_grain": "hour", "cell_weight": name}
+
+        def ranked(d: dict[str, float]) -> list[Json]:
+            return sorted(({"key": k, "spend": v} for k, v in d.items()), key=lambda r: -r["spend"])
+        return Scan(ranked(spend), ranked(agents)[:50], agg, cell_list, cell_info,
+                    [(t, proj, v[0], int(v[1])) for (t, proj), v in threads.items()], multi_spend)
+
+    def list_spans(self, trace: str, project: str) -> list[Json]:
+        out: list[Json] = []
+        tok = None
+        for _ in range(10):
+            r = self.sdk_read("traces list-spans", [trace, tok],
+                              lambda sdk: sdk.traces.list_spans(trace_id=trace, limit=200, page_token=tok,
+                                                                all_accessible_projects=True))
+            out += r.get("data") or []
+            tok = r.get("next_page_token")
+            if not r.get("has_more") or not tok:
+                break
+        return out
+
+    def get_span(self, trace: str, span: str, project: str) -> Json:
+        a = ["traces", "get-span", trace, span] + (["--project", project] if project else [])
+        return (self.orq(*a) or {}).get("span") or {}
+
+    @staticmethod
+    def leaf_llm(spans: list[Json], model: str | None = None) -> list[Json]:
+        return [s for s in spans if s.get("type") in LLM_SPAN_TYPES and not s.get("has_children")
+                and (model is None or model_key(s.get("provider", ""), s.get("model", "")) == model)]
+
+    def window_rows(self, model: str, cell: Cell, rng: random.Random) -> tuple[list[Json], int] | None:
+        """The traces of one random sub-window of the cell that holds fewer than SEARCH_CAP: the whole bucket,
+        else a random half, halved again while the search returns the cap. The halves form a fixed grid, so every
+        search is cached by its window, and a sub-window k halvings deep is reached with probability 2**-k."""
+        lo = parse_ts(cell.start)
+        hi = lo + timedelta(minutes=cell.minutes)
+        k = 0
+        while True:
+            rows = self.search(cell.project, lo, hi, [{"field": "model", "op": "eq", "values": [model]}])
+            if len(rows) < SEARCH_CAP:
+                return rows, k
+            if (hi - lo).total_seconds() / 2 < MIN_WINDOW_S:
+                self.capped.append(model)
+                return None
+            mid = lo + (hi - lo) / 2
+            lo, hi = (lo, mid) if rng.random() < 0.5 else (mid, hi)
+            k += 1
+
+    def draw_one(self, model: str, cells: list[Cell], seed: int) -> DrawnTrace | None:
+        """One trace of `model`, picked with probability proportional to its cost (PPS): a cell by its spend, a
+        sub-window (window_rows), then a trace in it by its search-row cost, among the traces that used only this
+        model. Records the inclusion probability; the traces left out are the multi-model share of the spend."""
+        rng = random.Random(seed)
+        total = sum(c.weight for c in cells)
+        for attempt in range(6):
+            x, acc, cell = rng.random() * total, 0.0, cells[-1]
+            for c in cells:
+                acc += c.weight
+                if acc >= x:
+                    cell = c
+                    break
+            got = self.window_rows(model, cell, rng)
+            if got is None:
+                continue
+            rows, k = got
+            if attempt == 0 and not self.filters:  # the first attempt only: a retry follows an empty pool
+                whole = sum(trace_cost(r) for r in rows)
+                if whole > 0:
+                    self.multi_obs[model].append((sum(trace_cost(r) for r in rows if not single_model(r)), whole,
+                                                  2.0 ** k / cell.weight))
+            rows = [r for r in rows if single_model(r)]
+            if any(not (r.get("trace_id") or r.get("id")) for r in rows):
+                self.caveat("trace without id", f"{model} in {cell.project or '(no project)'}: search returned a "
+                            "trace with no trace_id; skipped")
+                rows = [r for r in rows if r.get("trace_id") or r.get("id")]
+            costs = [trace_cost(r) for r in rows]
+            if sum(costs) <= 0:
+                continue
+            i = rng.choices(range(len(rows)), weights=costs)[0]
+            row = rows[i]
+            tid = row.get("trace_id") or row["id"]
+            span_id, span = self.routing_span(row, tid, cell.project)
+            p = (cell.weight / total) * 2.0 ** -k * costs[i] / sum(costs)
+            return DrawnTrace(model, cell.project, cell.start, tid, span_id, p, k, row.get("thread_id") or tid, row,
+                              span)
+        return None
+
+    def routing_span(self, row: Json, trace: str, project: str) -> tuple[str, Json]:
+        """The span whose input is the routing input: the root, or the trace's last LLM call when the root has no
+        messages."""
+        root = row.get("root_span_id") or row.get("span_id") or ""
+        span = self.get_span(trace, root, project) if root else {}
+        if input_messages(span.get("attributes") or {}):
+            return root, span
+        leaves = self.leaf_llm(self.list_spans(trace, project))
+        if not leaves:
+            return root, span
+        last = max(leaves, key=lambda s: s.get("started_at") or "")
+        return last["span_id"], self.get_span(trace, last["span_id"], project)
+
+    # ---- decisions
+
+    def sdk(self) -> OrqSdk:
+        with self.lock:
+            if self.client is None:
+                try:
+                    self.client, self.refresh = make_client(self.args.workspace)
+                except CredentialsError as e:
+                    raise self.no_credentials(e) from e
+            return self.client
+
+    @staticmethod
+    def no_credentials(e: CredentialsError) -> Stop:
+        return Stop("decision calls allowed", {"detail": f"no credentials for decision calls ({e}); export "
+                                                         "ORQ_API_KEY or run `orq auth login`"})
+
+    def load_decisions(self) -> None:
+        """Probabilities stored by an earlier run that did not end ok, so a rerun does not pay for them again."""
+        for f in self.decision_dir.glob("*.json"):
+            try:
+                self.decisions[f.stem] = Decision(score=score(json.loads(f.read_text())["probabilities"]))
+            except (OSError, ValueError, KeyError, TypeError):
+                f.unlink(missing_ok=True)
+
+    def decide(self, text: str) -> Decision:
+        key = self._key(text)
+        if key in self.decisions:
+            return self.decisions[key]
+        with self.lock:
+            self.sent += 1
+        body = {"model": DECISION_MODEL, "name": "cost-savings-report", "state": text,
+                "timeout": {"call_timeout": 1500}, "retry": {"count": 0}, "questions": QUESTION}
+
+        def create() -> Any:
+            if self.pacer:
+                self.pacer.acquire()
+            return self.sdk().router.decisions.create(**body, timeout_ms=180_000)
+        try:
+            answers = sdk_call(create, self.orq.retries, self.pacer.throttled if self.pacer else None, timeouts=False,
+                               refresh=lambda: self.refresh()).model_dump()["answers"]
+            probs = (answers.get("difficulty") or {}).get("probabilities")
+            res = Decision(score=score(probs)) if probs else Decision(error="error")
+            if probs:
+                self.decision_dir.mkdir(parents=True, exist_ok=True)
+                (self.decision_dir / f"{key}.json").write_text(json.dumps({"probabilities": probs}))
+        except SdkError as e:
+            if e.status_code == 429:
+                raise Stop("decision rate limit", {
+                    "detail": f"still rate limited after {MAX_429} waits; rerun later or with a smaller --sample",
+                    "rate_limit_per_minute": self.plan.rate_limit, "decisions_made": len(self.decisions)}) from e
+            if e.status_code in (401, 403):
+                raise Stop("decision calls allowed", {"detail": str(e)[:300]}) from e
+            res = Decision(error="decision_timeout" if e.status_code in (408, 504) else "error")
+        except CredentialsError as e:  # the token expired and the login is gone
+            raise self.no_credentials(e) from e
+        except httpx.TimeoutException:
+            res = Decision(error="decision_timeout")
+        except httpx.HTTPError:
+            res = Decision(error="error")
+        self.decisions[key] = res
+        return res
+
+    # ---- main flow
+
+    def run(self) -> Json:
+        done = False
+        try:
+            try:
+                self._run()
+            except Stop as s:
+                self.report["status"] = "stopped"
+                self.report["stop"] = {"check": s.check, "numbers": s.numbers}
+                self.log(f"stopped: {s.check} {json.dumps(s.numbers)}")
+            except OrqError as e:
+                hint = " (check the key has reporting.view)" if re.search(r"HTTP 40[13]", e.stderr) else ""
+                self.report["status"] = "stopped"
+                self.report["stop"] = {"check": "orq call failed",
+                                       "numbers": {"detail": e.stderr.strip()[:300] + hint}}
+                self.log(f"stopped: orq call failed {e.stderr.strip()[:200]}")
+            except Exception as e:  # missing binary, timeout, non-JSON output: report.json must still describe this run
+                self.report["status"] = "stopped"
+                self.report["stop"] = {"check": "analyze failed",
+                                       "numbers": {"detail": f"{type(e).__name__}: {e}"[:300]}}
+                self.log(f"stopped: analyze failed {type(e).__name__}: {e}"[:300])
+            self.write()
+            done = True
+        finally:
+            self.cleanup(done and self.report["status"] == "ok")
+        return self.report
+
+    def cleanup(self, ok: bool) -> None:
+        """The reads hold prompt texts: deleted at the end of every run, Ctrl-C and a declined confirmation included.
+        Only a run stopped at the confirmation outside a terminal keeps them, so the approved rerun reads the same
+        sample without paying for it again. The decisions hold probabilities only: kept until a run ends ok."""
+        if getattr(self.args, "keep_cache", False):
+            return
+        if not self.keep_reads:
+            shutil.rmtree(self.out / "cache" / "reads", ignore_errors=True)
+        if ok:
+            shutil.rmtree(self.decision_dir, ignore_errors=True)
+        try:
+            (self.out / "cache").rmdir()
+        except OSError:
+            pass
+
+    def _run(self) -> None:
+        a = self.args
+        if not a.workspace:  # pin the active workspace so the cache keys, the window reuse and the page name it
+            key = (self.orq("status", cache=False) or {}).get("active_workspace_key")
+            if key:
+                a.workspace = self.orq.workspace = self.report["workspace"] = key
+        self.sdk()  # credentials first: a run without them stops before it reads anything
+        self.set_window()
+        self.load_decisions()
+        self.log(f"window {self.frm} .. {self.to} ({self.days} days)")
+        self.plan = plan_of(self.workspace())
+        if not self.workspace():
+            self.caveat("plan unknown", "workspaces get failed; pacing and the default sample follow the free plan")
+        self.pacer = Pacer(self.plan.per_minute)
+        target = a.sample or self.plan.default_sample
+        self.report["params"] |= {"sample": target, "sample_source": "flag" if a.sample else "plan"}
+        self.load_models()
+        if self.filters:
+            self.scanned = scan = self.scan()
+            by_model, by_agent, by_deployment, total = scan.spend, scan.agents, None, scan.total
+            self.agg, self.multi_spend = scan.agg, scan.multi_spend
+        else:
+            by_model = self.spend_by("model")
+            total = sum(r["spend"] for r in by_model)
+            by_agent = self._safe(lambda: self.spend_by("agent")[:50])
+            by_deployment = self._safe(lambda: self.spend_by("deployment")[:50])
+            self.agg = self._safe(self.aggregates) or {}
+            self.cpt = self._safe(self.calls_per_trace) or {}
+        per_month = total * 30 / self.days
+        self.report["spend"] = {"total": total, "per_month": per_month, "by_model": by_model, "by_agent": by_agent,
+                                "by_deployment": by_deployment}
+        chat = [(r["key"], r["spend"]) for r in by_model if is_chat_model(r["key"], self.cat)]
+        if chat and not any(m in self.agg for m, _ in chat):
+            raise Stop("token totals", {"detail": "no model has token totals; pools, switch targets and the change "
+                                                  "model figure are priced from them"})
+        if heavy := [f"{m} {self.cpt[m]:.0f}" for m, _ in chat if (self.cpt.get(m) or 0) > AGENT_HEAVY_CALLS]:
+            self.caveat("agent-heavy traffic", f"LLM calls per trace: {', '.join(heavy)}; each sampled trace is "
+                        "routed as a whole on its last user message")
+        alloc = allocate([x for x in chat if x[0] in self.agg], target)
+        self.log(f"strata: {json.dumps(alloc)}")
+        cells: dict[str, list[Cell]] = {}
+        for m in alloc:
+            cs = self.cells(m)
+            if cs:
+                cells[m] = cs
+            else:
+                self.caveat("no cells", m)
+        jobs = [(m, cells[m], self.rng.randrange(2**31)) for m in draw_order(alloc) if m in cells]
+        floor = {m: min(n, MIN_PER_STRATUM) for m, n in alloc.items() if m in cells}
+        self.log(f"plan {self.plan.type}: {self.plan.rate_limit} requests/min, decisions paced to "
+                 f"{self.plan.per_minute:g}/min; up to {len(jobs)} traces, about {self.wait_min(len(jobs), len(jobs)):.0f} min")
+        drawn: list[DrawnTrace] = []
+        reason, rounds = "sample_size", 0
+        for start in range(0, len(jobs), ROUND):
+            if rounds and time.monotonic() - self.t0 > WALL_TIME_S:
+                reason = "wall_time"
+                break
+            if self.approved is not None and self.sent >= self.approved:
+                reason = "decision budget"
+                break
+            batch = jobs[start:start + ROUND]
+            with ThreadPoolExecutor(READ_WORKERS) as ex:
+                new = [d for d in ex.map(lambda j: self._safe(lambda: self.draw_one(*j)), batch) if d]
+            for d in new:
+                d.input, d.source = routing_input(d.span.get("attributes") or {})
+            drawn += new
+            rounds += 1
+            todo = sorted({d.input for d in drawn if d.input and self.undecided(d)})
+            if todo and "routing_decision_cost" not in self.report:
+                self.confirm(todo, len(drawn), len(jobs))
+            if self.approved is not None and len(todo) > (left := self.approved - self.sent):
+                todo, reason = todo[:left], "decision budget"  # the draws left without a decision are dropped
+                drawn = [d for d in drawn if not self.undecided(d) or d.input in todo]
+            self.decide_all(todo)
+            if not drawn:
+                continue
+            self.score_samples(drawn)
+            if reason == "decision budget":
+                break
+            have = Counter(d.model for d in drawn)
+            if len(drawn) >= max(sum(floor.values()), STOP_MIN_DRAWS) and all(have[m] >= n for m, n in floor.items()) \
+                    and start + len(batch) < len(jobs):
+                ci = self.headline_ci(dict(chat), STOP_BOOTSTRAP)
+                if ci and (why := stop_reason(ci.savings, ci.ci90, total)):
+                    reason = why
+                    break
+        if not drawn:
+            raise Stop("sample not empty", {"drawn": 0})
+        for m in alloc:
+            if not any(d.model == m for d in drawn):
+                self.caveat("stratum search empty", m)
+        if not self.filters:
+            self.multi_spend = sum(s * self.multi_share(m) for m, s in chat)
+        if self.multi_spend > 0:
+            self.caveat("multi-model traces", f"{self.multi_spend / total:.0%} of spend is in traces that used more "
+                        "than one model; they are not analysed, and the router estimate covers the single-model "
+                        "traces")
+        if self.capped:
+            self.caveat("dense search window", f"{len(self.capped)} draws met {SEARCH_CAP} traces in a "
+                        f"{MIN_WINDOW_S:g} s window and were drawn again")
+        final = self.headline_ci(dict(chat), BOOTSTRAP)
+        self.report["sampling"] = {
+            "plan": {"type": self.plan.type, "rate_limit_per_minute": self.plan.rate_limit,
+                     "rate_limit_source": self.plan.source, "daily_decision_limit": self.plan.daily_limit,
+                     "decisions_per_minute": self.plan.per_minute},
+            "target": target, "drawn": len(drawn), "rounds": rounds, "stop_reason": reason,
+            "half_width": (final.ci90[1] - final.ci90[0]) / 2 if final else None,
+            "estimate": final.savings if final else None,
+            "decision_calls": self.sent, "rate_limited": self.pacer.throttles, "wall_time_s": round(time.monotonic() - self.t0, 1),
+            "calls_per_trace": {m: self.cpt[m] for m, _ in chat if m in self.cpt}}
+        self.log(f"sampled {len(drawn)} traces in {rounds} rounds, stop: {reason}")
+        self.pilot_checks(drawn)
+        if a.counterfactual_test:
+            self.counterfactual()
+            return
+        self.estimate(dict(chat), total)
+        self.report["caching"] = self._safe(self.caching) or {"error": "caching scan failed"}
+        self.report["harness"] = ({"error": "not available with --filters"} if self.filters
+                                  else self._safe(self.harness) or {"error": "harness query failed"})
+
+    def wait_min(self, traces: int, calls: int) -> float:
+        """Rough minutes for `traces` reads and `calls` paced decision calls."""
+        reads = traces * READ_S_PER_DRAW / READ_WORKERS
+        decide = max(calls / self.plan.per_minute * 60, calls * DECISION_LATENCY_S / DECISION_WORKERS)
+        return (reads + decide) / 60
+
+    def confirm(self, texts: list[str], drawn: int, jobs: int) -> None:
+        """Before the first decision call: what the run will send and cost, extrapolated from the first round."""
+        calls = min(jobs, math.ceil(len(texts) * jobs / max(1, drawn)))
+        per_call = sum(len(t) / 4 + DECISION_OVERHEAD_TOKENS for t in texts) / len(texts)
+        cost = calls * per_call * DECISION_PRICE_PER_M / 1e6
+        minutes = self.wait_min(jobs - drawn, calls)
+        daily = (f" This uses {calls} of your {self.plan.daily_limit} daily decision calls."
+                 if self.plan.daily_limit else "")
+        capped = (f" The workspace states no rate limit, so the default sample is capped at {DEFAULT_RATE_SAMPLE}; "
+                  "--sample draws more." if self.plan.default_sample < PLAN_SAMPLE.get(self.plan.type, MAX_SAMPLE)
+                  and not self.args.sample else "")
+        note = (f"Up to {calls} decision calls, about ${cost:.4f} and {minutes:.0f} min; sampling usually stops much "
+                f"earlier once the range is tight.{daily}{capped} Each call sends one sampled prompt text to "
+                f"{DECISION_MODEL}; the calls appear as traces in this workspace.")
+        self.report["routing_decision_cost"] = {"calls": calls, "estimated_usd": cost, "minutes": round(minutes, 1)}
+        self.approved = calls
+        self.log(note)
+        if self.args.yes:
+            return
+        nums = {"calls": calls, "estimated_usd": cost, "minutes": round(minutes, 1), "plan": self.plan.type,
+                "daily_decision_limit": self.plan.daily_limit, "detail": note}
+        if not sys.stdin.isatty():
+            self.keep_reads = True
+            raise Stop("confirmation", nums | {"next": "rerun with --yes after the user approves"})
+        sys.stderr.write("continue? [y/N] ")  # stderr: stdout may be piped (--json)
+        sys.stderr.flush()
+        if sys.stdin.readline().strip().lower() != "y":
+            raise Stop("confirmation", nums | {"next": "declined"})
+
+    def decide_all(self, texts: list[str]) -> None:
+        done = itertools.count(1)
+
+        def one(t: str) -> None:
+            self.decide(t)
+            n = next(done)
+            if n % 10 == 0 or n == len(texts):
+                self.log(f"decisions {len(self.decisions)} made, {n}/{len(texts)} this round")
+        with ThreadPoolExecutor(DECISION_WORKERS) as ex:
+            list(ex.map(one, texts))
+
+    @staticmethod
+    def _key(text: str) -> str:
+        return hashlib.sha256(text.encode()).hexdigest()
+
+    def pools_of(self, m: str) -> dict[str, PoolInfo]:
+        """The model's pool and switch target per scope, computed once from the window's token totals."""
+        if m not in self.pools:
+            self.pools[m] = {sc: self.pool_for(m, sc) for sc in SCOPES}
+        return self.pools[m]
+
+    def needs_decision(self, d: DrawnTrace) -> bool:
+        """A decision changes the saving only when the trace is unrouted, has an input, and its model has a pool in
+        some scope; a model with none is already the cheapest choice, so the router serves its switch target."""
+        if d.input is None or has_auto_router(d.attrs) or has_auto_router(d.span.get("attributes") or {}):
+            return False
+        return any(p.pool for p in self.pools_of(d.model).values())
+
+    def undecided(self, d: DrawnTrace) -> bool:
+        return bool(d.input and self.needs_decision(d) and self._key(d.input) not in self.decisions)
+
+    def multi_share(self, m: str) -> float:
+        """The share of `m`'s spend in traces that used more than one model, from the windows the draws searched.
+        Weighted like the draws: a window k halvings deep stands for 2**k windows of a cell picked by its spend, so
+        its weight is 2**k / cell spend (the Hansen-Hurwitz ratio of the multi-model cost to the whole cost)."""
+        obs = self.multi_obs.get(m, [])
+        whole = sum(w * c for _, c, w in obs)
+        return sum(w * x for x, _, w in obs) / whole if whole > 0 else 0.0
+
+    def single_spend(self, spend: dict[str, float]) -> dict[str, float]:
+        """Spend the router estimate scales to: what each model spent in traces that used only that model."""
+        return {m: s * (1 - self.multi_share(m)) for m, s in spend.items()}
+
+    def headline_ci(self, spend: dict[str, float], boots: int) -> BootEstimate | None:
+        """The headline router estimate over the models whose pricing check passes."""
+        key = f"router|{HEADLINE_SCOPE}|balanced"
+        ok, _gaps = self.priced_ok(self.draws(), spend)
+        unpriced = {r.model for r in self.samples if key in r.unpriced}
+        cov = {m: ds for m, ds in ok.items() if m not in unpriced}
+        single = self.single_spend(spend)
+        return estimate(cov, {m: single.get(m, 0.0) for m in cov}, key, random.Random(self.args.seed), boots) \
+            if cov else None
+
+    def _safe(self, fn: Callable[[], T]) -> T | None:
+        try:
+            return fn()
+        except (OrqError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:  # CLI failures only; bugs raise
+            self.caveat("read failed", str(e)[:300])
+            return None
+
+    def score_samples(self, drawn: list[DrawnTrace]) -> None:
+        """Price every sample under each scenario (see SampleRow)."""
+        self.samples = []
+        for d in drawn:
+            m = d.model
+            pools = self.pools_of(m)
+            summ, attrs = d.summary, d.attrs
+            env = span_env(summ, attrs, m)
+            toks = span_tokens(summ, attrs)
+            cur = self.price_on(m, env)
+            cost = summ.get("cost") or {}
+            row = SampleRow(trace_id=d.trace_id, span_id=d.span_id, model=m, project=d.project, weight=d.weight,
+                            inclusion=d.inclusion, halvings=d.halvings, cluster=d.cluster,
+                            cur_price=price_tokens(toks, cur.prices),
+                            billed=float(cost.get("total") or 0) - float(cost.get("web_search") or 0),
+                            source=d.source, ask_chars=len(d.input or ""), prompt_tokens=toks.prompt,
+                            tokens=toks, env=env)
+            if cur.flag:
+                row.flags.append(cur.flag)
+            ss = row.scenario_savings
+
+            for sc in SCOPES:
+                sw = pools[sc].switch
+                ss[f"switch|{sc}"] = self._reprice(row, d, sw, f"switch|{sc}") if sw else 0.0
+            if has_auto_router(attrs) or has_auto_router(d.span.get("attributes") or {}):
+                row.fallback = "already_routed"
+            elif d.input is None:
+                row.fallback = d.source
+            elif not self.needs_decision(d):
+                row.fallback = "no_pool"
+            else:
+                dec = self.decide(d.input)
+                if dec.score is None:
+                    row.fallback = dec.error
+                else:
+                    row.score = dec.score
+                    row.tier = {p: tier_of(dec.score, p) for p in PROFILES}
+            for sc in SCOPES:
+                pool = pools[sc].pool
+                for p in PROFILES:
+                    key = f"router|{sc}|{p}"
+                    if row.fallback == "already_routed":
+                        ss[key] = 0.0
+                        continue
+                    if not pool:  # no pool to route over: the router serves the top seat, which is the switch
+                        ss[key] = ss[f"switch|{sc}"]
+                        if f"switch|{sc}" in row.unpriced and key not in row.unpriced:
+                            row.unpriced.append(key)
+                        if sc == HEADLINE_SCOPE:
+                            row.picks[p] = pools[sc].switch or m
+                        continue
+                    # an unscored turn goes to the router's default model, the top seat
+                    choice = pool[0].id if row.fallback is not None else pick(pool, row.tier[p], p).id
+                    ss[key] = 0.0
+                    if sc == HEADLINE_SCOPE:
+                        row.picks[p] = choice
+                    if choice != m:
+                        ss[key] = self._reprice(row, d, choice, key)
+            row.savings = {p: ss[f"router|{HEADLINE_SCOPE}|{p}"] for p in PROFILES}
+            head = pools[HEADLINE_SCOPE]
+            row.pool = [x.id for x in head.pool] if head.pool else None
+            row.pool_reason = head.reason
+            row.flags = sorted(set(row.flags))
+            self.samples.append(row)
+
+    def _reprice(self, row: SampleRow, d: DrawnTrace, target: str, key: str) -> float:
+        """Saving from serving this trace on `target` with the same input, cached and output tokens; a missing tier
+        price marks the scenario unpriced."""
+        pp = self.price_on(target, span_env(d.summary, d.attrs, target))
+        if pp.flag:
+            row.flags.append(f"{target}: {pp.flag}")
+            row.unpriced.append(key)
+        return row.cur_price - price_tokens(row.tokens, pp.prices)
+
+    def pilot_checks(self, drawn: list[DrawnTrace]) -> None:
+        rows = self.samples
+        n = len(rows)
+        scored = [r for r in rows if r.tier]
+        fb = sum(1 for r in rows if r.fallback in ("decision_timeout", "error", "empty_input", "prompt_limit"))
+        err = sum(1 for r in rows if r.fallback == "error")
+        sysfb = sum(1 for r in rows if r.source in ("system", "instructions"))
+        leaked = sum(1 for d in drawn if d.input and "<system-reminder>" in d.input)
+        tiers = {r.tier["balanced"] for r in scored}
+        checks = [
+            ("tier mix is not a single tier", len(tiers) > 1 or len(scored) < 2, {"tiers": sorted(tiers)}),
+            ("fallbacks below 10%", fb / n < 0.10, {"fallbacks": fb, "n": n}),
+            ("errors other than timeouts below 2%", err / n < 0.02, {"errors": err, "n": n}),
+            ("no system-reminder text in routing inputs", leaked == 0, {"inputs": leaked}),
+            ("system-prompt fallback below 10%", sysfb / n < 0.10, {"system_fallback": sysfb, "n": n}),
+        ]
+        for name, ok, nums in checks:
+            self.report["checks"]["stopping"].append({"check": name, "pass": ok, "numbers": nums})
+        self.report["samples"] = [r.to_json() for r in rows]
+        failed = [c for c in self.report["checks"]["stopping"] if not c["pass"]]
+        if failed and not self.args.counterfactual_test:
+            raise Stop(failed[0]["check"], failed[0]["numbers"])
+
+    def counterfactual(self) -> None:
+        per: dict[str, dict[str, int]] = defaultdict(lambda: {"n": 0, "differs": 0, "cheaper": 0, "pricier": 0})
+        asks = []
+        for r in self.samples:
+            rec = r.picks.get("balanced") or r.model
+            differs = rec != r.model
+            s = per[r.model]
+            s["n"] += 1
+            if differs:
+                s["differs"] += 1
+                cheaper = (self.v2(rec).get("price") or 0) < (self.v2(r.model).get("price") or 0)
+                s["cheaper" if cheaper else "pricier"] += 1
+            asks.append({"span_id": r.span_id, "used": r.model, "recommended": rec, "differs": differs,
+                         "tier": r.tier.get("balanced"), "fallback": r.fallback, "pool_reason": r.pool_reason})
+        self.report["counterfactual_test"] = {"asks": asks, "per_model": dict(per)}
+
+    def draws(self) -> dict[str, list[Draw]]:
+        by: dict[str, list[Draw]] = defaultdict(list)
+        for r in self.samples:
+            by[r.model].append(Draw(r.model, r.weight, r.cur_price, dict(r.scenario_savings), r.cluster))
+        return by
+
+    def priced_ok(self, by: dict[str, list[Draw]], spend: dict[str, float]
+                  ) -> tuple[dict[str, list[Draw]], dict[str, float | None]]:
+        """Sampled models whose catalog re-pricing of the drawn traces matches what orq billed, within PRICING_GAP;
+        and each model's gap (None: nothing billed)."""
+        gaps: dict[str, float | None] = {}
+        for m in by:
+            priced = sum(r.cur_price for r in self.samples if r.model == m)
+            billed = sum(r.billed for r in self.samples if r.model == m)
+            gaps[m] = abs(priced - billed) / billed if billed else None
+        return {m: ds for m, ds in by.items() if (g := gaps[m]) is not None and g <= PRICING_GAP}, gaps
+
+    def switch_exact(self, sc: str, spend: dict[str, float]) -> tuple[dict[str, float], dict[str, str]]:
+        """Change-model saving over the window per chat model, from its token totals: spend times the share its
+        switch target's base price saves on the same tokens. A model whose totals are missing, or priced more than
+        PRICING_GAP off its spend, is left out with the reason."""
+        per: dict[str, float] = {}
+        miss: dict[str, str] = {}
+        for m, s in spend.items():
+            agg = self.agg.get(m)
+            if agg is None or s <= 0:
+                miss[m] = "no token totals"
+                continue
+            own = price_tokens(agg, self.agg_price(m).prices)
+            gap = abs(own - s) / s
+            if gap > PRICING_GAP:
+                miss[m] = f"token totals priced {gap:.1%} off spend"
+                continue
+            sw = self.pools_of(m)[sc].switch
+            per[m] = s * (own - price_tokens(agg, self.agg_price(sw).prices)) / own if sw else 0.0
+        return per, miss
+
+    def estimate(self, spend: dict[str, float], total: float) -> None:
+        by = self.draws()
+        priced_ok, gaps = self.priced_ok(by, spend)
+        exact = {sc: self.switch_exact(sc, spend) for sc in SCOPES}
+        single = self.single_spend(spend)
+        head_exact, head_miss = exact[HEADLINE_SCOPE]
+        models = list(by) + [m for m in spend if m not in by and m in head_exact]  # sampled first
+        strata: list[Json] = []
+        not_covered: list[Json] = []
+        for m in models:
+            ds = by.get(m, [])
+            gap = gaps.get(m)
+            reason = ""
+            if not ds:
+                reason = "not sampled"
+            elif gap is None or gap > PRICING_GAP:
+                reason = f"pricing check off by {gap:.1%}" if gap is not None else "no billed cost"
+                self.caveat("pricing check", f"{m}: {reason}")
+                not_covered.append({"model": m, "spend": spend.get(m, 0.0), "reason": reason})
+            head = self.pools_of(m)[HEADLINE_SCOPE].to_json()
+            strata.append({"model": m, "spend": spend.get(m, 0.0), "n": len(ds), "clusters": len(clusters(ds)),
+                           "pool": head["pool"], "pool_reason": head["reason"], "pricing_gap": gap,
+                           "covered": not reason, "calls_per_trace": self.cpt.get(m),
+                           "multi_model_share": self.multi_share(m) or None,
+                           "switch_source": "totals" if m in head_exact else None})
+        for row in self.report["spend"]["by_model"]:
+            if row["key"] not in by:
+                why = ("no token totals" if row["key"] not in self.agg else "not sampled") if row["key"] in spend \
+                    else "not a chat model (decision, embedding or media)"
+                not_covered.append({"model": row["key"], "spend": row["spend"], "reason": why})
+        k = 30 / self.days
+
+        def scenario(key: str) -> Json:
+            unpriced = {r.model for r in self.samples if key in r.unpriced}
+            switch = key.startswith("switch|")
+            per_exact: dict[str, float] = exact[key.split("|")[1]][0] if switch else {}
+            cov = {} if switch else {m: ds for m, ds in priced_ok.items() if m not in unpriced}
+            cov_spend = {m: single.get(m, 0.0) for m in cov}
+            e = estimate(cov, cov_spend, key, random.Random(self.args.seed))
+            fixed = sum(per_exact.values())  # no sampling: no spread
+            cover = sum(cov_spend.values()) + sum(spend.get(m, 0.0) for m in per_exact)
+            out = {"savings": fixed + e.savings, "ci90": [fixed + x for x in e.ci90],
+                   "without_top3": fixed + without_top(cov, cov_spend, key),
+                   "coverage": (cover / total) if total else 0.0,
+                   "per_stratum": e.per_stratum | per_exact, "unpriced_models": sorted(unpriced - set(per_exact))}
+            if key.startswith("switch|"):
+                out["from_totals"] = sorted(per_exact)
+            return out | {"per_month": out["savings"] * k, "ci90_per_month": [x * k for x in out["ci90"]]}
+
+        scen = {key: scenario(key) for key in
+                [f"router|{sc}|{p}" for sc in SCOPES for p in PROFILES] + [f"switch|{sc}" for sc in SCOPES]}
+        head = scen[f"router|{HEADLINE_SCOPE}|balanced"]
+        for s in strata:
+            s["covered"] = s["covered"] and s["model"] not in head["unpriced_models"]
+            s["savings"] = head["per_stratum"].get(s["model"]) if s["covered"] else None
+            s["rate"] = stratum_rate(by[s["model"]], f"router|{HEADLINE_SCOPE}|balanced") if s["n"] else None
+        for m in head["unpriced_models"]:
+            if m in priced_ok:
+                not_covered.append({"model": m, "spend": spend.get(m, 0.0),
+                                    "reason": "trace tier has no price on a pool model"})
+        sw_head = scen[f"switch|{HEADLINE_SCOPE}"]["per_stratum"]
+        switch_nc = [{"model": r["key"], "spend": r["spend"],
+                      "reason": "not a chat model (decision, embedding or media)" if r["key"] not in spend
+                      else head_miss.get(r["key"], "no token totals")}
+                     for r in self.report["spend"]["by_model"] if sw_head.get(r["key"]) is None]
+        self.report["scenarios"] = [
+            {"scope": sc, "provider": sc.split(":")[0], "availability": sc.split(":")[1],
+             "headline": sc == HEADLINE_SCOPE,
+             "router": {p: dict(scen[f"router|{sc}|{p}"]) for p in PROFILES},
+             "switch": dict(scen[f"switch|{sc}"]),
+             "models": [{"model": m, **self.pools_of(m)[sc].to_json()} for m in models]}
+            for sc in SCOPES]
+        self.report["routing"] = {
+            "headline": {kk: head[kk] for kk in ("savings", "ci90", "without_top3", "coverage", "per_month",
+                                                 "ci90_per_month")},
+            "scope": HEADLINE_SCOPE,
+            "profiles": {p: {"savings": scen[f"router|{HEADLINE_SCOPE}|{p}"]["savings"],
+                             "ci90": scen[f"router|{HEADLINE_SCOPE}|{p}"]["ci90"]} for p in PROFILES},
+            "strata": strata, "not_covered": sorted(not_covered, key=lambda r: -r["spend"]),
+            "not_analysed": {"multi_model": {
+                "spend": self.multi_spend, "share": self.multi_spend / total if total else None,
+                "by_model": {m: sh for m in spend if (sh := self.multi_share(m)) > 0}}},
+            "switch_not_covered": sorted(switch_nc, key=lambda r: -r["spend"]),
+            "buckets": self.buckets(), "fallbacks": self.fallbacks(),
+            "moves": self.moves(),
+            "underpowered": self.underpowered(), "pareto": self.pareto(list(by)),
+        }
+
+    def moves(self) -> list[Json]:
+        """Per (used model, balanced pick): spans, how many cost more, weighted savings."""
+        out: dict[tuple[str, str], Json] = {}
+        for r in self.samples:
+            pick = r.picks.get("balanced") or r.model
+            row = out.setdefault((r.model, pick), {"used": r.model, "pick": pick, "tier": set(), "n": 0,
+                                                   "fallback": 0, "costs_more": 0, "weight": 0.0,
+                                                   "weighted_savings": 0.0})
+            row["n"] += 1
+            row["weight"] += r.weight
+            row["fallback"] += r.fallback is not None
+            row["costs_more"] += r.savings["balanced"] < 0
+            row["weighted_savings"] += r.weight * r.savings["balanced"]
+            row["tier"].add(r.tier.get("balanced") or f"fallback: {r.fallback}")
+        rows = [dict(v, tier=", ".join(sorted(v["tier"]))) for v in out.values()]
+        return sorted(rows, key=lambda v: (v["used"], -v["n"]))
+
+    def fallbacks(self) -> dict[str, int]:
+        return dict(Counter(str(r.fallback) for r in self.samples))
+
+    def buckets(self) -> dict[str, dict[str, Json]]:
+        out: dict[str, dict[str, Json]] = {"ask_tokens": defaultdict(lambda: {"n": 0, "weighted_savings": 0.0}),
+                                           "prompt_tokens": defaultdict(lambda: {"n": 0, "weighted_savings": 0.0})}
+        for r in self.samples:
+            for name, val, edges in (("ask_tokens", r.ask_chars / 4, ASK_BUCKETS),
+                                     ("prompt_tokens", r.prompt_tokens, PROMPT_BUCKETS)):
+                b = out[name][bucket(val, edges)]
+                b["n"] += 1
+                b["weighted_savings"] += r.weight * r.savings["balanced"]
+        return {k: dict(v) for k, v in out.items()}
+
+    def underpowered(self) -> list[Json]:
+        """Models where at least half the scored asks are hard: what moving those asks one model up would cost."""
+        out = []
+        for m in self.pools:
+            every = [r for r in self.samples if r.model == m]
+            rows = [r for r in every if r.tier]
+            hard = [r for r in rows if r.tier["balanced"] == "hard"]
+            if not rows or len(hard) / len(rows) < 0.5:
+                continue
+            nxt = self.next_stronger(m)
+            extra = None
+            den = sum(r.weight * r.cur_price for r in rows)
+            if nxt and hard and den:
+                num = sum(r.weight * (price_tokens(r.tokens, self.price_on(nxt, r.env).prices) - r.cur_price)
+                          for r in hard)
+                extra = num / den
+            out.append({"model": m, "n": len(every), "n_scored": len(rows), "share_hard": len(hard) / len(rows),
+                        "next_model": nxt, "next_enabled": self.enabled(nxt) if nxt else None,
+                        "extra_cost_rate": extra})
+        return out
+
+    def pareto(self, models: list[str]) -> list[Json]:
+        """Per used model: which models dominate it, enabled first, from any provider in the same region."""
+        out: list[Json] = []
+        for m in models:
+            inc = self.garden.get(m)
+            if inc is None or inc.free:
+                out.append({"model": m, "dominated_by": None, "note": "no index or price"})
+                continue
+            cost = self.traffic_cost(m)
+            own = cost(m) if cost else None
+            if cost is None or own is None:
+                dom = [x for x in self.candidates(m, "any_provider:all") if x.router_id != m and x.dominates(inc)]
+            else:  # on this model's sampled traffic, cache prices included
+                dom = [x for x in self.candidates(m, "any_provider:all") if x.router_id != m
+                       and (c := cost(x.router_id)) is not None and x.default_index >= inc.default_index
+                       and c <= own and (x.default_index > inc.default_index or c < own)]
+            dom.sort(key=lambda x: (not self.enabled(x.router_id), -x.default_index))
+            out.append({"model": m, "index": inc.default_index, "blend_price": inc.price,
+                        "dominated_by": [{"model": x.router_id, "index": x.default_index, "blend_price": x.price,
+                                          "enabled": self.enabled(x.router_id)} for x in dom[:5]], "note": ""})
+        return out
+
+    # ---- caching
+
+    def caching(self) -> Json:
+        if self.scanned:  # threads from the scanned rows; their trace count stands in for the request count
+            threads = [(t, proj, spend) for t, proj, spend, n in self.scanned.threads if n >= 3]
+        else:
+            cost_rows = self.tq([{"metric": "genai.cost", "op": "sum"}], ["thread", "project"])
+            req_rows = self.tq([{"metric": "genai.requests", "op": "count"}], ["thread", "project"])
+            reqs = {(r["group"].get("thread"), r["group"].get("project")): r["metrics"].get("genai.requests:count") or 0
+                    for r in req_rows}
+            threads = [(r["group"].get("thread"), r["group"].get("project"), r["metrics"].get("genai.cost:sum") or 0)
+                       for r in cost_rows if r["group"].get("thread")]
+            threads = [t for t in threads if reqs.get((t[0], t[1]), 0) >= 3]
+        threads.sort(key=lambda t: -t[2])
+        threads = threads[: self.args.cache_threads]
+        self.log(f"caching: scanning {len(threads)} threads")
+        with ThreadPoolExecutor(READ_WORKERS) as ex:
+            results = list(ex.map(lambda t: self._safe(lambda: self.scan_thread(*t)), threads))
+        cands = [c for res in results if res for c in res]
+        prompt = sum(c.prompt_tokens for c in cands)
+        return {"threads_scanned": len(threads), "label": "found in scanned threads, not scaled to the window",
+                "savings_found": sum(c.savings for c in cands if c.candidate),
+                "cached_share": sum(c.cached_tokens for c in cands) / prompt if prompt else None,
+                "saved_by_cache": sum(c.cache_saved for c in cands),
+                "threads_caching": len({c.thread for c in cands if c.cached_tokens >= 0.2 * c.prompt_tokens > 0}),
+                "savings_orq": sum(c.savings for c in cands if c.candidate and c.product in ("agents", "deployments")),
+                "rows": [asdict(c) for c in sorted(cands, key=lambda c: -c.savings)[:50]]}
+
+    def scan_thread(self, thread: str, project: str, spend: float) -> list[CacheCandidate]:
+        traces = self.search(project, parse_ts(self.frm), parse_ts(self.to),
+                             [{"field": "thread_id", "op": "eq", "values": [thread]}])[:30]
+        by_model: dict[str, list[Turn]] = defaultdict(list)
+        agent = product = None
+        for t in traces:
+            tid = t.get("trace_id") or t.get("id")
+            if not tid:
+                self.caveat("trace without id", f"thread {thread}: search returned a trace with no trace_id; skipped")
+                continue
+            ag = t.get("agent")
+            agent = agent or (ag.get("key") or ag.get("id") if isinstance(ag, dict) else ag)
+            product = product or (((t.get("attributes") or {}).get("orq") or {}).get("product"))
+            for s in self.leaf_llm(self.list_spans(tid, project)):
+                u = s.get("usage") or {}
+                by_model[model_key(s.get("provider", ""), s.get("model", ""))].append(Turn(
+                    parse_ts(s["started_at"]).timestamp(), int(u.get("prompt_tokens") or 0),
+                    int(u.get("prompt_cached_tokens") or 0), int(u.get("prompt_cache_creation_tokens") or 0)))
+        out = []
+        for m, turns in by_model.items():
+            turns.sort(key=lambda x: x.t)
+            prices = self.price_on(m, {}).prices
+            ok, why = caching_candidate(turns, prices)
+            ttl = min([_ttl_seconds(k.removeprefix("cache_write_")) for k in prices if k.startswith("cache_write_")]
+                      or [300.0])
+            saving = caching_savings(turns, prices, ttl) if ok else 0.0
+            if ok and saving <= 0:
+                ok, why = False, "cache expires between turns or the write premium outweighs reads"
+            read = prices.get("cache_read")
+            cached = sum(t.cached for t in turns)
+            prov = developer_of(self.canonical(m))
+            action = {"anthropic": "set cache_control breakpoints", "openai": "keep the prompt prefix stable",
+                      "google": "reads-only reporting; no figure"}.get(prov, "check provider caching")
+            out.append(CacheCandidate(
+                thread=thread, project=project, model=m, turns=len(turns), candidate=ok, reason=why,
+                savings=saving if ok and prov != "google" else 0.0, upper_bound=prov == "openai", action=action,
+                thread_spend=spend, prompt_tokens=sum(t.prompt for t in turns), cached_tokens=cached,
+                cache_saved=cached * (prices.get("input", 0.0) - read) if read is not None else 0.0,
+                agent=agent, product=product))
+        return out
+
+    def harness(self) -> Json:
+        try:
+            rows = self.tq([{"metric": "orq.gen_ai.cost", "op": "sum"}], ["trace_framework"])
+        except OrqError as e:
+            return {"metric": "orq.gen_ai.cost", "rows": [], "error": str(e)[:200]}
+        rows = [{"framework": r["group"].get("trace_framework") or "(not set)",
+                 "spend": r["metrics"].get("orq.gen_ai.cost:sum") or 0.0} for r in rows]
+        tot = sum(r["spend"] for r in rows)
+        for r in rows:
+            r["share"] = r["spend"] / tot if tot else None
+            r["coding_harness"] = r["framework"] in CODING_HARNESSES
+        gap = self.report["spend"]["total"] - tot
+        if gap < 0:  # the metrics can disagree upward; a negative difference means nothing
+            self.caveat("harness metric exceeds spend", f"orq.gen_ai.cost {tot:.2f} > genai.cost "
+                        f"{self.report['spend']['total']:.2f}; shares only")
+        return {"metric": "orq.gen_ai.cost", "rows": sorted(rows, key=lambda r: -r["spend"]),
+                "unattributed": gap if gap >= 0 else None}
+
+    # ---- output
+
+    def write(self) -> None:
+        if self.report["status"] == "ok" and "routing" in self.report:
+            items = list(self.report.items())  # summary right after the run header, before the bulky sections
+            self.report = dict(items[:5] + [("summary", summary(self.report))] + items[5:])
+        text = json.dumps(self.report, indent=1, default=str)
+        Report.model_validate_json(text, strict=True)  # a contract break fails here, not in a caller
+        (self.out / "report.json").write_text(text)
+        if self.args.json:
+            keys = ("status", "stop", "summary") + (("counterfactual_test",) if "counterfactual_test" in self.report else ())
+            keys = ("workspace", "generated_at") + keys
+            print(json.dumps({k: self.report.get(k) for k in keys}, default=str))
+            return
+        slots = "\n\n".join(f"## {s}\n\n<!-- {h} -->\n" for s, h in SLOTS.items())
+        (self.out / "narrative-slots.md").write_text(
+            "# Narrative slots\n\nCopy this file to narrative.md and replace each comment with prose. Quote numbers "
+            "only from report.json; lead with percent of spend, then dollars per month; no statistics in prose "
+            "(the page shows uncertainty in its appendix table).\n\n" + slots)
+        self.log(f"wrote {self.out / 'report.json'}")
+        if self.report.get("status") == "ok" and "routing" in self.report:
+            self.log(f"next: fill {self.out / 'narrative.md'}, then run render; report.html is the deliverable")
+
+
+SLOTS = {
+    "summary": "one line, at most 12 words, no model names: the lever named in summary.recommended (router is Smart Router, switch is change model) "
+               "with its percent of spend and monthly dollars (for example `Save 38% ($150/mo) with Smart "
+               "Router.`); the spend bar shows how much is possible today",
+    "routing": "why each model moves where it does: one line per model, plain words, no 'dominated', no raw index "
+               "numbers; no action list, the page renders the per-model plan; monthly figures",
+    "caching": "which threads or agents miss caching and the action per provider",
+    "caveats": "sample size, not-covered spend, failed caveat checks, fallback choice",
+}
+
+
+# --------------------------------------------------------------------------------------------- render
+
+
+def parse_narrative(text: str) -> dict[str, str]:
+    out, cur = {}, None
+    for line in text.splitlines():
+        m = re.match(r"^##\s+(\w+)\s*$", line)
+        if m:
+            cur = m.group(1).lower()
+            out[cur] = ""
+            continue
+        if cur:
+            out[cur] += line + "\n"
+    return {k: re.sub(r"<!--.*?-->", "", v, flags=re.S).strip() for k, v in out.items()}
+
+
+def _md(text: str) -> str:
+    blocks, html_out = re.split(r"\n\s*\n", text.strip()), []
+    for b in blocks:
+        lines = b.splitlines()
+        if all(re.match(r"^\s*[-*]\s+", ln) for ln in lines):
+            html_out.append("<ul>" + "".join(f"<li>{html.escape(re.sub(r'^\s*[-*]\s+', '', ln))}</li>"
+                                              for ln in lines) + "</ul>")
+        else:
+            html_out.append(f"<p>{html.escape(' '.join(lines))}</p>")
+    return "\n".join(html_out)
+
+
+def _usd(x: Any) -> str:
+    if x is None:
+        return "n/a"
+    if x != 0 and abs(x) < 0.01:
+        return "<$0.01" if x > 0 else "-<$0.01"
+    return f"${x:,.0f}" if abs(x) >= 1000 else f"${x:,.2f}"
+
+
+def _usd0(x: Any) -> str:
+    if x is None:
+        return "n/a"
+    return f"-${-x:,.0f}" if round(x) < 0 else f"${abs(x) if round(x) == 0 else x:,.0f}"
+
+
+def _pct(x: Any) -> str:
+    return "n/a" if x is None else f"{x:.0%}"
+
+
+def _pc(x: Any) -> str:
+    """A share as a whole percent; '<1%' for a positive share that rounds to zero."""
+    if x is None:
+        return "n/a"
+    return "<1%" if 0 < x < 0.005 else f"{x:.0%}"
+
+
+def _of(x: Any, base: Any) -> float | None:
+    return x / base if x is not None and base else None
+
+
+def _change(x: Any) -> str:
+    """A cost change as a percent, or as a multiple once it passes +1000%."""
+    if x is None:
+        return "n/a"
+    return f"{1 + x:.0f}x the cost" if x > 10 else f"{x:+.0%}"
+
+
+def _day(iso: str) -> str:
+    try:
+        d = parse_ts(iso)
+    except ValueError:
+        return iso
+    return f"{d.day} {d:%b %Y}"
+
+
+def _filter_text(f: Json) -> str:
+    return f"{f.get('field')} {f.get('op')} {', '.join(str(v) for v in f.get('values') or [])}"
+
+
+def _txt(x: Any) -> str:
+    if x is None or x == "":
+        return "none"
+    if isinstance(x, bool):
+        return "Yes" if x else "No"
+    return str(x)
+
+
+def _short(model: str) -> str:
+    return model.split("/", 1)[-1]
+
+
+def _table(rows: list[Json], cols: list[tuple[str, str, Any]], caption: str = "") -> str:
+    if not rows:
+        return "<p class=m>Nothing to show.</p>"
+    cap = f"<caption>{html.escape(caption)}</caption>" if caption else ""
+    num = [" class=num" if fmt in NUMERIC else "" for _, _, fmt in cols]
+    head = "".join(f"<th scope=col{c}>{html.escape(h)}</th>" for (h, _, _), c in zip(cols, num, strict=True))
+    def cell(fmt: Any, v: Any) -> str:
+        return fmt(v) if fmt in RAW else html.escape(str(fmt(v)))
+
+    body = "".join("<tr>" + "".join(f"<td{c}>{cell(fmt, r.get(k))}</td>"
+                                    for (_, k, fmt), c in zip(cols, num, strict=True)) + "</tr>" for r in rows)
+    label = html.escape(caption or cols[0][0])
+    return (f"<div class=t role=region tabindex=0 aria-label='{label}'><table>{cap}<thead><tr>{head}</tr></thead>"
+            f"<tbody>{body}</tbody></table></div>")
+
+
+THEME_BOOT = ("try{var t=localStorage.getItem('report-theme');"
+              "if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}"
+              "document.documentElement.classList.add('js')")
+
+_SVG = ("<svg class={c} viewBox='0 0 24 24' width=16 height=16 fill=none stroke=currentColor stroke-width=2 "
+        "stroke-linecap=round stroke-linejoin=round aria-hidden=true>{d}</svg>")
+SUN = _SVG.format(c="sun", d="<circle cx=12 cy=12 r=4></circle><path d='M12 2v2M12 20v2M4.93 4.93l1.41 1.41"
+                  "M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41'></path>")
+MOON = _SVG.format(c="moon", d="<path d='M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z'></path>")
+
+PAGE_JS = """(function(){var d=document.documentElement;
+var mq=window.matchMedia?matchMedia('(prefers-color-scheme: dark)'):null,btn=document.querySelector('.theme');
+function isDark(){var t=d.getAttribute('data-theme');return t?t==='dark':!!(mq&&mq.matches)}
+function label(){if(btn)btn.setAttribute('aria-label',isDark()?'Switch to light theme':'Switch to dark theme');
+var b=document.body;if(b){b.classList.remove('auto','light','dark');b.classList.add(d.getAttribute('data-theme')||'auto')}}
+label();if(mq&&mq.addEventListener)mq.addEventListener('change',label);
+if(btn)btn.addEventListener('click',function(){var t=isDark()?'light':'dark';d.setAttribute('data-theme',t);
+try{localStorage.setItem('report-theme',t)}catch(e){}label()});
+document.querySelectorAll('.copy').forEach(function(b){b.addEventListener('click',function(e){
+e.preventDefault();e.stopPropagation();var t=document.getElementById(b.getAttribute('data-copy')).textContent;
+var l=b.querySelector('b')||b,o=l.textContent;function done(){l.textContent='Copied';b.classList.add('ok');setTimeout(function(){l.textContent=o;b.classList.remove('ok')},1500)}
+function old(){var a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();
+try{document.execCommand('copy');done()}catch(x){}a.remove()}
+if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(done,old);else old()})});
+var tip=document.createElement('div');tip.className='tip';tip.setAttribute('role','tooltip');document.body.appendChild(tip);
+function show(el,x,y){tip.textContent=el.getAttribute('data-tip');tip.style.display='block';
+var w=tip.offsetWidth,h=tip.offsetHeight;tip.style.left=Math.max(8,Math.min(innerWidth-w-8,x-w/2))+'px';
+tip.style.top=(y-h-10<8?y+18:y-h-10)+'px'}
+function hide(){tip.style.display='none'}
+document.querySelectorAll('[data-tip]').forEach(function(el){
+el.addEventListener('pointermove',function(e){show(el,e.clientX,e.clientY)});el.addEventListener('pointerleave',hide);
+el.addEventListener('focus',function(){var r=el.getBoundingClientRect();show(el,r.left+r.width/2,r.top)});
+el.addEventListener('blur',hide)});
+})();"""
+
+CSS = """
+b,strong{font-weight:600}
+:root{--bg:#ffffff;--fg:#141319;--fg2:#3c3a48;--muted:#737373;--panel:#fafafa;--strip:#f7f6f5;--card:#ffffff;
+--line:#e6e6e6;--sep:#f6f6f6;--shadow:0 1px 2px 0 #14131908;--s1:#025558;--s2:#df5325;--kept:#dcdad6;--ns:#f3f3f3;--hl:#e6f6f5;
+--hl2:#4ba9a7;--hlb:#b8e4e2;--pill:#ffffff;--rec-fg:#025558;--rec-bg:#e6f6f5;--btn:#141319;--btn-fg:#ffffff;--btn-hover:#3c3a48;color-scheme:light}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){--bg:#1f1e1d;--fg:#faf9f5;--fg2:#c2c0b6;
+--muted:#9c9a92;--panel:#262624;--strip:#1f1e1d;--card:#30302e;--line:#42413d;--sep:#3a3935;--shadow:0 1px 2px 0 #00000040;
+--s1:#2fbfba;--s2:#f27c3c;--kept:#55544f;--ns:#232221;--hl:#2fbfba2e;--hl2:#2fbfba66;--hlb:#2fbfba80;--pill:#42413d;--rec-fg:#2fbfba;--rec-bg:#2fbfba2e;--btn:#faf9f5;--btn-fg:#141319;--btn-hover:#dcdad6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#1f1e1d;--fg:#faf9f5;--fg2:#c2c0b6;--muted:#9c9a92;--panel:#262624;--strip:#1f1e1d;
+--card:#30302e;--line:#42413d;--sep:#3a3935;--shadow:0 1px 2px 0 #00000040;--s1:#2fbfba;--s2:#f27c3c;--kept:#55544f;--ns:#232221;
+--hl:#2fbfba2e;--hl2:#2fbfba66;--hlb:#2fbfba80;--pill:#42413d;--rec-fg:#2fbfba;--rec-bg:#2fbfba2e;--btn:#faf9f5;--btn-fg:#141319;--btn-hover:#dcdad6;color-scheme:dark}
+*{box-sizing:border-box}
+body{font:14px/1.5 "Avio Sans",Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+background:var(--bg);color:var(--fg);margin:0;padding-block:28px 56px;
+padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+main{max-width:1000px;margin:0 auto}
+h1,h2,h3{text-wrap:balance;line-height:1.25;color:var(--fg);font-weight:500}
+h1{font-size:24px;margin:0 0 4px;letter-spacing:-0.01em}
+h2{font-size:11px;line-height:14px;font-weight:500;color:var(--muted);margin:0;padding:12px 16px;scroll-margin-top:16px}
+h3{font-size:14px;margin:20px 0 6px}
+p,li,dd{max-width:68ch;text-wrap:pretty}
+.m{color:var(--muted)}
+.tip{position:fixed;z-index:10;display:none;pointer-events:none;max-width:260px;padding:6px 10px;border-radius:6px;
+font-size:12px;line-height:1.4;background:var(--fg);color:var(--bg);box-shadow:0 2px 8px #00000030}
+[data-tip]{cursor:default}[data-tip]:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+.setup+.setup{margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}
+.setup h3{font-size:15px;margin:0 0 4px;display:flex;align-items:center;gap:8px}.setup .ol{margin:8px 0 0}.setup .ol a{color:var(--fg);text-underline-offset:2px}
+.cpg{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 0}
+.cpg .copy{display:inline-flex;align-items:center;gap:12px;max-width:100%;padding:8px 16px 8px 10px;font:inherit;text-align:left;
+cursor:pointer;color:var(--btn-fg);background:var(--btn);border:0;border-radius:6px;box-shadow:0 1px 2px 0 #14131926;transition:background .15s}
+.cpg .copy:hover{background:var(--btn-hover)}.cpg .copy:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+.cpg .copy.ok{background:var(--s1);color:#fff}
+.ags{display:inline-flex;flex:none}
+.ag{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--card);color:var(--fg);
+border:2px solid var(--btn);margin-left:-7px}.ag:first-child{margin-left:0}.ag svg{width:13px;height:13px;fill:currentColor}
+.ag.term{width:auto;padding:0 7px;border-radius:12px;font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
+.copy:hover .ag{border-color:var(--btn-hover)}.copy.ok .ag{border-color:var(--s1)}
+.gs{display:flex;flex-direction:column;min-width:0}.gs b{font-size:14px;font-weight:600;line-height:1.3}
+.cpg .gs small{font-size:12px;color:inherit;opacity:.85;line-height:1.3}
+.cps{display:flex;flex-wrap:wrap;column-gap:20px;margin:4px 0 0}.cps details.cp[open]{flex-basis:100%;order:2}
+details.cp{border:0;padding:0;margin:0}
+details.cp>summary{list-style:none;cursor:pointer;padding:4px 0;font-size:13px;font-weight:400;color:var(--muted)}
+details.cp>summary::-webkit-details-marker{display:none}
+details.cp>summary::before{content:"\\25B8";display:inline-block;width:1em;color:var(--muted);transition:transform .15s}
+details.cp[open]>summary::before{transform:rotate(90deg)}
+details.cp pre{margin:0 0 10px;padding:10px 12px;background:var(--panel);border-radius:4px;font:12px/1.5 ui-monospace,
+SFMono-Regular,Menlo,monospace;color:var(--fg)}
+details.cp pre.cmd{white-space:pre;overflow-x:auto}details.cp pre.txt{white-space:pre-wrap;overflow-wrap:break-word}
+.setup .mv{margin:8px 0;padding-left:18px}.setup .mv li{margin:2px 0}
+@media (prefers-reduced-motion:reduce){details>summary::before{transition:none}}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.top>div{min-width:0}
+.toc{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 16px;margin:20px 0 4px;font-size:13px}
+.toc span{color:var(--muted)}
+.toc ul{display:flex;flex-wrap:wrap;gap:4px 16px;margin:0;padding:0;list-style:none}
+.toc li{max-width:none}
+.toc a{color:var(--fg);text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:3px;
+transition:text-decoration-color .15s ease-out}
+.toc a:hover{text-decoration-color:currentColor}
+.toc a:focus-visible{outline:2px solid var(--s1);outline-offset:2px;border-radius:2px}
+.theme{display:none;place-items:center;width:32px;height:32px;padding:0;border:1px solid var(--line);border-radius:8px;
+background:var(--strip);color:var(--muted);cursor:pointer;transition:color .15s ease-out,background-color .15s ease-out}
+.js .theme{display:inline-grid}.theme:hover{color:var(--fg);background:var(--pill)}
+.theme:focus-visible{outline:2px solid var(--s1);outline-offset:1px}
+.theme .sun{display:none}
+:root[data-theme="dark"] .theme .sun{display:block}:root[data-theme="dark"] .theme .moon{display:none}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .theme .sun{display:block}
+:root:not([data-theme="light"]) .theme .moon{display:none}}
+@media (prefers-reduced-motion:reduce){.toc a,.theme{transition:none}}
+.card{background:var(--strip);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow);margin:12px 0;overflow:hidden}
+.card>.cb{background:var(--card);border:1px solid var(--line);border-radius:4px;box-shadow:0 -1px 1px 0 #14131908;
+margin:0 2px 2px;padding:var(--pad);min-width:0;--pad:16px}
+.okline{display:flex;gap:10px;align-items:flex-start}.okline .ok{flex:none;width:20px;height:20px;color:var(--s1);margin-top:2px}
+.card>.cb>:first-child{margin-top:0}.card>.cb>:last-child{margin-bottom:0}
+.hero{margin:24px 0 0}
+.hero .verdict{margin:0 0 12px;font-size:17px;font-weight:500;color:var(--fg);max-width:60ch}
+.kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.kpis .card{margin:8px 0 0}
+@media (max-width:480px){.kpis .card{position:relative;overflow:visible}
+.kpis .rec{position:absolute;top:-9px;right:8px}}
+.kh{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:12px 16px;font-size:11px;line-height:14px;font-weight:500;color:var(--muted)}
+.kn{white-space:nowrap}
+.rec{margin-left:auto;font-size:10px;font-weight:500;line-height:12px;padding:2px 6px;border-radius:9999px;
+color:var(--rec-fg);background:var(--rec-bg);border:1px solid var(--hlb)}
+.kh i,.dot{width:8px;height:8px;border-radius:2px;display:inline-block;flex:none}
+.big{font-size:36px;line-height:1.1;font-weight:500;margin:0;letter-spacing:-0.02em;color:var(--fg)}
+.big small{font-size:14px;font-weight:400;color:#a6a6a6;margin-left:6px;letter-spacing:0}
+.kpis .note{margin:8px 0 0;font-size:13px;color:var(--muted)}
+.hero .gap{margin:8px 0 24px;font-size:13px;max-width:none}
+.bar{display:flex;gap:3px;height:6px}
+.bar i{display:block;height:100%;border-radius:2px;min-width:3px}
+.bar .b1{background:var(--s1)}.bar .b2{background:var(--hl2)}.bar .b3{background:var(--ns)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;margin:12px 0 0;font-size:13px;color:var(--fg2);padding:0;
+list-style:none}
+.legend li{display:flex;align-items:center;gap:6px}
+.sw{display:inline-block;width:8px;height:8px;border-radius:2px}
+.sr{background:var(--s1)}.sr2{background:var(--hl2)}.kept{background:var(--kept)}
+.r{background:var(--s1)}.s{background:var(--s2)}
+.caveat{margin:12px 0 0;font-size:13px}
+.chart{margin:12px 0 0}
+.row{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1.15fr) 6.5em;gap:6px 16px;align-items:start;
+padding:12px 0;border-bottom:1px solid var(--line)}
+.row:first-child{padding-top:0}.row:last-child{border-bottom:0;padding-bottom:0}
+.who{min-width:0}
+.who>span{display:block;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.who>span:first-of-type{margin-top:8px}
+.flow{display:grid;grid-template-columns:10em auto minmax(0,1fr);align-items:center;min-width:0;
+--lv:var(--fg2);--chip-h:25px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:var(--chip-h);border:1px solid var(--line);
+background:var(--card);border-radius:4px;padding:0 8px;font-size:13px;font-weight:500;line-height:1.3;
+color:var(--fg);white-space:nowrap;box-shadow:var(--shadow)}
+.chip.src{display:block;justify-self:start;max-width:100%;overflow:hidden;text-overflow:ellipsis;
+line-height:calc(var(--chip-h) - 2px);background:var(--panel);color:var(--fg2)}
+.chip.new{border-style:dashed;border-color:var(--s1)}
+.chip.same{background:var(--panel);color:var(--fg2)}
+.chip em{font-style:normal;font-size:11px;font-weight:500;color:var(--rec-fg)}
+.chip.same em{color:var(--muted)}
+.link{width:18px;height:2px;background:var(--lv);position:relative}
+.flow.switch .link{width:26px;margin-right:6px}
+.flow.switch .link::after{content:"";position:absolute;right:-6px;top:-4px;border:5px solid transparent;
+border-left:6px solid var(--lv);border-right:0}
+.to{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;min-width:0}
+.to li{display:flex;flex-wrap:nowrap;align-items:center;gap:8px;position:relative;min-width:0}
+.to li small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.to.fork li{padding-left:16px}
+.to.fork li::before{content:"";position:absolute;left:0;top:calc(var(--chip-h)/2 - 1px);width:12px;height:2px;
+background:var(--lv)}
+.to.fork li::after{content:"";position:absolute;left:0;width:2px;top:-3px;bottom:-3px;background:var(--lv)}
+.to.fork li:first-child::after{top:calc(var(--chip-h)/2)}
+.to.fork li:last-child::after{bottom:auto;height:calc(var(--chip-h)/2 + 3px)}
+.to small{font-size:12px;color:var(--muted)}
+.lk{display:inline-block;width:16px;height:2px;vertical-align:middle;margin-right:6px;background:var(--fg2);
+position:relative}
+.lk.arrow::after{content:"";position:absolute;right:-2px;top:-3px;border:4px solid transparent;
+border-left:5px solid var(--fg2);border-right:0}
+.lk.fork{width:12px;height:10px;background:none;border:solid var(--fg2);border-width:2px 0 2px 2px}
+.lk.dash{width:16px;height:10px;background:none;border:1px dashed var(--s1);border-radius:3px}
+.val,.kpis,.cell,.legend,.num,td,th{font-variant-numeric:tabular-nums}
+.who span.hard{color:var(--muted);font-weight:400}
+.track{display:flex;gap:2px;height:6px;align-items:stretch;margin-top:10px}
+.bx{min-width:0}
+.legend.mini{margin:6px 0 0;gap:2px 12px;font-size:12px;color:var(--muted)}
+.wf{display:flex;gap:28px;align-items:flex-start}.wc{flex:0 0 112px;min-width:0}
+.wp{position:relative;height:140px;width:56px}.wp i{position:absolute;left:0;right:0;min-height:2px;border-radius:2px}
+.wp i.tot{background:var(--fg2)}.wp i.sr{background:var(--s1)}.wp i.sr2{background:var(--hl2)}
+.cn{position:absolute;left:100%;width:84px;border-top:1px dashed var(--muted)}
+.wc p{margin:8px 0 0;font-size:12px;color:var(--muted)}.wc b,.wc span{display:block}.wc b{font-size:16px;color:var(--fg)}
+.track i{display:block;min-width:3px;border-radius:2px}
+.track i.kept{min-width:0}
+.foot{margin:8px 0 0;font-size:13px}
+.foot+.foot{margin-top:2px}
+.val{text-align:right}
+.val b{display:block;font-size:16px;font-weight:600}
+.val span{font-size:12px;color:var(--muted)}
+.grid{display:grid;grid-template-columns:5.5em minmax(0,1fr) minmax(0,1fr);gap:8px;margin:12px 0 8px;
+align-items:stretch}
+.grid .ch,.grid .rh{font-size:13px;font-weight:500;color:var(--muted);margin:0;align-self:end}
+.grid .rh{align-self:center}
+.cell{border:1px solid var(--line);border-radius:4px;padding:10px 12px;min-width:0;background:var(--panel)}
+.cell.hl{background:var(--hl);border-color:var(--hlb)}
+.cell p{margin:0}
+.cell .tag{font-size:12px;font-weight:500;color:var(--rec-fg)}
+.cell .f1{font-size:20px;line-height:28px;font-weight:500;color:var(--s1)}
+.cell .f2{font-size:16px;line-height:24px;font-weight:500;color:var(--s2);margin-top:8px}
+.cell .f1 span,.cell .f2 span{font-size:12px;font-weight:400;color:var(--muted);margin-left:6px}
+.cell .ci{font-size:12px;color:var(--muted)}
+.cell .en{font-size:12px;color:var(--muted);margin-top:6px}
+dl.gl{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;margin:12px 0}
+dl.gl dt{font-weight:500}dl.gl dd{margin:0}
+.rows{margin:12px calc(-1*var(--pad)) calc(-1*var(--pad))}
+details,summary,table,thead,tbody,tr,th,td,caption,dl,dt,dd{background:none;box-shadow:none}
+details,summary,td,li,dt,dd{color:var(--fg)}caption{color:var(--muted)}
+details{border:0;border-top:1px solid var(--line);border-radius:0;margin:0;padding:2px 16px}
+details:not(.cp):first-child{border-top:0}
+details[open]{padding-bottom:4px}
+summary{cursor:pointer;padding:10px 0;margin:0;border:0;border-radius:0;font-weight:500;color:var(--fg)}
+summary span{font-weight:400;color:var(--muted)}
+details:not(.cp)>summary{list-style:none;position:relative;padding-left:1.25em}
+details:not(.cp)>summary::-webkit-details-marker{display:none}
+details:not(.cp)>summary::before{content:"\\25B8";position:absolute;left:0;width:1em;text-align:center;color:var(--muted);transition:transform .15s}
+details:not(.cp)[open]>summary::before{transform:rotate(90deg)}
+details:not(.cp)>summary span{display:block;font-size:13px;line-height:18px;margin-top:2px}
+.t{overflow-x:auto;margin:8px 0 12px}
+svg.rg{display:block}svg.rg .gl{stroke:var(--line);stroke-width:1}svg.rg .tk{stroke:var(--ns);stroke-width:2;stroke-linecap:round}
+svg.rg .ci{stroke-width:6;stroke-linecap:round}svg.rg.lv-r .ci{stroke:var(--s1)}svg.rg.lv-s .ci{stroke:var(--s2)}
+svg.rg circle{fill:var(--fg);stroke:var(--card);stroke-width:1.5}.t td:first-child{white-space:nowrap}
+@media print{.theme,.toc{display:none}.card,.row,details,tr{break-inside:avoid}body{padding:0}}
+table{border-collapse:collapse;width:100%;font-size:12px;line-height:20px}
+caption{text-align:left;font-weight:500;padding:4px 0 6px}
+td,th{border-bottom:1px solid var(--sep);padding:8px 16px;text-align:left;vertical-align:top}
+td{overflow-wrap:anywhere;min-width:5em}
+td.num,th.num{text-align:right}
+th{color:var(--muted);font-weight:500;white-space:nowrap}
+tbody tr:last-child td{border-bottom:0}
+.ex{border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin:6px 0;font-size:13px;color:var(--muted);
+white-space:pre-wrap;overflow-wrap:anywhere;max-height:12em;overflow:auto}
+:focus-visible{outline:2px solid var(--s1);outline-offset:2px}
+@media (max-width:720px){
+.grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.grid .corner{display:none}
+.cell .f1 span,.cell .f2 span{display:block;margin:0}
+.grid .rh{grid-column:1/-1;margin-top:6px}
+.kpis{gap:8px}
+.big{font-size:28px}.big small{display:block;margin:2px 0 0}
+.hero .verdict{font-size:16px}
+.card>.cb{--pad:12px}
+.row{grid-template-columns:minmax(0,1fr) auto;padding:12px 0}
+.who{grid-column:1/-1}.bx{grid-column:1;grid-row:2}.val{grid-row:2}
+.wf{gap:8px}.wc{flex:1 1 0}.cn{width:calc(25vw - 40px)}.wp{height:110px;width:40px}.wc b{font-size:14px}
+.flow{grid-template-columns:9.5em auto minmax(0,1fr);--chip-h:23px}
+.chip{font-size:12px;padding:0 6px}.chip em{font-size:10px}.to small{font-size:11px}
+.to li{flex-wrap:wrap;gap:2px 8px}.to li small{white-space:normal}.to.fork li::after{bottom:-5px}
+dl.gl{grid-template-columns:1fr}dl.gl dd{margin-bottom:8px}
+}
+"""
+
+
+SCOPE_LABEL = {"same_provider:all": "Same provider, all available", "same_provider:enabled": "Same provider, enabled",
+               "any_provider:all": "Any provider, all available", "any_provider:enabled": "Any provider, enabled"}
+TOKENIZER_NOTE = ("Any-provider figures reuse the sampled token counts. Other model families tokenize "
+                  "differently, so they carry an error the traces cannot measure.")
+
+
+STOP_TEXT = {"sample_size": "it reached the sample size",
+             "relative_precision": f"the Smart Router 90% range was within {STOP_REL_HALF_WIDTH:.0%} of the estimate",
+             "absolute_precision": f"the Smart Router 90% range was within {STOP_ABS_HALF_WIDTH:.0%} of spend",
+             "wall_time": f"it hit the {WALL_TIME_S // 60} min time cap",
+             "decision budget": "the approved decision calls were used up"}
+
+
+def _sampling_note(sa: SummarySampling | None) -> str:
+    """How many traces were drawn, on which plan, why drawing stopped, and which models the change-model figure
+    prices from token totals instead of the sample."""
+    if sa is None:
+        return ""
+    why = STOP_TEXT.get(sa.stop_reason or "", sa.stop_reason or "")
+    hw = f" (±{_usd0(sa.half_width_per_month)}/mo)" if sa.half_width_per_month is not None else ""
+    out = (f"<p class=m>Sample: {sa.drawn} of up to {sa.target} traces ({html.escape(str(sa.plan))} plan), picked "
+           f"in proportion to their cost; {sa.decision_calls} decision calls. Drawing stopped because "
+           f"{html.escape(why)}{hw}.</p>")
+    if sa.switch_from_totals:
+        out += (f"<p class=m>Change model is priced on every call of the window for {len(sa.switch_from_totals)} "
+                "model(s), from token totals at base prices: no sampling range for those.</p>")
+    return out
+
+
+def _ci_cell(s: Any) -> str:
+    return str(s)
+
+
+NUMERIC = (_usd, _usd0, _pct, _pc, _ci_cell, _change)
+
+
+PROVIDER_NAME = {"openai": "OpenAI", "anthropic": "Anthropic", "google-ai": "Google", "google": "Google",
+                 "aws": "AWS", "azure": "Azure", "mistral": "Mistral"}
+
+
+def _pool_switch(m: Move | Json) -> tuple[list[str], str | None]:
+    """A move's pool and change-model target; `m` is a Move or a scenario `models` entry."""
+    return (m.pool or [], m.switch) if isinstance(m, Move) else (m.get("pool") or [], m.get("switch"))
+
+
+def _lever(m: Move | Json) -> Literal["router", "switch", ""]:
+    """'router' when the move routes the model over a pool, 'switch' (change model) when it moves it whole, else ''."""
+    pool, switch = _pool_switch(m)
+    return "router" if len(pool) > 1 else "switch" if switch else ""
+
+
+def _phrase(m: Move | Json) -> str:
+    """The move of one model in one scope, lower case: 'route over A and B', 'change to A' or 'route'."""
+    pool, switch = _pool_switch(m)
+    if len(pool) > 1:
+        return "route over " + " and ".join(_short(p) for p in pool)
+    return f"change to {_short(switch)}" if switch else "route"
+
+
+def _same_move(a: Move | Json, b: Move | Json) -> bool:
+    return _pool_switch(a) == _pool_switch(b)
+
+
+def _differs_today(today: Move | Json | None, head: Move | Json) -> bool:
+    """Whether the enabled-only scope moves the model differently from the headline, which then needs enabling."""
+    return today is not None and bool(_lever(today)) and not _same_move(today, head)
+
+
+def _rec_lines(rec: Recommendation) -> list[str]:
+    """Plain row text: what to do with this model, now and after enabling models, as short sentences."""
+    if rec.saved_per_month <= 0:
+        prov = rec.model.split("/")[0]
+        return [f"Keep it: no cheaper {PROVIDER_NAME.get(prov, prov)} model is as strong"]
+    head: Move | Json = rec.move or {}
+    today = rec.today_move
+    if not rec.enable:
+        p = _phrase(head)
+        return [p[0].upper() + p[1:]]
+    later = f"After enabling {' and '.join(_short(e) for e in rec.enable)}: {_phrase(head)}."
+    if today is not None and _differs_today(today, head):
+        return [f"Now: {_phrase(today)}.", later]
+    return [later]
+
+
+def _before_enabling_note(enable: list[str], today: Move | Json | None, head: Move | Json, now: float | None,
+                          spend: float) -> str:
+    """What to do before enabling models, when the enabled-only move already saves money."""
+    if not (enable and today is not None and _differs_today(today, head) and (now or 0) > 0):
+        return ""
+    return f"Before enabling: {_phrase(today)} now, {_pc(_of(now, spend))} saved ({_usd0(now)}/mo)."
+
+
+def _rec_note(rec: Recommendation) -> str:
+    return _before_enabling_note(rec.enable, rec.today_move, rec.move or {}, rec.saved_today_per_month,
+                                 rec.spend_per_month)
+
+
+def _headline(report: Json) -> Json:
+    return next((sc for sc in report.get("scenarios") or [] if sc.get("headline")), {})
+
+
+def _enabled_scope(report: Json, head: Json) -> Json | None:
+    """The same-provider, enabled-models-only scenario (the headline itself when it already is that)."""
+    if head.get("availability") == "enabled":
+        return head
+    want = f"{head.get('provider', 'same_provider')}:enabled"
+    return next((sc for sc in report.get("scenarios") or [] if sc.get("scope") == want), None)
+
+
+def _as_switch(info: Json) -> Json:
+    """A model's move under the change-model lever: its switch target only, enabling only that target."""
+    sw = info.get("switch")
+    return {"model": info.get("model"), "pool": None, "switch": sw,
+            "enable": [e for e in info.get("enable") or [] if e == sw]}
+
+
+def _plan_figures(report: Json, per_month: float, lever: str = "router") -> Json:
+    """The plan as numbers: the enabled-only router figure (today) and the extra from enabling models.
+
+    Today lists the moves of the enabled scope. A move whose target is the same in the headline scope takes the
+    headline stratum saving. If exactly one move differs, it takes the residual; with more, their amounts are
+    omitted. Without an enabled scope, step 1 falls back to the headline moves that need nothing enabled.
+    """
+    ro = report.get("routing") or {}
+    head = _headline(report)
+    sw = lever == "switch"
+    conv = _as_switch if sw else (lambda i: i)
+    h_info = {m["model"]: conv(m) for m in head.get("models", [])}
+    if sw:
+        strata = {m: (v or 0) * per_month for m, v in ((head.get("switch") or {}).get("per_stratum") or {}).items()}
+        h_pm = (head.get("switch") or {}).get("per_month") or 0
+    else:
+        strata = {s["model"]: (s.get("savings") or 0) * per_month for s in ro.get("strata") or []}
+        h_pm = (ro.get("headline") or {}).get("per_month")
+        if h_pm is None:
+            h_pm = head.get("router", {}).get("balanced", {}).get("per_month") or 0
+    enabled = _enabled_scope(report, head)
+
+    def est(sc: Json) -> Json:
+        return (sc.get("switch") if sw else (sc.get("router") or {}).get("balanced")) or {}
+
+    if enabled is not None and enabled is not head:
+        e_pm = est(enabled).get("per_month") or 0
+        e_info = {m["model"]: conv(m) for m in enabled.get("models", [])}
+    else:
+        e_info = {m: i for m, i in h_info.items() if not i.get("enable")}
+        e_pm = sum(strata.get(m, 0) for m in e_info) if enabled is None else h_pm
+    moves = {m: (i, strata.get(m)) for m, i in e_info.items() if _lever(i)}
+    diff = [m for m, (i, _) in moves.items() if not _same_move(i, h_info.get(m, {}))]
+    amounts = {m: (v if m not in diff else None) for m, (_, v) in moves.items()}
+    if len(diff) == 1:
+        amounts[diff[0]] = e_pm - sum(v or 0 for m, v in amounts.items() if m != diff[0])
+    exact = est(enabled or {}).get("per_stratum")
+    if exact is not None:  # the enabled scope's own per-model saving: no reconciliation needed
+        amounts = {m: (exact.get(m) or 0.0) * per_month for m in moves}
+    now = [(m, i, amounts[m]) for m, (i, _) in moves.items()]
+    now.sort(key=lambda x: -(x[2] if x[2] is not None else -1))
+    later = [m for m, i in h_info.items() if i.get("enable") and strata.get(m, 0) > 0]
+    enable = list(dict.fromkeys(e for m in later for e in h_info[m]["enable"]))
+    if sw:
+        analysed = {m for m, v in ((head.get("switch") or {}).get("per_stratum") or {}).items() if v is not None}
+    else:
+        analysed = {s["model"] for s in ro.get("strata") or [] if s.get("savings") is not None}
+    return {"now": now, "e_pm": e_pm, "h_pm": h_pm, "later": later, "enable": enable, "h_info": h_info,
+            "e_info": e_info, "strata": strata, "analysed": analysed}
+
+
+def _today_amounts(f: Json) -> dict[str, float]:
+    """Monthly saving available today per model: the enabled scope's own per-model saving when the report has it.
+    Older reports: amounts the reconciliation could not pin down (several moves differ from the headline) split
+    what is left of the enabled-scope total by headline saving."""
+    known = {m: v for m, _, v in f["now"] if v is not None}
+    unknown = [m for m, _, v in f["now"] if v is None]
+    if unknown:
+        left = max(0.0, f["e_pm"] - sum(known.values()))
+        weights = {m: f["strata"].get(m, 0) for m in unknown}
+        tot = sum(weights.values())
+        known.update({m: left * (w / tot if tot else 1 / len(unknown)) for m, w in weights.items()})
+    return known
+
+
+def _hard_models(ro: Json) -> dict[str, float]:
+    """Models where at least half of the sampled calls are hard asks, with that share."""
+    return {u["model"]: u["share_hard"] for u in ro.get("underpowered") or [] if (u.get("share_hard") or 0) >= 0.5}
+
+
+@dataclass
+class Flow:
+    """Where one model's calls go in the headline scope."""
+    lever: Literal["router", "switch", ""]  # see _lever
+    targets: list[Target]
+    enable: list[str]  # drawn targets that are not enabled, never the model itself
+
+
+def _flow(model: str, head: Json, moves: list[Json]) -> Flow:
+    """Targets with their share of sampled calls (by sample weight, over the drawn targets only), the tiers of their
+    scored calls, unscored calls, and the models to enable."""
+    lever = _lever(head)
+    targets = (head.get("pool") or []) if lever == "router" else [head["switch"]] if lever == "switch" else []
+    counts: dict[str, float] = {}
+    unscored: dict[str, int] = {}
+    tiers: dict[str, set[str]] = {}
+    for mv in moves:
+        if mv.get("used") == model:
+            w = mv.get("weight")
+            counts[mv["pick"]] = counts.get(mv["pick"], 0) + (w if w is not None else (mv.get("n") or 0))
+            unscored[mv["pick"]] = unscored.get(mv["pick"], 0) + (mv.get("fallback") or 0)
+            tiers.setdefault(mv["pick"], set()).update(t.strip() for t in str(mv.get("tier", "")).split(","))
+    drawn = [t for t in targets if counts.get(t)] or targets
+    total = sum(counts.get(t, 0) for t in drawn)
+    enable = [e for e in head.get("enable") or [] if e in drawn and e != model]
+    out = []
+    for t in sorted(drawn, key=lambda t: -counts.get(t, 0)):
+        tt = [x for x in TIERS if x in tiers.get(t, set())]
+        out.append(Target(model=t, share_of_calls=counts[t] / total if total and t in counts else None,
+                          tiers=tt if 0 < len(tt) < len(TIERS) else [], unscored_calls=unscored.get(t, 0),
+                          enable=t in enable, stays=t == model))
+    return Flow(lever, out, enable)
+
+
+def _flow_html(model: str, lever: str, targets: list[Target], lines: list[str]) -> str:
+    """Source model chip, an arrow, and one chip per target: a fork for the router, a single arrow for a change."""
+    src = f"<span class='chip src' title='{html.escape(model)}'>{html.escape(_short(model))}</span>"
+    items = []
+    for b in targets:
+        cls = "chip" + (" new" if b.enable else "") + (" same" if b.stays else "")
+        meta, title = [], b.model
+        if len(targets) > 1:
+            if b.share_of_calls is not None:
+                meta.append("<1%" if 0 < b.share_of_calls < 0.005 else f"{b.share_of_calls:.0%}")
+            if b.tiers:
+                meta.append(", ".join(t.capitalize() for t in b.tiers))
+            if b.unscored_calls:
+                title += f" \u00b7 {b.unscored_calls} ungraded call{'s' if b.unscored_calls != 1 else ''}"
+        tag = "<em>enable</em>" if b.enable else "<em>stays</em>" if b.stays else ""
+        small = f"<small>{html.escape(' · '.join(meta))}</small>" if meta else ""
+        items.append(f"<li><span class='{cls}' title='{html.escape(title)}'>"
+                     f"{html.escape(_short(b.model))}{tag}</span>{small}</li>")
+    kind = "fork" if len(items) > 1 else "one"
+    return (f"<div class='flow {lever}' role=img aria-label='{html.escape(' '.join(lines))}'>{src}"
+            f"<span class=link></span><ul class='to {kind}'>{''.join(items)}</ul></div>")
+
+
+def _waterfall(spend: float, now_v: float, more_v: float, left_v: float, how: str) -> str:
+    """Vertical waterfall: today's bill, the saving possible now with enabled models, the extra saving after enabling
+    more (dropped when zero), and the new bill. Steps are % of today's bill; a dashed line carries each level across."""
+    steps = [("tot", "Spend now", spend, 0.0, ""),
+             ("sr", "Possible now", now_v, 0.0, "\u2212"),
+             ("sr2", "After enabling", more_v, now_v, "\u2212"),
+             ("tot", "New bill", left_v, spend - left_v, "")]
+    steps = [s for s in steps if s[0] != "sr2" or more_v > 0]
+    cols = []
+    for i, (c, label, v, top, sign) in enumerate(steps):
+        h, y = _of(v, spend) or 0.0, _of(top, spend) or 0.0
+        nxt = None if i == len(steps) - 1 else (y if c == "tot" and i == 0 else y + h)
+        cn = f"<span class=cn style='top:{nxt * 100:.2f}%'></span>" if nxt is not None else ""
+        tip = html.escape(_tip(f"{label} with {how}" if sign else label, v, spend, "today's bill"))
+        cols.append(f"<div class=wc><div class=wp><i class={c} style='top:{y * 100:.2f}%;height:{h * 100:.2f}%' "
+                    f"tabindex=0 data-tip='{tip}'></i>{cn}</div><p><b>{sign}{_usd0(v)}</b>"
+                    f"<span>{label}</span><span>{_pc(h)}</span></p></div>")
+    aria = (f"{_usd0(spend)} a month now; {_usd0(now_v)} possible now, {_usd0(more_v)} more after enabling "
+            f"models, {_usd0(left_v)} a month after")
+    return f"<div class=wf role=img aria-label='{html.escape(aria)}'>{''.join(cols)}</div>"
+
+
+def _move(info: Json | None) -> Move | None:
+    return None if info is None else Move(pool=info.get("pool"), switch=info.get("switch"))
+
+
+def _rec_rows(report: Json, per_month: float, lever: str, keys: dict[str, str]) -> list[Recommendation]:
+    """One recommendation per sampled model under one lever: its monthly saving split into today (enabled models)
+    and after enabling. `share_hard` is set on the flagged row with the largest saving only."""
+    ro = report.get("routing") or {}
+    f = _plan_figures(report, per_month, lever)
+    today = _today_amounts(f)
+    hard = _hard_models(ro)
+    moves = ro.get("moves") or []
+    out = []
+    for st in sorted(ro.get("strata") or [], key=lambda x: -f["strata"].get(x["model"], 0)):
+        m = st["model"]
+        if lever == "router" and st.get("n") == 0:  # priced from token totals for the switch only, never sampled
+            continue
+        saved = max(0.0, f["strata"].get(m, 0))
+        now = min(saved, max(0.0, today.get(m, 0.0)))
+        n = sum(mv.get("n") or 0 for mv in moves if mv.get("used") == m)
+        spend = (st.get("spend") or 0) * per_month
+        head, today_move = f["h_info"].get(m, {}), f["e_info"].get(m)
+        fl = _flow(m, head, moves)
+        act = "not_analysed" if m not in f["analysed"] else fl.lever if saved > 0 and fl.lever else "keep"
+        out.append(Recommendation(
+            model=m, action=act, router_key=keys.get(m) if act == "router" else None, move=_move(head),
+            today_move=_move(today_move), targets=fl.targets, enable=fl.enable, spend_per_month=spend,
+            saved_per_month=saved, pct_of_model_spend=_of(saved, spend), saved_today_per_month=now,
+            saved_after_enabling_per_month=saved - now, sampled_calls=n, small_sample=0 < n < MIN_SAMPLE,
+            share_hard=None))
+    flagged = [r for r in out if r.model in hard and r.saved_per_month > 0]
+    if flagged:
+        top = max(flagged, key=lambda r: r.saved_per_month)
+        top.share_hard = hard[top.model]
+    return out
+
+
+def _scopes(report: Json, spend_pm: float | None) -> list[SummaryScope]:
+    """Both levers in every scope, headline first."""
+    out = []
+    for sc in sorted(report.get("scenarios") or [], key=lambda x: not x.get("headline")):
+        models = sc.get("models") or []
+        enable = {"router": [e for m in models for e in m.get("enable") or []],
+                  "switch": [e for m in models for e in _as_switch(m)["enable"]]}
+
+        def lever(name: str, f: Json) -> ScopeLever:
+            return ScopeLever(pct_of_spend=_of(f.get("per_month"), spend_pm), per_month=f.get("per_month"),
+                              ci90_per_month=f.get("ci90_per_month"), coverage=f.get("coverage"),
+                              enable=list(dict.fromkeys(enable[name])))
+
+        out.append(SummaryScope(scope=sc["scope"], headline=bool(sc.get("headline")),
+                                router=lever("router", sc["router"]["balanced"]), switch=lever("switch", sc["switch"]),
+                                models=[ScopeModel(**{k: m.get(k) for k in ("model", "pool", "switch", "enable")})
+                                        for m in models]))
+    return out
+
+
+def _not_analysed(report: Json, per_month: float, lever: str | None = "router") -> NotAnalysed:
+    """Spend the recommended lever's estimate leaves out (the router's when none is recommended)."""
+    ro = report.get("routing") or {}
+    nc = ro.get("switch_not_covered", ro.get("not_covered")) if lever == "switch" else ro.get("not_covered")
+    nc = nc or []
+    multi = (((ro.get("not_analysed") or {}).get("multi_model") or {}).get("spend") or 0) if lever != "switch" else 0
+    return NotAnalysed(per_month=sum(x.get("spend") or 0 for x in nc) * per_month, model_count=len(nc),
+                       multi_model_per_month=multi * per_month)
+
+
+def summary(report: Json) -> Json:
+    """Every number the page shows, so render only formats and a caller can skip the page."""
+    head = _headline(report)
+    sp = report.get("spend") or {}
+    spend_pm = sp.get("per_month")
+    total = sp.get("total")
+    per_month = spend_pm / total if total and spend_pm else 30 / max(1, report["window"]["days"])
+    h = (report.get("routing") or {}).get("headline") or {}
+    r, w = (head.get("router") or {}).get("balanced") or {}, head.get("switch") or {}
+    r_pm, w_pm = h.get("per_month"), w.get("per_month")
+    saves = {k for k, pm in (("router", r_pm), ("switch", w_pm)) if pm is not None and pm > 0}
+    rec = ("router" if "router" in saves and ("switch" not in saves or r_pm >= w_pm) else  # type: ignore[operator]
+           "switch" if "switch" in saves else None)  # None: neither lever saves anything
+    en = _enabled_scope(report, head) or {}
+    today = {"router": ((en.get("router") or {}).get("balanced") or {}).get("per_month"),
+             "switch": (en.get("switch") or {}).get("per_month")}
+    rp, wp = _setup_plan(report, "router"), _setup_plan(report, "switch")
+    if rec == "router" and not rp["moves"] and wp["moves"]:
+        rec = "switch"  # the router figure comes from moves a router setup would not create
+    keys = {m["model"]: m["key"] for m in rp["moves"]}
+    ca = report.get("caching") or {}
+
+    recs = {k: _rec_rows(report, per_month, k, keys) for k in ("router", "switch")}
+
+    def lever(name: str, pm: Any, fig: Json, plan: Json, moves: list[Json]) -> Json:
+        t = today[name]
+        if t is not None and recs[name]:  # the split the per-model rows show, so page and rows agree
+            t = sum(x.saved_today_per_month or 0.0 for x in recs[name])
+        if t is not None and pm is not None:
+            t = min(max(t, 0.0), max(pm, 0.0))
+        return {"pct_of_spend": _of(pm, spend_pm), "per_month": pm, "ci90_per_month": fig.get("ci90_per_month"),
+                "coverage": fig.get("coverage"), "saved_today_per_month": t,
+                "saved_after_enabling_per_month": max(0.0, pm - t) if pm is not None and t is not None else None,
+                "enable": plan["enable"], **({"routers": moves} if name == "router" else {"replacements": moves})}
+
+    return {"window": {k: report["window"].get(k) for k in ("from", "to", "days", "requested", "retention")},
+            "caveats": list((report.get("checks") or {}).get("caveats") or []),
+            "spend_total": total, "spend_per_month": spend_pm, "scope": head.get("scope"),
+            "filters": (report.get("params") or {}).get("filters") or [],
+            "sampled_calls": len(report["samples"]) if "samples" in report else (report.get("params") or {}).get("sample"),
+            "sampling": _summary_sampling(report),
+            "recommended": rec, "levers_overlap": _ranges_overlap(head),
+            "router": {**lever("router", r_pm, r, rp, [{k: m[k] for k in ("model", "key", "pool")} for m in rp["moves"]]),
+                       "replacements": [{k: m[k] for k in ("model", "to")} for m in rp["replacements"]],
+                       "without_top3_per_month": (h["without_top3"] * per_month) if h.get("without_top3") is not None
+                       else None},
+            "switch": lever("switch", w_pm, w, wp, [{k: m[k] for k in ("model", "to")} for m in wp["moves"]]),
+            "recommendations": {k: [x.model_dump() for x in v] for k, v in recs.items()},
+            "scopes": [x.model_dump() for x in _scopes(report, spend_pm)],
+            "not_analysed": _not_analysed(report, per_month, rec).model_dump(),
+            "sampled_moves": [{k: mv.get(k) for k in MOVE_FIELDS} for mv in (report.get("routing") or {}).get("moves") or []],
+            "caching": {"threads_scanned": ca.get("threads_scanned"), "savings_found": ca.get("savings_found"),
+                        "cached_share": ca.get("cached_share"), "saved_by_cache": ca.get("saved_by_cache"),
+                        "threads_caching": ca.get("threads_caching"), "error": ca.get("error"),
+                        "rows": [{k: r.get(k) for k in CACHE_FIELDS} for r in ca.get("rows") or [] if r.get("candidate")][:20]}}
+
+
+def _summary_sampling(report: Json) -> Json | None:
+    sa = report.get("sampling")
+    if not sa:
+        return None
+    pl = sa.get("plan") or {}
+    return {"plan": pl.get("type"), "target": sa.get("target"), "drawn": sa.get("drawn"),
+            "stop_reason": sa.get("stop_reason"), "decision_calls": sa.get("decision_calls"),
+            "half_width_per_month": (sa["half_width"] * 30 / max(1, report["window"]["days"]))
+            if sa.get("half_width") is not None else None,
+            "switch_from_totals": ((_headline(report).get("switch") or {}).get("from_totals") or [])}
+
+
+MOVE_FIELDS = ("used", "pick", "tier", "n", "fallback", "costs_more", "weighted_savings")
+CACHE_FIELDS = ("thread", "agent", "model", "turns", "savings", "action")
+
+
+def _ranges_overlap(head: Json) -> bool:
+    """Whether the 90% ranges of the two levers' monthly savings overlap (a rough, conservative test: both come
+    from the same sampled calls, so a paired comparison would separate them sooner)."""
+    r = ((head.get("router") or {}).get("balanced") or {}).get("ci90_per_month")
+    w = (head.get("switch") or {}).get("ci90_per_month")
+    if not r or not w:
+        return False
+    return r[0] <= w[1] and w[0] <= r[1]
+
+
+def _plan_caption(lever: str, pct: float | None, pm: float | None) -> str:
+    name = "change model" if lever == "switch" else "Smart Router"
+    return (f"<p class=m>Recommended plan ({name}): one move per model. Together: {_pc(pct)} saved "
+            f"({_usd0(pm)}/mo). Each bar is that model's monthly spend.</p>")
+
+
+def _tip(what: str, v: float, spend: float | None, of: str = "this model's spend") -> str:
+    share = f" \u00b7 {_pc(_of(v, spend))} of {of}" if spend else ""
+    return f"{what}: {_usd0(v)}/mo{share}"
+
+
+def _actions_chart(recs: list[Recommendation], not_analysed: NotAnalysed) -> str:
+    drawn = [r for r in recs if r.saved_per_month > 0]
+    kept = [r for r in recs if r.saved_per_month <= 0]
+    levers = {_lever(r.move or {}) for r in drawn}
+    rows = []
+    for r in drawn:
+        spend, saved = r.spend_per_month, r.saved_per_month
+        now, after = r.saved_today_per_month or 0.0, r.saved_after_enabling_per_month or 0.0
+        lever = _lever(r.move or {})
+        seg = [("sr", now), ("sr2", after), ("kept", max(0.0, spend - saved))]
+        how = "Smart Router" if lever == "router" else "Change model"
+        on = ", ".join(_short(x) for x in r.enable)
+        what = {"sr": f"Possible now with {how}", "sr2": f"Possible with {how} after enabling {on or 'models'}",
+                "kept": "Still spent"}
+        sp = spend or 1e-9
+        bars = "".join(f"<i class={c} style='flex:{v / sp:.4f} 1 0' tabindex=0 "
+                       f"data-tip='{html.escape(_tip(what[c], v, spend))}'></i>" for c, v in seg
+                       if v / sp > (0.02 if c == "kept" else 0))
+        split = [("sr", f"{_pc(_of(now, sp))} now", now), ("sr2", f"+{_pc(_of(after, sp))} after enabling", after)]
+        split_html = "".join(f"<li><span class='sw {c}'></span>{t} \u00b7 {_usd0(v)}</li>" for c, t, v in split
+                             if v > 0)
+        tip = (f"{_short(r.model)}: {_pc(_of(now, spend))} possible now, "
+               f"{_pc(_of(after, spend))} more after enabling, of {_usd0(spend)} a month")
+        note = _rec_note(r)
+        notes = f"<span>{html.escape(note)}</span>" if note else ""
+        if 0 < r.sampled_calls < MIN_SAMPLE:  # 0 means no recorded moves, not a small sample
+            notes += f"<span>Small sample: {r.sampled_calls} call{'s' if r.sampled_calls != 1 else ''}.</span>"
+        if r.share_hard is not None:
+            notes += "<span class=hard>Mostly hard work: spot-check answers before moving it.</span>"
+        rows.append(f"<div class=row><div class=who>{_flow_html(r.model, lever, r.targets, _rec_lines(r))}{notes}</div>"
+                    f"<div class=bx><div class=track role=img aria-label='{html.escape(tip)}'>{bars}</div>"
+                    f"<ul class='legend mini'>{split_html}</ul></div>"
+                    f"<div class=val><b>{_pc(_of(saved, spend))} saved</b>"
+                    f"<span>{_usd0(saved)} of {_usd0(spend)}/mo</span></div></div>")
+    legend = "<ul class=legend><li><span class='sw sr'></span>Possible now</li>"
+    if any((r.saved_after_enabling_per_month or 0.0) > 0 for r in drawn):
+        legend += "<li><span class='sw sr2'></span>After enabling</li>"
+    legend += "<li><span class='sw kept'></span>Still spent</li>"
+    if "switch" in levers:
+        legend += "<li><span class='lk arrow'></span>Arrow: move all calls</li>"
+    if "router" in levers:
+        legend += "<li><span class='lk fork'></span>Fork: Smart Router picks a model per call, % is its share of calls</li>"
+    if any(r.enable for r in drawn):
+        legend += "<li><span class='lk dash'></span>Dashed: enable this model in your orq.ai workspace first</li>"
+    foot = ""
+    for act, text in (("keep", "keep, already the cheapest model that is as strong"),
+                      ("not_analysed", "not analysed, their traffic could not be priced reliably")):
+        if names := [_short(r.model) for r in kept if (r.action == "not_analysed") == (act == "not_analysed")]:
+            foot += f"<p class='m foot'>{html.escape(', '.join(names))}: {text}.</p>"
+    if n := not_analysed.model_count:
+        foot += (f"<p class='m foot'>Not analysed: {_usd0(not_analysed.per_month)}/mo of spend on "
+                 f"{n} model{'s' if n != 1 else ''}.</p>")
+    if not_analysed.multi_model_per_month > 0:
+        foot += (f"<p class='m foot'>Not analysed: {_usd0(not_analysed.multi_model_per_month)}/mo of spend in "
+                 "traces that used more than one model.</p>")
+    return legend + "</ul><div class=chart>" + "".join(rows) + "</div>" + foot
+
+
+def _scope_cell(sc: SummaryScope | None, approx: bool, show_coverage: bool) -> str:
+    """Both levers in one scope, each with the models it needs enabled and, when coverage varies, its coverage."""
+    if not sc:
+        return "<div class=cell><p class=m>n/a</p></div>"
+    out = ["<div class='cell hl'><p class=tag>This report's figure</p>" if sc.headline else "<div class=cell>"]
+    for cls, f, name in (("f1", sc.router, "Smart Router"), ("f2", sc.switch, "Change model")):
+        out += [f"<p class={cls}>{_pc(f.pct_of_spend)}<span>{name}</span></p>", f"<p class=ci>{_usd0(f.per_month)}/mo</p>"]
+        if f.enable:
+            names = html.escape(", ".join(f.enable), quote=True)
+            out.append(f"<p class=en title='{names}'>enable {len(f.enable)} model{'s' if len(f.enable) != 1 else ''}</p>")
+        if show_coverage:
+            out.append(f"<p class=en>{_pct(f.coverage)} of spend covered</p>")
+    if approx:
+        out.append("<p class=en>approximate</p>")
+    return "".join(out) + "</div>"
+
+
+def _scope_grid(scopes: list[SummaryScope]) -> str:
+    """2x2 grid: provider scope in columns, availability in rows; the headline cell is tinted."""
+    by = {sc.scope: sc for sc in scopes}
+    covs = {f.coverage for sc in scopes for f in (sc.router, sc.switch)}
+    out = ["<div class=grid><span class=corner></span><p class=ch>Same provider</p><p class=ch>Any provider</p>"]
+    for avail, label in (("all", "All available"), ("enabled", "Enabled only")):
+        out.append(f"<p class=rh>{label}</p>")
+        for prov in ("same_provider", "any_provider"):
+            out.append(_scope_cell(by.get(f"{prov}:{avail}"), prov == "any_provider", len(covs) > 1))
+    return "".join(out) + "</div>"
+
+
+def _scope_label(sc: SummaryScope) -> str:
+    return (SCOPE_LABEL.get(sc.scope) or sc.scope) + (" (headline)" if sc.headline else "")
+
+
+def _uncertainty_rows(scopes: list[SummaryScope]) -> list[Json]:
+    rows: list[Json] = []
+    for sc in scopes:
+        for lever, fig in (("Smart Router", sc.router), ("Change model", sc.switch)):
+            ci = fig.ci90_per_month
+            rows.append({"scope": _scope_label(sc), "lever": lever, "pm": fig.per_month, "pct": fig.pct_of_spend,
+                         "ci": f"{_usd0(ci[0])} to {_usd0(ci[1])}" if ci else "n/a",
+                         "range": (ci[0], fig.per_month, ci[1], lever) if ci else None})
+    ends = [v for r in rows if r["range"] for v in (r["range"][0], r["range"][2])]
+    # one shared scale for every row, from just below the lowest bound to the highest, so overlaps show
+    span = (max(ends) - min(ends)) if ends else 0
+    axis = (min(ends) - span * 0.05, max(ends) + span * 0.05) if span > 0 else None
+    for r in rows:
+        r["range"] = (*r["range"], *axis) if r["range"] and axis else None
+    return rows
+
+
+RANGE_W = 260
+
+
+def _range_cell(v: Any) -> str:
+    """Inline range plot on the table's shared axis: a track, the 90% range as a bar, a dot at the estimate."""
+    if not v:
+        return ""
+    lo, est, hi, lever, a0, a1 = v
+    x = [max(0.0, min(1.0, ((a or 0) - a0) / (a1 - a0))) * (RANGE_W - 8) + 4 for a in (lo, est, hi)]
+    cls = "lv-s" if lever == "Change model" else "lv-r"
+    step = next(st for st in (5, 10, 20, 25, 50, 100, 200, 500, 1000, 2000, 5000, 1e9) if (a1 - a0) / st <= 5)
+    zero = [0] if a0 < 0 < a1 else []
+    grid = "".join(f"<line class=gl x1={(t - a0) / (a1 - a0) * (RANGE_W - 8) + 4:.1f} "
+                   f"x2={(t - a0) / (a1 - a0) * (RANGE_W - 8) + 4:.1f} y1=0 y2=14></line>"
+                   for t in sorted({*range(int(math.ceil(a0 / step) * step), int(a1) + 1, int(step)), *zero}))
+    label = f"90% range {_usd0(lo)} to {_usd0(hi)} a month, estimate {_usd0(est)}"
+    return (f"<svg class='rg {cls}' width={RANGE_W} height=14 viewBox='0 0 {RANGE_W} 14' role=img "
+            f"aria-label='{html.escape(label)}'>{grid}<line class=tk x1=4 x2={RANGE_W - 4} y1=7 y2=7></line>"
+            f"<line class=ci x1={x[0]:.1f} x2={max(x[2], x[0] + 2):.1f} y1=7 y2=7></line>"
+            f"<circle cx={x[1]:.1f} cy=7 r=3.5></circle></svg>")
+
+
+RAW = (_range_cell,)
+
+
+def _range_head(rows: list[Json]) -> str:
+    r = next((x["range"] for x in rows if x["range"]), None)
+    if not r:
+        return "Range"
+    step = next(st for st in (5, 10, 20, 25, 50, 100, 200, 500, 1000, 2000, 5000, 1e9) if (r[5] - r[4]) / st <= 5)
+    return f"Range, {_usd0(r[4])} to {_usd0(r[5])}, lines every {_usd0(step)}"  # table formatters that return markup, not text
+
+
+def _pool_tables(scopes: list[SummaryScope]) -> str:
+    out = []
+    for sc in scopes:
+        cap = _scope_label(sc)
+        out.append(_table([m.model_dump() for m in sc.models], [("Model in use", "model", str),
+                                         ("Router pool", "pool", lambda p: ", ".join(p or []) or "none"),
+                                         ("Change to", "switch", _txt),
+                                         ("Enable first", "enable", lambda e: ", ".join(e or []) or "nothing")],
+                            cap))
+    return "".join(out)
+
+
+CHECK = ("<svg class=ok viewBox='0 0 20 20' aria-hidden=true><circle cx=10 cy=10 r=10 fill=currentColor />"
+         "<path d='M5.5 10.5l3 3 6-7' fill=none stroke='var(--card)' stroke-width=2.2 stroke-linecap=round "
+         "stroke-linejoin=round /></svg>")
+
+
+def _caching_body(cs: SummaryCaching) -> str:
+    """Current caching first, then what turning it on where it is missing would add."""
+    n, found, share = cs.threads_scanned, cs.savings_found or 0, cs.cached_share
+    scope = f"the {n} costliest multi-turn threads"
+    now = (f"{_pct(share)} of input tokens in {scope} were read from cache, saving "
+           f"{_usd(cs.saved_by_cache or 0)} in those threads." if share else
+           f"No input tokens in {scope} were read from cache.")
+    if found >= 1:
+        return (f"<p>{now}</p><p><b>Turning caching on where it is missing:</b> {_usd(found)} more in those threads, "
+                "not scaled to the window.</p>")
+    head = "Caching already works here." if share else "No caching change needed."
+    tail = (f"Turning it on where it is missing would add {_usd(found)}." if share else
+            f"Caching would save {_usd(found)}: the turns are too short or too far apart for the cache to pay off.")
+    return f"<p class=okline>{CHECK}<span><b>{head}</b> {now} {tail}</span></p>"
+
+
+def _card(title: str, body: str, ident: str = "") -> str:
+    """Platform chart card: header strip with a small title, inset body."""
+    i = f" id={ident}" if ident else ""
+    return f"<section class=card><h2{i}>{html.escape(title)}</h2><div class=cb>{body}</div></section>"
+
+
+ORQ_APP = "https://my.orq.ai"
+ROUTER_PROFILE = "SMART_ROUTER_PROFILE_BALANCED"
+SEP = " \u00b7 "
+
+
+def _router_key(model: str) -> str:
+    return "savings-" + re.sub(r"[^a-z0-9]+", "-", model.lower()).strip("-")
+
+
+def _setup_plan(report: Json, lever: str) -> Json:
+    """What applying one lever takes: models to enable, and per model in use its router pool or new model.
+
+    The router plan also lists `replacements`: a model with no pool to route over is served by its switch target in
+    the router figure, so following the router plan means changing that model too."""
+    moves, enable, replacements = [], [], []
+    head = _headline(report)
+    strata = (report.get("routing") or {}).get("strata") or []
+    if lever == "router":
+        saving = {s["model"]: s.get("savings") for s in strata}
+    else:  # a model with no covered per-stratum figure was not analysed: treat it as no saving
+        per = (head.get("switch") or {}).get("per_stratum") or {}
+        saving = {s["model"]: per.get(s["model"]) for s in strata}
+        saving.update(per)
+    for info in head.get("models") or []:
+        if info["model"] in saving and not (saving[info["model"]] or 0) > 0:
+            continue  # the page says keep or not analysed for this model: set nothing up
+        if lever == "router" and _lever(info) == "router":
+            moves.append({"model": info["model"], "key": _router_key(info["model"]), "pool": list(info["pool"])})
+            new = info.get("enable") or []
+        elif lever == "router" and _lever(info) == "switch":
+            replacements.append({"model": info["model"], "to": info["switch"]})
+            new = _as_switch(info)["enable"]
+        elif lever == "switch" and info.get("switch"):
+            moves.append({"model": info["model"], "to": info["switch"]})
+            new = _as_switch(info)["enable"]
+        else:
+            continue
+        enable += [e for e in new if e not in enable]
+    plan = {"lever": lever, "enable": enable, "moves": moves, "workspace": report.get("workspace")}
+    return {**plan, "replacements": replacements} if lever == "router" else plan
+
+
+def _setup_commands(plan: Json) -> str:
+    """Shell lines that apply the plan; safe to rerun. A router whose key exists is reused, and one is created only
+    when every pool model has a Smart Router score right now: the report can be older than the garden, and the
+    service rejects an unscored pool model."""
+    router = plan["lever"] == "router"
+    if not plan["enable"] and not router:
+        return ""
+    # No comment lines: an interactive zsh without interactivecomments runs `#` as a command and breaks on quotes.
+    # A failed or empty orq call is never read as "found": every lookup returns non-zero and the caller skips.
+    ws = plan.get("workspace")
+    lines = [f"orq() {{ command orq \"$@\" --workspace {shlex.quote(str(ws))}; }}"] if ws else []
+    lines += ["mid() { orq models list -o json -j \"[?refId=='$1'].id | [0]\" --raw; }",
+              "enable() {",
+              "  local id; id=$(mid \"$1\") || { echo \"skip $1: could not list models\" >&2; return 1; }",
+              "  if [ -z \"$id\" ] || [ \"$id\" = null ]; then echo \"skip $1: not in this workspace's model list\" >&2",
+              "  else orq models enable --model-id \"$id\" >/dev/null && echo \"enabled $1\"; fi",
+              "}"]
+    if router:
+        lines += ["has() { local r; r=$(orq \"$@\") || return 2; [ -n \"$r\" ] && [ \"$r\" != null ]; }",
+                  "scored() { has models list -o json -j \"[?refId=='$1' && metadata.autorouter.v2].id | [0]\" --raw; }",
+                  "on() { has models list -o json -j \"[?refId=='$1' && enabled].id | [0]\" --raw; }",
+                  "router() {",
+                  "  local k=$1 ref m a; shift; a=()",
+                  "  ref=$(orq smart-routers list --limit 200 -o json -j \"data[?key=='$k'].model_ref | [0]\" --raw) || "
+                  "{ echo \"skip $k: could not list smart routers\" >&2; return 1; }",
+                  "  if [ -n \"$ref\" ] && [ \"$ref\" != null ]; then echo \"$k exists: use $ref\"; return; fi",
+                  "  for m in \"$@\"; do",
+                  "    on \"$m\" || { echo \"skip $k: $m is not enabled (or the lookup failed)\" >&2; return 1; }",
+                  "    scored \"$m\" || { echo \"skip $k: $m has no Smart Router score yet (or the lookup failed)\" >&2; return 1; }",
+                  "    a+=(--models \"$m\")",
+                  "  done",
+                  f"  ref=$(orq smart-routers create --key \"$k\" \"${{a[@]}}\" --body-profile {ROUTER_PROFILE} "
+                  "-o json -j model_ref --raw) && echo \"$k created: use $ref\"",
+                  "}"]
+    if plan["enable"]:
+        lines += [f"enable {m}" for m in plan["enable"]]
+    if router:
+        lines += [f"router {m['key']} {' '.join(m['pool'])}" for m in plan["moves"]]
+        lines += ["echo " + shlex.quote(f"then change {m['model']} to {m['to']} in your code and deployments")
+                  for m in plan.get("replacements") or []]
+    return "\n".join(lines)
+
+
+def _setup_prompt(plan: Json) -> str:
+    ws = f" in workspace {plan['workspace']} (pass `--workspace {plan['workspace']}` to every orq command)" \
+        if plan.get("workspace") else ""
+    out = [f"Apply this orq.ai cost-savings plan{ws}. Use the orq CLI (`orq --help`).", ""]
+    step = 1
+    if plan["enable"]:
+        out.append(f"{step}. Enable these models in the orq.ai workspace with `orq models enable --model-id <id>`. "
+                   "<id> is the model's `id` from `orq models list -o json`, not the provider/model name:")
+        out += [f"   - {m}" for m in plan["enable"]]
+        step += 1
+    if plan["lever"] == "router":
+        swaps = plan.get("replacements") or []
+        if plan["moves"]:
+            out.append(f"{step}. Create one Smart Router per model with `orq smart-routers create`, profile "
+                       f"{ROUTER_PROFILE}, and keep the `model_ref` each response returns. Every pool model needs a Smart "
+                       "Router score (`metadata.autorouter.v2` in `orq models list -o json`): skip a router whose pool "
+                       "has a model without one or one that is not enabled, and tell me which. If a key already exists (`orq smart-routers list`), reuse "
+                       "its `model_ref` instead of creating it again:")
+            out += [f"   - key {m['key']}, models {', '.join(m['pool'])} (replaces {m['model']})" for m in plan["moves"]]
+        if swaps:
+            step += bool(plan["moves"])
+            out.append(f"{step}. {'Then change' if plan['moves'] else 'Change'} these models, which have no pool to "
+                       "route over, to their replacement for all of their calls (the Smart Router figure counts "
+                       "these changes too):")
+            out += [f"   - {m['model']} -> {m['to']}" for m in swaps]
+        swap = ("the `model_ref` of its router, or its replacement" if swaps and plan["moves"]
+                else "its replacement" if swaps else "the `model_ref` of its router")
+    else:
+        out.append(f"{step}. Use these replacements:")
+        out += [f"   - {m['model']} -> {m['to']}" for m in plan["moves"]]
+        swap = "its replacement"
+    out += [(f"{step + 1}. Before changing anything that serves traffic, run a sample of real prompts through the old "
+             f"and the new setup ({swap}) and compare the answers. Report any quality differences."),
+            (f"{step + 2}. Find every place this codebase uses one of the replaced models (model ids in code and "
+             f"config). Change each to {swap}. Leave other models alone. Show me the diff before committing."),
+            (f"{step + 3}. List the orq.ai deployments and agents that use a replaced model, and change them to "
+             f"{swap} only after I confirm.")]
+    return "\n".join(out)
+
+
+# Agent marks for the prompt copy button, as on saaf-project.orq.ai; one <symbol> each, used by reference.
+AGENT_ICONS = (
+    ('claude', 'Claude Code',
+     '<path d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z"></path>'),
+    ('codex', 'Codex',
+     '<path d="M21.55 10.004a5.416 5.416 0 00-.478-4.501c-1.217-2.09-3.662-3.166-6.05-2.66A5.59 5.59 0 0010.831 1C8.39.995 6.224 2.546 5.473 4.838A5.553 5.553 0 001.76 7.496a5.487 5.487 0 00.691 6.5 5.416 5.416 0 00.477 4.502c1.217 2.09 3.662 3.165 6.05 2.66A5.586 5.586 0 0013.168 23c2.443.006 4.61-1.546 5.361-3.84a5.553 5.553 0 003.715-2.66 5.488 5.488 0 00-.693-6.497v.001zm-8.381 11.558a4.199 4.199 0 01-2.675-.954c.034-.018.093-.05.132-.074l4.44-2.53a.71.71 0 00.364-.623v-6.176l1.877 1.069c.02.01.033.029.036.05v5.115c-.003 2.274-1.87 4.118-4.174 4.123zM4.192 17.78a4.059 4.059 0 01-.498-2.763c.032.02.09.055.131.078l4.44 2.53c.225.13.504.13.73 0l5.42-3.088v2.138a.068.068 0 01-.027.057L9.9 19.288c-1.999 1.136-4.552.46-5.707-1.51h-.001zM3.023 8.216A4.15 4.15 0 015.198 6.41l-.002.151v5.06a.711.711 0 00.364.624l5.42 3.087-1.876 1.07a.067.067 0 01-.063.005l-4.489-2.559c-1.995-1.14-2.679-3.658-1.53-5.63h.001zm15.417 3.54l-5.42-3.088L14.896 7.6a.067.067 0 01.063-.006l4.489 2.557c1.998 1.14 2.683 3.662 1.529 5.633a4.163 4.163 0 01-2.174 1.807V12.38a.71.71 0 00-.363-.623zm1.867-2.773a6.04 6.04 0 00-.132-.078l-4.44-2.53a.731.731 0 00-.729 0l-5.42 3.088V7.325a.068.068 0 01.027-.057L14.1 4.713c2-1.137 4.555-.46 5.707 1.513.487.833.664 1.809.499 2.757h.001zm-11.741 3.81l-1.877-1.068a.065.065 0 01-.036-.051V6.559c.001-2.277 1.873-4.122 4.181-4.12.976 0 1.92.338 2.671.954-.034.018-.092.05-.131.073l-4.44 2.53a.71.71 0 00-.365.623l-.003 6.173v.002zm1.02-2.168L12 9.25l2.414 1.375v2.75L12 14.75l-2.415-1.375v-2.75z"></path>'),
+    ('cursor', 'Cursor',
+     '<path d="M22.106 5.68L12.5.135a.998.998 0 00-.998 0L1.893 5.68a.84.84 0 00-.419.726v11.186c0 .3.16.577.42.727l9.607 5.547a.999.999 0 00.998 0l9.608-5.547a.84.84 0 00.42-.727V6.407a.84.84 0 00-.42-.726zm-.603 1.176L12.228 22.92c-.063.108-.228.064-.228-.061V12.34a.59.59 0 00-.295-.51l-9.11-5.26c-.107-.062-.063-.228.062-.228h18.55c.264 0 .428.286.296.514z"></path>'),
+    ('copilot', 'GitHub Copilot',
+     '<path d="M19.245 5.364c1.322 1.36 1.877 3.216 2.11 5.817.622 0 1.2.135 1.592.654l.73.964c.21.278.323.61.323.955v2.62c0 .339-.173.669-.453.868C20.239 19.602 16.157 21.5 12 21.5c-4.6 0-9.205-2.583-11.547-4.258-.28-.2-.452-.53-.453-.868v-2.62c0-.345.113-.679.321-.956l.73-.963c.392-.517.974-.654 1.593-.654l.029-.297c.25-2.446.81-4.213 2.082-5.52 2.461-2.54 5.71-2.851 7.146-2.864h.198c1.436.013 4.685.323 7.146 2.864zm-7.244 4.328c-.284 0-.613.016-.962.05-.123.447-.305.85-.57 1.108-1.05 1.023-2.316 1.18-2.994 1.18-.638 0-1.306-.13-1.851-.464-.516.165-1.012.403-1.044.996a65.882 65.882 0 00-.063 2.884l-.002.48c-.002.563-.005 1.126-.013 1.69.002.326.204.63.51.765 2.482 1.102 4.83 1.657 6.99 1.657 2.156 0 4.504-.555 6.985-1.657a.854.854 0 00.51-.766c.03-1.682.006-3.372-.076-5.053-.031-.596-.528-.83-1.046-.996-.546.333-1.212.464-1.85.464-.677 0-1.942-.157-2.993-1.18-.266-.258-.447-.661-.57-1.108-.32-.032-.64-.049-.96-.05zm-2.525 4.013c.539 0 .976.426.976.95v1.753c0 .525-.437.95-.976.95a.964.964 0 01-.976-.95v-1.752c0-.525.437-.951.976-.951zm5 0c.539 0 .976.426.976.95v1.753c0 .525-.437.95-.976.95a.964.964 0 01-.976-.95v-1.752c0-.525.437-.951.976-.951zM7.635 5.087c-1.05.102-1.935.438-2.385.906-.975 1.037-.765 3.668-.21 4.224.405.394 1.17.657 1.995.657h.09c.649-.013 1.785-.176 2.73-1.11.435-.41.705-1.433.675-2.47-.03-.834-.27-1.52-.63-1.813-.39-.336-1.275-.482-2.265-.394zm6.465.394c-.36.292-.6.98-.63 1.813-.03 1.037.24 2.06.675 2.47.968.957 2.136 1.104 2.776 1.11h.044c.825 0 1.59-.263 1.995-.657.555-.556.765-3.187-.21-4.224-.45-.468-1.335-.804-2.385-.906-.99-.088-1.875.058-2.265.394zM12 7.615c-.24 0-.525.015-.84.044.03.16.045.336.06.526l-.001.159a2.94 2.94 0 01-.014.25c.225-.022.425-.027.612-.028h.366c.187 0 .387.006.612.028-.015-.146-.015-.277-.015-.409.015-.19.03-.365.06-.526a9.29 9.29 0 00-.84-.044z"></path>'),
+)
+
+
+def _icon_sprite() -> str:
+    syms = "".join(f"<symbol id=ic-{k} viewBox='0 0 24 24'>{body}</symbol>" for k, _, body in AGENT_ICONS)
+    return f"<svg width=0 height=0 style='position:absolute' aria-hidden=true>{syms}</svg>"
+
+
+def _copy_button(kind: str, text: str, label: str, hint: str) -> str:
+    """A compact copy button (agent marks or a terminal mark, label, hint) tied to its text by id."""
+    if kind == "txt":
+        marks = "".join(f"<span class=ag title='{n}'><svg aria-hidden=true><use href='#ic-{k}'/></svg></span>"
+                        for k, n, _ in AGENT_ICONS)
+    else:
+        marks = "<span class='ag term' aria-hidden=true>&gt;_</span>"
+    return (f"<button type=button class=copy data-copy={_copy_id(text)} aria-label='{html.escape(label)}'>"
+            f"<span class=ags>{marks}</span><span class=gs><b aria-live=polite>{html.escape(label)}</b>"
+            f"<small>{html.escape(hint)}</small></span></button>")
+
+
+def _copy_text(kind: str, text: str, show: str) -> str:
+    return (f"<details class=cp><summary>{html.escape(show)}</summary>"
+            f"<pre class={kind} id={_copy_id(text)}>{html.escape(text)}</pre></details>")
+
+
+def _copy_id(text: str) -> str:
+    return "cp" + hashlib.sha1(text.encode()).hexdigest()[:10]
+
+
+def _stored_plans(summ: Summary) -> dict[str, Json]:
+    """The setup plans (see _setup_plan) as the summary stores them."""
+    def dump(xs: list[RouterSetup] | list[Replacement]) -> list[Json]:
+        return [x.model_dump() for x in xs]
+
+    return {"router": {"lever": "router", "enable": summ.router.enable, "moves": dump(summ.router.routers),
+                       "replacements": dump(summ.router.replacements)},
+            "switch": {"lever": "switch", "enable": summ.switch.enable, "moves": dump(summ.switch.replacements)}}
+
+
+def _and(moves: list[Json]) -> str:
+    names = [m["model"].split("/")[-1] for m in moves]
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def _setup_card(plans: dict[str, Json], rec: str, workspace: Any) -> str:
+    ws = urllib.parse.quote(str(workspace or ""), safe="")
+    blocks = []
+    for lever in (["switch", "router"] if rec == "s" else ["router", "switch"]):
+        plan = plans[lever]
+        swaps = plan["moves"] if lever == "switch" else plan.get("replacements") or []
+        if not plan["moves"] and not swaps:
+            continue
+        name = "Smart Router" if lever == "router" else "Change model"
+        tag = " <span class=rec>Recommended</span>" if lever[0] == rec else ""
+        n_on, n_mv = len(plan["enable"]), len(plan["moves"])
+        steps = []
+        if lever == "router" and n_mv:
+            steps.append(f"create {n_mv} router{'s' if n_mv != 1 else ''} and point {_and(plan['moves'])} at them")
+        if swaps:
+            steps.append(f"change {_and(swaps)}")
+        what = ", then ".join(steps)
+        summary = (f"Enable {n_on} model{'s' if n_on != 1 else ''}, then {what}." if n_on
+                   else what[0].upper() + what[1:] + ".")
+        links = [f"<a href='{ORQ_APP}/{ws}/router/models?q={urllib.parse.quote(m.split('/')[-1])}'>"
+                 f"Enable {html.escape(m.split('/')[-1])}</a>" for m in plan["enable"]]
+        if lever == "router":
+            links.insert(0, f"<a href='{ORQ_APP}/{ws}/router/smart-router?id=new'>Create a Smart Router</a>")
+        prompt, cmds = _setup_prompt(plan), _setup_commands(plan)
+        blocks.append(f"<div class=setup><h3>{name}{tag}</h3><p class=m>{html.escape(summary)}</p>"
+                      + (f"<ul class=mv>{''.join(f'<li>{html.escape(_short(m['model']))} \u2192 {html.escape(_short(m['to']))}</li>' for m in swaps)}</ul>"
+                         if swaps else "")
+                      + "<div class=cpg>"
+                      + _copy_button("txt", prompt, "Copy prompt", "Paste into your coding agent")
+                      + (_copy_button("cmd", cmds, "Copy commands",
+                                      f"{cmds.count(chr(10)) + 1} lines for the orq CLI") if cmds else "")
+                      + "</div><div class=cps>" + _copy_text("txt", prompt, "Show prompt")
+                      + (_copy_text("cmd", cmds, "Show commands") if cmds else "") + "</div>"
+                      + (f"<p class='m ol'>In orq.ai: {SEP.join(links)}</p>" if links else "") + "</div>")
+    if not blocks:
+        return ""
+    return _card("Set it up", _icon_sprite() + "".join(blocks), "setup")
+
+
+def _details(title: str, hint: str, body: str) -> str:
+    return f"<details><summary>{html.escape(title)} <span>{html.escape(hint)}</span></summary>{body}</details>"
+
+
+GLOSSARY = [
+    ("Smart Router", "orq's router. For each call it picks a model from a pool by how hard the call looks; cheaper models get the easier calls."),
+    ("Change model", "Replace a model with a cheaper, at least as strong model for all of its calls."),
+    ("Pool", "The models the router may pick from: one at least as strong as today's, plus cheaper tiers."),
+    ("Index", ("A benchmark score for overall model strength. Higher is stronger. Not a measure of fit for "
+              "your workload.")),
+    ("As strong and cheaper", "Another model scores at least as high on the index and costs no more on your traffic."),
+    ("Scope", "Which models are allowed: same provider or any, and enabled models only or all available."),
+    ("Coverage", ("The share of spend a lever's estimate covers: the sampled models whose re-pricing matches the "
+                  "bill, and for change model also every model priced from its token totals.")),
+    ("Sampled trace", ("One trace from this workspace, picked with a chance in proportion to its cost and re-priced "
+                       "whole on the new model; the router grades its last user message.")),
+    ("Easy, Medium, Hard", ("How demanding each sampled call is, as graded by the router. Easy and medium calls "
+                            "are the ones the router sends to cheaper models; check answer quality before moving traffic.")),
+    ("Ungraded", "Calls the router could not grade; they go to the strongest model in the pool."),
+]
+
+
+FONT_DIR = Path(__file__).resolve().parent.parent / "resources" / "fonts"
+
+
+def _font_css() -> str:
+    """@font-face rules for the bundled Avio Sans subsets (Latin), inlined so the page stays one file."""
+    out = []
+    for name, weight in (("Regular", 400), ("Medium", 500), ("SemiBold", 600)):
+        f = FONT_DIR / f"AvioSans-{name}.woff2"
+        if f.exists():
+            data = base64.b64encode(f.read_bytes()).decode()
+            out.append(f'@font-face{{font-family:"Avio Sans";font-weight:{weight};font-style:normal;'
+                       f'font-display:swap;src:url(data:font/woff2;base64,{data}) format("woff2")}}')
+    return "".join(out)
+
+
+def _moves_rows(moves: list[Json]) -> list[Json]:
+    """Moves with a call count that says how many of the calls were fallbacks (no routing decision)."""
+    return [dict(mv, calls=f"{mv.get('n', 0)}" + (f" (incl. {mv['fallback']} fallback)" if mv.get("fallback") else ""))
+            for mv in moves]
+
+
+def render(report: Json, narrative: dict[str, str], redact: bool) -> str:
+    missing = [s for s in SLOTS if s != "caching" and not narrative.get(s)]
+    if missing:
+        raise SystemExit(f"narrative slots empty: {', '.join(missing)}")
+    if "summary" not in report:
+        raise SystemExit("report.json has no summary; rerun analyze")
+    cs = report["summary"]["caching"]  # the caching slot is only used when the caching card is shown
+    if not cs.get("error") and (cs["savings_found"] or 0) >= 1 and not narrative.get("caching"):
+        raise SystemExit("narrative slots empty: caching")
+    S = Summary.model_validate(report["summary"])
+    cs, win = S.caching, S.window
+    ws = str(report.get("workspace") or "your workspace")
+    total = S.spend_total or 0
+    h_pm, sw_pm = S.router.per_month, S.switch.per_month
+    n = S.sampled_calls
+    caching_error = cs.error
+    caching_small = not caching_error and (cs.savings_found or 0) < 1
+    spend_pm = S.spend_per_month
+    first = re.split(r"\n\s*\n", narrative["summary"].strip())[0]
+    verdict = html.escape(" ".join(first.split()))
+    p_router, p_switch = S.router.pct_of_spend, S.switch.pct_of_spend
+    rec = {"router": "r", "switch": "s"}.get(S.recommended or "", "")  # "": neither lever saves anything
+    # the spend bar, the plan and the coverage line follow the recommended lever
+    plan: RouterLever | SwitchLever = S.switch if rec == "s" else S.router
+    cov = plan.coverage
+    bar = ""
+    if rec and spend_pm and plan.per_month is not None and plan.saved_today_per_month is not None:
+        now_v, more_v = max(0.0, plan.saved_today_per_month), plan.saved_after_enabling_per_month or 0.0
+        left_v = max(0.0, spend_pm - now_v - more_v)
+        bar = _waterfall(spend_pm, now_v, more_v, left_v, "Smart Router" if rec == "r" else "Change model")
+    adds = round((h_pm or 0) - (sw_pm or 0)) if h_pm is not None and sw_pm is not None else None
+    pts = round((p_router - p_switch) * 100) if p_router is not None and p_switch is not None else 0
+    if adds is None:
+        gap = ""
+    elif not rec:
+        gap = "<p class='m gap'>Neither lever saves money on the sampled calls.</p>"
+    elif S.levers_overlap:
+        gap = ("<p class='m gap'>Both save about the same: the difference is within the margin of error, "
+               "so either works.</p>")
+    elif adds > 0:
+        more = f"{pts}% of spend more" if pts >= 1 else "slightly more"
+        gap = f"<p class='m gap'>Router saves {more} (+${adds:,}/mo).</p>"
+        if rec == "s":
+            gap = (f"<p class='m gap'>Smart Router estimates {more} (+${adds:,}/mo), but no router can be set up "
+                   "from the enabled, scored models; change model is the plan you can apply.</p>")
+    else:
+        gap = "<p class='m gap'>Router adds nothing here.</p>"
+
+    def kpi(dot: str, name: str, p: Any, pm: Any, cov: Any) -> str:
+        tag = "<span class=rec>Recommended</span>" if dot == rec else ""
+        return (f"<section class=card><div class=kh><i class={dot}></i><span class=kn>{name}</span>{tag}</div><div class=cb>"
+                f"<p class=big>{_pc(p)}<small>saved, {_usd0(pm)}/mo</small></p>"
+                f"<p class=m>{_pct(cov)} of total spend analysed</p></div></section>")
+
+    hero = ("<section class=hero aria-label='Headline'>"
+            f"<p class=verdict>{verdict}</p><div class=kpis>"
+            f"{kpi('r', 'Smart Router', p_router, h_pm, S.router.coverage)}"
+            f"{kpi('s', 'Change model', p_switch, sw_pm, S.switch.coverage)}</div>{gap}"
+            + _card("Savings against monthly spend",
+                    f"{bar}<p class='m caveat'>{n or 'The'} sampled traces; the estimate covers models that make up {_pct(cov)} of spend. "
+                    "Test answer quality before moving traffic.</p>")
+            + "</section>")
+
+    setup = _setup_card(_stored_plans(S), rec, report.get("workspace"))
+    toc = [("do", "What to do"), ("setup", "Set it up"), ("scopes", "Other model choices"), ("details", "Details")]
+    nav = ("<nav class=toc aria-label='On this page'><span>On this page</span><ul>"
+           + "".join(f"<li><a href='#{k}'>{t}</a></li>" for k, t in toc if k != "setup" or setup) + "</ul></nav>")
+    theme = f"<button type=button class=theme aria-label='Switch colour theme'>{SUN}{MOON}</button>"
+    to_day = _day(win.to)
+    cap = ""
+    if (win.requested or 0) > win.days:
+        cap = f"; you asked for {win.requested}, the workspace keeps traces for {win.retention} days"
+    scope = (f"<p class=m>Scope: {html.escape('; '.join(_filter_text(f) for f in S.filters))}</p>" if S.filters else "")
+    head = (f"<header class=top><div><h1>Where you can save on LLM spend</h1>"
+            f"<p class=m>{html.escape(ws)} · {html.escape(_day(win.from_))} to {html.escape(to_day)} "
+            f"({win.days} days{cap}), scaled to a month: {_usd0(spend_pm)}/mo LLM spend.</p>{scope}</div>{theme}</header>")
+    caption = (_plan_caption("switch", p_switch, sw_pm) if rec == "s" else _plan_caption("router", p_router, h_pm)
+               if rec else "<p class=m>No saving found: no sampled model has a cheaper model that is as strong.</p>")
+    parts = [_card("What to do", caption
+                   + _actions_chart(S.recommendations.switch if rec == "s" else S.recommendations.router,
+                                    S.not_analysed),
+                   "do"),
+             setup,
+             _card("Other model choices", "<p class=m>Share of monthly spend saved, by which models are allowed.</p>"
+                   + _scope_grid(S.scopes) + f"<p class=m>{html.escape(TOKENIZER_NOTE)}</p>", "scopes")]
+    if not caching_error:
+        parts.append(_card("Caching", _caching_body(cs) + ("" if caching_small else _md(narrative["caching"])),
+                           "caching"))
+    gen = html.escape(_day(report["generated_at"]) if report.get("generated_at") else to_day)
+    unc = _uncertainty_rows(S.scopes)
+    dets = [_details("Estimates with uncertainty", "90% CI per scope and lever",
+                     "<p class=m>The 90% CI covers sampling noise only, not answer quality. The range plot "
+                     "shows it on one scale for every row (it does not start at $0): where two bars overlap, the "
+                     "difference is within the margin of error.</p>" + _table(unc,
+                         [("Scope", "scope", str), ("Lever", "lever", str), ("$/mo saved", "pm", _usd),
+                          ("% saved", "pct", _pc), ("90% CI ($/mo)", "ci", _ci_cell),
+                          (_range_head(unc), "range", _range_cell)], "Estimates with uncertainty")),
+            _details("Why each move", "the reasoning per model", _md(narrative["routing"])),
+            _details("Method and caveats", "sample, coverage, limits, terms",
+                     _md(narrative["caveats"]) + _sampling_note(S.sampling) + (
+                         f"<p class=m>Without the 3 sampled traces that save the most, the Smart Router estimate is "
+                         f"{_usd0(S.router.without_top3_per_month or 0)}/mo.</p>"
+                         "<dl class=gl>" + "".join(f"<dt>{html.escape(t)}</dt><dd>{html.escape(d)}</dd>"
+                                                   for t, d in GLOSSARY) + "</dl>")),
+            _details("Pools and models to enable", "what each move needs, per scope", _pool_tables(S.scopes)),
+            _details("Where sampled asks move", "headline scope, balanced profile",
+                     _table(_moves_rows([m.model_dump() for m in S.sampled_moves]), [("Model in use", "used", str), ("Router pick", "pick", str),
+                                                  ("Difficulty tiers", "tier", str), ("Sampled calls", "calls", str),
+                                                  ("Calls that cost more", "costs_more", str),
+                                                  ("Saving on the sampled calls", "weighted_savings", _usd)],
+                            "Where sampled asks move"))]
+    if not caching_small and not caching_error:
+        dets.append(_details("Caching candidates", f"{cs.threads_scanned} threads scanned",
+                             _table([r.model_dump() for r in cs.rows],
+                                    [("Thread", "thread", lambda t: "(hidden)" if redact else t),
+                                     ("Agent", "agent", lambda a: a or "no agent"), ("Model", "model", str),
+                                     ("Turns", "turns", str), ("Saving", "savings", _usd), ("Action", "action", str)],
+                                    "Caching candidates")))
+    intro = ""
+    if caching_error:
+        intro = f"<p><b>Caching:</b> not checked ({html.escape(str(caching_error))}).</p>"
+    intro += (f"<p class=m>{_usd(total)} spent over the {win.days}-day window. Covers {_pct(cov)} of spend; "
+             f"figures re-price the sampled calls on the new model. Balanced routing profile, generated {gen}.</p>")
+    parts.append(_card("Details", intro + "<div class=rows>" + "".join(dets) + "</div>", "details"))
+    body = head + hero + nav + "".join(parts)
+    title = f"Where you can save on LLM spend: {ws}, {to_day.split(' ', 1)[-1]}"
+    return ("<!doctype html><html lang=en><head><meta charset=utf-8>"
+            "<meta name=viewport content='width=device-width, initial-scale=1'>"
+            f"<title>{html.escape(title)}</title><script>{THEME_BOOT}</script><style>{_font_css()}{CSS}</style></head>"
+            f"<body class=auto><main>{body}</main><script>{PAGE_JS}</script></body></html>")
+
+
+# --------------------------------------------------------------------------------------------- report.json contract
+# The models are the contract; resources/report.schema.json is generated from them (`schema` subcommand). Keys the
+# contract leaves untyped are Any, free objects dict[str, Any], and every object accepts extra keys. A non-null key
+# that may be absent defaults to _ABSENT (None), which is never validated; report_schema() drops the default.
+
+
+_ABSENT: Any = None  # default of a non-null key that may be absent: never validated, dropped from the schema
+
+
+class _Obj(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+Interval = Annotated[list[float], Field(min_length=2, max_length=2)]
+Share = Annotated[float, Field(ge=0, le=1)]
+
+
+class StopInfo(_Obj):
+    check: str
+    numbers: dict[str, Any]
+
+
+class SummaryWindow(_Obj):
+    from_: str = Field(alias="from")
+    to: str
+    days: int
+    requested: int | None
+    retention: int | None
+
+
+class CacheRow(_Obj):
+    thread: Any
+    agent: Any
+    model: Any
+    turns: Any
+    savings: Any
+    action: Any
+
+
+class SummaryCaching(_Obj):
+    threads_scanned: int | None
+    savings_found: float | None
+    error: str | None
+    rows: list[CacheRow] = Field(description="Up to 20 candidate threads, largest saving first.")
+    cached_share: float | None = Field(description="Share of input tokens in the scanned threads already read from cache.")
+    saved_by_cache: float | None = Field(description="What those cache reads saved against the input price, in the scanned threads.")
+    threads_caching: int | None = Field(description="Scanned threads with a model already reading 20% or more of its input from cache.")
+
+
+class SampledMove(_Obj):
+    used: Any
+    pick: Any
+    tier: Any
+    n: Any
+    fallback: Any
+    costs_more: Any
+    weighted_savings: Any
+
+
+class RouterSetup(_Obj):
+    model: Any
+    key: Any
+    pool: Any
+
+
+class Replacement(_Obj):
+    model: Any
+    to: Any
+
+
+COVERAGE_DOC = "Share of spend on the models this lever's estimate covers."
+
+
+class RouterLever(_Obj):
+    pct_of_spend: float | None
+    per_month: float | None
+    ci90_per_month: list[float] | None
+    coverage: float | None = Field(description=COVERAGE_DOC)
+    saved_today_per_month: float | None
+    saved_after_enabling_per_month: float | None
+    without_top3_per_month: float | None
+    enable: list[str]
+    routers: list[RouterSetup]
+    replacements: list[Replacement] = Field(
+        description="Models with no pool to route over: the router figure serves them on their change-model target, "
+                    "so the router plan changes them too.")
+
+
+class SwitchLever(_Obj):
+    pct_of_spend: float | None
+    per_month: float | None
+    ci90_per_month: list[float] | None
+    coverage: float | None = Field(description=COVERAGE_DOC)
+    saved_today_per_month: float | None
+    saved_after_enabling_per_month: float | None
+    enable: list[str]
+    replacements: list[Replacement]
+
+
+class Move(_Obj):
+    pool: list[str] | None
+    switch: str | None
+
+
+class Target(_Obj):
+    model: Any
+    share_of_calls: float | None
+    tiers: list[str]
+    unscored_calls: int
+    enable: bool
+    stays: bool
+
+
+class Recommendation(_Obj):
+    model: Any
+    action: Literal["router", "switch", "keep", "not_analysed"]
+    router_key: str | None
+    move: Move | None
+    today_move: Move | None
+    targets: list[Target]
+    enable: list[str]
+    spend_per_month: float
+    saved_per_month: float
+    pct_of_model_spend: float | None
+    saved_today_per_month: float | None
+    saved_after_enabling_per_month: float | None
+    sampled_calls: int
+    small_sample: bool
+    share_hard: float | None
+
+
+class Recommendations(_Obj):
+    router: list[Recommendation]
+    switch: list[Recommendation]
+
+
+class ScopeLever(_Obj):
+    pct_of_spend: float | None
+    per_month: float | None
+    ci90_per_month: list[float] | None
+    coverage: float | None
+    enable: list[str]
+
+
+class ScopeModel(_Obj):
+    model: Any
+    pool: Any
+    switch: Any
+    enable: Any
+
+
+class SummaryScope(_Obj):
+    scope: Any
+    headline: bool
+    router: ScopeLever
+    switch: ScopeLever
+    models: list[ScopeModel]
+
+
+class NotAnalysed(_Obj):
+    per_month: float
+    model_count: int
+    multi_model_per_month: float = Field(0.0, description="Spend in multi-model traces, which the router estimate leaves out.")
+
+
+class SummarySampling(_Obj):
+    plan: str | None
+    target: int | None
+    drawn: int | None
+    stop_reason: str | None
+    decision_calls: int | None
+    half_width_per_month: float | None
+    switch_from_totals: list[str]
+
+
+class Summary(_Obj):
+    window: SummaryWindow
+    spend_total: float | None
+    spend_per_month: float | None
+    scope: Any
+    filters: list[dict[str, Any]] = Field(default_factory=list, description="The --filters the run was scoped to.")
+    sampled_calls: int | None
+    sampling: SummarySampling | None = Field(None, description="How the sample was drawn and why drawing stopped.")
+    recommended: Literal["router", "switch"] | None = Field(
+        description="null when neither lever saves anything (per_month <= 0 or null).")
+    levers_overlap: bool
+    router: RouterLever
+    switch: SwitchLever
+    recommendations: Recommendations = Field(
+        description="One row per sampled model, per lever; action keep means no cheaper model is as strong, "
+                    "not_analysed that the lever's estimate does not cover the model.")
+    scopes: list[SummaryScope]
+    not_analysed: NotAnalysed
+    sampled_moves: list[SampledMove] = Field(
+        description="Per (model in use, balanced pick) in the headline scope: sampled calls, fallbacks among them, "
+                    "and their saving.")
+    caching: SummaryCaching
+    caveats: list[Any]
+
+
+class Params(_Obj):
+    sample: Annotated[int, Field(ge=1, le=MAX_SAMPLE)] | None = Field(
+        description="Traces the run may draw; null until the plan is read when --sample is not given.")
+    profile: Literal["balanced"]
+    policy: Literal["jev-general-v1"]
+    seed: int
+    counterfactual_test: bool
+    filters: list[dict[str, Any]] = Field(_ABSENT, description="--filters: every trace read was scoped to these.")
+    sample_source: Literal["flag", "plan"] = Field(
+        _ABSENT, description="flag: --sample; plan: the default for the workspace's plan.")
+    cell_grain: dict[str, Literal["hour", "6h", "day"]] = Field(
+        _ABSENT, description="Per sampled model, the bucket of the cell query: hour, or coarser when hourly "
+                             "cells exceed the time-series budget.")
+    cell_weight: dict[str, Literal["cost", "requests"]] = Field(
+        _ABSENT, description="Per sampled model, what cells are weighted by: spend, or request counts when the model "
+                             "has no recorded cost.")
+
+
+class Window(_Obj):
+    from_: str = Field(alias="from")
+    to: str
+    days: int = Field(ge=1)
+    requested: int = Field(_ABSENT, ge=1)
+    retention: Annotated[int, Field(ge=1)] | None = None
+
+
+class SpendRow(_Obj):
+    key: str
+    spend: float
+
+
+class Spend(_Obj):
+    total: float
+    per_month: float
+    by_model: list[SpendRow]
+    by_agent: list[SpendRow] | None = None
+    by_deployment: list[SpendRow] | None = None
+
+
+class RoutingDecisionCost(_Obj):
+    calls: int
+    estimated_usd: float
+    minutes: float = _ABSENT
+
+
+class PlanInfo(_Obj):
+    type: str
+    rate_limit_per_minute: int = Field(ge=1)
+    rate_limit_source: Literal["metadata.rateLimit", "features.rate_limit", "default"]
+    daily_decision_limit: int | None
+    decisions_per_minute: float
+
+
+class Sampling(_Obj):
+    plan: PlanInfo
+    target: int = Field(ge=1, description="Traces the run may draw: --sample, else the plan default.")
+    drawn: int
+    rounds: int
+    stop_reason: Literal["sample_size", "relative_precision", "absolute_precision", "wall_time",
+                         "decision budget"] = Field(
+        description="Why drawing stopped: the target was reached, the headline 90% interval was narrow enough "
+                    "(relative or absolute), the wall-time cap, or the approved decision calls were used up.")
+    half_width: float | None = Field(description="Half the headline 90% interval at the stop, in window dollars.")
+    estimate: float | None
+    decision_calls: int
+    rate_limited: int = Field(description="429 responses waited out.")
+    wall_time_s: float
+    calls_per_trace: dict[str, float] = Field(description="LLM calls per trace per model, from telemetry.")
+
+
+class StoppingCheck(_Obj):
+    check: str
+    pass_: bool = Field(alias="pass")
+    numbers: dict[str, Any]
+
+
+class Caveat(_Obj):
+    check: str
+    detail: str
+
+
+class Checks(_Obj):
+    stopping: list[StoppingCheck]
+    caveats: list[Caveat]
+
+
+class PerProfile(_Obj):
+    __pydantic_extra__: dict[str, float] = Field(init=False)  # pyright: ignore[reportIncompatibleVariableOverride]
+    balanced: float
+    cost: float
+
+
+class Sample(_Obj):
+    trace_id: Any
+    span_id: Any
+    model: Any
+    weight: float = Field(gt=0, description="1 / inclusion.")
+    inclusion: float = Field(_ABSENT, gt=0, le=1, description="Probability one draw of this model picks this trace.")
+    cluster: str = Field(_ABSENT, description="Bootstrap cluster: the thread, else the trace.")
+    cur_price: float
+    billed: float
+    savings: PerProfile
+    picks: dict[str, Any]
+    fallback: str | None
+
+
+class Estimate(_Obj):
+    savings: float
+    ci90: Interval
+    coverage: Share
+    per_month: float
+    ci90_per_month: Interval
+    without_top3: float
+    unpriced_models: list[str]
+    per_stratum: dict[str, float | None] = _ABSENT
+    from_totals: list[str] = Field(
+        _ABSENT, description="Change model only: models priced exactly from the window's token totals, with no "
+                             "sampling spread.")
+
+
+class ScenarioRouter(_Obj):
+    __pydantic_extra__: dict[str, Estimate] = Field(init=False)  # pyright: ignore[reportIncompatibleVariableOverride]
+    balanced: Estimate
+    cost: Estimate
+
+
+class ScenarioModel(_Obj):
+    model: str
+    pool: list[str] | None
+    switch: str | None
+    enable: list[str]
+    relaxed: bool
+    reason: str
+
+
+class Scenario(_Obj):
+    scope: Literal["same_provider:all", "same_provider:enabled", "any_provider:all", "any_provider:enabled"]
+    provider: Literal["same_provider", "any_provider"]
+    availability: Literal["all", "enabled"]
+    headline: bool
+    router: ScenarioRouter
+    switch: Estimate
+    models: list[ScenarioModel]
+
+
+class Headline(_Obj):
+    savings: float
+    ci90: Interval
+    without_top3: float
+    coverage: Share
+    per_month: float
+    ci90_per_month: Interval
+
+
+class ProfileFigure(_Obj):
+    savings: float
+    ci90: Interval
+
+
+class Profiles(_Obj):
+    __pydantic_extra__: dict[str, ProfileFigure] = Field(init=False)  # pyright: ignore[reportIncompatibleVariableOverride]
+    balanced: ProfileFigure
+    cost: ProfileFigure
+
+
+class RoutingMove(_Obj):
+    used: str
+    pick: str
+    n: int
+    fallback: int
+    weight: float = _ABSENT
+
+
+class Stratum(_Obj):
+    model: str
+    spend: float
+    n: int
+    clusters: int
+    covered: bool
+    savings: float | None = None
+    pool: list[str] | None
+    pool_reason: Any
+    calls_per_trace: float | None = None
+    multi_model_share: float | None = Field(None, description="Share of this model's spend in multi-model traces.")
+    switch_source: Literal["totals"] | None = None
+
+
+class NotCovered(_Obj):
+    model: str
+    spend: float
+    reason: str
+
+
+class NotAnalysedSpend(_Obj):
+    multi_model: dict[str, Any] = Field(
+        description="Multi-model traces are left out of the draw: spend, share of all spend, by_model share of each "
+                    "model's own spend.")
+
+
+class Routing(_Obj):
+    headline: Headline
+    profiles: Profiles
+    moves: list[RoutingMove] = _ABSENT
+    strata: list[Stratum]
+    not_covered: list[NotCovered]
+    switch_not_covered: list[NotCovered] = _ABSENT
+    not_analysed: NotAnalysedSpend = _ABSENT
+    buckets: Any
+    fallbacks: Any
+    underpowered: Any
+    pareto: Any
+
+
+class Ask(_Obj):
+    span_id: Any
+    used: Any
+    recommended: Any
+    differs: bool
+
+
+class CounterfactualTest(_Obj):
+    asks: list[Ask]
+    per_model: dict[str, Any]
+
+
+class Caching(_Obj):
+    threads_scanned: int = _ABSENT
+    label: str = _ABSENT
+    savings_found: float = _ABSENT
+    savings_orq: float = _ABSENT
+    rows: list[Any] = _ABSENT
+    error: str = _ABSENT
+    cached_share: float | None = None
+    saved_by_cache: float | None = None
+    threads_caching: int | None = None
+
+
+class Harness(_Obj):
+    metric: str = _ABSENT
+    rows: list[Any] = _ABSENT
+    unattributed: float | None = None
+
+
+REPORT_RULES: JsonDict = {  # the JSON Schema form of Report._finished_run_parts
+    "if": {"properties": {"status": {"const": "ok"}}, "required": ["status", "routing"]},
+    "then": {"required": ["summary"]},
+    "allOf": [{"if": {"properties": {"params": {"properties": {"counterfactual_test": {"const": True}},
+                                                "required": ["counterfactual_test"]},
+                                     "status": {"const": "ok"}},
+                      "required": ["params", "status"]},
+               "then": {"required": ["counterfactual_test"]}}],
+}
+
+
+class Report(_Obj):
+    model_config = ConfigDict(extra="allow", title="orq-find-cost-savings report.json", json_schema_extra=REPORT_RULES)
+    schema_version: Literal["1.3"]
+    generated_at: str
+    workspace: str | None
+    status: Literal["ok", "stopped"]
+    stop: StopInfo | None
+    summary: Summary = Field(
+        _ABSENT, description="Written by analyze on a finished run: every number the page shows. render only formats "
+                             "these; it does not recompute them.")
+    params: Params
+    window: Window = _ABSENT
+    spend: Spend = _ABSENT
+    routing_decision_cost: RoutingDecisionCost = _ABSENT
+    sampling: Sampling = _ABSENT
+    checks: Checks
+    samples: list[Sample] = _ABSENT
+    scenarios: list[Scenario] = Field(_ABSENT, min_length=4, max_length=4)
+    routing: Routing = _ABSENT
+    counterfactual_test: CounterfactualTest = _ABSENT
+    caching: Caching = _ABSENT
+    harness: Harness = _ABSENT
+
+    @model_validator(mode="after")
+    def _finished_run_parts(self) -> Report:
+        given = self.model_fields_set
+        if self.status == "ok" and "routing" in given and "summary" not in given:
+            raise ValueError("a finished run (status ok, with routing) must carry summary")
+        if self.status == "ok" and self.params.counterfactual_test and "counterfactual_test" not in given:
+            raise ValueError("status ok with params.counterfactual_test must carry counterfactual_test")
+        return self
+
+
+def _dump_compact(x: Any, ind: str = "") -> str:
+    """JSON with any object or list that fits in 140 columns on one line, the layout the schema file had by hand."""
+    flat = json.dumps(x, ensure_ascii=False)
+    if len(ind) + len(flat) <= 140 or not isinstance(x, (dict, list)) or not x:
+        return flat
+    inner = ind + "  "
+    items = ([f"{inner}{json.dumps(k)}: {_dump_compact(v, inner)}" for k, v in x.items()] if isinstance(x, dict)
+             else [inner + _dump_compact(v, inner) for v in x])
+    o, c = "{}" if isinstance(x, dict) else "[]"
+    return o + "\n" + ",\n".join(items) + "\n" + ind + c
+
+
+def report_schema() -> Json:
+    """JSON Schema of report.json, generated from Report; resources/report.schema.json holds it."""
+    def clean(node: Any, keyed: bool = False) -> Any:  # keyed: a map of names to schemas (properties, $defs)
+        if isinstance(node, list):
+            return [clean(x) for x in node]
+        if not isinstance(node, dict):
+            return node
+        if keyed:  # an Any field is listed under required only, as before, not as an empty schema
+            return {k: c for k, c in ((k, clean(v)) for k, v in node.items()) if c != {}}
+        out = {k: clean(v, k in ("properties", "$defs")) for k, v in node.items()
+               if k not in ("title", "default") and not (k == "additionalProperties" and v is True)}
+        alts = out.get("anyOf")
+        if alts and len(alts) == 2 and {"type": "null"} in alts:  # X | None as type: [X, "null"], as written by hand
+            other = alts[0] if alts[1] == {"type": "null"} else alts[1]
+            if list(other) == ["type"] and isinstance(other["type"], str):
+                del out["anyOf"]
+                out["type"] = [other["type"], "null"]
+        return out
+
+    return {"$schema": "https://json-schema.org/draft/2020-12/schema", "title": Report.model_config.get("title"),
+            **clean(Report.model_json_schema())}
+
+
+# --------------------------------------------------------------------------------------------- CLI
+
+
+def _filters(text: str) -> list[Json]:
+    try:
+        out = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise argparse.ArgumentTypeError(f"not JSON: {e}") from e
+    if not isinstance(out, list) or not all(isinstance(f, dict) and {"field", "op", "values"} <= f.keys() for f in out):
+        raise argparse.ArgumentTypeError("expected a JSON list of {field, op, values}")
+    return out
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    an = sub.add_parser("analyze", help="sample, score and estimate; writes report.json")
+    an.add_argument("--workspace", help="workspace key (default: the CLI's active workspace)")
+    an.add_argument("--out", required=True)
+    an.add_argument("--window", type=int, default=WINDOW_DAYS, metavar="DAYS",
+                    help="days of traces to analyse, ending now; capped by the workspace's trace retention")
+    an.add_argument("--sample", type=int, default=None,
+                    help=f"traces to draw at most (default by plan: free {PLAN_SAMPLE['free']}, growth "
+                         f"{PLAN_SAMPLE['growth']}, others {MAX_SAMPLE}); drawing stops earlier once the estimate is "
+                         "precise enough")
+    an.add_argument("--filters", type=_filters, metavar="JSON",
+                    help="scope every trace read: a JSON list of {field, op, values}, as `orq traces search --filters` "
+                         "takes it, e.g. '[{\"field\": \"project_id\", \"op\": \"eq\", \"values\": [\"p1\"]}]'. "
+                         "Spend and token totals then come from the matching trace rows instead of telemetry")
+    an.add_argument("--counterfactual-test", action="store_true")
+    an.add_argument("--cache-threads", type=int, default=200, help="threads to scan for caching gaps")
+    an.add_argument("--seed", type=int, default=1917)
+    an.add_argument("--yes", action="store_true", help="skip the decision-cost confirmation")
+    an.add_argument("--keep-cache", action="store_true",
+                    help="keep <out>/cache (CLI responses, prompt texts included) after the run; deleted by default")
+    an.add_argument("--json", action="store_true",
+                    help="print status and summary as JSON on stdout and skip the narrative slots; for callers "
+                         "that use report.json without rendering the page")
+    rn = sub.add_parser("render", help="merge narrative.md into report.html")
+    rn.add_argument("--out", required=True)
+    rn.add_argument("--narrative", required=True)
+    rn.add_argument("--redact", action="store_true", help="hide thread ids in the caching table")
+    sub.add_parser("schema", help="print the JSON Schema of report.json, generated from the Report model")
+    a = ap.parse_args(argv)
+    if a.cmd == "schema":
+        print(_dump_compact(report_schema()))
+        return 0
+    if a.cmd == "analyze":
+        if a.sample is not None and not 1 <= a.sample <= MAX_SAMPLE:
+            ap.error(f"--sample must be between 1 and {MAX_SAMPLE}")
+        if a.window < 1:
+            ap.error("--window must be at least 1")
+        rep = Analyzer(a).run()
+        return 0 if rep["status"] == "ok" else 2
+    report = json.loads((Path(a.out) / "report.json").read_text())
+    if report.get("status") != "ok" or "routing" not in report:
+        raise SystemExit("report.json has no finished analysis; rerun analyze")
+    page = render(report, parse_narrative(Path(a.narrative).read_text()), a.redact)
+    (Path(a.out) / "report.html").write_text(page)
+    print(Path(a.out) / "report.html")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
