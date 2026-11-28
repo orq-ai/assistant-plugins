@@ -49,7 +49,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Annotated, Any, Literal, NamedTuple, TypeVar
+from typing import Annotated, Any, Literal, NamedTuple, TypeVar, cast
 
 import httpx
 from evaluatorq.common import model_frontier as mf
@@ -851,12 +851,51 @@ def backoff(attempt: int) -> None:
     time.sleep(2 ** attempt * (0.5 + random.random()))
 
 
+def sdk_call(call: Callable[[], T], retries: int = 4, on_429: Callable[[float], None] | None = None,
+             timeouts: bool = True, refresh: Callable[[], None] | None = None) -> T:
+    """`call()` with the retry every SDK call shares: a 429 waits its Retry-After (`on_429`, else a sleep) up to
+    MAX_429 times, a 5xx or a timeout (when `timeouts`) backs off up to `retries`, and a 401 `authz_stale` asks
+    `refresh` for a new login token once. Anything else, and an exhausted retry, raises."""
+    attempt = limited = 0
+    stale = False
+    while True:
+        try:
+            return call()
+        except SdkError as e:
+            if e.status_code == 429 and limited < MAX_429:
+                limited += 1
+                (on_429 or time.sleep)(retry_after(e.headers))
+                continue
+            if e.status_code == 401 and "authz_stale" in e.body and refresh and not stale:
+                stale = True
+                refresh()
+                continue
+            if not (500 <= e.status_code <= 504 and attempt < retries):
+                raise
+        except httpx.TimeoutException:
+            if not (timeouts and attempt < retries):
+                raise
+        backoff(attempt)
+        attempt += 1
+
+
 class Orq:
     def __init__(self, workspace: str | None, cache_dir: Path | None, retries: int = 4):
         self.workspace, self.cache_dir, self.retries = workspace, cache_dir, retries
         self.calls = 0
         if cache_dir:
             cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def cached(self, key: list[Any], load: Callable[[], Json]) -> Json:
+        """`load()`, read from the read cache when an earlier run of this window stored it."""
+        path = self.cache_dir / f"{hashlib.sha256(json.dumps(key, default=str).encode()).hexdigest()[:24]}.json" \
+            if self.cache_dir else None
+        if path and path.exists():
+            return json.loads(path.read_text())
+        out = load()
+        if path:
+            path.write_text(json.dumps(out))
+        return out
 
     def __call__(self, *args: str, cache: bool = True) -> Any:
         """One CLI call, read from the cache when it has it. A 5xx or 429 is retried with jittered backoff up to
@@ -886,20 +925,21 @@ class CredentialsError(Exception):
     """No credentials for decision calls: no CLI login (or no `orq` binary) and no `ORQ_API_KEY`."""
 
 
-def make_client(workspace: str | None) -> OrqSdk:
-    """The SDK client for decision calls, with the credentials the CLI reads with: the token of the CLI login (it
-    lasts about an hour, so it is asked for again when it expires), else `ORQ_API_KEY` when no login is available.
-    Raises CredentialsError when neither works."""
+def make_client(workspace: str | None) -> tuple[OrqSdk, Callable[[], None]]:
+    """The SDK client with the credentials the CLI reads with, and a function that gets a new token: the token of
+    the CLI login (it lasts about an hour, so it is asked for again when it expires), else `ORQ_API_KEY` when no
+    login is available. Raises CredentialsError when neither works."""
     server = os.environ.get("ORQ_API_BASE_URL") or None
     argv = ["orq", "auth", "token", "-o", "json"] + (["--workspace", workspace] if workspace else [])
     tok: dict[str, Any] = {}
     lock = threading.Lock()
 
-    def token() -> str:
+    def token(force: bool = False) -> str:
         with lock:
-            if not tok or tok["expires"] - time.time() < 60:
+            if force or not tok or tok["expires"] - time.time() < 60:
                 try:
-                    p = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+                    p = subprocess.run(argv + (["--refresh"] if force else []), capture_output=True, text=True,
+                                       timeout=60)
                     if p.returncode != 0:
                         raise OrqError(argv, p.returncode, p.stderr)
                     out = json.loads(p.stdout)
@@ -914,9 +954,12 @@ def make_client(workspace: str | None) -> OrqSdk:
         token()
     except CredentialsError:
         if key := os.environ.get("ORQ_API_KEY"):
-            return OrqSdk(api_key=key, server_url=server)
+            return OrqSdk(api_key=key, server_url=server), lambda: None
         raise
-    return OrqSdk(api_key=token, server_url=server or tok.get("server"))
+
+    def refresh() -> None:
+        token(True)
+    return OrqSdk(api_key=token, server_url=server or tok.get("server")), refresh
 
 
 # --------------------------------------------------------------------------------------------- helpers
@@ -1159,6 +1202,7 @@ class Analyzer:
         self.orq = Orq(args.workspace, self.out / "cache" / "reads")
         self.decision_dir = self.out / "cache" / "decisions"
         self.client: OrqSdk | None = None
+        self.refresh: Callable[[], None] = lambda: None  # a new login token, once make_client has run
         self.filters: list[Json] = list(getattr(args, "filters", None) or [])
         self.rng = random.Random(args.seed)
         self.report: dict[str, Any] = {"schema_version": SCHEMA_VERSION, "generated_at": iso(datetime.now(UTC)),
@@ -1200,22 +1244,33 @@ class Analyzer:
 
     # ---- telemetry
 
-    def tq(self, compute: list[Json], group_by: list[str], filters: list[Json] | None = None, mode: str = "scalar",
+    def tq(self, compute: list[Json], group_by: list[str], filters: list[Json] | None = None, mode: Literal["scalar", "timeseries"] = "scalar",
            grain: str | None = None, strict: bool = False) -> list[Json]:
-        a = ["telemetry", "query", "--source", "TELEMETRY_SOURCE_TRACES", "--mode", mode, "--from", self.frm,
-             "--to", self.to, "--compute", json.dumps(compute), "--limit", "5000"]
-        for g in group_by:
-            a += ["--group-by", g]
-        if filters:
-            a += ["--filters", json.dumps(filters)]
-        if grain:
-            a += ["--interval-seconds", grain] if grain.isdigit() else ["--grain", grain]
-        r = self.orq(*a) or {}
+        interval = int(grain) if grain and grain.isdigit() else None
+        r = self.sdk_read("telemetry query", [mode, self.frm, self.to, compute, group_by, filters, grain],
+                          lambda sdk: sdk.telemetry.query(  # sort: the server echoes "" and the SDK rejects that
+                              source="TELEMETRY_SOURCE_TRACES", mode=mode, from_=parse_ts(self.frm),
+                              to=parse_ts(self.to), compute=cast(Any, compute), limit=5000, sort="desc",
+                              group_by=group_by or None, filters=cast(Any, filters),
+                              grain=None if interval or not grain else grain, interval_seconds=interval))
         if r.get("has_more"):
             if strict:
                 raise Truncated(r.get("data") or [])
             self.caveat("telemetry truncated", " ".join(group_by))
         return r.get("data") or []
+
+    def sdk_read(self, label: str, key: list[Any], call: Callable[[OrqSdk], Any]) -> Json:
+        """One read through the SDK client, read cache and shared retry. A failure is an OrqError, as for a CLI read,
+        so the callers handle both alike."""
+        def load() -> Json:
+            try:
+                res = sdk_call(lambda: call(self.sdk()), self.orq.retries, refresh=lambda: self.refresh())
+            except SdkError as e:
+                raise OrqError(label.split(), e.status_code, f"HTTP {e.status_code} {e.body}") from e
+            except httpx.HTTPError as e:
+                raise OrqError(label.split(), 0, f"{type(e).__name__}: {e}") from e
+            return res.model_dump(by_alias=True, mode="json")
+        return self.orq.cached([label, *key], load)
 
     def bad_filters(self, e: OrqError) -> Stop | None:
         """A 400 on a filtered call is the server rejecting --filters: the stop carries its message."""
@@ -1560,10 +1615,9 @@ class Analyzer:
         out: list[Json] = []
         tok = None
         for _ in range(10):
-            a = ["traces", "list-spans", trace, "--limit", "200"] + (["--project", project] if project else [])
-            if tok:
-                a += ["--page-token", tok]
-            r = self.orq(*a) or {}
+            r = self.sdk_read("traces list-spans", [trace, tok],
+                              lambda sdk: sdk.traces.list_spans(trace_id=trace, limit=200, page_token=tok,
+                                                                all_accessible_projects=True))
             out += r.get("data") or []
             tok = r.get("next_page_token")
             if not r.get("has_more") or not tok:
@@ -1655,7 +1709,7 @@ class Analyzer:
         with self.lock:
             if self.client is None:
                 try:
-                    self.client = make_client(self.args.workspace)
+                    self.client, self.refresh = make_client(self.args.workspace)
                 except CredentialsError as e:
                     raise self.no_credentials(e) from e
             return self.client
@@ -1681,43 +1735,33 @@ class Analyzer:
             self.sent += 1
         body = {"model": DECISION_MODEL, "name": "cost-savings-report", "state": text,
                 "timeout": {"call_timeout": 1500}, "retry": {"count": 0}, "questions": QUESTION}
-        limited = attempt = 0
-        while True:
+
+        def create() -> Any:
             if self.pacer:
                 self.pacer.acquire()
-            try:
-                answers = self.sdk().router.decisions.create(**body, timeout_ms=180_000).model_dump()["answers"]
-                probs = (answers.get("difficulty") or {}).get("probabilities")
-                res = Decision(score=score(probs)) if probs else Decision(error="error")
-                if probs:
-                    self.decision_dir.mkdir(parents=True, exist_ok=True)
-                    (self.decision_dir / f"{key}.json").write_text(json.dumps({"probabilities": probs}))
-            except SdkError as e:
-                if e.status_code == 429:
-                    limited += 1
-                    if limited > MAX_429:
-                        raise Stop("decision rate limit", {
-                            "detail": f"still rate limited after {MAX_429} waits; rerun later or with a smaller "
-                                      "--sample",
-                            "rate_limit_per_minute": self.plan.rate_limit,
-                            "decisions_made": len(self.decisions)}) from e
-                    if self.pacer:
-                        self.pacer.throttled(retry_after(e.headers))
-                    continue
-                if e.status_code in (401, 403):
-                    raise Stop("decision calls allowed", {"detail": str(e)[:300]}) from e
-                if 500 <= e.status_code <= 504 and attempt < self.orq.retries:
-                    backoff(attempt)
-                    attempt += 1
-                    continue
-                res = Decision(error="decision_timeout" if e.status_code in (408, 504) else "error")
-            except CredentialsError as e:  # the token expired and the login is gone
-                raise self.no_credentials(e) from e
-            except httpx.TimeoutException:
-                res = Decision(error="decision_timeout")
-            except httpx.HTTPError:
-                res = Decision(error="error")
-            break
+            return self.sdk().router.decisions.create(**body, timeout_ms=180_000)
+        try:
+            answers = sdk_call(create, self.orq.retries, self.pacer.throttled if self.pacer else None, timeouts=False,
+                               refresh=lambda: self.refresh()).model_dump()["answers"]
+            probs = (answers.get("difficulty") or {}).get("probabilities")
+            res = Decision(score=score(probs)) if probs else Decision(error="error")
+            if probs:
+                self.decision_dir.mkdir(parents=True, exist_ok=True)
+                (self.decision_dir / f"{key}.json").write_text(json.dumps({"probabilities": probs}))
+        except SdkError as e:
+            if e.status_code == 429:
+                raise Stop("decision rate limit", {
+                    "detail": f"still rate limited after {MAX_429} waits; rerun later or with a smaller --sample",
+                    "rate_limit_per_minute": self.plan.rate_limit, "decisions_made": len(self.decisions)}) from e
+            if e.status_code in (401, 403):
+                raise Stop("decision calls allowed", {"detail": str(e)[:300]}) from e
+            res = Decision(error="decision_timeout" if e.status_code in (408, 504) else "error")
+        except CredentialsError as e:  # the token expired and the login is gone
+            raise self.no_credentials(e) from e
+        except httpx.TimeoutException:
+            res = Decision(error="decision_timeout")
+        except httpx.HTTPError:
+            res = Decision(error="error")
         self.decisions[key] = res
         return res
 

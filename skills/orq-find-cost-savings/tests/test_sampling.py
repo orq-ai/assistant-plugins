@@ -185,6 +185,49 @@ def test_decision_calls_never_exceed_the_approved_count_and_the_run_ends_ok_at_t
     assert "approved decision calls were used up" in c.render(rep, {k: "x" for k in c.SLOTS}, redact=False)
 
 
+def sdk_error(status, body="{}", retry=None):
+    return c.SdkError("failed", httpx.Response(status, headers={"Retry-After": retry} if retry else {}, text=body))
+
+
+def test_the_shared_sdk_retry_waits_retry_after_backs_off_on_5xx_and_timeouts_and_refreshes_a_stale_token(monkeypatch):
+    slept, refreshed = [], []
+    monkeypatch.setattr(c.time, "sleep", slept.append)
+    monkeypatch.setattr(c.random, "random", lambda: 0.5)  # backoff 2**attempt seconds
+    replies = [sdk_error(429, retry="7"), sdk_error(503), httpx.ReadTimeout("slow"),
+               sdk_error(401, '{"code":"authz_stale"}'), "ok"]
+
+    def call():
+        r = replies.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    assert c.sdk_call(call, refresh=lambda: refreshed.append(1)) == "ok"
+    assert slept == [7.0, 1.0, 2.0] and refreshed == [1]
+    for err in (sdk_error(401, '{"code":"authz_stale"}'), sdk_error(400), httpx.ReadTimeout("slow")):
+        replies[:] = [err, err, err, err, err, err, err, err, "ok"]
+        with pytest.raises(type(err)):
+            c.sdk_call(call, retries=1, refresh=lambda: None, timeouts=not isinstance(err, httpx.TimeoutException))
+
+
+def test_a_telemetry_error_through_the_sdk_is_an_orq_error_with_the_server_message(tmp_path):
+    an = c.Analyzer(ns(tmp_path))
+    an.orq = FakeOrq()
+    an.frm, an.to = "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z"
+    an.orq.client.telemetry.query = lambda **kw: (_ for _ in ()).throw(
+        sdk_error(400, "outside the retention period of 14 days"))
+    with pytest.raises(c.OrqError) as e:
+        an.tq([{"metric": "genai.cost", "op": "sum"}], [])
+    assert "HTTP 400" in e.value.stderr and "retention period of 14 days" in e.value.stderr
+
+
+def test_a_sdk_read_is_stored_in_the_read_cache(tmp_path):
+    orq = c.Orq("demo", tmp_path / "reads")
+    calls = []
+    assert orq.cached(["k", 1], lambda: calls.append(1) or {"a": 1}) == {"a": 1}
+    assert orq.cached(["k", 1], lambda: calls.append(1) or {"a": 2}) == {"a": 1} and calls == [1]
+
+
 def test_a_decision_is_stored_without_its_prompt_and_read_back(tmp_path):
     an, _, _ = paced(tmp_path, [])
     an.decide(HARD_ASK)
@@ -212,11 +255,11 @@ def test_the_client_uses_the_cli_token_else_the_api_key(monkeypatch):
     out = {"token": "tok-1", "server": "https://srv", "expires_at": "2099-01-01T00:00:00Z"}
     monkeypatch.setattr(c.subprocess, "run", lambda argv, **kw: subprocess.CompletedProcess(
         argv, 0, json.dumps(out), ""))
-    assert REAL_MAKE_CLIENT("ws") == "client"
+    assert REAL_MAKE_CLIENT("ws")[0] == "client"
     assert seen["api_key"]() == "tok-1" and seen["server_url"] == "https://srv"
     seen.clear()
     monkeypatch.setattr(c.subprocess, "run", lambda argv, **kw: subprocess.CompletedProcess(argv, 1, "", "no login"))
-    assert REAL_MAKE_CLIENT("ws") == "client" and seen == {"api_key": "key-1", "server_url": None}
+    assert REAL_MAKE_CLIENT("ws")[0] == "client" and seen == {"api_key": "key-1", "server_url": None}
     monkeypatch.delenv("ORQ_API_KEY")
     with pytest.raises(c.CredentialsError):
         REAL_MAKE_CLIENT("ws")

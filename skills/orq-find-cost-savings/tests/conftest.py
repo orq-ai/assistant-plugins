@@ -53,14 +53,43 @@ def row(span):
 
 
 class FakeOrq:
-    """The CLI the script reads with and, as `router`, the SDK client it decides with."""
+    """The CLI the script reads with and the SDK client it reads and decides with. The SDK reads are turned into
+    the CLI's argument lists, so one `__call__` (and `calls`) sees every read."""
     last: "FakeOrq"
+    retries = 4
 
     def __init__(self, retention=None, plan="pro", agg=True):
         self.decisions, self.retention, self.plan, self.agg = 0, retention, plan, agg
         self.calls: list[list[str]] = []
         self.router = SimpleNamespace(decisions=SimpleNamespace(create=self.decide))
+        self.client = SimpleNamespace(router=self.router, telemetry=SimpleNamespace(query=self.sdk_telemetry),
+                                      traces=SimpleNamespace(list_spans=self.sdk_list_spans))
         FakeOrq.last = self
+
+    def cached(self, key, load):
+        return load()
+
+    @staticmethod
+    def sdk_out(out):
+        return SimpleNamespace(model_dump=lambda **_kw: out)
+
+    def sdk_telemetry(self, *, mode, from_, to, compute, group_by=None, filters=None, grain=None,
+                      interval_seconds=None, **_kw):
+        a = ["telemetry", "query", "--source", "TELEMETRY_SOURCE_TRACES", "--mode", mode, "--from", c.iso(from_),
+             "--to", c.iso(to), "--compute", json.dumps(compute), "--limit", "5000"]
+        for g in group_by or []:
+            a += ["--group-by", g]
+        if filters:
+            a += ["--filters", json.dumps(filters)]
+        if grain:
+            a += ["--grain", grain]
+        if interval_seconds:
+            a += ["--interval-seconds", str(interval_seconds)]
+        return self.sdk_out(self(*a))
+
+    def sdk_list_spans(self, *, trace_id, limit, page_token=None, **_kw):
+        a = ["traces", "list-spans", trace_id, "--limit", str(limit)] + (["--page-token", page_token] if page_token else [])
+        return self.sdk_out(self(*a))
 
     def decide(self, *, state, **_body):
         self.decisions += 1
@@ -136,7 +165,7 @@ REAL_MAKE_CLIENT = c.make_client
 
 @pytest.fixture(autouse=True)
 def fake_sdk(monkeypatch):
-    monkeypatch.setattr(c, "make_client", lambda workspace: FakeOrq.last)
+    monkeypatch.setattr(c, "make_client", lambda workspace: (FakeOrq.last.client, lambda: None))
 
 
 def ns(tmp_path, **kw):

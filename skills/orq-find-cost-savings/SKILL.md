@@ -24,7 +24,7 @@ Not for: creating a Smart Router (use `orq-cli`), debugging one trace (use `orq-
 - `orq` CLI logged in (`orq status`), on the workspace to analyse.
 - Permissions: `traces.list`, `reporting.view`, `classify`.
 - `uv`. The script declares its dependencies inline.
-- Decision calls use the `orq-ai-sdk` with the credentials the CLI reads with: the CLI login's token (`orq auth token`), else `ORQ_API_KEY`.
+- Decision calls, telemetry queries and span listings use the `orq-ai-sdk` with the credentials the CLI reads with: the CLI login's token (`orq auth token`), else `ORQ_API_KEY`. The other reads (workspace, model catalog, model garden, trace search, span content) stay on the `orq` CLI, because the SDK drops fields they carry.
 
 ## Run
 
